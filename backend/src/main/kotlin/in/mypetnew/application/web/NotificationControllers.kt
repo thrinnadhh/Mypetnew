@@ -50,6 +50,8 @@ class NotificationApiController(
                 request.platform,
                 request.installationId,
                 request.environment,
+                principal.role,
+                principal.sessionId,
             )
         }
         if (request.permissionState != "GRANTED" || request.nativeToken.isBlank()) {
@@ -62,6 +64,8 @@ class NotificationApiController(
             request.installationId,
             request.nativeToken,
             request.environment,
+            principal.role,
+            principal.sessionId,
         )
     }
 

@@ -17,4 +17,4 @@ Disable sends, rotate the server-side credential, revoke the old credential, reb
 
 Allow only a versioned template, safe title/body, opaque notification/resource IDs, and an allowlisted route. Never include OTPs, tokens, full phone/address, payment or medical details, proofs, authoritative totals/status, or provider credentials. A tapped notification fetches canonical state and applies current authorization.
 
-The current repository implements the device/inbox/domain projection contract. FCM dispatch, durable retry/dead-letter execution, and this runbook's outage drill remain certification blockers until the staging adapter and worker are installed and exercised.
+The repository includes encrypted JDBC device registration, durable notification/outbox/attempt projections, bounded claim recovery and retry/dead-letter logic, and an FCM HTTP v1 adapter using Google application-default credentials. The real Firebase outage/recovery drill and physical-device delivery matrix remain certification blockers until these components are exercised in isolated staging.

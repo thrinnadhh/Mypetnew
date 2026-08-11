@@ -1,17 +1,22 @@
 package `in`.mypetnew.identity
 
 import `in`.mypetnew.common.error.DomainException
+import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.identity.domain.InMemoryOtpProvider
+import `in`.mypetnew.identity.domain.InMemorySessionStore
 import `in`.mypetnew.identity.domain.OtpPurpose
 import `in`.mypetnew.identity.domain.OtpService
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.UUID
 
 class IdentityContractTest {
     private val clock = Clock.fixed(Instant.parse("2026-08-11T12:00:00Z"), ZoneOffset.UTC)
@@ -56,5 +61,23 @@ class IdentityContractTest {
             service.verify(challenge.challengeId, "+919876543210", OtpPurpose.LOGIN, code, clock.instant().plusSeconds(301))
         }
     }
-}
 
+    @Test
+    fun `refresh rotation revokes the old secret and session revocation invalidates access`() {
+        val store = InMemorySessionStore(clock, Duration.ofDays(30))
+        val accountId = UUID.randomUUID()
+        val first = store.create(accountId, "+919876543210", Role.CUSTOMER, "device-a")
+
+        assertTrue(store.isActive(first.sessionId))
+        val rotated = store.rotate(first.refreshToken)
+        assertNotEquals(first.sessionId, rotated.sessionId)
+        assertNotEquals(first.refreshToken, rotated.refreshToken)
+        assertFalse(store.isActive(first.sessionId))
+        assertTrue(store.isActive(rotated.sessionId))
+        assertThrows(DomainException::class.java) { store.rotate(first.refreshToken) }
+
+        store.revoke(rotated.sessionId, accountId)
+        assertFalse(store.isActive(rotated.sessionId))
+        assertFalse(rotated.toString().contains(rotated.refreshToken))
+    }
+}

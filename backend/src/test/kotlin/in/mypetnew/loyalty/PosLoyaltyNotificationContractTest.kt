@@ -74,11 +74,11 @@ class PosLoyaltyNotificationContractTest {
     @Test
     fun `device rotation and notification dedupe preserve safe payload`() {
         val devices = DeviceRegistrationService()
-        val notifications = NotificationService(devices)
+        val notifications = NotificationService()
         val user = UUID.randomUUID()
         val installation = UUID.randomUUID()
-        devices.register(user, AppKind.CUSTOMER, Platform.ANDROID, installation, "token-old", "dev")
-        devices.register(user, AppKind.CUSTOMER, Platform.ANDROID, installation, "token-new", "dev")
+        devices.register(user, AppKind.CUSTOMER, Platform.ANDROID, installation, "token-old", "development")
+        devices.register(user, AppKind.CUSTOMER, Platform.ANDROID, installation, "token-new", "development")
 
         val first = notifications.enqueue(
             sourceEventId = UUID.randomUUID(),
@@ -111,15 +111,32 @@ class PosLoyaltyNotificationContractTest {
         val owner = UUID.randomUUID()
         val attacker = UUID.randomUUID()
         val installation = UUID.randomUUID()
-        devices.register(owner, AppKind.CUSTOMER, Platform.ANDROID, installation, "owner-token", "dev")
+        devices.register(owner, AppKind.CUSTOMER, Platform.ANDROID, installation, "owner-token", "development")
 
         assertThrows(DomainException::class.java) {
-            devices.register(attacker, AppKind.CUSTOMER, Platform.ANDROID, installation, "attacker-token", "dev")
+            devices.register(attacker, AppKind.CUSTOMER, Platform.ANDROID, installation, "attacker-token", "development")
         }
         assertThrows(DomainException::class.java) {
-            devices.recordPermissionDenied(attacker, AppKind.CUSTOMER, Platform.ANDROID, installation, "dev")
+            devices.recordPermissionDenied(attacker, AppKind.CUSTOMER, Platform.ANDROID, installation, "development")
         }
         assertEquals(1, devices.activeFor(owner).size)
         assertEquals(0, devices.activeFor(attacker).size)
+    }
+
+    @Test
+    fun `notification templates reject empty content and unsafe event names before persistence`() {
+        val notifications = NotificationService()
+
+        assertThrows(DomainException::class.java) {
+            notifications.enqueue(
+                sourceEventId = UUID.randomUUID(),
+                recipientId = UUID.randomUUID(),
+                templateVersion = "Unsafe Event-v1",
+                title = "",
+                body = "Open the app.",
+                route = SafeRoute.INBOX,
+                resourceId = UUID.randomUUID(),
+            )
+        }
     }
 }

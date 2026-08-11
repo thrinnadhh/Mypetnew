@@ -8,7 +8,7 @@ This directory separates reproducible source evidence from infrastructure and ph
 
 | Gate | Command/evidence | Current result |
 |---|---|---|
-| backend clean build/domain/API/architecture | `./gradlew :backend:check --no-daemon --no-configuration-cache` | PASS locally |
+| backend clean build/domain/API/architecture | `./gradlew :backend:check --no-daemon --no-configuration-cache` | PASS locally; 80% JaCoCo gate covers domain/application code, while PostgreSQL/cloud infrastructure adapters remain in the separate staging gate |
 | client lint | `pnpm lint` | PASS locally |
 | client type safety | `pnpm typecheck` | PASS locally |
 | client tests and coverage | `pnpm test:coverage` | PASS locally |
@@ -17,7 +17,18 @@ This directory separates reproducible source evidence from infrastructure and ph
 | production dependency audit | `./scripts/dependency-audit.sh` | PASS with two CI-enforced expiring Expo build-tool exceptions documented in `docs/qa/SECURITY_EXCEPTIONS.md` |
 | connected in-process walking skeleton | `WalkingSkeletonApiTest` | PASS locally |
 
-CI uploads immutable backend and client reports under the commit SHA. The source suite covers domain invariants, role denial, API error shape, barcode isolation, inventory concurrency, quote/order/POS idempotency, merchant-scoped loyalty, migration privacy, notification dedupe, device role binding, and safe inbox routing.
+CI uploads immutable backend and client reports under the commit SHA. The source suite covers domain invariants, role denial, API error shape, rotating sessions, barcode isolation, inventory concurrency, quote/order/POS idempotency, merchant-scoped loyalty, migration privacy, private-storage policy, FCM result classification, notification retry/dead-letter behavior, device role binding, and safe inbox routing.
+
+## Blocking source/runtime work
+
+| Area | Status | Required completion evidence |
+|---|---|---|
+| durable commerce transaction spine | NOT IMPLEMENTED | PostgreSQL repositories and atomic transactions/outbox for provider, catalog, inventory, cart, quote, order, POS and loyalty, exercised through the production profile |
+| production identity lifecycle | NOT IMPLEMENTED | external OTP adapter plus persistent/race-safe challenge limits, Merchant/Admin bootstrap and live role/permission revocation |
+| complete role workflows | NOT IMPLEMENTED | Customer/Merchant critical screens, Merchant scanner/manual/offline inventory flow, order fulfilment, POS/association/loyalty, and Admin approval UI against canonical APIs |
+| production-profile integration suite | NOT IMPLEMENTED | PostgreSQL-backed API/E2E tests for rollback, concurrency, idempotency, tenant authorization, audit and outbox recovery |
+
+The production profile is intentionally fail-closed: it does not substitute the test/development in-memory commerce services or OTP provider. Until this table is cleared, the source implementation itself is not Sprint 1 complete even if every reproducible gate above is green.
 
 ## Blocking certification gates
 

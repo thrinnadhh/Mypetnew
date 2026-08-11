@@ -1,6 +1,7 @@
 package `in`.mypetnew.engagement.domain
 
 import `in`.mypetnew.common.error.DomainException
+import `in`.mypetnew.common.auth.Role
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Instant
@@ -30,7 +31,32 @@ data class DeviceRegistration(
     val lastSeenAt: Instant,
 )
 
-class DeviceRegistrationService {
+interface DeviceRegistrationPersistence {
+    fun register(
+        userId: UUID,
+        role: Role,
+        sessionId: UUID,
+        appKind: AppKind,
+        platform: Platform,
+        installationId: UUID,
+        token: String,
+        environment: String,
+    ): DeviceRegistration
+
+    fun recordPermissionDenied(
+        userId: UUID,
+        role: Role,
+        sessionId: UUID,
+        appKind: AppKind,
+        platform: Platform,
+        installationId: UUID,
+        environment: String,
+    ): DeviceRegistration
+
+    fun activeFor(userId: UUID): List<DeviceRegistration>
+}
+
+class DeviceRegistrationService(private val persistence: DeviceRegistrationPersistence? = null) {
     private data class StoredRegistration(
         val public: DeviceRegistration,
         val protectedToken: String,
@@ -46,9 +72,14 @@ class DeviceRegistrationService {
         installationId: UUID,
         token: String,
         environment: String,
+        role: Role = roleFor(appKind),
+        sessionId: UUID = UUID.randomUUID(),
     ): DeviceRegistration {
-        if (token.isBlank() || token.length > 4_096 || environment !in setOf("dev", "staging", "production")) {
+        if (token.isBlank() || token.length > 4_096 || environment !in setOf("development", "staging", "production")) {
             throw DomainException("DEVICE_REGISTRATION_INVALID", "The device registration is invalid")
+        }
+        persistence?.let {
+            return it.register(userId, role, sessionId, appKind, platform, installationId, token, environment)
         }
         requireInstallationOwner(userId, appKind, installationId, environment)
         registrations.replaceAll { _, stored ->
@@ -98,9 +129,22 @@ class DeviceRegistrationService {
         platform: Platform,
         installationId: UUID,
         environment: String,
+        role: Role = roleFor(appKind),
+        sessionId: UUID = UUID.randomUUID(),
     ): DeviceRegistration {
-        if (environment !in setOf("dev", "staging", "production")) {
+        if (environment !in setOf("development", "staging", "production")) {
             throw DomainException("DEVICE_REGISTRATION_INVALID", "The device registration is invalid")
+        }
+        persistence?.let {
+            return it.recordPermissionDenied(
+                userId,
+                role,
+                sessionId,
+                appKind,
+                platform,
+                installationId,
+                environment,
+            )
         }
         requireInstallationOwner(userId, appKind, installationId, environment)
         registrations.replaceAll { _, stored ->
@@ -138,9 +182,9 @@ class DeviceRegistrationService {
     }
 
     @Synchronized
-    fun activeFor(userId: UUID): List<DeviceRegistration> = registrations.values
-        .map(StoredRegistration::public)
-        .filter { it.userId == userId && it.status == RegistrationStatus.ACTIVE }
+    fun activeFor(userId: UUID): List<DeviceRegistration> = persistence?.activeFor(userId)
+        ?: registrations.values.map(StoredRegistration::public)
+            .filter { it.userId == userId && it.status == RegistrationStatus.ACTIVE }
 
     private fun requireInstallationOwner(
         userId: UUID,
@@ -163,6 +207,14 @@ class DeviceRegistrationService {
         .digest(token.toByteArray(StandardCharsets.UTF_8))
         .take(8)
         .joinToString("") { "%02x".format(it) }
+
+    companion object {
+        private fun roleFor(appKind: AppKind): Role = when (appKind) {
+            AppKind.CUSTOMER -> Role.CUSTOMER
+            AppKind.MERCHANT -> Role.MERCHANT
+            AppKind.CAPTAIN -> Role.CAPTAIN
+        }
+    }
 }
 
 data class Notification(
@@ -177,17 +229,33 @@ data class Notification(
     val createdAt: Instant,
 )
 
-class NotificationService(private val devices: DeviceRegistrationService) {
+interface NotificationRepository {
+    fun putIfAbsent(notification: Notification): Notification
+    fun forRecipient(recipientId: UUID): List<Notification>
+}
+
+class InMemoryNotificationRepository : NotificationRepository {
     private data class DedupeKey(
         val sourceEventId: UUID,
         val recipientId: UUID,
         val templateVersion: String,
-        val channel: String = "PUSH",
     )
 
     private val notifications = mutableMapOf<DedupeKey, Notification>()
 
     @Synchronized
+    override fun putIfAbsent(notification: Notification): Notification {
+        val key = DedupeKey(notification.sourceEventId, notification.recipientId, notification.templateVersion)
+        return notifications.getOrPut(key) { notification }
+    }
+
+    @Synchronized
+    override fun forRecipient(recipientId: UUID): List<Notification> = notifications.values
+        .filter { it.recipientId == recipientId }
+        .sortedByDescending(Notification::createdAt)
+}
+
+class NotificationService(private val repository: NotificationRepository = InMemoryNotificationRepository()) {
     fun enqueue(
         sourceEventId: UUID,
         recipientId: UUID,
@@ -197,12 +265,18 @@ class NotificationService(private val devices: DeviceRegistrationService) {
         route: SafeRoute,
         resourceId: UUID,
     ): Notification {
-        if (title.length > 80 || body.length > 240 || templateVersion.length > 80) {
+        val eventType = templateVersion.substringBefore("-v")
+        if (
+            title.length !in 1..80 ||
+            body.length !in 1..240 ||
+            templateVersion.length !in 1..80 ||
+            !eventType.matches(Regex("[a-z0-9-]{1,80}"))
+        ) {
             throw DomainException("NOTIFICATION_TEMPLATE_INVALID", "The notification content is invalid")
         }
-        val key = DedupeKey(sourceEventId, recipientId, templateVersion)
-        return notifications[key] ?: Notification(
-            id = UUID.randomUUID(),
+        val notificationId = UUID.randomUUID()
+        val candidate = Notification(
+            id = notificationId,
             sourceEventId = sourceEventId,
             recipientId = recipientId,
             templateVersion = templateVersion,
@@ -210,20 +284,15 @@ class NotificationService(private val devices: DeviceRegistrationService) {
             title = title,
             body = body,
             payload = mapOf(
-                "notificationId" to UUID.randomUUID().toString(),
+                "notificationId" to notificationId.toString(),
                 "resourceId" to resourceId.toString(),
                 "route" to route.wireValue,
-                "eventType" to templateVersion.substringBefore("-v"),
+                "eventType" to eventType,
             ),
             createdAt = Instant.now(),
-        ).also { notification ->
-            notifications[key] = notification
-            devices.activeFor(recipientId)
-        }
+        )
+        return repository.putIfAbsent(candidate)
     }
 
-    @Synchronized
-    fun forRecipient(recipientId: UUID): List<Notification> = notifications.values
-        .filter { it.recipientId == recipientId }
-        .sortedByDescending(Notification::createdAt)
+    fun forRecipient(recipientId: UUID): List<Notification> = repository.forRecipient(recipientId)
 }

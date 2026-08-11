@@ -51,7 +51,9 @@ Sprint 1 is complete only when every applicable test in [Sprint 1 Hard Test Cont
 
 ## Implemented Sprint 1 source baseline
 
-The repository now contains a Kotlin/Spring Boot modular monolith, a private Flyway schema, shared TypeScript contracts/design tokens, separate Customer/Merchant/Captain Expo applications, and a Next.js Admin application. The automated walking skeleton exercises provider approval, outlet-scoped barcode catalog and inventory, pickup quote/order transitions, POS, merchant-scoped loyalty, role-safe device registration, and notification inbox projection.
+The repository now contains a Kotlin/Spring Boot modular monolith, a private Flyway schema, rotating refresh sessions, a Supabase private-storage adapter, encrypted device registration, durable notification attempts with an FCM HTTP v1 adapter, shared TypeScript contracts/design tokens, separate Customer/Merchant/Captain Expo shells, and a Next.js Admin shell. The automated in-process walking skeleton exercises provider approval, outlet-scoped barcode catalog and inventory, pickup quote/order transitions, POS, merchant-scoped loyalty, role-safe device registration, and notification inbox projection.
+
+This is not the complete Sprint 1 production runtime. Core provider/catalog/inventory/cart/quote/order/POS/loyalty persistence and atomic outbox integration still use test/development in-memory services, the production OTP adapter is absent, and the role clients do not yet implement all Sprint 1 operational screens. The production profile deliberately has no in-memory fallback and will fail closed until those dependencies are implemented. These source blockers and the remaining infrastructure/device gates are tracked in the evidence record below.
 
 Use Java 21, Node 22.23.2, and pnpm 11.21.0:
 

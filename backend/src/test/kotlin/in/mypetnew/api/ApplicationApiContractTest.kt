@@ -19,6 +19,8 @@ import tools.jackson.databind.ObjectMapper
     classes = [MyPetNewApplication::class],
     properties = [
         "mypet.security.token-secret=test-only-secret-that-is-longer-than-32-bytes",
+        "mypet.security.token-issuer=mypetnew-test-api",
+        "mypet.security.token-audience=mypetnew-test-clients",
         "spring.datasource.url=jdbc:h2:mem:mypet;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
@@ -72,14 +74,35 @@ class ApplicationApiContractTest {
         val challengeId = objectMapper.readTree(requested.response.contentAsString).path("challengeId").asString()
         val code = (otpProvider as InMemoryOtpProvider).codeFor(java.util.UUID.fromString(challengeId))
 
-        mockMvc.post("/api/v1/auth/otp/verify") {
+        val verified = mockMvc.post("/api/v1/auth/otp/verify") {
             contentType = MediaType.APPLICATION_JSON
             content = """{"challengeId":"$challengeId","mobile":"+919876543210","purpose":"LOGIN","code":"$code"}"""
         }.andExpect {
             status { isOk() }
             jsonPath("$.accessToken") { isNotEmpty() }
+            jsonPath("$.refreshToken") { isNotEmpty() }
             jsonPath("$.role") { value("CUSTOMER") }
-        }
+        }.andReturn()
+        val firstSession = objectMapper.readTree(verified.response.contentAsString)
+        val refreshed = mockMvc.post("/api/v1/auth/sessions/refresh") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"refreshToken":"${firstSession.path("refreshToken").asString()}"}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.accessToken") { isNotEmpty() }
+            jsonPath("$.refreshToken") { isNotEmpty() }
+        }.andReturn()
+        val secondSession = objectMapper.readTree(refreshed.response.contentAsString)
+        org.junit.jupiter.api.Assertions.assertNotEquals(
+            firstSession.path("refreshToken").asString(),
+            secondSession.path("refreshToken").asString(),
+        )
+        mockMvc.get("/api/v1/notifications") {
+            header("Authorization", "Bearer ${firstSession.path("accessToken").asString()}")
+        }.andExpect { status { isUnauthorized() } }
+        mockMvc.get("/api/v1/notifications") {
+            header("Authorization", "Bearer ${secondSession.path("accessToken").asString()}")
+        }.andExpect { status { isOk() } }
 
         mockMvc.post("/api/v1/auth/otp/request") {
             contentType = MediaType.APPLICATION_JSON

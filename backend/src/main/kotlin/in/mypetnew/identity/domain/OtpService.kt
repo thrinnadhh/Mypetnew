@@ -39,6 +39,7 @@ data class OtpChallengeResponse(
 data class VerifiedMobile(
     val subjectId: UUID,
     val mobile: String,
+    val deviceId: String,
     val verifiedAt: Instant,
 )
 
@@ -51,6 +52,7 @@ class OtpService(
         val id: UUID,
         val mobile: String,
         val purpose: OtpPurpose,
+        val deviceId: String,
         val code: String,
         val expiresAt: Instant,
         var consumedAt: Instant? = null,
@@ -72,7 +74,7 @@ class OtpService(
         enforceRateLimit("ip:$ipAddress", now)
         val id = UUID.randomUUID()
         val code = random.nextInt(1_000_000).toString().padStart(6, '0')
-        val challenge = Challenge(id, mobile, purpose, code, now.plus(ttl))
+        val challenge = Challenge(id, mobile, purpose, deviceId, code, now.plus(ttl))
         challenges[id] = challenge
         provider.send(id, mobile, code, purpose)
         return OtpChallengeResponse(
@@ -102,7 +104,7 @@ class OtpService(
             invalidOtp()
         }
         challenge.consumedAt = at
-        return VerifiedMobile(UUID.nameUUIDFromBytes(mobile.toByteArray()), mobile, at)
+        return VerifiedMobile(UUID.nameUUIDFromBytes(mobile.toByteArray()), mobile, challenge.deviceId, at)
     }
 
     private fun enforceRateLimit(key: String, now: Instant) {
@@ -125,4 +127,3 @@ class OtpService(
         "The verification code is invalid or expired",
     )
 }
-

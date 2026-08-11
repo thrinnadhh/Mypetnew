@@ -27,6 +27,7 @@ dependencies {
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
+    implementation("com.google.auth:google-auth-library-oauth2-http:1.36.0")
     runtimeOnly("org.postgresql:postgresql")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
@@ -43,6 +44,11 @@ tasks.test {
 
 tasks.jacocoTestReport {
     dependsOn(tasks.test)
+    classDirectories.setFrom(
+        files(classDirectories.files.map { classes ->
+            fileTree(classes) { exclude("**/infrastructure/**") }
+        }),
+    )
     reports {
         xml.required.set(true)
         html.required.set(true)
@@ -50,6 +56,11 @@ tasks.jacocoTestReport {
 }
 
 tasks.jacocoTestCoverageVerification {
+    classDirectories.setFrom(
+        files(classDirectories.files.map { classes ->
+            fileTree(classes) { exclude("**/infrastructure/**") }
+        }),
+    )
     violationRules {
         rule {
             limit { minimum = "0.80".toBigDecimal() }

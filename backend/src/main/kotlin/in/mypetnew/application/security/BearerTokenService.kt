@@ -4,6 +4,7 @@ import `in`.mypetnew.common.auth.AdminPermission
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
+import `in`.mypetnew.identity.domain.SessionStore
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
@@ -27,11 +28,15 @@ class BearerTokenService(
     private val clock: Clock = Clock.systemUTC(),
 ) {
     private val secret = properties.tokenSecret.toByteArray(StandardCharsets.UTF_8)
+    private val issuer = properties.tokenIssuer
+    private val audience = properties.tokenAudience
     private val encoder = Base64.getUrlEncoder().withoutPadding()
     private val decoder = Base64.getUrlDecoder()
 
     fun issue(principal: Principal, lifetime: Duration = Duration.ofHours(1)): String {
         val payload = listOf(
+            issuer,
+            audience,
             principal.actorId,
             principal.role,
             principal.organizationId ?: "-",
@@ -51,17 +56,17 @@ class BearerTokenService(
         if (!MessageDigest.isEqual(sign(parts[0]), actualSignature)) invalid()
         val payload = runCatching { String(decoder.decode(parts[0]), StandardCharsets.UTF_8) }.getOrElse { invalid() }
         val values = payload.split('|')
-        if (values.size != 7) invalid()
-        val expiresAt = values[6].toLongOrNull() ?: invalid()
+        if (values.size != 9 || values[0] != issuer || values[1] != audience) invalid()
+        val expiresAt = values[8].toLongOrNull() ?: invalid()
         if (clock.instant().epochSecond >= expiresAt) invalid()
         return runCatching {
             Principal(
-                actorId = UUID.fromString(values[0]),
-                role = Role.valueOf(values[1]),
-                organizationId = values[2].takeUnless { it == "-" }?.let(UUID::fromString),
-                outletIds = values[3].csv().map(UUID::fromString).toSet(),
-                permissions = values[4].csv().map(AdminPermission::valueOf).toSet(),
-                sessionId = UUID.fromString(values[5]),
+                actorId = UUID.fromString(values[2]),
+                role = Role.valueOf(values[3]),
+                organizationId = values[4].takeUnless { it == "-" }?.let(UUID::fromString),
+                outletIds = values[5].csv().map(UUID::fromString).toSet(),
+                permissions = values[6].csv().map(AdminPermission::valueOf).toSet(),
+                sessionId = UUID.fromString(values[7]),
             )
         }.getOrElse { invalid() }
     }
@@ -77,7 +82,10 @@ class BearerTokenService(
 }
 
 @Component
-class BearerAuthenticationFilter(private val tokens: BearerTokenService) : OncePerRequestFilter() {
+class BearerAuthenticationFilter(
+    private val tokens: BearerTokenService,
+    private val sessions: SessionStore,
+) : OncePerRequestFilter() {
     override fun doFilterInternal(
         request: HttpServletRequest,
         response: HttpServletResponse,
@@ -85,17 +93,16 @@ class BearerAuthenticationFilter(private val tokens: BearerTokenService) : OnceP
     ) {
         val authorization = request.getHeader("Authorization")
         if (authorization?.startsWith("Bearer ") == true && SecurityContextHolder.getContext().authentication == null) {
-            runCatching { tokens.verify(authorization.removePrefix("Bearer ").trim()) }
-                .onSuccess { principal ->
-                    val authorities = buildList {
-                        add(SimpleGrantedAuthority("ROLE_${principal.role}"))
-                        principal.permissions.forEach { add(SimpleGrantedAuthority("PERMISSION_$it")) }
-                    }
-                    SecurityContextHolder.getContext().authentication =
-                        UsernamePasswordAuthenticationToken(principal, null, authorities)
+            val principal = runCatching { tokens.verify(authorization.removePrefix("Bearer ").trim()) }.getOrNull()
+            if (principal != null && runCatching { sessions.isActive(principal.sessionId) }.getOrDefault(false)) {
+                val authorities = buildList {
+                    add(SimpleGrantedAuthority("ROLE_${principal.role}"))
+                    principal.permissions.forEach { add(SimpleGrantedAuthority("PERMISSION_$it")) }
                 }
+                SecurityContextHolder.getContext().authentication =
+                    UsernamePasswordAuthenticationToken(principal, null, authorities)
+            }
         }
         filterChain.doFilter(request, response)
     }
 }
-

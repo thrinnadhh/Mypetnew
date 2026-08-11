@@ -3,6 +3,7 @@ package `in`.mypetnew.application.web
 import `in`.mypetnew.common.error.DomainException
 import jakarta.servlet.http.HttpServletRequest
 import org.springframework.http.converter.HttpMessageNotReadableException
+import org.springframework.web.multipart.MaxUploadSizeExceededException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.MissingRequestHeaderException
@@ -60,6 +61,10 @@ class GlobalExceptionHandler {
     fun noResource(request: HttpServletRequest): ResponseEntity<ApiErrorEnvelope> =
         ResponseEntity.status(HttpStatus.NOT_FOUND)
             .body(envelope("RESOURCE_NOT_FOUND", "The requested resource is unavailable", request))
+
+    @ExceptionHandler(MaxUploadSizeExceededException::class)
+    fun oversizedUpload(request: HttpServletRequest): ResponseEntity<ApiErrorEnvelope> =
+        ResponseEntity.badRequest().body(envelope("DOCUMENT_INVALID", "The document cannot be accepted", request))
 
     @ExceptionHandler(Exception::class)
     fun unexpected(error: Exception, request: HttpServletRequest): ResponseEntity<ApiErrorEnvelope> =

@@ -22,6 +22,8 @@ import java.util.UUID
     classes = [MyPetNewApplication::class],
     properties = [
         "mypet.security.token-secret=test-only-secret-that-is-longer-than-32-bytes",
+        "mypet.security.token-issuer=mypetnew-test-api",
+        "mypet.security.token-audience=mypetnew-test-clients",
         "spring.datasource.url=jdbc:h2:mem=walking;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
@@ -69,13 +71,13 @@ class WalkingSkeletonApiTest {
             "/api/v1/devices/registrations",
             merchantToken,
             "merchant-device",
-            """{"appKind":"MERCHANT","environment":"dev","installationId":"${UUID.randomUUID()}","platform":"ANDROID","nativeToken":"merchant-native-token","permissionState":"GRANTED"}""",
+            """{"appKind":"MERCHANT","environment":"development","installationId":"${UUID.randomUUID()}","platform":"ANDROID","nativeToken":"merchant-native-token","permissionState":"GRANTED"}""",
         )
         post(
             "/api/v1/devices/registrations",
             customerToken,
             "customer-device",
-            """{"appKind":"CUSTOMER","environment":"dev","installationId":"${UUID.randomUUID()}","platform":"ANDROID","nativeToken":"customer-native-token","permissionState":"GRANTED"}""",
+            """{"appKind":"CUSTOMER","environment":"development","installationId":"${UUID.randomUUID()}","platform":"ANDROID","nativeToken":"customer-native-token","permissionState":"GRANTED"}""",
         )
         val listing = post(
             "/api/v1/merchant/listings",

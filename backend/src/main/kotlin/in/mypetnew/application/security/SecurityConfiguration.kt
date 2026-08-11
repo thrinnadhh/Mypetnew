@@ -19,10 +19,19 @@ import java.util.UUID
 import tools.jackson.databind.ObjectMapper
 
 @ConfigurationProperties("mypet.security")
-data class SecurityProperties(val tokenSecret: String) {
+data class SecurityProperties(
+    val tokenSecret: String,
+    val tokenIssuer: String,
+    val tokenAudience: String,
+) {
     init {
         require(tokenSecret.length >= 32) { "MYPET_TOKEN_SECRET must contain at least 32 characters" }
+        require(tokenIssuer.matches(Regex("[A-Za-z0-9:/._-]{3,120}"))) { "MYPET_TOKEN_ISSUER is invalid" }
+        require(tokenAudience.matches(Regex("[A-Za-z0-9:/._-]{3,120}"))) { "MYPET_TOKEN_AUDIENCE is invalid" }
     }
+
+    override fun toString(): String =
+        "SecurityProperties(tokenSecret=[REDACTED], tokenIssuer=$tokenIssuer, tokenAudience=$tokenAudience)"
 }
 
 @Configuration
@@ -42,7 +51,12 @@ class SecurityConfiguration {
             .logout { it.disable() }
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .authorizeHttpRequests {
-                it.requestMatchers("/actuator/health/**", "/api/v1/public/**", "/api/v1/auth/otp/**").permitAll()
+                it.requestMatchers(
+                    "/actuator/health/**",
+                    "/api/v1/public/**",
+                    "/api/v1/auth/otp/**",
+                    "/api/v1/auth/sessions/refresh",
+                ).permitAll()
                     .anyRequest().authenticated()
             }
             .exceptionHandling {

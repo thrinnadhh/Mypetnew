@@ -19,10 +19,30 @@ spring:
   threads:
     virtual:
       enabled: true
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 11MB
 
 mypet:
   security:
     token-secret: ${MYPET_TOKEN_SECRET:}
+    token-issuer: ${MYPET_TOKEN_ISSUER:}
+    token-audience: ${MYPET_TOKEN_AUDIENCE:}
+  supabase:
+    storage:
+      url: ${SUPABASE_URL:}
+      service-key: ${SUPABASE_SERVICE_ROLE_KEY:}
+      private-bucket: ${SUPABASE_PRIVATE_EVIDENCE_BUCKET:}
+  firebase:
+    project-id: ${FIREBASE_PROJECT_ID:}
+    environment: ${MYPET_ENVIRONMENT:}
+  notifications:
+    device-token-encryption-key: ${MYPET_DEVICE_TOKEN_KEY:}
+    worker:
+      batch-size: ${NOTIFICATION_BATCH_SIZE:50}
+      max-attempts: ${NOTIFICATION_MAX_ATTEMPTS:5}
+      fixed-delay-millis: ${NOTIFICATION_FIXED_DELAY_MILLIS:1000}
 
 management:
   endpoints:
@@ -40,4 +60,3 @@ server:
     include-message: never
     include-stacktrace: never
   shutdown: graceful
-

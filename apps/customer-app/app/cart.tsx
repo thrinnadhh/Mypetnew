@@ -39,7 +39,7 @@ export default function CartScreen() {
             </View>
             <View style={styles.quantity}>
               <Pressable accessibilityLabel={`Decrease ${item.name}`} accessibilityRole="button" onPress={() => { setQuantity(item.listingId, item.quantity - 1) }} style={styles.quantityButton}><Text style={styles.quantityButtonText}>−</Text></Pressable>
-              <Text accessibilityLabel={`Quantity ${item.quantity}`} style={styles.quantityText}>{item.quantity}</Text>
+              <Text accessibilityLabel={`Quantity ${String(item.quantity)}`} style={styles.quantityText}>{item.quantity}</Text>
               <Pressable accessibilityLabel={`Increase ${item.name}`} accessibilityRole="button" disabled={item.quantity >= 100} onPress={() => { setQuantity(item.listingId, item.quantity + 1) }} style={[styles.quantityButton, item.quantity >= 100 && styles.disabled]}><Text style={styles.quantityButtonText}>＋</Text></Pressable>
             </View>
           </View>

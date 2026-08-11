@@ -239,7 +239,7 @@ export function BottomNav() {
         )
       })}
       <Link href="/cart" asChild>
-        <Pressable accessibilityLabel={`Cart with ${itemCount} items`} accessibilityRole="button" style={styles.cartShortcut}>
+        <Pressable accessibilityLabel={`Cart with ${String(itemCount)} items`} accessibilityRole="button" style={styles.cartShortcut}>
           <Text style={styles.cartShortcutIcon}>🛒</Text>
           {itemCount > 0 ? <View style={styles.cartShortcutCount}><Text style={styles.cartCountText}>{itemCount > 99 ? '99+' : itemCount}</Text></View> : null}
         </Pressable>

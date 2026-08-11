@@ -15,7 +15,7 @@ export default function CatalogScreen() {
     <Page title="Food & Nutrition">
       <SearchBox onChangeText={setQuery} placeholder="Search food, treats, brands..." value={query} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-        {filters.map((filter) => <Pressable key={filter} onPress={() => setActive(filter)}><Chip active={active === filter} label={filter} /></Pressable>)}
+        {filters.map((filter) => <Pressable accessibilityRole="button" hitSlop={4} key={filter} onPress={() => setActive(filter)}><Chip active={active === filter} label={filter} /></Pressable>)}
       </ScrollView>
       <View style={styles.row}><Text style={text.muted}>{products.length} products</Text><View style={styles.rowActions}><Text style={styles.action}>↕ Sort</Text><Text style={styles.action}>☷ Filters</Text></View></View>
       <View style={styles.section}><SectionHeader title="Trending nutrition" /><ProductGrid products={products} /></View>

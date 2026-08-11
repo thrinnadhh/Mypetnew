@@ -19,5 +19,29 @@ describe('Customer single-outlet cart', () => {
     expect(replaced.outletId).toBe('outlet-b')
     expect(replaced.lines).toEqual([])
   })
-})
 
+  it('merges matching lines and rejects unsafe quantities', () => {
+    const first = addCartLine(createEmptyCart(), { outletId: 'outlet-a', listingId: 'food', quantity: 1 })
+    if (first.kind !== 'updated') throw new Error('expected updated cart')
+    const withToy = addCartLine(first.cart, { outletId: 'outlet-a', listingId: 'toy', quantity: 2 })
+    if (withToy.kind !== 'updated') throw new Error('expected updated cart')
+    const merged = addCartLine(withToy.cart, { outletId: 'outlet-a', listingId: 'food', quantity: 3 })
+    expect(merged.kind).toBe('updated')
+    if (merged.kind !== 'updated') throw new Error('expected updated cart')
+    expect(merged.cart.lines).toEqual([
+      { listingId: 'food', quantity: 4 },
+      { listingId: 'toy', quantity: 2 }
+    ])
+
+    expect(() => addCartLine(first.cart, { outletId: 'outlet-a', listingId: 'food', quantity: 0 })).toThrow('Quantity')
+    expect(() => addCartLine(first.cart, { outletId: 'outlet-a', listingId: 'food', quantity: 1.5 })).toThrow('Quantity')
+    expect(() => addCartLine(first.cart, { outletId: 'outlet-a', listingId: 'food', quantity: 101 })).toThrow('Quantity')
+  })
+
+  it('keeps the cart when replacement is empty or unchanged', () => {
+    const cart = createEmptyCart()
+    expect(replaceCartOutlet(cart, '')).toBe(cart)
+    const selected = replaceCartOutlet(cart, 'outlet-a')
+    expect(replaceCartOutlet(selected, 'outlet-a')).toBe(selected)
+  })
+})

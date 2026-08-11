@@ -24,4 +24,16 @@ describe('Merchant barcode scanner contract', () => {
     expect(sent).toEqual(['scan-a'])
     expect(queue.pending()).toEqual([])
   })
+
+  it('rejects unsafe scanner and offline queue limits', () => {
+    expect(() => new ScannerCaptureGate(-1)).toThrow('non-negative integer')
+    expect(() => new ScannerCaptureGate(1.5)).toThrow('non-negative integer')
+    expect(() => new OfflineActionQueue(0)).toThrow('positive')
+
+    const queue = new OfflineActionQueue(1)
+    queue.enqueue({ idempotencyKey: 'scan-a', barcode: '4006381333931', outletId: 'outlet-a' })
+    expect(() => {
+      queue.enqueue({ idempotencyKey: 'scan-b', barcode: '036000291452', outletId: 'outlet-a' })
+    }).toThrow('full')
+  })
 })

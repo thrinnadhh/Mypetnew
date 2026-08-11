@@ -2,3 +2,11 @@ packages:
   - apps/*
   - packages/*
 
+overrides:
+  postcss: 8.5.26
+  sharp: 0.35.3
+
+auditConfig:
+  ignoreGhsas:
+    - GHSA-5p2g-fcmc-qvqq
+    - GHSA-w3rx-r6r6-pgpr

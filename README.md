@@ -48,3 +48,18 @@ Sprint 1 is a production-shaped walking skeleton:
 The Kotlin/Spring Boot backend remains the only business authority. Supabase supplies managed PostgreSQL and object storage; role apps do not access domain tables directly. Firebase Cloud Messaging supplies mobile push through a provider-neutral backend adapter, while each app fetches canonical state from the API after a notification.
 
 Sprint 1 is complete only when every applicable test in [Sprint 1 Hard Test Contract](docs/qa/SPRINT_1_HARD_TEST_CASES.md) passes with evidence.
+
+## Implemented Sprint 1 source baseline
+
+The repository now contains a Kotlin/Spring Boot modular monolith, a private Flyway schema, shared TypeScript contracts/design tokens, separate Customer/Merchant/Captain Expo applications, and a Next.js Admin application. The automated walking skeleton exercises provider approval, outlet-scoped barcode catalog and inventory, pickup quote/order transitions, POS, merchant-scoped loyalty, role-safe device registration, and notification inbox projection.
+
+Use Java 21, Node 22.23.2, and pnpm 11.21.0:
+
+```bash
+corepack pnpm install --frozen-lockfile
+corepack pnpm verify
+```
+
+`corepack pnpm verify` runs secret-boundary scanning, the backend quality/coverage gate, client lint/typecheck/coverage, and production builds. Configuration keys are documented in [`.env.example`](.env.example); real secrets must remain in the server/build secret store.
+
+The current release status and infrastructure/device blockers are recorded in [Sprint 1 evidence](docs/qa/evidence/sprint-1/README.md). A green source build does not substitute for isolated Supabase/Firebase evidence or physical-device scanner/push tests.

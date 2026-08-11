@@ -29,6 +29,21 @@ describe('shared API contracts', () => {
       path: '/api/v1/orders'
     })).toBe(true)
     expect(isApiErrorEnvelope({ message: 'raw exception' })).toBe(false)
+    expect(isApiErrorEnvelope(null)).toBe(false)
+    expect(isApiErrorEnvelope([])).toBe(false)
+    expect(isApiErrorEnvelope({ code: 500 })).toBe(false)
+    expect(isApiErrorEnvelope({ code: 'X', message: 4 })).toBe(false)
+    expect(isApiErrorEnvelope({ code: 'X', message: 'x', traceId: 7 })).toBe(false)
+    expect(isApiErrorEnvelope({ code: 'X', message: 'x', traceId: 't', fieldErrors: [] })).toBe(false)
+    expect(isApiErrorEnvelope({
+      code: 'X', message: 'x', traceId: 't', fieldErrors: { field: 7 }, timestamp: 'now', path: '/'
+    })).toBe(false)
+    expect(isApiErrorEnvelope({
+      code: 'X', message: 'x', traceId: 't', fieldErrors: {}, timestamp: 7, path: '/'
+    })).toBe(false)
+    expect(isApiErrorEnvelope({
+      code: 'X', message: 'x', traceId: 't', fieldErrors: {}, timestamp: 'now', path: 7
+    })).toBe(false)
   })
 
   it('production runtime never falls back to mock API or server credentials', () => {
@@ -40,5 +55,25 @@ describe('shared API contracts', () => {
       firebaseServerPrivateKey: 'forbidden'
     })).toThrow('server credential')
   })
-})
 
+  it('validates environment transport and Firebase identifiers', () => {
+    expect(() => requirePublicRuntimeConfig({
+      environment: 'staging', apiUrl: 'http://api.example.com', firebaseProjectId: 'staging', firebaseAppId: 'app'
+    })).toThrow('HTTPS')
+    expect(() => requirePublicRuntimeConfig({
+      environment: 'production', apiUrl: 'https://api.example.com', firebaseProjectId: 'prod'
+    })).toThrow('Firebase')
+    expect(() => requirePublicRuntimeConfig({
+      environment: 'production', apiUrl: 'https://api.example.com', firebaseAppId: 'app'
+    })).toThrow('Firebase')
+    expect(() => requirePublicRuntimeConfig({
+      environment: 'development', apiUrl: 'http://localhost:8080/', firebaseProjectId: 'dev', firebaseAppId: 'app'
+    })).not.toThrow()
+    expect(requirePublicRuntimeConfig({
+      environment: 'staging', apiUrl: 'https://api.example.com/', firebaseProjectId: 'staging', firebaseAppId: 'app'
+    }).apiUrl).toBe('https://api.example.com')
+    expect(() => requirePublicRuntimeConfig({
+      environment: 'production', apiUrl: 'https://api.example.com', firebaseProjectId: 'prod', firebaseAppId: 'app', databaseUrl: 'forbidden'
+    })).toThrow('server credential')
+  })
+})

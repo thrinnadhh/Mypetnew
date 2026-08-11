@@ -20,6 +20,7 @@ export default function CustomerHome() {
   const [listings, setListings] = useState<readonly ListingSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -40,6 +41,7 @@ export default function CustomerHome() {
 
   const products = useMemo(() => listings.map((listing, index) => ({
     id: listing.id,
+    outletId: listing.outletId,
     name: listing.name,
     merchant: 'Nearby merchant',
     pricePaise: listing.sellingPricePaise,
@@ -48,43 +50,52 @@ export default function CustomerHome() {
     viewOnly: listing.commerceMode === 'VIEW_ONLY'
   })), [listings])
 
+  const submitSearch = () => {
+    const trimmed = query.trim()
+    if (trimmed.length === 0) {
+      router.push('/catalog')
+      return
+    }
+    router.push({ pathname: '/catalog', params: { q: trimmed } })
+  }
+
   return (
     <Page bottomNav>
       <View style={styles.pullUp}><HomeHeader /></View>
-      <SearchBox />
+      <SearchBox onChangeText={setQuery} onSubmit={submitSearch} value={query} />
 
       <View style={styles.hero}>
-        <Image resizeMode="cover" source={{ uri: images.hero }} style={StyleSheet.absoluteFillObject} />
+        <Image resizeMode="cover" source={{ uri: images.hero }} style={styles.heroImage} />
         <View style={styles.heroOverlay}>
           <Badge label="NEW ARRIVALS" tone="green" />
           <Text style={styles.heroTitle}>Discover fresh essentials</Text>
           <Text style={styles.heroCopy}>Products, grooming and trusted care near you.</Text>
-          <Pressable accessibilityRole="button" onPress={() => router.push('/catalog')} style={styles.heroButton}><Text style={styles.heroButtonText}>Explore</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={() => { router.push('/catalog') }} style={styles.heroButton}><Text style={styles.heroButtonText}>Explore</Text></Pressable>
         </View>
       </View>
 
       <View style={styles.quickRow}>
-        <Link href="/catalog" asChild><Pressable style={styles.quickCard}><Text style={styles.quickIcon}>♡</Text><Text style={styles.quickLabel}>Favourites</Text></Pressable></Link>
-        <Link href="/orders" asChild><Pressable style={styles.quickCard}><Text style={styles.quickIcon}>▣</Text><Text style={styles.quickLabel}>Orders</Text></Pressable></Link>
-        <Link href="/reports" asChild><Pressable style={styles.quickCard}><Text style={styles.quickIcon}>✚</Text><Text style={styles.quickLabel}>Health</Text></Pressable></Link>
+        <Link href="/catalog" asChild><Pressable accessibilityRole="button" style={styles.quickCard}><Text style={styles.quickIcon}>♡</Text><Text style={styles.quickLabel}>Explore</Text></Pressable></Link>
+        <Link href="/orders" asChild><Pressable accessibilityRole="button" style={styles.quickCard}><Text style={styles.quickIcon}>▣</Text><Text style={styles.quickLabel}>Orders</Text></Pressable></Link>
+        <Link href="/reports" asChild><Pressable accessibilityRole="button" style={styles.quickCard}><Text style={styles.quickIcon}>✚</Text><Text style={styles.quickLabel}>Health</Text></Pressable></Link>
       </View>
 
       <View style={styles.section}>
-        <SectionHeader title="Shop by category" action="See all" />
-        <CategoryGrid items={categories} onPress={() => router.push('/catalog')} />
+        <SectionHeader action="See all" onAction={() => { router.push('/catalog') }} title="Shop by category" />
+        <CategoryGrid items={categories} onPress={() => { router.push('/catalog') }} />
       </View>
 
       <View style={styles.section}>
-        <SectionHeader title="Trending for your pet" action="View all" />
+        <SectionHeader action="View all" onAction={() => { router.push('/catalog') }} title="Trending for your pet" />
         {loading ? <ActivityIndicator color={palette.primary} accessibilityLabel="Loading nearby products" /> : null}
-        {error ? <Pressable onPress={() => { void load() }} style={styles.errorCard}><Text style={styles.errorText}>{error} Tap to retry.</Text></Pressable> : null}
-        {!loading && !error && products.length > 0 ? <ProductGrid products={products} /> : null}
-        {!loading && !error && products.length === 0 ? <View style={styles.previewNotice}><Text style={text.muted}>No live listings yet. Showing the approved frontend layout only.</Text></View> : null}
+        {error !== null ? <Pressable accessibilityRole="button" onPress={() => { void load() }} style={styles.errorCard}><Text style={styles.errorText}>{error} Tap to retry.</Text></Pressable> : null}
+        {!loading && error === null && products.length > 0 ? <ProductGrid products={products} /> : null}
+        {!loading && error === null && products.length === 0 ? <View style={styles.previewNotice}><Text style={text.muted}>No live listings yet. Preview products below are intentionally non-purchasable.</Text></View> : null}
         {!loading && products.length === 0 ? <ProductGrid products={previewProducts} /> : null}
       </View>
 
       <View style={styles.section}>
-        <SectionHeader title="Premium shops nearby 🏆" action="Preview" />
+        <SectionHeader action="Preview" title="Premium shops nearby 🏆" />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
           <StoreCard image={images.shop} name="The Posh Paws" subtitle="Premium pet supplies & food" />
           <StoreCard image={previewProducts[0].image} name="Healthy Hounds" subtitle="Organic food & essentials" distance="2.1 km" />
@@ -92,7 +103,7 @@ export default function CustomerHome() {
       </View>
 
       <View style={styles.section}>
-        <SectionHeader title="Care nearby" action="Design preview" />
+        <SectionHeader action="Design preview" title="Care nearby" />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
           <StoreCard href="/hospital" image={images.groom1} name="City Pet Hospital" subtitle="Emergency & general care" rating="4.9" />
           <StoreCard href="/grooming" image={images.groom2} name="Paws & Bubbles Spa" subtitle="Luxury grooming & styling" distance="0.8 km" />
@@ -101,7 +112,7 @@ export default function CustomerHome() {
 
       <View style={styles.section}>
         <SectionHeader title="Pet guides" />
-        <Link href="/guide" asChild><Pressable style={styles.guideCard}><View style={styles.guideCopy}><Badge label="PET GUIDE" tone="amber" /><Text style={text.section}>Puppy nutrition and healthy growth</Text><Text style={text.muted}>Practical care guidance in the same clean card system as your Stitch screens.</Text></View><Text style={styles.guideArrow}>›</Text></Pressable></Link>
+        <Link href="/guide" asChild><Pressable accessibilityRole="button" style={styles.guideCard}><View style={styles.guideCopy}><Badge label="PET GUIDE" tone="amber" /><Text style={text.section}>Puppy nutrition and healthy growth</Text><Text style={text.muted}>Practical care guidance in the same clean card system as your Stitch screens.</Text></View><Text style={styles.guideArrow}>›</Text></Pressable></Link>
       </View>
     </Page>
   )
@@ -111,6 +122,7 @@ const styles = StyleSheet.create({
   pullUp: { marginHorizontal: -metrics.pageGutter, marginTop: -12 },
   section: { gap: 14 },
   hero: { borderRadius: metrics.radiusLg, height: 190, overflow: 'hidden', position: 'relative' },
+  heroImage: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 },
   heroOverlay: { backgroundColor: 'rgba(7, 19, 39, 0.56)', flex: 1, gap: 8, justifyContent: 'center', padding: 20 },
   heroTitle: { color: '#FFFFFF', fontSize: 25, fontWeight: '900', lineHeight: 30, maxWidth: 260 },
   heroCopy: { color: '#EEF4FF', fontSize: 13, lineHeight: 18, maxWidth: 260 },

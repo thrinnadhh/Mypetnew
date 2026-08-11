@@ -47,7 +47,7 @@ class PublicCatalogController(
                 val outlet = providers.getOutlet(listing.outletId)
                 outlet.status == ProviderStatus.ACTIVE && (listing.commerceMode.name == "VIEW_ONLY" || inventory.available(listing.id) > 0)
             }
-            .sortedBy(PublicListingSort::name)
+            .sortedWith(compareBy(PublicListingSort::name).thenBy { it.id.toString() })
             .toList()
         val from = (page * pageSize).coerceAtMost(visible.size)
         val to = (from + pageSize).coerceAtMost(visible.size)

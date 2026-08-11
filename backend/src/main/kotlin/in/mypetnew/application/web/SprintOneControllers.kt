@@ -17,6 +17,8 @@ import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.loyalty.domain.LoyaltyService
+import `in`.mypetnew.engagement.domain.NotificationService
+import `in`.mypetnew.engagement.domain.SafeRoute
 import `in`.mypetnew.pos.domain.CustomerAssociationChallengeService
 import `in`.mypetnew.pos.domain.PaymentDeclaration
 import `in`.mypetnew.pos.domain.PosService
@@ -134,6 +136,7 @@ class CustomerCommerceApiController(
     private val orders: OrderService,
     private val loyalty: LoyaltyService,
     private val associations: CustomerAssociationChallengeService,
+    private val notifications: NotificationService,
 ) {
     @PostMapping("/quotes/pickup")
     fun quote(
@@ -172,13 +175,24 @@ class CustomerCommerceApiController(
         Authorizer.requireRole(customer, Role.CUSTOMER)
         val quote = quotes.requireValid(request.quoteId, request.cartSignature)
         if (quote.customerId != customer.actorId) resourceUnavailable()
-        return orders.checkout(
+        val order = orders.checkout(
             customer.actorId,
             quote.outletId,
             quote.lines.mapValues { it.value.first },
             quote.pricing.grandTotalPaise,
             idempotencyKey,
         )
+        val outlet = providers.getOutlet(order.outletId)
+        notifications.enqueue(
+            sourceEventId = order.id,
+            recipientId = outlet.ownerActorId,
+            templateVersion = "pickup-order-placed-v1",
+            title = "New pickup order",
+            body = "Open MyPet Merchant to review a new pickup order.",
+            route = SafeRoute.MERCHANT_ORDER,
+            resourceId = order.id,
+        )
+        return order
     }
 
     data class ChallengeRequest(val organizationId: UUID, val outletId: UUID)
@@ -227,6 +241,7 @@ class MerchantCommerceApiController(
     private val orders: OrderService,
     private val pos: PosService,
     private val associations: CustomerAssociationChallengeService,
+    private val notifications: NotificationService,
 ) {
     @PostMapping("/orders/{orderId}/transitions")
     fun transition(
@@ -265,7 +280,7 @@ class MerchantCommerceApiController(
             listing.id to Pair(line.quantity, listing.sellingPricePaise)
         }
         if (lines.size != request.lines.size) throw DomainException("POS_LINE_INVALID", "The POS cart contains duplicate lines")
-        return pos.complete(
+        val sale = pos.complete(
             outlet.organizationId,
             outlet.id,
             customerId,
@@ -273,6 +288,18 @@ class MerchantCommerceApiController(
             request.paymentDeclaration,
             idempotencyKey,
         )
+        if (sale.customerId != null && sale.loyaltyAwarded) {
+            notifications.enqueue(
+                sourceEventId = sale.id,
+                recipientId = sale.customerId,
+                templateVersion = "pos-star-v1",
+                title = "You earned a loyalty star",
+                body = "Open MyPet to view your merchant loyalty activity.",
+                route = SafeRoute.CUSTOMER_LOYALTY,
+                resourceId = outlet.organizationId,
+            )
+        }
+        return sale
     }
 
     private fun authorizedOrder(principal: Principal, orderId: UUID): ProductOrder {
@@ -282,7 +309,7 @@ class MerchantCommerceApiController(
     }
 }
 
-private fun Authentication.domainPrincipal(): Principal = principal as? Principal
+internal fun Authentication.domainPrincipal(): Principal = principal as? Principal
     ?: throw DomainException("AUTHENTICATION_REQUIRED", "Authentication is required")
 
 private fun authorizedActiveOutlet(
@@ -304,4 +331,3 @@ private fun resourceUnavailable(): Nothing = throw DomainException(
     "RESOURCE_NOT_FOUND",
     "The requested resource is unavailable",
 )
-

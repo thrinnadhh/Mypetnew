@@ -2,6 +2,7 @@ package `in`.mypetnew.loyalty
 
 import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.catalog.domain.StockReason
+import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.engagement.domain.AppKind
 import `in`.mypetnew.engagement.domain.DeviceRegistrationService
 import `in`.mypetnew.engagement.domain.NotificationService
@@ -12,6 +13,7 @@ import `in`.mypetnew.pos.domain.PaymentDeclaration
 import `in`.mypetnew.pos.domain.PosService
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.UUID
@@ -102,5 +104,22 @@ class PosLoyaltyNotificationContractTest {
         assertFalse(first.payload.values.any { it.contains("token-") })
         assertTrue(first.payload.keys.all { it in setOf("notificationId", "resourceId", "route", "eventType") })
     }
-}
 
+    @Test
+    fun `another user cannot claim or disable an existing installation`() {
+        val devices = DeviceRegistrationService()
+        val owner = UUID.randomUUID()
+        val attacker = UUID.randomUUID()
+        val installation = UUID.randomUUID()
+        devices.register(owner, AppKind.CUSTOMER, Platform.ANDROID, installation, "owner-token", "dev")
+
+        assertThrows(DomainException::class.java) {
+            devices.register(attacker, AppKind.CUSTOMER, Platform.ANDROID, installation, "attacker-token", "dev")
+        }
+        assertThrows(DomainException::class.java) {
+            devices.recordPermissionDenied(attacker, AppKind.CUSTOMER, Platform.ANDROID, installation, "dev")
+        }
+        assertEquals(1, devices.activeFor(owner).size)
+        assertEquals(0, devices.activeFor(attacker).size)
+    }
+}

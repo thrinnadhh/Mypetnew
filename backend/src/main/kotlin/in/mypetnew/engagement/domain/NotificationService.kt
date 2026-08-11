@@ -50,6 +50,7 @@ class DeviceRegistrationService {
         if (token.isBlank() || token.length > 4_096 || environment !in setOf("dev", "staging", "production")) {
             throw DomainException("DEVICE_REGISTRATION_INVALID", "The device registration is invalid")
         }
+        requireInstallationOwner(userId, appKind, installationId, environment)
         registrations.replaceAll { _, stored ->
             if (
                 stored.public.installationId == installationId &&
@@ -91,9 +92,72 @@ class DeviceRegistrationService {
     }
 
     @Synchronized
+    fun recordPermissionDenied(
+        userId: UUID,
+        appKind: AppKind,
+        platform: Platform,
+        installationId: UUID,
+        environment: String,
+    ): DeviceRegistration {
+        if (environment !in setOf("dev", "staging", "production")) {
+            throw DomainException("DEVICE_REGISTRATION_INVALID", "The device registration is invalid")
+        }
+        requireInstallationOwner(userId, appKind, installationId, environment)
+        registrations.replaceAll { _, stored ->
+            if (
+                stored.public.installationId == installationId &&
+                stored.public.appKind == appKind &&
+                stored.public.environment == environment
+            ) stored.copy(public = stored.public.copy(status = RegistrationStatus.DISABLED)) else stored
+        }
+        val existing = registrations.values.firstOrNull {
+            it.public.userId == userId &&
+                it.public.installationId == installationId &&
+                it.public.appKind == appKind &&
+                it.public.environment == environment &&
+                it.public.tokenFingerprint == "permission-denied"
+        }
+        if (existing != null) {
+            val refreshed = existing.public.copy(lastSeenAt = Instant.now())
+            registrations[refreshed.id] = existing.copy(public = refreshed)
+            return refreshed
+        }
+        val disabled = DeviceRegistration(
+            id = UUID.randomUUID(),
+            userId = userId,
+            appKind = appKind,
+            platform = platform,
+            installationId = installationId,
+            environment = environment,
+            tokenFingerprint = "permission-denied",
+            status = RegistrationStatus.DISABLED,
+            lastSeenAt = Instant.now(),
+        )
+        registrations[disabled.id] = StoredRegistration(disabled, "")
+        return disabled
+    }
+
+    @Synchronized
     fun activeFor(userId: UUID): List<DeviceRegistration> = registrations.values
         .map(StoredRegistration::public)
         .filter { it.userId == userId && it.status == RegistrationStatus.ACTIVE }
+
+    private fun requireInstallationOwner(
+        userId: UUID,
+        appKind: AppKind,
+        installationId: UUID,
+        environment: String,
+    ) {
+        val belongsToAnotherUser = registrations.values.any {
+            it.public.userId != userId &&
+                it.public.installationId == installationId &&
+                it.public.appKind == appKind &&
+                it.public.environment == environment
+        }
+        if (belongsToAnotherUser) {
+            throw DomainException("DEVICE_REGISTRATION_INVALID", "The device registration is invalid")
+        }
+    }
 
     private fun fingerprint(token: String): String = MessageDigest.getInstance("SHA-256")
         .digest(token.toByteArray(StandardCharsets.UTF_8))

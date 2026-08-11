@@ -2,11 +2,16 @@ package `in`.mypetnew.application.web
 
 import `in`.mypetnew.common.error.DomainException
 import jakarta.servlet.http.HttpServletRequest
+import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.MissingRequestHeaderException
+import org.springframework.web.bind.MissingServletRequestParameterException
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
+import org.springframework.web.servlet.resource.NoResourceFoundException
 import java.time.Instant
 import java.util.UUID
 
@@ -39,6 +44,23 @@ class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(envelope("VALIDATION_FAILED", "Request validation failed", request, fields))
     }
 
+    @ExceptionHandler(HttpMessageNotReadableException::class)
+    fun malformed(request: HttpServletRequest): ResponseEntity<ApiErrorEnvelope> =
+        ResponseEntity.badRequest().body(envelope("MALFORMED_REQUEST", "The request body is malformed", request))
+
+    @ExceptionHandler(
+        MissingRequestHeaderException::class,
+        MissingServletRequestParameterException::class,
+        MethodArgumentTypeMismatchException::class,
+    )
+    fun binding(request: HttpServletRequest): ResponseEntity<ApiErrorEnvelope> =
+        ResponseEntity.badRequest().body(envelope("VALIDATION_FAILED", "Request validation failed", request))
+
+    @ExceptionHandler(NoResourceFoundException::class)
+    fun noResource(request: HttpServletRequest): ResponseEntity<ApiErrorEnvelope> =
+        ResponseEntity.status(HttpStatus.NOT_FOUND)
+            .body(envelope("RESOURCE_NOT_FOUND", "The requested resource is unavailable", request))
+
     @ExceptionHandler(Exception::class)
     fun unexpected(error: Exception, request: HttpServletRequest): ResponseEntity<ApiErrorEnvelope> =
         ResponseEntity.internalServerError().body(
@@ -59,4 +81,3 @@ class GlobalExceptionHandler {
         path = request.requestURI,
     )
 }
-

@@ -1,5 +1,6 @@
 package `in`.mypetnew.api
 
+import `in`.mypetnew.application.MyPetNewApplication
 import org.hamcrest.Matchers.containsString
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -12,6 +13,7 @@ import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
 
 @SpringBootTest(
+    classes = [MyPetNewApplication::class],
     properties = [
         "mypet.security.token-secret=test-only-secret-that-is-longer-than-32-bytes",
         "spring.datasource.url=jdbc:h2:mem:mypet;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",

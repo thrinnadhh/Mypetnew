@@ -66,6 +66,9 @@ importers:
       '@mypet/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@mypet/mobile-notifications':
+        specifier: workspace:*
+        version: link:../../packages/mobile-notifications
       expo:
         specifier: 57.0.12
         version: 57.0.12(@babel/core@7.29.7)(@expo/dom-webview@57.0.1)(@expo/metro-runtime@57.0.9)(expo-router@57.0.12)(react-dom@19.2.8)(react-native-worklets@0.11.3)(react-native@0.86.2)(react@19.2.8)(typescript@5.9.3)
@@ -100,9 +103,15 @@ importers:
       '@mypet/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@mypet/mobile-notifications':
+        specifier: workspace:*
+        version: link:../../packages/mobile-notifications
       expo:
         specifier: 57.0.12
         version: 57.0.12(@babel/core@7.29.7)(@expo/dom-webview@57.0.1)(@expo/metro-runtime@57.0.9)(expo-router@57.0.12)(react-dom@19.2.8)(react-native-worklets@0.11.3)(react-native@0.86.2)(react@19.2.8)(typescript@5.9.3)
+      expo-constants:
+        specifier: 57.0.10
+        version: 57.0.10(expo@57.0.12)(react-native@0.86.2)
       expo-notifications:
         specifier: 57.0.10
         version: 57.0.10(expo@57.0.12)(react-native@0.86.2)(react@19.2.8)(typescript@5.9.3)
@@ -134,12 +143,18 @@ importers:
       '@mypet/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@mypet/mobile-notifications':
+        specifier: workspace:*
+        version: link:../../packages/mobile-notifications
       expo:
         specifier: 57.0.12
         version: 57.0.12(@babel/core@7.29.7)(@expo/dom-webview@57.0.1)(@expo/metro-runtime@57.0.9)(expo-router@57.0.12)(react-dom@19.2.8)(react-native-worklets@0.11.3)(react-native@0.86.2)(react@19.2.8)(typescript@5.9.3)
       expo-camera:
         specifier: 57.0.3
         version: 57.0.3(@types/emscripten@1.41.5)(expo@57.0.12)(react-native@0.86.2)(react@19.2.8)
+      expo-constants:
+        specifier: 57.0.10
+        version: 57.0.10(expo@57.0.12)(react-native@0.86.2)
       expo-notifications:
         specifier: 57.0.10
         version: 57.0.10(expo@57.0.12)(react-native@0.86.2)(react@19.2.8)(typescript@5.9.3)
@@ -170,6 +185,25 @@ importers:
         version: 5.9.3
 
   packages/design-tokens:
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  packages/mobile-notifications:
+    dependencies:
+      '@mypet/api-contracts':
+        specifier: workspace:*
+        version: link:../api-contracts
+      expo-notifications:
+        specifier: 57.0.10
+        version: 57.0.10(expo@57.0.12)(react-native@0.86.2)(react@19.2.8)(typescript@5.9.3)
+      expo-secure-store:
+        specifier: 57.0.1
+        version: 57.0.1(expo@57.0.12)
+      react-native:
+        specifier: 0.86.2
+        version: 0.86.2(@babel/core@7.29.7)(react@19.2.8)
     devDependencies:
       typescript:
         specifier: 5.9.3
@@ -2617,6 +2651,23 @@ packages:
       nullthrows: 1.1.1
       react: 19.2.8
       react-native: 0.86.2(@babel/core@7.29.7)(@react-native/metro-config@0.87.0)(@types/react@19.2.18)(react@19.2.8)
+    dev: false
+
+  /@react-native/virtualized-lists@0.86.2(react-native@0.86.2)(react@19.2.8):
+    resolution: {integrity: sha512-uO0J72gh3EvE+1/GHRk18QRyBDTRHRB0AraAfojsRjbT7VMuJwKrZYaKGshavoaEud6aw00ZB9/8mTMIKjjcAw==}
+    engines: {node: ^20.19.4 || ^22.13.0 || ^24.3.0 || >= 25.0.0}
+    peerDependencies:
+      '@types/react': ^19.2.0
+      react: '*'
+      react-native: 0.86.2
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+    dependencies:
+      invariant: 2.2.4
+      nullthrows: 1.1.1
+      react: 19.2.8
+      react-native: 0.86.2(@babel/core@7.29.7)(react@19.2.8)
     dev: false
 
   /@rolldown/binding-android-arm64@1.2.3:
@@ -6072,6 +6123,62 @@ packages:
       '@react-native/normalize-colors': 0.86.2
       '@react-native/virtualized-lists': 0.86.2(@types/react@19.2.18)(react-native@0.86.2)(react@19.2.8)
       '@types/react': 19.2.18
+      abort-controller: 3.0.0
+      anser: 1.4.10
+      ansi-regex: 5.0.1
+      babel-plugin-syntax-hermes-parser: 0.36.0
+      base64-js: 1.5.1
+      commander: 12.1.0
+      flow-enums-runtime: 0.0.6
+      hermes-compiler: 250829098.0.16
+      invariant: 2.2.4
+      memoize-one: 5.2.1
+      metro-runtime: 0.84.4
+      metro-source-map: 0.84.4
+      nullthrows: 1.1.1
+      pretty-format: 29.7.0
+      promise: 8.3.0
+      react: 19.2.8
+      react-devtools-core: 6.1.5
+      react-refresh: 0.14.2
+      regenerator-runtime: 0.13.11
+      scheduler: 0.27.0
+      semver: 7.8.5
+      stacktrace-parser: 0.1.11
+      tinyglobby: 0.2.17
+      whatwg-fetch: 3.6.20
+      ws: 7.5.13
+      yargs: 17.7.3
+    transitivePeerDependencies:
+      - '@babel/core'
+      - '@react-native-community/cli'
+      - '@react-native/metro-config'
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+    dev: false
+
+  /react-native@0.86.2(@babel/core@7.29.7)(react@19.2.8):
+    resolution: {integrity: sha512-zbJXGZpwfZGA79Z9ob6Atvfx4nAQL8yJBa35s58E4Oo+khPykfQP2sTeumkKbjwajFYfVayg8pj7Il9nIfTk7A==}
+    engines: {node: ^20.19.4 || ^22.13.0 || ^24.3.0 || >= 25.0.0}
+    hasBin: true
+    peerDependencies:
+      '@react-native/jest-preset': 0.86.2
+      '@types/react': ^19.1.1
+      react: ^19.2.3
+    peerDependenciesMeta:
+      '@react-native/jest-preset':
+        optional: true
+      '@types/react':
+        optional: true
+    dependencies:
+      '@react-native/assets-registry': 0.86.2
+      '@react-native/codegen': 0.86.2(@babel/core@7.29.7)
+      '@react-native/community-cli-plugin': 0.86.2(@react-native/metro-config@0.87.0)
+      '@react-native/gradle-plugin': 0.86.2
+      '@react-native/js-polyfills': 0.86.2
+      '@react-native/normalize-colors': 0.86.2
+      '@react-native/virtualized-lists': 0.86.2(react-native@0.86.2)(react@19.2.8)
       abort-controller: 3.0.0
       anser: 1.4.10
       ansi-regex: 5.0.1

@@ -45,11 +45,8 @@ export class OfflineActionQueue {
 
   public async flush(send: (action: QueuedScanAction) => Promise<ScanReplayResult>): Promise<void> {
     for (const action of this.actions.values()) {
-      const result = await send(action)
-      if (result.kind === 'existing-listing' || result.kind === 'created-listing' || result.kind === 'conflict') {
-        this.actions.delete(action.idempotencyKey)
-      }
+      await send(action)
+      this.actions.delete(action.idempotencyKey)
     }
   }
 }
-

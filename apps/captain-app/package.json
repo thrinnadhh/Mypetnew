@@ -10,6 +10,7 @@
   "dependencies": {
     "@mypet/api-contracts": "workspace:*",
     "@mypet/design-tokens": "workspace:*",
+    "@mypet/mobile-notifications": "workspace:*",
     "expo": "57.0.12",
     "expo-notifications": "57.0.10",
     "expo-router": "57.0.12",

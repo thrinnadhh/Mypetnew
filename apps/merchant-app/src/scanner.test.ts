@@ -16,13 +16,12 @@ describe('Merchant barcode scanner contract', () => {
     queue.enqueue({ idempotencyKey: 'scan-a', barcode: '4006381333931', outletId: 'outlet-a' })
     const sent: string[] = []
 
-    await queue.flush(async (action) => {
+    await queue.flush((action) => {
       sent.push(action.idempotencyKey)
-      return { kind: 'existing-listing', listingId: 'listing-a' }
+      return Promise.resolve({ kind: 'existing-listing', listingId: 'listing-a' })
     })
 
     expect(sent).toEqual(['scan-a'])
     expect(queue.pending()).toEqual([])
   })
 })
-

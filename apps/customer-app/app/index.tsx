@@ -114,7 +114,7 @@ const styles = StyleSheet.create({
   heroOverlay: { backgroundColor: 'rgba(7, 19, 39, 0.56)', flex: 1, gap: 8, justifyContent: 'center', padding: 20 },
   heroTitle: { color: '#FFFFFF', fontSize: 25, fontWeight: '900', lineHeight: 30, maxWidth: 260 },
   heroCopy: { color: '#EEF4FF', fontSize: 13, lineHeight: 18, maxWidth: 260 },
-  heroButton: { alignItems: 'center', backgroundColor: palette.primaryBright, borderRadius: 8, justifyContent: 'center', marginTop: 4, minHeight: 42, paddingHorizontal: 16, width: 104 },
+  heroButton: { alignItems: 'center', backgroundColor: palette.primaryBright, borderRadius: 8, justifyContent: 'center', marginTop: 4, minHeight: 48, paddingHorizontal: 16, width: 104 },
   heroButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
   quickRow: { flexDirection: 'row', gap: 10 },
   quickCard: { alignItems: 'center', backgroundColor: palette.surface, borderColor: palette.border, borderRadius: metrics.radiusMd, borderWidth: 1, flex: 1, gap: 5, justifyContent: 'center', minHeight: 78 },

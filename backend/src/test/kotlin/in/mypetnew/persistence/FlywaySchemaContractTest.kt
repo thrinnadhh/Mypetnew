@@ -11,7 +11,7 @@ import java.util.UUID
 class FlywaySchemaContractTest {
     @Test
     fun `clean migration creates private Sprint 1 schema and database-backed invariants`() {
-        val url = "jdbc:h2:mem:migration-${UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE"
+        val url = "jdbc:h2:mem:migration-${UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
         val flyway = Flyway.configure()
             .dataSource(url, "sa", "")
             .schemas("mypet")
@@ -25,9 +25,9 @@ class FlywaySchemaContractTest {
 
         DriverManager.getConnection(url, "sa", "").use { connection ->
             val tables = connection.prepareStatement(
-                "select table_name from information_schema.tables where table_schema = 'mypet'",
+                "select table_name from information_schema.tables where lower(table_schema) = 'mypet'",
             ).use { statement ->
-                statement.executeQuery().use { rows -> buildSet { while (rows.next()) add(rows.getString(1)) } }
+                statement.executeQuery().use { rows -> buildSet { while (rows.next()) add(rows.getString(1).lowercase()) } }
             }
             assertTrue(tables.containsAll(setOf(
                 "identity_account",
@@ -41,7 +41,7 @@ class FlywaySchemaContractTest {
                 "outbox_event",
                 "device_registration",
                 "audit_event",
-            )))
+            )), "tables=$tables")
 
             val organizationId = UUID.randomUUID()
             val outletId = UUID.randomUUID()
@@ -87,4 +87,3 @@ class FlywaySchemaContractTest {
         }
     }
 }
-

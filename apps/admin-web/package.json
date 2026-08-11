@@ -1,0 +1,23 @@
+{
+  "name": "@mypet/admin-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@mypet/api-contracts": "workspace:*",
+    "@mypet/design-tokens": "workspace:*",
+    "next": "16.2.11",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.3",
+    "typescript": "5.9.3"
+  }
+}
+

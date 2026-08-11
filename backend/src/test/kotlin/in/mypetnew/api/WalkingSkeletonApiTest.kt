@@ -65,6 +65,18 @@ class WalkingSkeletonApiTest {
             outletIds = setOf(outletId),
         )
         val merchantToken = tokens.issue(merchant)
+        post(
+            "/api/v1/devices/registrations",
+            merchantToken,
+            "merchant-device",
+            """{"appKind":"MERCHANT","environment":"dev","installationId":"${UUID.randomUUID()}","platform":"ANDROID","nativeToken":"merchant-native-token","permissionState":"GRANTED"}""",
+        )
+        post(
+            "/api/v1/devices/registrations",
+            customerToken,
+            "customer-device",
+            """{"appKind":"CUSTOMER","environment":"dev","installationId":"${UUID.randomUUID()}","platform":"ANDROID","nativeToken":"customer-native-token","permissionState":"GRANTED"}""",
+        )
         val listing = post(
             "/api/v1/merchant/listings",
             merchantToken,
@@ -99,6 +111,14 @@ class WalkingSkeletonApiTest {
             """{"quoteId":"${quote.uuid("id")}","cartSignature":"${quote.path("cartSignature").asString()}"}""",
         )
         val orderId = order.uuid("id")
+        mockMvc.get("/api/v1/notifications") {
+            header("Authorization", "Bearer $merchantToken")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items.length()") { value(1) }
+            jsonPath("$.items[0].payload.route") { value("merchant/orders/detail") }
+            jsonPath("$.items[0].payload.resourceId") { value(orderId.toString()) }
+        }
         listOf("ACCEPTED", "PREPARING", "READY_FOR_PICKUP", "DELIVERED").forEachIndexed { index, status ->
             post(
                 "/api/v1/merchant/orders/$orderId/transitions",
@@ -126,6 +146,13 @@ class WalkingSkeletonApiTest {
         }.andExpect {
             status { isOk() }
             jsonPath("$.availableStars") { value(1) }
+        }
+        mockMvc.get("/api/v1/notifications") {
+            header("Authorization", "Bearer $customerToken")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items.length()") { value(1) }
+            jsonPath("$.items[0].payload.route") { value("customer/loyalty") }
         }
 
         mockMvc.get("/api/v1/merchant/orders/$orderId") {

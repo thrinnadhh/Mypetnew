@@ -116,7 +116,7 @@ function ProductCard({ product, width }: { product: { id: string; name: string; 
         <Text numberOfLines={2} style={styles.productName}>{product.name}</Text>
         <View style={styles.productFooter}>
           <Text style={styles.productPrice}>{formatPaise(product.pricePaise)}</Text>
-          {product.viewOnly ? <Badge label="VIEW" tone="blue" /> : <Pressable accessibilityLabel={`Add ${product.name}`} accessibilityRole="button" style={styles.addButton}><Text style={styles.addButtonText}>＋</Text></Pressable>}
+          {product.viewOnly ? <Badge label="VIEW" tone="blue" /> : <Pressable accessibilityLabel={`Add ${product.name}`} accessibilityRole="button" hitSlop={4} style={styles.addButton}><Text style={styles.addButtonText}>＋</Text></Pressable>}
         </View>
       </View>
     </View>
@@ -184,12 +184,12 @@ const styles = StyleSheet.create({
   mic: { color: palette.primary, fontSize: 18 },
   sectionHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   sectionAction: { color: palette.primary, fontSize: 13, fontWeight: '700' },
-  chip: { alignItems: 'center', backgroundColor: palette.surface, borderColor: palette.border, borderRadius: 999, borderWidth: 1, justifyContent: 'center', minHeight: 36, paddingHorizontal: 14 },
+  chip: { alignItems: 'center', backgroundColor: palette.surface, borderColor: palette.border, borderRadius: 999, borderWidth: 1, justifyContent: 'center', minHeight: 40, paddingHorizontal: 14 },
   chipActive: { backgroundColor: palette.primarySoft, borderColor: palette.primary },
   chipText: { color: palette.text, fontSize: 12, fontWeight: '700' },
   chipTextActive: { color: palette.primary },
   primaryButton: { alignItems: 'center', backgroundColor: palette.primaryBright, borderRadius: metrics.radiusSm, justifyContent: 'center', minHeight: metrics.button, paddingHorizontal: 18 },
-  primaryButtonCompact: { minHeight: 42, paddingHorizontal: 14 },
+  primaryButtonCompact: { minHeight: 48, paddingHorizontal: 14 },
   primaryButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
   buttonDisabled: { opacity: 0.45 },
   buttonPressed: { opacity: 0.82 },
@@ -218,7 +218,7 @@ const styles = StyleSheet.create({
   productName: { color: palette.text, fontSize: 12, fontWeight: '700', lineHeight: 16, minHeight: 32 },
   productFooter: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 3 },
   productPrice: { color: palette.text, fontSize: 14, fontWeight: '900' },
-  addButton: { alignItems: 'center', backgroundColor: palette.primaryBright, borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
+  addButton: { alignItems: 'center', backgroundColor: palette.primaryBright, borderRadius: 20, height: 40, justifyContent: 'center', width: 40 },
   addButtonText: { color: '#FFFFFF', fontSize: 22, fontWeight: '700', lineHeight: 24 },
   storeCard: { backgroundColor: palette.surface, borderColor: palette.border, borderRadius: metrics.radiusMd, borderWidth: 1, overflow: 'hidden', width: 220 },
   storeImage: { backgroundColor: palette.surfaceSoft, height: 108, width: '100%' },

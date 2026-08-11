@@ -1,7 +1,7 @@
 # MyPetNew Decision Log
 
 Status: **Authoritative**  
-Version: **1.0**  
+Version: **1.1**  
 Date: **2026-08-11**  
 Owner: **Product and Platform**
 
@@ -34,6 +34,8 @@ This file records decisions that must not be reinterpreted by individual apps or
 | D-021 | Grooming and veterinary bookings have an appointment lifecycle separate from product orders. | Appointment `PAID` is a payment state, not a booking/fulfilment state. |
 | D-022 | Sprint 1 delivers an executable walking skeleton: auth, provider/outlet, merchant-owned barcode catalog, stock, single-merchant pickup/pay-on-fulfilment order, POS loyalty, and hard CI gates. | Sprint 1 is not complete based on screens, HTTP 200 responses, or compilation alone. |
 | D-023 | The repository remains private and carries no open-source licence while architecture and business rules stabilize. | Redistribution rights are not granted. |
+| D-024 | Use Supabase as managed infrastructure for PostgreSQL and object storage. The Kotlin/Spring Boot backend remains the only domain API and owns Flyway migrations, authorization, transactions, and signed storage access. | Role apps never connect directly to domain tables. Supabase Auth, direct client Data API access, Realtime, and Edge Functions are not authorities for Version 1 business flows. |
+| D-025 | Use Firebase Cloud Messaging (FCM) as the launch mobile-push adapter behind `NotificationProvider`; Expo apps use `expo-notifications` to register native device tokens and handle notifications/deep links. | FCM credentials stay server-side, projects are isolated by environment, iOS delivery uses the APNs configuration attached to FCM, and notification delivery never changes business state. |
 
 ## Derived safety decisions
 
@@ -51,6 +53,10 @@ These decisions follow from the locked choices and close implementation ambiguit
 | DD-008 | Store pickup uses `PAY_ON_FULFILMENT` in Sprint 1. It must not be mislabeled as a captured online payment. |
 | DD-009 | A medicine offering has `commerce_mode=VIEW_ONLY`; all server-side order and POS paths reject it even if a client is modified. |
 | DD-010 | Future changes to fees, loyalty, or cadence are versioned and affect new transactions only; existing snapshots retain the rule version used at creation. |
+| DD-011 | Application tables live in a private, non-client-exposed PostgreSQL schema. Only the backend database identity receives domain-table privileges; no Supabase secret/service-role key is shipped to a role app or Admin browser. |
+| DD-012 | Private merchant-verification, medical, support, and proof objects use private Supabase Storage buckets and short-lived, purpose-bound signed access issued only after backend authorization. |
+| DD-013 | A push payload contains an opaque notification/resource reference and safe routing metadata, never OTPs, access tokens, full phone numbers, payment evidence, medical details, proofs, or other sensitive business data. The receiving app reloads canonical state from the API. |
+| DD-014 | Device registrations are scoped by environment, app, installation, platform, user/role, token, and session. Rotation, logout, permission revocation, provider invalidation, staleness, and account suspension deactivate the appropriate registration without deleting delivery audit. |
 
 ## Change procedure
 
@@ -62,4 +68,3 @@ Every proposed decision change must include:
 4. updated acceptance and adversarial tests;
 5. finance, security, privacy, or legal review when applicable;
 6. rollout, observability, and rollback plan.
-

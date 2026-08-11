@@ -1,0 +1,26 @@
+{
+  "name": "@mypet/customer-app",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "build": "expo export --platform android --output-dir dist",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@mypet/api-contracts": "workspace:*",
+    "@mypet/design-tokens": "workspace:*",
+    "@mypet/mobile-notifications": "workspace:*",
+    "expo": "57.0.12",
+    "expo-constants": "57.0.10",
+    "expo-notifications": "57.0.10",
+    "expo-router": "57.0.12",
+    "expo-secure-store": "57.0.1",
+    "react": "19.2.8",
+    "react-native": "0.86.2"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "typescript": "5.9.3"
+  }
+}

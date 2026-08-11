@@ -48,3 +48,20 @@ Sprint 1 is a production-shaped walking skeleton:
 The Kotlin/Spring Boot backend remains the only business authority. Supabase supplies managed PostgreSQL and object storage; role apps do not access domain tables directly. Firebase Cloud Messaging supplies mobile push through a provider-neutral backend adapter, while each app fetches canonical state from the API after a notification.
 
 Sprint 1 is complete only when every applicable test in [Sprint 1 Hard Test Contract](docs/qa/SPRINT_1_HARD_TEST_CASES.md) passes with evidence.
+
+## Implemented Sprint 1 source baseline
+
+The repository now contains a Kotlin/Spring Boot modular monolith, a private Flyway schema, rotating refresh sessions, a Supabase private-storage adapter, encrypted device registration, durable notification attempts with an FCM HTTP v1 adapter, shared TypeScript contracts/design tokens, separate Customer/Merchant/Captain Expo shells, and a Next.js Admin shell. The automated in-process walking skeleton exercises provider approval, outlet-scoped barcode catalog and inventory, pickup quote/order transitions, POS, merchant-scoped loyalty, role-safe device registration, and notification inbox projection.
+
+This is not the complete Sprint 1 production runtime. Core provider/catalog/inventory/cart/quote/order/POS/loyalty persistence and atomic outbox integration still use test/development in-memory services, the production OTP adapter is absent, and the role clients do not yet implement all Sprint 1 operational screens. The production profile deliberately has no in-memory fallback and will fail closed until those dependencies are implemented. These source blockers and the remaining infrastructure/device gates are tracked in the evidence record below.
+
+Use Java 21, Node 22.23.2, and pnpm 11.21.0:
+
+```bash
+corepack pnpm install --frozen-lockfile
+corepack pnpm verify
+```
+
+`corepack pnpm verify` runs secret-boundary scanning, the backend quality/coverage gate, client lint/typecheck/coverage, and production builds. Configuration keys are documented in [`.env.example`](.env.example); real secrets must remain in the server/build secret store.
+
+The current release status and infrastructure/device blockers are recorded in [Sprint 1 evidence](docs/qa/evidence/sprint-1/README.md). A green source build does not substitute for isolated Supabase/Firebase evidence or physical-device scanner/push tests.

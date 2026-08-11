@@ -1,0 +1,62 @@
+spring:
+  application:
+    name: mypetnew-backend
+  datasource:
+    url: ${DATABASE_URL:}
+    username: ${DATABASE_USERNAME:}
+    password: ${DATABASE_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${DATABASE_POOL_MAX:10}
+      minimum-idle: ${DATABASE_POOL_MIN:2}
+      connection-timeout: 5000
+  flyway:
+    enabled: true
+    schemas: mypet
+    default-schema: mypet
+    create-schemas: true
+  jackson:
+    default-property-inclusion: non_null
+  threads:
+    virtual:
+      enabled: true
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 11MB
+
+mypet:
+  security:
+    token-secret: ${MYPET_TOKEN_SECRET:}
+    token-issuer: ${MYPET_TOKEN_ISSUER:}
+    token-audience: ${MYPET_TOKEN_AUDIENCE:}
+  supabase:
+    storage:
+      url: ${SUPABASE_URL:}
+      service-key: ${SUPABASE_SERVICE_ROLE_KEY:}
+      private-bucket: ${SUPABASE_PRIVATE_EVIDENCE_BUCKET:}
+  firebase:
+    project-id: ${FIREBASE_PROJECT_ID:}
+    environment: ${MYPET_ENVIRONMENT:}
+  notifications:
+    device-token-encryption-key: ${MYPET_DEVICE_TOKEN_KEY:}
+    worker:
+      batch-size: ${NOTIFICATION_BATCH_SIZE:50}
+      max-attempts: ${NOTIFICATION_MAX_ATTEMPTS:5}
+      fixed-delay-millis: ${NOTIFICATION_FIXED_DELAY_MILLIS:1000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+
+server:
+  error:
+    include-message: never
+    include-stacktrace: never
+  shutdown: graceful

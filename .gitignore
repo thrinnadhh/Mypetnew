@@ -1,0 +1,17 @@
+.gradle/
+build/
+**/build/
+node_modules/
+.pnpm-store/
+.next/
+.expo/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.iml
+*.tsbuildinfo
+.idea/
+.DS_Store
+evidence/generated/

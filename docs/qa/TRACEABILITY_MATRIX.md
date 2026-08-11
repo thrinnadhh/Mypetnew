@@ -1,7 +1,7 @@
 # Requirements Traceability Matrix
 
 Status: **Living release-control document**  
-Version: **1.0**  
+Version: **1.1**  
 Date: **2026-08-11**
 
 ## 1. Purpose
@@ -37,6 +37,9 @@ This matrix prevents “implemented” claims without a requirement, owner, flow
 | dispatch/offers/proofs | D-009 | Delivery, Commerce | [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | S4 | duplicate ready, no captain, rejection, timeout, accept race, wrong proof, restart E2E |
 | Admin control plane | D-004 | Engagement & Operations plus owning modules | [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | S8 | permission matrix, no generic state/balance edit, audit/reconciliation E2E |
 | reviews/support/content | product scope | Engagement & Operations | [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | S8, S9 | verified-source, evidence privacy, XSS/media, SLA, notification replay tests |
+| Supabase PostgreSQL/private schema | D-003, D-024, DD-011 | all domain modules through owned repositories | [Notification](../flows/NOTIFICATIONS.md) plus all transaction flows | S1 continuously, S10/S11 certification | S1-SUP-001..007, 011..012; S1-OPS-001..010 |
+| Supabase private object storage | D-024, DD-012 | Provider and owning document modules via `DocumentStore` | [Notification](../flows/NOTIFICATIONS.md), [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | S1 baseline, S4/S5/S8 expansion | S1-SUP-004, 006, 008..010, 012; cross-tenant/file-abuse tests |
+| Firebase mobile push and in-app notifications | D-025, DD-013..014 | Engagement & Operations | [Notification](../flows/NOTIFICATIONS.md) | S1 spine, S9 completion, S10/S11 certification | S1-PUSH-001..019, S1-E2E-009; provider outage/deep-link/device matrix |
 | multi-city/PIN expansion | D-013 | Provider, Operations | all affected | S10 | city activation/isolation, PIN conflict/import, no-code-change test |
 | security/privacy/accessibility | DD-006..007 | cross-cutting | all flows | S1 continuously, S10/S11 certification | S1-SEC-001..012, S1-MOB-001..012, external review |
 | reliability/observability/recovery | product principles | cross-cutting | all flows | every sprint, S10 | S1-OPS-001..010, load/chaos/restore/full E2E |
@@ -46,8 +49,8 @@ This matrix prevents “implemented” claims without a requirement, owner, flow
 | Sprint 1 ticket | Minimum hard-test coverage |
 |---|---|
 | S1-01 repository/CI | S1-ARC-001, 004..006, S1-SEC-010 |
-| S1-02 backend/modular monolith | S1-ARC-002..003, 007..010, S1-OPS-001..005 |
-| S1-03 role client shells | S1-ARC-004..005, S1-AUTH-008..009, S1-MOB-001, 008, 011 |
+| S1-02 backend/modular monolith/Supabase | S1-ARC-002..003, 007..010, S1-SUP-001..012, S1-OPS-001..005, 009 |
+| S1-03 role client/Firebase shells | S1-ARC-004..005, S1-AUTH-008..009, S1-MOB-001, 008, 011, S1-PUSH-001..008, 014..019 |
 | S1-04 OTP/session | S1-AUTH-001..007, 012, S1-SEC-005, 007..009 |
 | S1-05 RBAC/Admin permissions | S1-AUTH-008..011, S1-SEC-001, 011 |
 | S1-06 provider/outlet/PIN | S1-TEN-001..010, S1-E2E-001 |
@@ -61,8 +64,8 @@ This matrix prevents “implemented” claims without a requirement, owner, flow
 | S1-14 Merchant fulfilment | S1-ORD-015..020, S1-E2E-003 |
 | S1-15 POS | S1-POS-001..015, S1-INV-006..007, S1-E2E-004 |
 | S1-16 loyalty | S1-LOY-001..018, S1-E2E-004..005 |
-| S1-17 outbox/inbox | S1-INV-013..014, S1-POS-010..011, S1-LOY-010..013, S1-OPS-004..005 |
-| S1-18 connected certification | S1-E2E-001..008 plus every pass-matrix gate |
+| S1-17 outbox/inbox/FCM | S1-INV-013..014, S1-POS-010..011, S1-LOY-010..013, S1-OPS-004..005, S1-PUSH-001..019 |
+| S1-18 connected certification | S1-E2E-001..009 plus every pass-matrix gate, including Supabase and physical native-push evidence |
 
 ## 4. Implementation row template
 
@@ -89,4 +92,3 @@ The release traceability gate fails when:
 ## 6. Release status
 
 Initial status for every row and test is `NOT RUN`. This repository defines what must be built and proven; it does not claim implementation or production readiness.
-

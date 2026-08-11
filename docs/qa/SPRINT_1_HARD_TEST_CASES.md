@@ -1,9 +1,9 @@
 # Sprint 1 Hard Test Contract
 
 Status: **Mandatory release gate; initially NOT RUN**  
-Version: **1.0**  
+Version: **1.1**  
 Scope: Sprint 1 walking skeleton  
-Applies to: backend, PostgreSQL migrations, Customer app, Merchant app, Captain shell, Admin web shell, workers, and connected E2E
+Applies to: backend, Supabase PostgreSQL migrations and Storage, Customer app, Merchant app, Captain shell, Admin web shell, Firebase Cloud Messaging, workers, and connected E2E
 
 ## 1. Gate policy
 
@@ -25,7 +25,7 @@ No integrity/security case may be waived into production by changing it to `NOT_
 
 Each test result records:
 
-- test ID, commit SHA, UTC timestamp, environment, database migration version;
+- test ID, commit SHA, UTC timestamp, environment, database migration version, Supabase project reference, and Firebase project/app identifiers where applicable;
 - test runner/device/app build identifier;
 - setup/fixture IDs containing no secrets or real customer data;
 - expected and observed result;
@@ -37,7 +37,7 @@ Physical barcode evidence also records Android model, OS, camera permission stat
 
 ## 3. Production-shaped test environment
 
-- clean PostgreSQL created solely from committed Flyway migrations;
+- clean PostgreSQL created solely from committed Flyway migrations, plus an isolated Supabase staging topology gate;
 - repeat upgrade from the previous Sprint 1 schema checkpoint;
 - Redis/worker/outbox configuration matching intended topology;
 - real cryptographic signing and production code paths with sandbox OTP/provider adapters only at external boundaries;
@@ -45,7 +45,8 @@ Physical barcode evidence also records Android model, OS, camera permission stat
 - separate Merchant A/outlet A, Merchant B/outlet B, Customers A/B, Staff A limited/full, Admin permissions, products, and view-only medicine fixtures;
 - deterministic clock support for expiry tests without changing production semantics;
 - network fault and process-restart controls;
-- at least one physical Android device for Merchant scanner/permission/offline cases.
+- at least one physical Android device with development builds for Merchant scanner/permission/offline and Customer/Merchant native-push cases; Expo Go is not valid push evidence;
+- separate non-production Supabase and Firebase projects/configuration; no production credential or customer data in test environments.
 
 ## 4. Architecture and repository gates
 
@@ -254,7 +255,48 @@ Physical barcode evidence also records Android model, OS, camera permission stat
 | S1-OPS-009 | Backup Sprint 1 database, restore to isolated environment, run reconciliation and smoke flow. | Restored aggregates/ledgers/history/idempotency/outbox are consistent and usable. |
 | S1-OPS-010 | Reconcile orders/items/reservations/movements, POS/items/movements, and loyalty sources/ledger/rewards. | Zero unexplained mismatch; reconciliation query/report retained. |
 
-## 15. Connected end-to-end certification
+## 15. Supabase managed-infrastructure gates
+
+| ID | Scenario/action | Mandatory expected result |
+|---|---|---|
+| S1-SUP-001 | Apply committed Flyway migrations to an empty Supabase staging database and run the walking-skeleton smoke flow. | Private application schema is created deterministically; backend starts and completes the flow without dashboard/manual DDL. |
+| S1-SUP-002 | Connect the production-shaped Spring workload through the documented persistent-server connection mode with TLS and bounded HikariCP; exhaust the configured pool under load. | Connections stay within declared limits, wait/time out safely, expose pool metrics, and do not bypass transaction or tenant rules. |
+| S1-SUP-003 | Enumerate exposed schemas/tables/functions and attempt application-table access using only client-visible Supabase configuration. | No domain table/function is exposed for client CRUD; public/anonymous/authenticated client access is denied without leaking row existence. |
+| S1-SUP-004 | Scan mobile/web bundles, source, CI artifacts, logs, traces, and error output for database passwords and Supabase secret/service-role keys. | No privileged Supabase/database secret is present; only deliberately public project configuration may appear. |
+| S1-SUP-005 | Attempt direct domain mutation through Supabase REST/GraphQL/realtime channels and with a forged client role/tenant identifier. | Access is unavailable/denied and no business mutation, event, audit gap, or tenant leak occurs. |
+| S1-SUP-006 | Run backend migrations and runtime with their declared least-privilege identities; attempt writes to another module and Supabase-owned `auth`/`storage` schemas. | Runtime can perform only required application operations; forbidden schema/platform writes fail and are observed. |
+| S1-SUP-007 | Drop/refuse database connections before command, during uncommitted transaction, and after commit before response; restore connectivity and replay idempotently. | No partial aggregate; committed result is discoverable; retry does not duplicate order, stock, POS, loyalty, history, or outbox effects. |
+| S1-SUP-008 | Upload merchant-verification evidence with wrong type, deceptive extension, oversized content, traversal-style name, and cross-tenant object key. | Type/size/name policy and authorization reject abuse; no executable/public exposure or cross-tenant overwrite/read. |
+| S1-SUP-009 | Request/view a private evidence object as owner staff, wrong outlet, Merchant B, Customer, Captain, Admin without permission, and authorized reviewing Admin. | Only currently authorized actors obtain short-lived purpose-bound access; denial does not expose object existence. |
+| S1-SUP-010 | Reuse a private signed URL after expiry, after actor/session revocation, and from a copied context. | URL lifetime is bounded and expiry is enforced; access design documents the residual bearer-link window and never embeds permanent credentials. |
+| S1-SUP-011 | Compare Flyway history and expected schema to staging after an out-of-band dashboard DDL change. | Drift gate fails with exact safe evidence; release cannot proceed until repaired through reviewed migration/forward-fix. |
+| S1-SUP-012 | Back up the Supabase staging database and private evidence metadata, restore to isolation, rotate credentials, and run reconciliation/smoke checks. | Restored state is consistent and usable; old credentials fail; private objects remain non-public and correctly linked. |
+
+## 16. Firebase native-push gates
+
+| ID | Scenario/action | Mandatory expected result |
+|---|---|---|
+| S1-PUSH-001 | On physical Android development builds, grant notification permission and register Customer and Merchant apps after login. | Each obtains a native device token and creates one authorized environment/app/install/user/session binding; raw token is absent from UI/logs/traces. |
+| S1-PUSH-002 | Attempt to present Expo Go or an emulator-only run as native-push evidence. | Certification gate rejects the evidence; a physical-device development build is required. |
+| S1-PUSH-003 | Deny notification permission, deny again after explanation, then enable it from OS settings and reopen app. | No crash/coercive prompt loop; in-app inbox remains usable; enabled state re-registers exactly once. |
+| S1-PUSH-004 | Simulate FCM token rotation/reinstall/restore and concurrently submit old/new registration requests. | One current active binding remains; old token becomes ineligible; retries are idempotent and audit contains no raw token. |
+| S1-PUSH-005 | Logout, revoke one session remotely, suspend an account, and leave another device/session active. | Only matching registrations become ineligible before later sends; the unaffected authorized session behaves according to policy. |
+| S1-PUSH-006 | Register a token using the wrong role app, package/bundle ID, user, session, platform, or Firebase environment. | Server rejects the mismatch, creates no binding, and emits safe security telemetry. |
+| S1-PUSH-007 | Scan repository, CI artifacts, app bundles, source maps, logs, and container image for FCM service-account JSON/private keys and APNs private keys. | No server credential exists in client/source artifacts; backend starts only with secret-managed environment-correct credentials. |
+| S1-PUSH-008 | Inspect every Sprint 1 notification payload at app, provider adapter, logs, traces, and dead letter. | No OTP/token/full phone/address/payment/medical/proof/secret/authoritative total or status; only safe template text, opaque IDs, and allowlisted route metadata. |
+| S1-PUSH-009 | Replay and concurrently consume one notification source event 100 times with multiple workers. | One logical inbox item and one logical send per eligible active device/template/channel; dedupe is database-backed. |
+| S1-PUSH-010 | Place a pickup order and complete an eligible associated POS sale. | Authorized Merchant devices receive the order notification; the associated Customer receives the loyalty notification; foreign users/outlets receive none. |
+| S1-PUSH-011 | Return verified invalid/unregistered-token responses from FCM while other tokens for the user remain valid. | Exact failed binding is marked invalid and not retried; other active registrations and in-app item remain correct. |
+| S1-PUSH-012 | Inject FCM timeout, throttling, authentication/config failure, and provider outage while creating orders/POS sales. | Transactions commit independently; transient cases back off with jitter; config/poison cases dead-letter/alert; backlog is observable and replayable. |
+| S1-PUSH-013 | Crash worker after claim, before send, after provider acceptance, and before local acknowledgement; restart repeatedly. | At-least-once transport is contained by logical dedupe/audit; no missing inbox item or duplicate domain effect; uncertain provider outcome is explicit. |
+| S1-PUSH-014 | Receive each Sprint 1 push while app is foregrounded, backgrounded, and killed; tap/dismiss/reopen. | UX is safe and accessible; tap opens only an allowlisted destination and fetches canonical state; dismissal changes no business state. |
+| S1-PUSH-015 | Copy a deep link to a signed-out app, wrong-role app, different user, and user whose outlet access was removed. | Auth/role/tenant guard denies without cached sensitive content or existence leak; authorized login may resume only if access still exists. |
+| S1-PUSH-016 | Deliver a delayed notification whose order/loyalty state has since changed or whose resource was cancelled/expired. | App displays current authorized API state or safe unavailable result; stale payload never replays an action or overwrites state. |
+| S1-PUSH-017 | Send to multiple active installations for one user and duplicate app reinstall registrations. | At most one delivery per eligible active installation and one in-app item per user; stale/duplicate installations are excluded. |
+| S1-PUSH-018 | Measure notification backlog age, send outcomes, invalid/stale registrations, retries, dead letters, and deep-link fetch failures during fault tests. | Metrics and alerts are environment/app/template scoped, contain no raw token/PII, and link to a tested FCM outage/credential-rotation runbook. |
+| S1-PUSH-019 | Build any iOS release candidate and exercise APNs-through-FCM registration/delivery on a physical iPhone; if Sprint 1 has no iOS release candidate, retain the gate for pre-distribution certification. | Candidate cannot be distributed without physical delivery/deep-link evidence using the matching environment credentials; absence of a candidate is recorded, not misrepresented as a pass. |
+
+## 17. Connected end-to-end certification
 
 | ID | Scenario/action | Mandatory expected result |
 |---|---|---|
@@ -266,8 +308,9 @@ Physical barcode evidence also records Android model, OS, camera permission stat
 | S1-E2E-006 | Merchant B creates same barcode and transacts own stock while attacking Merchant A IDs. | Independent data/economics; every foreign read/write denied. |
 | S1-E2E-007 | At injected timeout/restart points, repeat checkout, Merchant transition, POS completion, stock adjustment, onboarding confirmation, and worker events. | Same final results as uninterrupted run; no duplicate or missing money/stock/order/sale/star/history. |
 | S1-E2E-008 | Publish view-only medicine and attempt commerce through every Customer/Merchant direct path. | Discovery works; cart, quote, order, recurring placeholder, and POS are server-blocked and security-observed. |
+| S1-E2E-009 | In one physical-device run, place a pickup order for Merchant A and complete a Customer-associated POS sale; inject one FCM outage, recover, and open both pushes. | Supabase transaction/outbox/inbox records reconcile; only intended Merchant/Customer receives safe notification; canonical order/loyalty state is correct before and after retry. |
 
-## 16. Sprint 1 pass matrix
+## 18. Sprint 1 pass matrix
 
 The CI/evidence summary must expose at least these independent gates:
 
@@ -280,21 +323,22 @@ The CI/evidence summary must expose at least these independent gates:
 | Merchant app | typecheck/lint/tests/scanner/POS/loyalty/offline contracts |
 | Captain/Admin shells | typecheck/lint/role guards/no production mocks |
 | Physical scanner QA | device permission, scanning, lifecycle, offline/restart evidence |
-| Connected E2E | S1-E2E-001 through S1-E2E-008 |
+| Supabase boundary | S1-SUP-001 through S1-SUP-012, private schema/storage, connection and restore evidence |
+| Physical native-push QA | S1-PUSH-001 through S1-PUSH-019 as release-target applicable; Expo Go/emulator is not physical evidence |
+| Connected E2E | S1-E2E-001 through S1-E2E-009 |
 | Security/privacy | S1-SEC matrix, scans, redaction, tenant/role tests |
 | Recovery/observability | worker replay, backup restore, reconciliation, trace/metrics/alerts |
 | Traceability | every Sprint 1 PRD ID/ticket/test/evidence link complete |
 
-## 17. Final certification record
+## 19. Final certification record
 
 The Sprint 1 release-candidate record contains:
 
 - commit and immutable build identifiers;
 - all gate results and evidence links;
-- zero open Critical/High integrity, security, privacy, tenant, barcode, stock, order, POS, or loyalty defect;
+- zero open Critical/High integrity, security, privacy, tenant, Supabase boundary, notification, barcode, stock, order, POS, or loyalty defect;
 - explicitly documented lower-severity risks with owner/date;
 - Product, Engineering, QA, and Security sign-off;
 - clear statement: `SPRINT 1 CERTIFIED` or `SPRINT 1 NOT CERTIFIED`.
 
 Anything else is informational, not certification.
-

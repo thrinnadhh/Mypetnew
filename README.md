@@ -16,6 +16,7 @@ This repository starts contract-first. The documents below are the source of tru
 | [Merchant Barcode, POS and Loyalty Flow](docs/flows/MERCHANT_BARCODE_POS_LOYALTY.md) | Barcode onboarding, stock, POS billing, customer association, stars, and rewards |
 | [Services and Recurring Flow](docs/flows/SERVICES_RECURRING.md) | Grooming, veterinary, medicine discovery, appointment, and recurring-order flows |
 | [Captain and Admin Operations Flow](docs/flows/CAPTAIN_ADMIN_OPERATIONS.md) | Dispatch, captain delivery, platform oversight, refunds, and support |
+| [Notification Delivery Flow](docs/flows/NOTIFICATIONS.md) | Supabase-backed outbox, Firebase device registration, push delivery, deep links, retries, and token lifecycle |
 | [Sprint 1 Hard Test Contract](docs/qa/SPRINT_1_HARD_TEST_CASES.md) | Mandatory adversarial, concurrency, security, device, and E2E release gates for Sprint 1 |
 | [Requirements Traceability](docs/qa/TRACEABILITY_MATRIX.md) | Mapping from PRD requirements to sprints, flows, and tests |
 
@@ -42,7 +43,8 @@ Reference does not mean automatic reuse. Every reused component must pass the co
 
 Sprint 1 is a production-shaped walking skeleton:
 
-`OTP identity -> verified merchant outlet -> merchant-owned barcode listing -> stock -> single-merchant pickup/pay-on-fulfilment order -> POS sale -> merchant-specific loyalty star`
+`OTP identity -> verified merchant outlet -> merchant-owned barcode listing -> stock -> single-merchant pickup/pay-on-fulfilment order -> POS sale -> merchant-specific loyalty star -> durable Firebase push`
+
+The Kotlin/Spring Boot backend remains the only business authority. Supabase supplies managed PostgreSQL and object storage; role apps do not access domain tables directly. Firebase Cloud Messaging supplies mobile push through a provider-neutral backend adapter, while each app fetches canonical state from the API after a notification.
 
 Sprint 1 is complete only when every applicable test in [Sprint 1 Hard Test Contract](docs/qa/SPRINT_1_HARD_TEST_CASES.md) passes with evidence.
-

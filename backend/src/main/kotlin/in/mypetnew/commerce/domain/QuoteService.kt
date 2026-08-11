@@ -84,6 +84,10 @@ class QuoteService(
         return quote
     }
 
+    @Synchronized
+    fun get(id: UUID): Quote = quotes[id]
+        ?: throw DomainException("QUOTE_NOT_FOUND", "The quote is unavailable")
+
     private fun signature(customerId: UUID, outletId: UUID, lines: Map<UUID, Pair<Int, Long>>): String {
         val canonical = buildString {
             append(customerId).append(':').append(outletId)
@@ -96,4 +100,3 @@ class QuoteService(
             .joinToString("") { "%02x".format(it) }
     }
 }
-

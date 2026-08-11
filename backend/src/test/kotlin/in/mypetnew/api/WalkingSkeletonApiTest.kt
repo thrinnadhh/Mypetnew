@@ -96,7 +96,7 @@ class WalkingSkeletonApiTest {
             "/api/v1/customer/orders",
             customerToken,
             "checkout-1",
-            """{"quoteId":"${quote.uuid("id")}","cartSignature":"${quote.path("cartSignature").asText()}"}""",
+            """{"quoteId":"${quote.uuid("id")}","cartSignature":"${quote.path("cartSignature").asString()}"}""",
         )
         val orderId = order.uuid("id")
         listOf("ACCEPTED", "PREPARING", "READY_FOR_PICKUP", "DELIVERED").forEachIndexed { index, status ->
@@ -145,6 +145,5 @@ class WalkingSkeletonApiTest {
         return json.readTree(result.response.contentAsString)
     }
 
-    private fun tools.jackson.databind.JsonNode.uuid(name: String): UUID = UUID.fromString(path(name).asText())
+    private fun tools.jackson.databind.JsonNode.uuid(name: String): UUID = UUID.fromString(path(name).asString())
 }
-

@@ -43,6 +43,7 @@ class CatalogService {
     )
 
     private val listings = mutableMapOf<UniqueBarcode, Listing>()
+    private val listingsById = mutableMapOf<UUID, Listing>()
     private val idempotency = IdempotencyStore<Listing>()
 
     @Synchronized
@@ -72,9 +73,19 @@ class CatalogService {
                 commerceMode = if (command.kind == ListingKind.MEDICINE) CommerceMode.VIEW_ONLY else CommerceMode.COMMERCE,
                 mrpPaise = command.mrpPaise,
                 sellingPricePaise = command.sellingPricePaise,
-            ).also { listings[unique] = it }
+            ).also {
+                listings[unique] = it
+                listingsById[it.id] = it
+            }
         }
     }
+
+    @Synchronized
+    fun getListing(listingId: UUID): Listing = listingsById[listingId]
+        ?: throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+
+    @Synchronized
+    fun allListings(): List<Listing> = listingsById.values.toList()
 
     private fun validate(command: CreateListingCommand) {
         if (command.name.isBlank() || command.name.length > 160) {
@@ -94,4 +105,3 @@ class CatalogService {
         }
     }
 }
-

@@ -157,5 +157,9 @@ class NotificationService(private val devices: DeviceRegistrationService) {
             devices.activeFor(recipientId)
         }
     }
-}
 
+    @Synchronized
+    fun forRecipient(recipientId: UUID): List<Notification> = notifications.values
+        .filter { it.recipientId == recipientId }
+        .sortedByDescending(Notification::createdAt)
+}

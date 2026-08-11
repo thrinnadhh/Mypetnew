@@ -70,5 +70,8 @@ class ProviderService {
 
     @Synchronized
     fun allOutlets(): List<ProviderOutlet> = outlets.values.toList()
-}
 
+    @Synchronized
+    fun getOutlet(outletId: UUID): ProviderOutlet = outlets[outletId]
+        ?: throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+}

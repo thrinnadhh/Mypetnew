@@ -13,6 +13,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.web.AuthenticationEntryPoint
 import org.springframework.security.web.SecurityFilterChain
+import org.springframework.security.web.authentication.AnonymousAuthenticationFilter
 import java.time.Instant
 import java.util.UUID
 import tools.jackson.databind.ObjectMapper
@@ -28,7 +29,11 @@ data class SecurityProperties(val tokenSecret: String) {
 @EnableConfigurationProperties(SecurityProperties::class)
 class SecurityConfiguration {
     @Bean
-    fun securityFilterChain(http: HttpSecurity, objectMapper: ObjectMapper): SecurityFilterChain {
+    fun securityFilterChain(
+        http: HttpSecurity,
+        objectMapper: ObjectMapper,
+        bearerAuthenticationFilter: BearerAuthenticationFilter,
+    ): SecurityFilterChain {
         val entryPoint = stableAuthenticationEntryPoint(objectMapper)
         http
             .csrf { it.disable() }
@@ -46,6 +51,7 @@ class SecurityConfiguration {
                         writeError(objectMapper, request, response, 403, "FORBIDDEN", "Access is denied")
                     }
             }
+            .addFilterBefore(bearerAuthenticationFilter, AnonymousAuthenticationFilter::class.java)
         return http.build()
     }
 

@@ -19,6 +19,22 @@ This directory separates reproducible source evidence from infrastructure and ph
 
 CI uploads immutable backend and client reports under the commit SHA. The source suite covers domain invariants, role denial, API error shape, rotating sessions, barcode isolation, inventory concurrency, quote/order/POS idempotency, merchant-scoped loyalty, migration privacy, private-storage policy, FCM result classification, notification retry/dead-letter behavior, device role binding, and safe inbox routing.
 
+## Latest local verification record
+
+| Field | Value |
+|---|---|
+| verified source commit | `b4f8f1ee65ab1a85b27437a7dafaa735b335ef61` |
+| completed at | `2026-08-11T16:09:04Z` |
+| environment | local macOS source gate only; no Supabase/Firebase staging or physical device |
+| toolchains | OpenJDK `21.0.11`, Node `22.23.2`, pnpm `11.21.0` |
+| database contract version | Flyway `V3__notification_worker_claims.sql` (static/H2-compatible contract checks only) |
+| backend result | 43 tests, 0 failures/errors; JaCoCo instruction coverage `8640/10128` (`85.31%`) for the domain/application scope |
+| client result | 13 tests, 0 failures; 100% coverage for exercised shared modules; lint and typecheck pass |
+| build result | Next.js Admin production build and Customer/Merchant/Captain Android Expo exports pass |
+| security result | repository secret scan passes; dependency gate passes with one below-threshold Moderate advisory and the two expiring High Expo build-tool exceptions |
+
+The commands were `./scripts/verify.sh` and `./scripts/dependency-audit.sh`. Generated build and test artifacts remain local/CI outputs rather than committed evidence.
+
 ## Blocking source/runtime work
 
 | Area | Status | Required completion evidence |

@@ -50,18 +50,20 @@ export async function loadCustomerSession(): Promise<CustomerSession | null> {
   const raw = await SecureStore.getItemAsync(sessionKey)
   if (raw === null) return null
   try {
-    const parsed = JSON.parse(raw) as CustomerSession
-    if (
-      parsed.tokenType !== 'Bearer' ||
-      parsed.role !== 'CUSTOMER' ||
-      typeof parsed.accessToken !== 'string' ||
-      typeof parsed.refreshToken !== 'string' ||
-      typeof parsed.mobile !== 'string'
-    ) {
+    const parsed = JSON.parse(raw) as unknown
+    if (!isRecord(parsed) || !isStoredCustomerSession(parsed)) {
       await clearCustomerSession()
       return null
     }
-    return parsed
+    return {
+      accessToken: parsed.accessToken,
+      refreshToken: parsed.refreshToken,
+      tokenType: 'Bearer',
+      accessTokenExpiresAt: parsed.accessTokenExpiresAt,
+      refreshTokenExpiresAt: parsed.refreshTokenExpiresAt,
+      role: 'CUSTOMER',
+      mobile: parsed.mobile
+    }
   } catch {
     await clearCustomerSession()
     return null
@@ -92,6 +94,22 @@ export async function authenticatedFetch(path: string, init: RequestInit = {}): 
   const refreshed = await refreshResponse.json() as SessionPayload
   const rotated = await saveCustomerSession(refreshed, session.mobile)
   return fetch(`${runtimeConfig.apiUrl}${path}`, withBearer(init, rotated.accessToken))
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isStoredCustomerSession(value: Record<string, unknown>): value is Record<string, unknown> & CustomerSession {
+  return (
+    typeof value.accessToken === 'string' &&
+    typeof value.refreshToken === 'string' &&
+    value.tokenType === 'Bearer' &&
+    typeof value.accessTokenExpiresAt === 'string' &&
+    typeof value.refreshTokenExpiresAt === 'string' &&
+    value.role === 'CUSTOMER' &&
+    typeof value.mobile === 'string'
+  )
 }
 
 function withBearer(init: RequestInit, accessToken: string): RequestInit {

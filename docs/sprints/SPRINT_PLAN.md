@@ -1,7 +1,7 @@
 # MyPetNew Sprint Execution Plan
 
 Status: **Execution baseline**  
-Version: **1.0**  
+Version: **1.1**  
 Date: **2026-08-11**
 
 ## 1. Delivery model
@@ -54,7 +54,7 @@ A ticket may enter implementation only when it has:
 Done means merged implementation plus passing evidence for:
 
 1. backend unit and domain tests;
-2. PostgreSQL integration and migration tests;
+2. PostgreSQL integration and migration tests, including a Supabase staging topology gate;
 3. API/schema/consumer contract tests;
 4. client typecheck, lint, unit/component tests;
 5. role and tenant authorization tests;
@@ -89,8 +89,8 @@ flowchart LR
 | Ticket | Scope | Primary requirements |
 |---|---|---|
 | S1-01 | Initialize monorepo, pinned toolchains, CODEOWNERS, formatting/lint/typecheck/test commands, build cache, protected-branch expectations, secret/dependency scanning, and evidence directories. | Release governance |
-| S1-02 | Create Kotlin/Spring Boot modular-monolith shell with module boundary fitness tests, shared money/time/error/idempotency primitives, PostgreSQL/Flyway, health/readiness, structured logging, and trace IDs. | Data/API, NFR |
-| S1-03 | Create separate Customer, Merchant, and Captain Expo shells plus Next.js Admin shell using shared design tokens and API contracts; production builds contain no mock fallback. | D-002, accessibility |
+| S1-02 | Create Kotlin/Spring Boot modular-monolith shell with module boundary fitness tests, shared money/time/error/idempotency primitives, Supabase PostgreSQL/Flyway, private application schema, least-privilege server identity, supported persistent-server connection mode, health/readiness, structured logging, and trace IDs. Add a Supabase Storage `DocumentStore` adapter with a private verification-evidence bucket and signed-access boundary. | D-003, D-024, DAT, NFR |
+| S1-03 | Create separate Customer, Merchant, and Captain Expo shells plus Next.js Admin shell using shared design tokens and API contracts; add environment-specific Firebase app configuration and `expo-notifications` native-token/deep-link shell; production builds contain no mock fallback or server credential. | D-002, D-025, NOT, accessibility |
 | S1-04 | Implement identity/session model, mobile OTP challenge/verification adapter contract, token rotation/revocation, guest/auth boundary, and stable API errors. | CUS-010..013 |
 | S1-05 | Implement canonical roles and scoped Admin permission model; add deny-by-default API authorization and cross-role contract tests. | Roles, D-004 |
 | S1-06 | Implement merchant organization/outlet/capability onboarding, Admin approval, staff/outlet scope, active/suspended behavior, and six-digit service PIN-code management. | Provider, D-005, D-013 |
@@ -104,8 +104,8 @@ flowchart LR
 | S1-14 | Implement Merchant order queues/detail and authorized `PLACED -> ACCEPTED -> PREPARING -> READY_FOR_PICKUP -> DELIVERED` pickup transitions; reject/cancel reason and conflict refresh. | ORD-020..023 |
 | S1-15 | Implement POS cart scanning, live price/stock, customer challenge association, cash/external-payment declaration, atomic sale/items/stock/receipt, and replay safety. | POS-001..005 |
 | S1-16 | Implement merchant-scoped loyalty ledger, onboarding challenge star, POS completion star, configurable minimum spend default ₹100, derived balance, audit, and duplicate-source protection. Reward issuance may be implemented behind a disabled/config-tested boundary if not exposed in Sprint 1 UI. | LOY-001..004, D-014..016 |
-| S1-17 | Implement durable outbox/inbox for order/POS/loyalty projections and notifications, replay worker, dead-letter visibility, and deterministic recovery after injected failures. | Reliability, NOT |
-| S1-18 | Build connected walking-skeleton E2E harness, real PostgreSQL tests, adversarial/race tests, scanner device checklist, accessibility gate, observability assertions, and traceability report. | Sprint 1 hard contract |
+| S1-17 | Implement durable outbox/inbox and notification projection; device-registration lifecycle; FCM HTTP v1/Admin SDK adapter behind `NotificationProvider`; Merchant order and Customer POS-loyalty push templates; safe payload/deep links; invalid-token cleanup; retry/dead-letter visibility; and deterministic recovery after injected failures. | D-025, Reliability, NOT |
+| S1-18 | Build connected walking-skeleton E2E harness, local and Supabase staging PostgreSQL tests, private-storage authorization tests, adversarial/race tests, scanner and native-push physical-device checklists, accessibility gate, observability assertions, and traceability report. | D-024, D-025, Sprint 1 hard contract |
 
 ### Sprint 1 mandatory scenarios
 
@@ -118,11 +118,14 @@ flowchart LR
 - cross-merchant cart conflict is explicit;
 - duplicate/replayed commands return the same effect, not a second effect;
 - last-unit order/POS races allow only one stock consumer;
-- tenant/role attacks reveal no foreign data.
+- tenant/role attacks reveal no foreign data;
+- Merchant receives one safe FCM/in-app notification for a placed pickup order and Customer receives one for a POS-earned loyalty star;
+- denied/rotated/revoked/invalid notification tokens and an FCM outage preserve canonical business state and converge according to policy;
+- application tables cannot be read or written from a role app with Supabase public configuration, and private verification evidence requires backend-authorized short-lived access.
 
 ### Sprint 1 exit gate
 
-Every applicable case in [Sprint 1 Hard Test Contract](../qa/SPRINT_1_HARD_TEST_CASES.md) must pass. Any physical scanner/permission case not executed on a real Android device blocks production readiness and must be marked honestly; an emulator result is not equivalent.
+Every applicable case in [Sprint 1 Hard Test Contract](../qa/SPRINT_1_HARD_TEST_CASES.md) must pass. Any physical scanner or native-push/permission case not executed in a development build on a real Android device blocks Sprint 1 certification; Expo Go and emulator results are not equivalent. Any iOS release candidate must separately pass physical-iPhone APNs-through-FCM delivery before distribution.
 
 ## 6. Sprint 2 — Customer commerce, pricing, Cashfree, and order detail
 
@@ -279,8 +282,8 @@ Complete retention and operational communication without compromising transactio
 
 | Ticket | Scope |
 |---|---|
-| S9-01 | Durable notification template/version, preference, channel, dedupe, retry, dead letter, delivery receipt, and in-app inbox. |
-| S9-02 | Transactional notifications for OTP, orders, payments/refunds, dispatch, appointments, loyalty/rewards, recurring proposals, and support. |
+| S9-01 | Complete durable notification template/version, preference, channel, dedupe, retry, dead letter, FCM provider receipt/result, stale-token cleanup, and in-app inbox operations on the Sprint 1 notification spine. |
+| S9-02 | Complete transactional notifications for OTP, orders, payments/refunds, dispatch, appointments, loyalty/rewards, recurring proposals, and support, with role-safe allowlisted deep links. |
 | S9-03 | Verified-purchase/service reviews, one-source policy, rating aggregation, merchant reply, moderation, media safety, and abuse reporting. |
 | S9-04 | Customer/Merchant/Captain support initiation, role-safe evidence, conversation/attachments, status/SLA, and satisfaction. |
 | S9-05 | Favorites, reorder, recently viewed, provider follow, and rule-based recommendations with explainable source. |
@@ -305,7 +308,7 @@ Prove the platform can expand beyond Tirupati through data/configuration and sur
 | S10-04 | OWASP web/API/mobile review, threat model, SAST/SCA/secret/IaC/container scans, penetration test remediation, and abuse limits. |
 | S10-05 | Backup/PITR, restore validation, data reconciliation, migration clean/upgrade/rollback-forward drill, and disaster recovery. |
 | S10-06 | Observability dashboards, SLOs, burn-rate alerts, business-integrity alerts, security alerts, and runbooks. |
-| S10-07 | Accessibility full pass, low-end Android/network/device matrix, background location, notification/deep-link, clock/timezone, and offline recovery. |
+| S10-07 | Accessibility full pass, low-end Android/network/device matrix, physical iOS notification matrix, background location, FCM/APNs notification/deep-link, clock/timezone, and offline recovery. |
 | S10-08 | Data retention/deletion/export, audit retention, medical-document access/expiry, privacy-impact review, and incident procedure. |
 | S10-09 | Cost limits, provider quotas, cache/storage/log retention, queue/backlog capacity, and degraded-mode policies. |
 | S10-10 | Full role E2E regression at pilot load and production topology certification. |
@@ -324,7 +327,7 @@ Move from production-shaped software to a controlled real-world pilot with legal
 | S11-02 | Drugs/medicine view-only compliance review, verified-provider display rules, prohibited-commerce tests, and future pharmacy decision record. |
 | S11-03 | GST invoice/fee/commission/settlement verification with finance/tax professional; Cashfree production account/webhook/reconciliation proof. |
 | S11-04 | Google Play/App Store metadata, privacy/data-safety declarations, permissions, screenshots, support URLs, signing, and staged tracks. |
-| S11-05 | Production domains, TLS, secrets, environment isolation, observability, on-call, backup, status/incident communication, and access review. |
+| S11-05 | Production domains, TLS, Supabase project/role/schema/storage isolation, Firebase project/app/APNs configuration, server-only credential rotation, observability, on-call, backup, status/incident communication, and access review. |
 | S11-06 | Merchant/captain onboarding playbooks, training, barcode/device/printer readiness, support escalation, and pilot acceptance. |
 | S11-07 | Physical end-to-end pilot scripts across Customer/Merchant/Captain/Admin, payment, refund, loyalty, appointment, recurring, support, and failure recovery. |
 | S11-08 | Release candidate freeze, migration rehearsal, rollback drill, go/no-go evidence pack, staged rollout, metrics guardrails, and rollback triggers. |
@@ -356,4 +359,3 @@ Each sprint stores or links:
 - known limitations and explicitly deferred items;
 - rollback/forward-fix steps;
 - Product, Engineering, QA, Security, and applicable Legal/Finance acceptance.
-

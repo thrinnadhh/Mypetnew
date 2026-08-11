@@ -137,7 +137,7 @@ export default function CheckoutScreen() {
       ) : null}
 
       <InfoCard title="Order Summary">
-        {items.map((item) => <Line key={item.listingId} label={item.name} value={formatPaise(item.pricePaise * item.quantity)} sub={`Qty: ${item.quantity}`} />)}
+        {items.map((item) => <Line key={item.listingId} label={item.name} value={formatPaise(item.pricePaise * item.quantity)} sub={`Qty: ${String(item.quantity)}`} />)}
         <View style={styles.divider} />
         {loadingQuote ? <ActivityIndicator accessibilityLabel="Confirming live price and stock" color={palette.primary} /> : null}
         {quote !== null ? (

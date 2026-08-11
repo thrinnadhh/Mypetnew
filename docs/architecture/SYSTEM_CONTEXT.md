@@ -1,7 +1,7 @@
 # System Context and Selective-Reuse Boundaries
 
 Status: **Authoritative architecture baseline**  
-Version: **1.0**  
+Version: **1.1**  
 Date: **2026-08-11**
 
 ## 1. Target system
@@ -13,22 +13,26 @@ flowchart TB
     Captain["Captain Expo app"]
     Admin["Admin Next.js web"]
     API["MyPetNew modular monolith"]
-    DB[(PostgreSQL)]
+    DB[(Supabase PostgreSQL)]
+    Storage[(Supabase Storage)]
     Redis[(Redis)]
-    Providers["OTP, Cashfree, maps, push, object storage"]
+    Push["Firebase Cloud Messaging"]
+    Providers["OTP, Cashfree, maps"]
 
     Customer --> API
     Merchant --> API
     Captain --> API
     Admin --> API
     API --> DB
+    API --> Storage
     API --> Redis
+    API --> Push
     API --> Providers
 ```
 
 ### Deployment rule
 
-The backend is one production process and one schema-managed PostgreSQL cluster. Domain modules preserve ownership boundaries in code and database naming. Redis supports cache, rate limit, locks, and later GEO; it is not a business source of truth.
+The backend is one production process and one Flyway-managed application schema in a Supabase PostgreSQL project per environment. Domain modules preserve ownership boundaries in code and database naming. Customer, Merchant, Captain, and Admin clients call only the MyPetNew API; they never query application tables through the Supabase Data API. Redis supports cache, rate limit, locks, and later GEO; it is not a business source of truth.
 
 ## 2. Repository target layout
 
@@ -57,6 +61,8 @@ Mypetnew/
 │   ├── eslint-config/
 │   └── test-contracts/
 ├── infra/
+│   ├── supabase/
+│   └── firebase/
 ├── scripts/
 └── docs/
 ```
@@ -88,7 +94,7 @@ Use synchronous module calls when the initiating response depends on the result 
 sequenceDiagram
     participant API as Command API
     participant Domain as Owning module
-    participant DB as PostgreSQL
+    participant DB as Supabase PostgreSQL
     participant Worker as Outbox worker
     participant Side as Dependent module/provider
 
@@ -105,7 +111,7 @@ sequenceDiagram
 
 | Concern | Authority | Never authoritative |
 |---|---|---|
-| identity/role/permissions | Identity & Access module + PostgreSQL | client navigation, JWT claims without server validation |
+| identity/role/permissions | Identity & Access module + Supabase PostgreSQL | client navigation, JWT claims without server validation, Supabase client session |
 | merchant/outlet status | Provider module | Merchant app local profile |
 | listing/price/stock | Catalog & Inventory module | barcode payload, customer/merchant cached card |
 | quote/order/lifecycle | Commerce module | payment state, client tracker, Admin dashboard label |
@@ -137,12 +143,54 @@ Customer and Captain context is similarly derived from the session. Admin uses c
 
 | Integration | Port | Launch adapter | Failure behavior |
 |---|---|---|---|
+| Transactional database | owned repositories | Supabase PostgreSQL via server connection/pooler | fail transaction; reconnect within bounded pool; never switch to client/local authority |
 | OTP | `OtpProvider` | configurable Indian SMS provider | rate-limit; no login bypass; reconciliation/audit |
 | Payment | `PaymentProvider` | Cashfree | webhook-authoritative; retry/reconcile; fail closed |
 | Maps/geocoding | `RoutingProvider` | selected during delivery sprint | unavailable route blocks new quote, not existing order history |
-| Push | `NotificationProvider` | FCM/Expo-compatible adapter | durable retry; in-app state remains canonical |
-| Object storage | `DocumentStore` | S3-compatible | signed, purpose-bound URLs; no public medical evidence |
+| Push | `NotificationProvider` | Firebase Cloud Messaging HTTP v1/Admin SDK | durable retry and token cleanup; in-app/API state remains canonical |
+| Object storage | `DocumentStore` | Supabase Storage | signed, purpose-bound URLs; no public medical/verification/support evidence |
 | Analytics | `AnalyticsSink` | server events + approved client events | analytics outage never blocks transaction |
+
+### 8.1 Supabase boundary
+
+Supabase is managed infrastructure, not a second backend. Spring Boot owns domain authorization, transaction orchestration, DTOs, migrations, and storage-access decisions.
+
+| Supabase capability | Version 1 decision |
+|---|---|
+| PostgreSQL | **Use.** Application tables live in a private, non-client-exposed schema. Flyway is the schema authority. Persistent server deployments use the supported direct/session-pooler connection mode, TLS, and a bounded HikariCP pool. |
+| Storage | **Use.** Product media is intentionally public only when policy permits. All verification, medical, support, invoice, and delivery-proof objects are private and exposed only through backend-authorized short-lived access. |
+| Auth | **Do not use initially.** The Identity & Access module owns mobile OTP, sessions, four canonical roles, staff/outlet scope, Admin permissions, and revocation. |
+| Data API from apps | **Do not use for domain data.** No role app or Admin browser holds privileged database credentials or performs domain-table CRUD directly. |
+| Realtime | **Do not use as transaction authority.** Clients refresh from canonical API projections; future read-only live hints require a separate decision. |
+| Edge Functions | **Do not use for core commands.** Provider webhooks, scheduled work, and business transitions remain in the Spring backend/workers. |
+
+The backend database identity receives only required application-schema privileges. It must not modify Supabase platform-owned `auth` or `storage` schemas. Database passwords, service-role/secret keys, and private storage signing authority remain in server secret management and never enter client bundles.
+
+### 8.2 Firebase push boundary
+
+Each environment has a separate Firebase project. Customer, Merchant, and Captain package/bundle identifiers are registered as separate Firebase apps. Expo `expo-notifications` obtains the native device token; the backend sends through the provider-neutral `NotificationProvider` using FCM. iOS delivery is configured through APNs credentials attached to the correct Firebase project.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant App as Expo role app
+    participant API as MyPetNew API
+    participant DB as Supabase PostgreSQL
+    participant FCM as Firebase FCM
+
+    User->>App: Allow notifications
+    App->>App: Obtain native device token
+    App->>API: Register token + app/install/session
+    API->>DB: Upsert authorized device binding
+    DB-->>API: Registration active
+    API-->>App: Accepted
+    API->>DB: Commit business state + outbox
+    API->>FCM: Send safe notification from worker
+    FCM-->>App: Push notification
+    App->>API: Open route and fetch canonical state
+```
+
+FCM credentials exist only in the server/build secret store. A notification contains only safe display text plus opaque IDs and an allowlisted route. Invalid-token responses deactivate the matching registration; transient failures retry with backoff; delivery audit and an in-app inbox remain queryable. Push failure never changes the business transaction that created the outbox event.
 
 ## 9. Reference-repository assessment
 
@@ -225,8 +273,9 @@ CI must eventually enforce:
 - no floating-point monetary fields;
 - no provider SDK types in domain/public DTOs;
 - no mobile/web secret patterns or production mock fallbacks;
+- application schemas are not exposed for client-side Supabase Data API CRUD and no client contains a Supabase secret/service-role key;
+- no client or repository contains an FCM service-account/APNs private key, and Firebase project/app IDs match the build environment;
 - every transactional command declares idempotency behavior;
 - every collection endpoint declares pagination bounds;
 - migration ordering, clean install, upgrade, and schema ownership;
 - API contract compatibility and generated-client drift.
-

@@ -4,7 +4,7 @@ Status: **Implementation baseline**
 Version: **1.0**  
 Date: **2026-08-11**  
 Initial market: **Tirupati, Andhra Pradesh, India**  
-Architecture: **Kotlin/Spring Boot modular monolith; PostgreSQL; separate Expo apps; Next.js Admin**
+Architecture: **Kotlin/Spring Boot modular monolith; Supabase PostgreSQL and Storage; Firebase Cloud Messaging; separate Expo apps; Next.js Admin**
 
 ## 1. Purpose
 
@@ -400,6 +400,20 @@ The regulatory baseline includes the Indian Drugs and Cosmetics Act/Rules and Sc
 
 `NOT-002` Transactional notifications cover OTP, order/appointment transitions, payment/refund, dispatch, loyalty reward/expiry, recurring proposal, and support updates.
 
+`NOT-003` Mobile push uses a provider-neutral `NotificationProvider` with Firebase Cloud Messaging as the launch adapter. Expo apps use `expo-notifications` to obtain native device tokens and handle foreground, background, killed-state, and deep-link behavior.
+
+`NOT-004` The server stores device registrations by environment, app, platform, installation, authenticated user/role, session, token fingerprint, permission state, last-seen time, and lifecycle status. Token rotation and logout deactivate the old binding safely.
+
+`NOT-005` Push payloads contain no sensitive or authoritative business state. A push may include an opaque notification/resource ID, event type, safe title/body template, and allowlisted route; the app must authorize and fetch current data from the API.
+
+`NOT-006` Notification provider acceptance or failure cannot advance, reverse, or fabricate an order, payment, appointment, dispatch, stock, POS, loyalty, or support state. An in-app inbox/API projection remains available when push is delayed or denied.
+
+`NOT-007` FCM service-account credentials are server-only secrets. Firebase projects and app registrations are isolated for development, staging, and production; a non-production build cannot register with or send through the production project.
+
+`NOT-008` Invalid/unregistered tokens are deactivated from verified provider responses. Transient errors use bounded exponential retry; poison messages enter an observable dead letter; dedupe ensures one logical notification per event/recipient/channel/template version.
+
+`NOT-009` Sprint 1 proves native push on a physical Android development build. Expo Go is not acceptable push evidence. Every iOS release candidate must also prove APNs-through-FCM delivery on a physical iPhone before distribution.
+
 ## 17. Data and API contracts
 
 ### 17.1 Aggregate ownership
@@ -439,12 +453,25 @@ Clients branch on HTTP status and stable code, never English message text.
 
 All transactional POST/command endpoints declare idempotency scope, key format, request fingerprint, retention, replay response, mismatch behavior, and concurrency semantics.
 
+### 17.4 Managed data infrastructure
+
+`DAT-001` Supabase hosts the PostgreSQL transactional database, but Spring Boot repositories and domain services remain the only business-data access path for Customer, Merchant, Captain, and Admin clients.
+
+`DAT-002` Flyway in the backend repository owns application-schema creation and upgrades. Dashboard edits and ad hoc production DDL are prohibited; clean-install, upgrade, and drift checks run in CI and against a Supabase staging environment.
+
+`DAT-003` Application tables are placed in a private, non-client-exposed schema with least-privilege backend database roles. Version 1 does not use Supabase Auth, direct client Data API access, Realtime, or Edge Functions for core domain commands.
+
+`DAT-004` Supabase Storage is accessed through `DocumentStore`. Public product media may use a deliberately public, sanitized bucket; verification evidence, medical/support documents, invoices, and delivery proofs remain private and use short-lived purpose-bound access after backend authorization.
+
+`DAT-005` Long-lived Spring Boot workloads use the supported Supabase PostgreSQL connection mode appropriate for persistent servers, TLS, and a conservatively bounded application pool. Connection exhaustion, failover/reconnect, backup, point-in-time recovery where enabled, and restore are operationally tested.
+
 ## 18. Non-functional requirements
 
 ### 18.1 Security and privacy
 
 - OWASP ASVS/MASVS-aligned controls appropriate to web/mobile/API.
 - Short-lived access tokens, rotating refresh tokens, device/session revocation, secure storage, and no secrets in clients.
+- No Supabase secret/service-role key, PostgreSQL credential, FCM service-account JSON, or APNs private key is present in mobile/web bundles or the repository.
 - Deny-by-default authorization at controller and service boundaries; tenant isolation tested at repository/database access.
 - Encryption in transit and at rest; sensitive fields minimized and encrypted where justified.
 - Secret manager, rotation, signed webhook validation, strict CORS, security headers, rate limits, abuse monitoring, and dependency/secret scanning.
@@ -453,7 +480,7 @@ All transactional POST/command endpoints declare idempotency scope, key format, 
 
 ### 18.2 Reliability and consistency
 
-- PostgreSQL transactions protect local aggregate invariants.
+- Supabase PostgreSQL transactions protect local aggregate invariants; managed platform features do not bypass module ownership.
 - Outbox/inbox patterns protect durable cross-module effects.
 - Workers are replay-safe and observable; scheduler ownership uses distributed locking.
 - Cache is never authoritative for money, stock, loyalty, payment, order, appointment, or permission.
@@ -511,4 +538,3 @@ Sprint 1 must prove the walking skeleton end to end:
 8. Exactly one merchant-specific loyalty star is awarded.
 9. Duplicate requests/scans/replays and concurrent races produce no duplicate order, sale, stock movement, star, reward, or cross-tenant leak.
 10. Every mandatory gate in `docs/qa/SPRINT_1_HARD_TEST_CASES.md` passes with stored evidence.
-

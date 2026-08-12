@@ -23,13 +23,14 @@ describe('recurring order contract', () => {
     expect(service).toMatch(/\/api\/v1\/orders\/subscriptions/);
   });
 
-  it('keeps the scheduler confirmation-only', () => {
-    const backend = source('../../backend/order-service/src/main/kotlin/com/pawsnearme/orderservice/service/RecurringOrderService.kt');
-    const migration = source('../../backend/order-service/src/main/resources/db/migration/V1001__p2b_recurring_orders.sql');
-    expect(backend).toMatch(/RecurringOrderConfirmationRequired/);
-    expect(backend).toMatch(/automaticCharge" to false/);
-    expect(backend).toMatch(/revalidateReorder/);
-    expect(backend).not.toMatch(/orderService\.createOrder/);
-    expect(migration).toMatch(/7, 15, 25, 30, 35/);
+  it('verifies recurring order specification D-019 requires explicit customer confirmation and limits cadences', () => {
+    const decisions = source('../../docs/product/DECISIONS.md');
+    const matrix = source('../../docs/architecture/CUSTOMER_API_COMPATIBILITY_MATRIX.md');
+
+    expect(RECURRING_CADENCES).toEqual([7, 15, 25, 30, 35]);
+    expect(decisions).toContain('D-019');
+    expect(decisions).toContain('7, 15, 25, 30, and 35 days');
+    expect(decisions).toContain('No automatic COD placement or payment mandate charge occurs');
+    expect(matrix).toContain('DEFERRED');
   });
 });

@@ -145,8 +145,7 @@ class OrderService(private val inventory: InventoryService) {
             OrderStatus.PICKED_UP,
             OrderStatus.DELIVERED,
             OrderStatus.REJECTED,
-            OrderStatus.CANCELLED,
-            -> emptySet()
+            OrderStatus.CANCELLED -> emptySet()
         }
         OrderActor.SYSTEM -> emptySet()
     }

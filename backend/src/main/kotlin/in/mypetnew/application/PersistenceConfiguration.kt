@@ -1,7 +1,10 @@
 package `in`.mypetnew.application
 
+import `in`.mypetnew.catalog.domain.CatalogPersistence
+import `in`.mypetnew.catalog.domain.CatalogService
 import `in`.mypetnew.catalog.domain.InventoryPersistence
 import `in`.mypetnew.catalog.domain.InventoryService
+import `in`.mypetnew.catalog.infrastructure.JdbcCatalogPersistence
 import `in`.mypetnew.catalog.infrastructure.JdbcInventoryPersistence
 import `in`.mypetnew.commerce.domain.OrderPersistence
 import `in`.mypetnew.commerce.domain.OrderService
@@ -24,6 +27,13 @@ import org.springframework.transaction.support.TransactionTemplate
 @Configuration
 @Profile("!test & !development")
 class PersistenceConfiguration {
+    @Bean
+    fun catalogPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): CatalogPersistence =
+        JdbcCatalogPersistence(jdbc, transactions)
+
+    @Bean
+    fun productionCatalogService(persistence: CatalogPersistence): CatalogService = CatalogService(persistence)
+
     @Bean
     fun inventoryPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): InventoryPersistence =
         JdbcInventoryPersistence(jdbc, transactions)

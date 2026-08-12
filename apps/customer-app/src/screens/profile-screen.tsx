@@ -21,9 +21,12 @@ import {
   saveDeliveryContact,
   type AddressInput,
 } from '@/services/customer-profile';
+import { createCustomerPet, fetchCustomerPets, type CustomerPet } from '@/services/customer-pets';
 
 type AddressDraft = Record<keyof AddressInput, string>;
+type PetDraft = { name: string; species: 'DOG' | 'CAT' | 'OTHER'; breed: string; dateOfBirth: string };
 const emptyAddress: AddressDraft = { label: 'Home', line1: '', line2: '', city: 'Tirupati', state: 'Andhra Pradesh', pincode: '', geoLat: '', geoLng: '' };
+const emptyPet: PetDraft = { name: '', species: 'DOG', breed: '', dateOfBirth: '' };
 
 export default function ProfileScreen() {
   const theme = useTheme();
@@ -37,6 +40,12 @@ export default function ProfileScreen() {
   const [loadingAddress, setLoadingAddress] = useState(false);
   const [addressError, setAddressError] = useState<'offline' | 'error' | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pets, setPets] = useState<CustomerPet[]>([]);
+  const [loadingPets, setLoadingPets] = useState(false);
+  const [petsError, setPetsError] = useState<'offline' | 'error' | null>(null);
+  const [showAddPet, setShowAddPet] = useState(false);
+  const [petDraft, setPetDraft] = useState<PetDraft>(emptyPet);
+  const [savingPet, setSavingPet] = useState(false);
 
   const loadAddress = useCallback(async () => {
     if (!session) return;
@@ -58,10 +67,19 @@ export default function ProfileScreen() {
     finally { setLoadingAddress(false); }
   }, [session, user]);
 
+  const loadPets = useCallback(async () => {
+    if (!session) return;
+    setLoadingPets(true); setPetsError(null);
+    try { setPets(await fetchCustomerPets(session.access_token)); }
+    catch (error) { setPetsError(isOfflineError(error) ? 'offline' : 'error'); }
+    finally { setLoadingPets(false); }
+  }, [session]);
+
   useEffect(() => {
     if (!user || !session) return;
     void loadAddress();
-  }, [loadAddress, session, user]);
+    void loadPets();
+  }, [loadAddress, loadPets, session, user]);
 
   const normalizedDeliveryPhone = useMemo(() => {
     if (!deliveryPhone.trim()) return null;
@@ -118,6 +136,38 @@ export default function ProfileScreen() {
     }
   }, [address, normalizedDeliveryPhone, session, t, user]);
 
+  const savePet = useCallback(async () => {
+    if (!session) return;
+    const name = petDraft.name.trim();
+    if (!name || !petDraft.species) {
+      Alert.alert(t('common.error'), t('profileFoundation.petRequired'));
+      return;
+    }
+
+    setSavingPet(true);
+    try {
+      const created = await createCustomerPet({
+        name,
+        species: petDraft.species,
+        breed: petDraft.breed.trim() || null,
+        dateOfBirth: petDraft.dateOfBirth.trim() || null,
+      }, session.access_token);
+      setPets((current) => [...current, created]);
+      setPetDraft(emptyPet);
+      setShowAddPet(false);
+      Alert.alert(t('common.success'), t('profileFoundation.petSaved'));
+    } catch (error) {
+      Alert.alert(
+        t('common.error'),
+        isOfflineError(error)
+          ? t('states.offlineMessage')
+          : error instanceof Error ? error.message : t('states.errorMessage'),
+      );
+    } finally {
+      setSavingPet(false);
+    }
+  }, [petDraft, session, t]);
+
   if (!user || !session) return (
     <ScreenShell scroll={false} header={<AppBar title={t('profileFoundation.title')} />}>
       <StateView kind="unauthenticated" title={t('profileFoundation.guestTitle')} message={t('profileFoundation.guestMessage')} actionLabel={t('common.signIn')} onAction={() => void requireAuth({ action: 'SENSITIVE_ACCOUNT_CHANGE', returnTo: '/(tabs)/profile' })} />
@@ -132,6 +182,90 @@ export default function ProfileScreen() {
     <ScreenShell header={<AppBar title={t('profileFoundation.title')} subtitle={user.email ?? user.phone ?? undefined} />} testID="profile-screen">
       <SectionHeader title={t('profileFoundation.account')} />
       <View style={styles.stack}>{profileRows.map((row) => <View key={row.label} style={[styles.rowCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}><View style={styles.flex}><ThemedText style={styles.label}>{row.label}</ThemedText><ThemedText themeColor="textSecondary">{row.value}</ThemedText></View><StatusBadge label={t(row.complete ? 'profileFoundation.complete' : 'profileFoundation.incomplete')} tone={row.complete ? 'success' : 'warning'} /></View>)}</View>
+
+      <SectionHeader
+        title={t('profileFoundation.myPets')}
+        actionLabel={showAddPet ? t('common.cancel') : t('profileFoundation.addPet')}
+        onAction={() => setShowAddPet((current) => !current)}
+      />
+      {loadingPets ? <StateView kind="loading" title={t('states.loading')} /> : null}
+      {petsError ? (
+        <StateView
+          kind={petsError}
+          title={t(petsError === 'offline' ? 'states.offline' : 'profileFoundation.petsLoadError')}
+          message={t(petsError === 'offline' ? 'states.offlineMessage' : 'states.errorMessage')}
+          actionLabel={t('states.retry')}
+          onAction={() => void loadPets()}
+        />
+      ) : null}
+      {!loadingPets && !petsError ? (
+        <View style={styles.stack}>
+          {pets.length === 0 ? (
+            <StateView kind="empty" title={t('profileFoundation.petsEmpty')} message={t('profileFoundation.petsEmptyMessage')} />
+          ) : (
+            <View style={styles.petGrid}>
+              {pets.map((pet) => (
+                <View key={pet.petId} style={[styles.petCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+                  <View style={[styles.petAvatar, { backgroundColor: theme.primarySoft }]}>
+                    <AppIcon name="paw" color={theme.primary} size={28} />
+                  </View>
+                  <ThemedText style={styles.petName} numberOfLines={1}>{pet.name}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
+                    {[pet.species, pet.breed].filter(Boolean).join(' · ')}
+                  </ThemedText>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {showAddPet ? (
+            <View style={[styles.petForm, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+              <TextInput
+                value={petDraft.name}
+                onChangeText={(value) => setPetDraft((current) => ({ ...current, name: value }))}
+                placeholder={t('profileFoundation.petNamePlaceholder')}
+                placeholderTextColor={theme.textSecondary}
+                style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
+                accessibilityLabel={t('profileFoundation.petName')}
+              />
+              <View style={styles.speciesRow}>
+                {(['DOG', 'CAT', 'OTHER'] as const).map((species) => {
+                  const selected = petDraft.species === species;
+                  const labelKey = species === 'DOG' ? 'dog' : species === 'CAT' ? 'cat' : 'other';
+                  return (
+                    <Pressable
+                      key={species}
+                      onPress={() => setPetDraft((current) => ({ ...current, species }))}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      style={[styles.speciesChip, { backgroundColor: selected ? theme.primarySoft : theme.backgroundElement, borderColor: selected ? theme.primary : theme.border }]}
+                    >
+                      <ThemedText type="small" style={{ color: selected ? theme.primary : theme.text, fontWeight: '700' }}>{t(`profileFoundation.${labelKey}`)}</ThemedText>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <TextInput
+                value={petDraft.breed}
+                onChangeText={(value) => setPetDraft((current) => ({ ...current, breed: value }))}
+                placeholder={t('profileFoundation.breedOptional')}
+                placeholderTextColor={theme.textSecondary}
+                style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
+                accessibilityLabel={t('profileFoundation.breedOptional')}
+              />
+              <TextInput
+                value={petDraft.dateOfBirth}
+                onChangeText={(value) => setPetDraft((current) => ({ ...current, dateOfBirth: value }))}
+                placeholder={t('profileFoundation.dateOfBirthOptional')}
+                placeholderTextColor={theme.textSecondary}
+                style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
+                accessibilityLabel={t('profileFoundation.dateOfBirthOptional')}
+              />
+              <PrimaryAction label={t('profileFoundation.savePet')} onPress={() => void savePet()} loading={savingPet} />
+            </View>
+          ) : null}
+        </View>
+      ) : null}
 
       <SectionHeader title={t('profileFoundation.deliveryAddress')} />
       {loadingAddress ? <StateView kind="loading" title={t('states.loading')} /> : null}
@@ -175,6 +309,13 @@ const styles = StyleSheet.create({
   label: { ...typography.label },
   input: { flex: 1, minHeight: touchTarget, borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x4, ...typography.body },
   inline: { flexDirection: 'row', gap: spacing.x2 },
+  petGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x3 },
+  petCard: { width: '47%', minHeight: 132, borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card, padding: spacing.x4, alignItems: 'center', justifyContent: 'center', gap: spacing.x2 },
+  petAvatar: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
+  petName: { ...typography.label, textAlign: 'center' },
+  petForm: { borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card, padding: spacing.x4, gap: spacing.x3 },
+  speciesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x2 },
+  speciesChip: { minHeight: touchTarget, minWidth: 84, borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x3, alignItems: 'center', justifyContent: 'center' },
   languages: { gap: spacing.x2 },
   language: { minHeight: touchTarget, borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x4, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
 });

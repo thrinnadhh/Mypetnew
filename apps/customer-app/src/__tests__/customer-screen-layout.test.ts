@@ -26,4 +26,12 @@ describe('customer screen layout contracts', () => {
     expect(source).toContain('horizontal');
     expect(source).toContain('showsHorizontalScrollIndicator={false}');
   });
+
+  test('profile exposes API-backed pet management', () => {
+    const source = read('screens/profile-screen.tsx');
+    expect(source).toContain('fetchCustomerPets');
+    expect(source).toContain('createCustomerPet');
+    expect(source).toContain("profileFoundation.myPets");
+    expect(source).toContain("profileFoundation.addPet");
+  });
 });

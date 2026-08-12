@@ -259,20 +259,27 @@ describe('order production paths', () => {
     await expect(fetchOrderDetails('broken', token)).rejects.toThrow('invalid order ID');
   });
 
-  it('executes cancellation, reorder, quote and order creation contracts', async () => {
+  it('executes cancellation, reorder, canonical quote and order creation contracts', async () => {
     const reorder = {
       originalOrderId: 'order-1', providerId: 'provider-1', isProviderServiceable: true,
       items: [], canReorder: true,
     };
-    const quote = {
-      quoteToken: 'quote-1', subtotal: 500, itemDiscount: 0, couponDiscount: 0,
-      loyaltyDiscount: 0, deliveryFee: 20, tax: 0, roundOff: 0, payableTotal: 520,
-      isCodAvailable: true, expiresAt: '2026-08-06T12:15:00Z',
+    const canonicalQuote = {
+      id: 'quote-1', customerId: 'customer-1', outletId: 'provider-1',
+      lines: { 'food-1': [2, 25000] }, cartSignature: 'signed-cart',
+      fulfilmentMode: 'STORE_PICKUP', paymentMethod: 'PAY_ON_FULFILMENT',
+      pricing: {
+        itemSubtotalPaise: 50000, itemDiscountPaise: 0, couponDiscountPaise: 0,
+        loyaltyRewardPaise: 0, taxPaise: 0, platformFeePaise: 1000,
+        deliveryFeePaise: 0, merchantCommissionPaise: 1000, grandTotalPaise: 51000,
+        currency: 'INR', ruleVersion: 's1-v1',
+      },
+      expiresAt: '2026-08-06T12:15:00Z',
     };
     mockedFetch
       .mockResolvedValueOnce(response({}, 204))
       .mockResolvedValueOnce(response(reorder))
-      .mockResolvedValueOnce(response(quote))
+      .mockResolvedValueOnce(response(canonicalQuote))
       .mockResolvedValueOnce(response({
         orderId: 'new-order', providerId: 'provider-1', totalAmount: '520',
         status: 'CREATED', placedAt: '2026-08-06T12:00:00Z', items: [{ name: 'Food' }],
@@ -284,14 +291,21 @@ describe('order production paths', () => {
     await expect(fetchCheckoutQuote({
       customerId: 'customer-1', providerId: 'provider-1', deliveryAddressId: 'address-1',
       items: [{ offeringId: 'food-1', quantity: 2 }], paymentMethod: 'COD',
-    }, token)).resolves.toEqual(quote);
+    }, token)).resolves.toMatchObject({
+      quoteToken: 'quote-1', quoteId: 'quote-1', cartSignature: 'signed-cart',
+      fulfilmentMode: 'STORE_PICKUP', paymentMethod: 'PAY_ON_FULFILMENT', subtotal: 500,
+      platformFee: 10, deliveryFee: 0, payableTotal: 510, currency: 'INR', ruleVersion: 's1-v1',
+    });
     await expect(createCustomerOrder({
       customerId: 'customer-1', providerId: 'provider-1', deliveryAddressId: 'address-1',
       items: [{ offeringId: 'food-1', quantity: 2 }], paymentMethod: 'COD', quoteToken: 'quote-1',
     }, token)).resolves.toMatchObject({ id: 'new-order', providerName: 'Happy Pets', rawTotal: 520 });
 
     expect(mockedFetch.mock.calls[0][0]).toContain('reason=Changed%20mind%20%26%20reordered');
-    expect(mockedFetch.mock.calls[2][1]).toMatchObject({ method: 'POST' });
+    expect(mockedFetch.mock.calls[2][0]).toContain('/api/v1/customer/quotes/pickup');
+    expect(JSON.parse(mockedFetch.mock.calls[2][1]?.body as string)).toEqual({
+      outletId: 'provider-1', lines: [{ listingId: 'food-1', quantity: 2 }],
+    });
   });
 
   it('rejects operation errors and malformed order creation responses', async () => {
@@ -305,7 +319,7 @@ describe('order production paths', () => {
     await expect(reorderItems('order-1', token)).rejects.toThrow('Reorder blocked');
     await expect(fetchCheckoutQuote({
       customerId: 'c', providerId: 'p', deliveryAddressId: 'a', items: [],
-    }, token)).rejects.toThrow('Could not calculate checkout quote');
+    }, token)).rejects.toMatchObject({ status: 500, code: 'HTTP_500' });
     await expect(createCustomerOrder({
       customerId: 'c', providerId: 'p', deliveryAddressId: 'a', items: [],
     }, token)).rejects.toThrow('invalid response');

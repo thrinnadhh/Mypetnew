@@ -1,6 +1,10 @@
 ALTER TABLE mypet.pos_sale
-    ADD COLUMN request_fingerprint VARCHAR(64),
-    ADD COLUMN loyalty_awarded BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN request_fingerprint VARCHAR(64);
+
+ALTER TABLE mypet.pos_sale
+    ADD COLUMN loyalty_awarded BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE mypet.pos_sale
     ADD COLUMN trace_id VARCHAR(64) NOT NULL DEFAULT 'legacy';
 
 ALTER TABLE mypet.pos_sale

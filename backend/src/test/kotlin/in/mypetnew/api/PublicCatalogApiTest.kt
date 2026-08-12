@@ -265,15 +265,25 @@ class PublicCatalogApiTest {
             jsonPath("$.items[0].id") { value(medId.toString()) }
         }
 
-        // Search q by name, brand, category, outlet name
-        listOf("Antibiotic", "VetMed", "health", "Tirupati").forEach { query ->
+        // Search q by name, brand, category (returns 1 item)
+        listOf("Antibiotic", "VetMed", "health").forEach { query ->
             mockMvc.get("/api/v1/public/catalog") {
                 param("outletId", outletId.toString())
                 param("q", query)
             }.andExpect {
                 status { isOk() }
                 jsonPath("$.items.length()") { value(1) }
+                jsonPath("$.items[0].id") { value(medId.toString()) }
             }
+        }
+
+        // Search q by outlet name (returns 2 items)
+        mockMvc.get("/api/v1/public/catalog") {
+            param("outletId", outletId.toString())
+            param("q", "Tirupati")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items.length()") { value(2) }
         }
 
         // Pagination overflow safety page = Int.MAX_VALUE

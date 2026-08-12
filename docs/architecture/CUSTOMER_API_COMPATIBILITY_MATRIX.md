@@ -12,7 +12,7 @@ This document presents the authoritative inventory of Customer HTTP contracts in
 | OTP Verification | POST | `supabase.auth.verifyOtp` (SDK) | `/api/v1/auth/otp/verify` | **MISMATCH** | T2 |
 | Session Refresh | POST | `supabase.auth.getSession` (SDK) | `/api/v1/auth/sessions/refresh` | **MISMATCH** | T2 |
 | Session Logout | DELETE | `supabase.auth.signOut` (SDK) | `/api/v1/auth/sessions/current` | **MISMATCH** | T2 |
-| Public Catalog Listings | GET | `/api/v1/public/catalog` | `/api/v1/public/catalog` | **MISMATCH** (Client UI path pending) | T2 |
+| Public Catalog Listings | GET | Legacy provider/catalog routes (Canonical `/api/v1/public/catalog` not yet consumed) | `/api/v1/public/catalog` | **MISMATCH** | T2 |
 | Legacy Provider Discovery | GET | `/api/v1/discovery/providers` | N/A (Replaced by `/api/v1/public/catalog`) | **LEGACY_ONLY** | T2 |
 | Legacy Provider Profile | GET | `/api/v1/providers/{id}` | N/A (Embedded in catalog/listings) | **LEGACY_ONLY** | T2 |
 | Legacy Catalog Offerings | GET | `/api/v1/catalog/offerings` | `/api/v1/public/catalog` | **LEGACY_ONLY** | T2 |
@@ -46,7 +46,7 @@ This document presents the authoritative inventory of Customer HTTP contracts in
     - Response DTO: `OtpSessionResponse`
   - `DELETE /api/v1/auth/sessions/current`
     - Header: `Authorization: Bearer <accessToken>`
-- **Session Model Difference**: Per Decision `D-024`, Supabase Auth is not an authority for business domain flows. Canonical `MyPetNew` relies on Spring Boot JWT Bearer tokens + `SessionStore` (PostgreSQL) + session rotation.
+- **Session Model Difference**: Per Decision `D-024`, Supabase Auth is not an authority for business domain flows. The current baseline implementation uses `InMemorySessionStore`, whereas the production target architecture requires backend-owned PostgreSQL persistence (`JdbcSessionStore`) per `D-003` and `D-024`. Canonical `MyPetNew` relies on Spring Boot JWT Bearer tokens + `SessionStore` + session rotation.
 - **Owning Follow-up Ticket**: **T2** (Full Auth & Session Migration).
 
 ---

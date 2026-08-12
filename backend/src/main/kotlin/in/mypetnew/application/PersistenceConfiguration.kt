@@ -3,6 +3,9 @@ package `in`.mypetnew.application
 import `in`.mypetnew.catalog.domain.InventoryPersistence
 import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.catalog.infrastructure.JdbcInventoryPersistence
+import `in`.mypetnew.commerce.domain.OrderPersistence
+import `in`.mypetnew.commerce.domain.OrderService
+import `in`.mypetnew.commerce.infrastructure.JdbcOrderPersistence
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Profile
@@ -18,4 +21,12 @@ class PersistenceConfiguration {
 
     @Bean
     fun productionInventoryService(persistence: InventoryPersistence): InventoryService = InventoryService(persistence)
+
+    @Bean
+    fun orderPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): OrderPersistence =
+        JdbcOrderPersistence(jdbc, transactions)
+
+    @Bean
+    fun productionOrderService(inventory: InventoryService, persistence: OrderPersistence): OrderService =
+        OrderService(inventory, persistence)
 }

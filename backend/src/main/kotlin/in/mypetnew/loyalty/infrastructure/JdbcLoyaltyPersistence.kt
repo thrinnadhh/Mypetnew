@@ -23,16 +23,8 @@ class JdbcLoyaltyPersistence(
     ): LoyaltyAward {
         validateSource(sourceReference, eligibleSpendPaise)
         return transactions.execute {
-            jdbc.update(
-                """
-                INSERT INTO mypet.loyalty_relationship (
-                    customer_id, organization_id, available_stars, star_debt, version
-                ) VALUES (?, ?, 0, 0, 0)
-                ON CONFLICT (customer_id, organization_id) DO NOTHING
-                """.trimIndent(),
-                customerId,
-                merchantId,
-            )
+            lockCustomer(customerId)
+            ensureRelationship(customerId, merchantId)
             val balance = lockRelationship(customerId, merchantId)
             val sourceType = sourceType(sourceReference)
             val existing = jdbc.queryForObject(
@@ -141,6 +133,41 @@ class JdbcLoyaltyPersistence(
         customerId,
         merchantId,
     )
+
+    private fun lockCustomer(customerId: UUID) {
+        val present = jdbc.query(
+            "SELECT id FROM mypet.identity_account WHERE id = ? FOR UPDATE",
+            { result, _ -> result.getObject("id", UUID::class.java) },
+            customerId,
+        ).singleOrNull()
+        if (present == null) {
+            throw DomainException("LOYALTY_CUSTOMER_UNAVAILABLE", "The loyalty customer is unavailable")
+        }
+    }
+
+    private fun ensureRelationship(customerId: UUID, merchantId: UUID) {
+        val present = jdbc.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM mypet.loyalty_relationship
+            WHERE customer_id = ? AND organization_id = ?
+            """.trimIndent(),
+            Int::class.java,
+            customerId,
+            merchantId,
+        ) ?: 0
+        if (present == 0) {
+            jdbc.update(
+                """
+                INSERT INTO mypet.loyalty_relationship (
+                    customer_id, organization_id, available_stars, star_debt, version
+                ) VALUES (?, ?, 0, 0, 0)
+                """.trimIndent(),
+                customerId,
+                merchantId,
+            )
+        }
+    }
 
     private fun lockRelationship(customerId: UUID, merchantId: UUID): Relationship = jdbc.query(
         """

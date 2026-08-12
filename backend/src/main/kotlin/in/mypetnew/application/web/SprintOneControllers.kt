@@ -154,7 +154,11 @@ class CustomerCommerceApiController(
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
         val outlet = providers.getOutlet(request.outletId)
-        if (outlet.status != ProviderStatus.ACTIVE || !outlet.capabilities.contains(ProviderCapability.PRODUCT_STORE)) {
+        if (
+            outlet.status != ProviderStatus.ACTIVE ||
+            !outlet.pickupEnabled ||
+            !outlet.capabilities.contains(ProviderCapability.PRODUCT_STORE)
+        ) {
             resourceUnavailable()
         }
         val lines = request.lines.associate { line ->
@@ -185,7 +189,11 @@ class CustomerCommerceApiController(
         if (quote.customerId != customer.actorId) resourceUnavailable()
 
         val outlet = providers.getOutlet(quote.outletId)
-        if (outlet.status != ProviderStatus.ACTIVE || !outlet.capabilities.contains(ProviderCapability.PRODUCT_STORE)) {
+        if (
+            outlet.status != ProviderStatus.ACTIVE ||
+            !outlet.pickupEnabled ||
+            !outlet.capabilities.contains(ProviderCapability.PRODUCT_STORE)
+        ) {
             throw DomainException("QUOTE_STALE", "The provider changed after this quote was created")
         }
         val listingNames = quote.lines.map { (listingId, quotedLine) ->

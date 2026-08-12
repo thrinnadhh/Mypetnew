@@ -25,6 +25,7 @@ import `in`.mypetnew.pos.domain.PosService
 import `in`.mypetnew.provider.domain.ProviderCapability
 import `in`.mypetnew.provider.domain.ProviderService
 import `in`.mypetnew.provider.domain.ProviderStatus
+import org.slf4j.MDC
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -118,7 +119,14 @@ class CatalogInventoryApiController(
         val listing = catalog.getListing(request.listingId)
         if (listing.outletId != request.outletId) resourceUnavailable()
         if (request.quantity <= 0) throw DomainException("QUANTITY_INVALID", "Quantity must be positive")
-        return inventory.adjust(listing.id, request.quantity, StockReason.RECEIPT, idempotencyKey)
+        return inventory.adjust(
+            listing.id,
+            request.quantity,
+            StockReason.RECEIPT,
+            idempotencyKey,
+            actorId = principal.actorId,
+            traceId = currentTraceId(),
+        )
     }
 }
 
@@ -326,6 +334,8 @@ private fun authorizedActiveOutlet(
     ) resourceUnavailable()
     return outlet
 }
+
+private fun currentTraceId(): String = MDC.get("traceId") ?: TraceIdFilter.TRACE_ATTRIBUTE
 
 private fun resourceUnavailable(): Nothing = throw DomainException(
     "RESOURCE_NOT_FOUND",

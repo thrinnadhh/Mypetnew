@@ -3,111 +3,104 @@ import { Platform } from 'react-native';
 
 import type { PersistedRefreshState } from './types';
 
-const STORAGE_KEYS = {
-  REFRESH_TOKEN: 'mypetnew_customer_refresh_token',
-  REFRESH_EXPIRES_AT: 'mypetnew_customer_refresh_expires_at',
-  ACCOUNT_ID: 'mypetnew_customer_account_id',
-  MOBILE: 'mypetnew_customer_mobile',
-  ROLE: 'mypetnew_customer_role',
-  DEVICE_ID: 'mypetnew_customer_device_id',
-} as const;
-
+const SESSION_STORAGE_KEY = 'mypetnew_customer_session_v1';
+const STORAGE_VERSION = 1;
 const secureOptions = { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY } as const;
+const INDIAN_MOBILE = /^\+91[6-9][0-9]{9}$/;
 
-export async function savePersistedSession(state: PersistedRefreshState): Promise<void> {
-  if (Platform.OS === 'web') {
-    if (typeof window === 'undefined' || !window.sessionStorage) return;
-    window.sessionStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, state.refreshToken);
-    window.sessionStorage.setItem(STORAGE_KEYS.REFRESH_EXPIRES_AT, state.refreshTokenExpiresAt);
-    window.sessionStorage.setItem(STORAGE_KEYS.ACCOUNT_ID, state.accountId);
-    window.sessionStorage.setItem(STORAGE_KEYS.MOBILE, state.mobile);
-    window.sessionStorage.setItem(STORAGE_KEYS.ROLE, state.role);
-    window.sessionStorage.setItem(STORAGE_KEYS.DEVICE_ID, state.deviceId);
-  } else {
-    await Promise.all([
-      SecureStore.setItemAsync(STORAGE_KEYS.REFRESH_TOKEN, state.refreshToken, secureOptions),
-      SecureStore.setItemAsync(STORAGE_KEYS.REFRESH_EXPIRES_AT, state.refreshTokenExpiresAt, secureOptions),
-      SecureStore.setItemAsync(STORAGE_KEYS.ACCOUNT_ID, state.accountId, secureOptions),
-      SecureStore.setItemAsync(STORAGE_KEYS.MOBILE, state.mobile, secureOptions),
-      SecureStore.setItemAsync(STORAGE_KEYS.ROLE, state.role, secureOptions),
-      SecureStore.setItemAsync(STORAGE_KEYS.DEVICE_ID, state.deviceId, secureOptions),
-    ]);
+type StoredSessionEnvelope = {
+  version: number;
+  state: PersistedRefreshState;
+};
+
+function normalizePersistedState(value: unknown): PersistedRefreshState | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<PersistedRefreshState>;
+
+  if (
+    typeof candidate.refreshToken !== 'string' || !candidate.refreshToken.trim() ||
+    typeof candidate.refreshTokenExpiresAt !== 'string' || !candidate.refreshTokenExpiresAt.trim() ||
+    typeof candidate.accountId !== 'string' || !candidate.accountId.trim() ||
+    typeof candidate.mobile !== 'string' || !INDIAN_MOBILE.test(candidate.mobile.trim()) ||
+    candidate.role !== 'CUSTOMER' ||
+    typeof candidate.deviceId !== 'string' || !candidate.deviceId.trim() || candidate.deviceId.length > 128
+  ) {
+    return null;
+  }
+
+  const expiresAtMs = Date.parse(candidate.refreshTokenExpiresAt);
+  if (Number.isNaN(expiresAtMs) || expiresAtMs <= Date.now()) return null;
+
+  return {
+    refreshToken: candidate.refreshToken.trim(),
+    refreshTokenExpiresAt: candidate.refreshTokenExpiresAt.trim(),
+    accountId: candidate.accountId.trim(),
+    mobile: candidate.mobile.trim(),
+    role: 'CUSTOMER',
+    deviceId: candidate.deviceId.trim(),
+  };
+}
+
+function encodeState(state: PersistedRefreshState): string {
+  const normalized = normalizePersistedState(state);
+  if (!normalized) throw new Error('Persisted Customer session state is invalid');
+
+  const envelope: StoredSessionEnvelope = {
+    version: STORAGE_VERSION,
+    state: normalized,
+  };
+  return JSON.stringify(envelope);
+}
+
+function decodeState(raw: string): PersistedRefreshState | null {
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredSessionEnvelope>;
+    if (parsed.version !== STORAGE_VERSION) return null;
+    return normalizePersistedState(parsed.state);
+  } catch {
+    return null;
   }
 }
 
+export async function savePersistedSession(state: PersistedRefreshState): Promise<void> {
+  const encoded = encodeState(state);
+
+  if (Platform.OS === 'web') {
+    if (typeof window === 'undefined' || !window.sessionStorage) {
+      throw new Error('Customer session storage is unavailable');
+    }
+    window.sessionStorage.setItem(SESSION_STORAGE_KEY, encoded);
+    return;
+  }
+
+  await SecureStore.setItemAsync(SESSION_STORAGE_KEY, encoded, secureOptions);
+}
+
 export async function loadPersistedSession(): Promise<PersistedRefreshState | null> {
-  let refreshToken: string | null = null;
-  let refreshTokenExpiresAt: string | null = null;
-  let accountId: string | null = null;
-  let mobile: string | null = null;
-  let role: string | null = null;
-  let deviceId: string | null = null;
+  let raw: string | null;
 
   if (Platform.OS === 'web') {
     if (typeof window === 'undefined' || !window.sessionStorage) return null;
-    refreshToken = window.sessionStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
-    refreshTokenExpiresAt = window.sessionStorage.getItem(STORAGE_KEYS.REFRESH_EXPIRES_AT);
-    accountId = window.sessionStorage.getItem(STORAGE_KEYS.ACCOUNT_ID);
-    mobile = window.sessionStorage.getItem(STORAGE_KEYS.MOBILE);
-    role = window.sessionStorage.getItem(STORAGE_KEYS.ROLE);
-    deviceId = window.sessionStorage.getItem(STORAGE_KEYS.DEVICE_ID);
+    raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
   } else {
-    [refreshToken, refreshTokenExpiresAt, accountId, mobile, role, deviceId] = await Promise.all([
-      SecureStore.getItemAsync(STORAGE_KEYS.REFRESH_TOKEN),
-      SecureStore.getItemAsync(STORAGE_KEYS.REFRESH_EXPIRES_AT),
-      SecureStore.getItemAsync(STORAGE_KEYS.ACCOUNT_ID),
-      SecureStore.getItemAsync(STORAGE_KEYS.MOBILE),
-      SecureStore.getItemAsync(STORAGE_KEYS.ROLE),
-      SecureStore.getItemAsync(STORAGE_KEYS.DEVICE_ID),
-    ]);
+    raw = await SecureStore.getItemAsync(SESSION_STORAGE_KEY);
   }
 
-  if (
-    !refreshToken?.trim() ||
-    !refreshTokenExpiresAt?.trim() ||
-    !accountId?.trim() ||
-    !mobile?.trim() ||
-    !deviceId?.trim() ||
-    role !== 'CUSTOMER'
-  ) {
-    await clearPersistedSession();
-    return null;
-  }
+  if (!raw) return null;
 
-  // Check expiration timestamp strictly
-  const expiresAtMs = Date.parse(refreshTokenExpiresAt);
-  if (Number.isNaN(expiresAtMs) || expiresAtMs <= Date.now()) {
-    await clearPersistedSession();
-    return null;
-  }
+  const state = decodeState(raw);
+  if (state) return state;
 
-  return {
-    refreshToken: refreshToken.trim(),
-    refreshTokenExpiresAt: refreshTokenExpiresAt.trim(),
-    accountId: accountId.trim(),
-    mobile: mobile.trim(),
-    role: 'CUSTOMER',
-    deviceId: deviceId.trim(),
-  };
+  await clearPersistedSession();
+  return null;
 }
 
 export async function clearPersistedSession(): Promise<void> {
   if (Platform.OS === 'web') {
     if (typeof window === 'undefined' || !window.sessionStorage) return;
-    window.sessionStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-    window.sessionStorage.removeItem(STORAGE_KEYS.REFRESH_EXPIRES_AT);
-    window.sessionStorage.removeItem(STORAGE_KEYS.ACCOUNT_ID);
-    window.sessionStorage.removeItem(STORAGE_KEYS.MOBILE);
-    window.sessionStorage.removeItem(STORAGE_KEYS.ROLE);
-    window.sessionStorage.removeItem(STORAGE_KEYS.DEVICE_ID);
-  } else {
-    await Promise.all([
-      SecureStore.deleteItemAsync(STORAGE_KEYS.REFRESH_TOKEN),
-      SecureStore.deleteItemAsync(STORAGE_KEYS.REFRESH_EXPIRES_AT),
-      SecureStore.deleteItemAsync(STORAGE_KEYS.ACCOUNT_ID),
-      SecureStore.deleteItemAsync(STORAGE_KEYS.MOBILE),
-      SecureStore.deleteItemAsync(STORAGE_KEYS.ROLE),
-      SecureStore.deleteItemAsync(STORAGE_KEYS.DEVICE_ID),
-    ]);
+    window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    return;
   }
+
+  await SecureStore.deleteItemAsync(SESSION_STORAGE_KEY);
 }

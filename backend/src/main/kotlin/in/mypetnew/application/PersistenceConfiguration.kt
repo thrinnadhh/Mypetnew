@@ -15,8 +15,11 @@ import `in`.mypetnew.commerce.infrastructure.JdbcQuotePersistence
 import `in`.mypetnew.loyalty.domain.LoyaltyPersistence
 import `in`.mypetnew.loyalty.domain.LoyaltyService
 import `in`.mypetnew.loyalty.infrastructure.JdbcLoyaltyPersistence
+import `in`.mypetnew.pos.domain.CustomerAssociationChallengeService
+import `in`.mypetnew.pos.domain.CustomerAssociationPersistence
 import `in`.mypetnew.pos.domain.PosPersistence
 import `in`.mypetnew.pos.domain.PosService
+import `in`.mypetnew.pos.infrastructure.JdbcCustomerAssociationPersistence
 import `in`.mypetnew.pos.infrastructure.JdbcPosPersistence
 import `in`.mypetnew.provider.domain.ProviderPersistence
 import `in`.mypetnew.provider.domain.ProviderService
@@ -72,6 +75,17 @@ class PersistenceConfiguration {
 
     @Bean
     fun productionLoyaltyService(persistence: LoyaltyPersistence): LoyaltyService = LoyaltyService(persistence)
+
+    @Bean
+    fun customerAssociationPersistence(
+        jdbc: JdbcTemplate,
+        transactions: TransactionTemplate,
+    ): CustomerAssociationPersistence = JdbcCustomerAssociationPersistence(jdbc, transactions)
+
+    @Bean
+    fun productionCustomerAssociationService(
+        persistence: CustomerAssociationPersistence,
+    ): CustomerAssociationChallengeService = CustomerAssociationChallengeService(persistence = persistence)
 
     @Bean
     fun posPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): PosPersistence =

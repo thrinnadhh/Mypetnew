@@ -236,7 +236,7 @@ class JdbcInventoryPersistence(
                         movement.occurredAt,
                     )
                     movement
-                } ?: throw IllegalStateException("Inventory transaction returned no result")
+                }
             } catch (duplicate: DuplicateKeyException) {
                 lastDuplicate = duplicate
                 existingMovement(outletId, idempotencyKey)?.let { return replay(it, operationScope, fingerprint) }

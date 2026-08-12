@@ -3,7 +3,6 @@ package `in`.mypetnew.pos.domain
 import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.catalog.domain.StockReason
 import `in`.mypetnew.common.error.DomainException
-import `in`.mypetnew.common.idempotency.IdempotencyStore
 import `in`.mypetnew.loyalty.domain.LoyaltyService
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -187,18 +186,19 @@ class PosService(
 
 private class InMemoryPosPersistence : PosPersistence {
     override val rollsBackOnFailure: Boolean = false
+
+    private data class Binding(val fingerprint: String, val saleId: UUID)
+
     private val monitor = Any()
     private val sales = mutableMapOf<UUID, PosSale>()
-    private val keys = IdempotencyStore<UUID>()
-    private val bindings = mutableMapOf<Pair<UUID, String>, String>()
+    private val bindings = mutableMapOf<Pair<UUID, String>, Binding>()
 
     override fun <T> inTransaction(block: () -> T): T = synchronized(monitor) { block() }
 
     override fun find(outletId: UUID, idempotencyKey: String): PersistedPosSale? = synchronized(monitor) {
-        val fingerprint = bindings[outletId to idempotencyKey] ?: return@synchronized null
-        val sale = sales.values.firstOrNull { it.outletId == outletId && keys.execute("lookup:$outletId", idempotencyKey, fingerprint) { it.id } == it.id }
-            ?: return@synchronized null
-        PersistedPosSale(fingerprint, sale)
+        val binding = bindings[outletId to idempotencyKey] ?: return@synchronized null
+        val sale = sales[binding.saleId] ?: return@synchronized null
+        PersistedPosSale(binding.fingerprint, sale)
     }
 
     override fun insert(
@@ -209,9 +209,8 @@ private class InMemoryPosPersistence : PosPersistence {
     ) = synchronized(monitor) {
         val key = sale.outletId to idempotencyKey
         if (bindings.containsKey(key)) throw PosIdempotencyRace()
-        bindings[key] = requestFingerprint
-        keys.execute("lookup:${sale.outletId}", idempotencyKey, requestFingerprint) { sale.id }
         sales[sale.id] = sale
+        bindings[key] = Binding(requestFingerprint, sale.id)
     }
 
     override fun updateLoyaltyResult(saleId: UUID, awarded: Boolean) = synchronized(monitor) {
@@ -221,11 +220,7 @@ private class InMemoryPosPersistence : PosPersistence {
 
     override fun delete(saleId: UUID) = synchronized(monitor) {
         val sale = sales.remove(saleId) ?: return@synchronized
-        bindings.entries.removeIf { entry ->
-            entry.key.first == sale.outletId && runCatching {
-                keys.execute("lookup:${sale.outletId}", entry.key.second, entry.value) { saleId }
-            }.getOrNull() == saleId
-        }
+        bindings.entries.removeIf { it.value.saleId == sale.id }
     }
 
     override fun get(saleId: UUID): PosSale = synchronized(monitor) {

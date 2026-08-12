@@ -413,7 +413,7 @@ export async function createCustomerOrder(input: CreateOrderInput, accessToken?:
       ...headers(accessToken),
       'Content-Type': 'application/json',
       'X-Delivery-Contact-Phone': contact.phoneNumber,
-      'X-Idempotency-Key': `checkout:${input.quoteToken}`,
+      'Idempotency-Key': `checkout:${input.quoteToken}`,
     },
     body: JSON.stringify(input),
   });

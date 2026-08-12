@@ -22,11 +22,21 @@ class ApiClient {
 
   private buildHeaders(customHeaders?: Record<string, string>): Record<string, string> {
     const headers: Record<string, string> = {
+      Accept: 'application/json',
       'Content-Type': 'application/json',
-      ...(customHeaders || {}),
     };
 
-    if (this.sessionToken) {
+    if (customHeaders) {
+      for (const [key, value] of Object.entries(customHeaders)) {
+        if (key.toLowerCase() === 'x-idempotency-key') {
+          headers['Idempotency-Key'] = value;
+        } else {
+          headers[key] = value;
+        }
+      }
+    }
+
+    if (this.sessionToken && !headers.Authorization) {
       headers.Authorization = `Bearer ${this.sessionToken}`;
     }
 

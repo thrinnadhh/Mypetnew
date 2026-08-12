@@ -1,3 +1,4 @@
+import { apiErrorFromResponse } from '@/contracts/api-error';
 import { appConfig } from '@/utils/app-config';
 
 export interface LoyaltyProgressDto {
@@ -57,6 +58,24 @@ function authHeaders(accessToken: string): Record<string, string> {
 async function apiError(response: Response, fallback: string): Promise<Error> {
   const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null;
   return new Error(body?.message || body?.error || fallback);
+}
+
+export interface CustomerLoyaltyBalanceResponse {
+  organizationId: string;
+  availableStars: number;
+  rewards: number;
+}
+
+export async function fetchCustomerLoyaltyBalance(
+  organizationId: string,
+  accessToken: string,
+): Promise<CustomerLoyaltyBalanceResponse> {
+  const response = await fetch(
+    `${appConfig.apiBaseUrl}/api/v1/customer/loyalty/${encodeURIComponent(organizationId)}`,
+    { headers: authHeaders(accessToken) },
+  );
+  if (!response.ok) throw await apiErrorFromResponse(response);
+  return (await response.json()) as CustomerLoyaltyBalanceResponse;
 }
 
 export async function fetchLoyaltyProgress(

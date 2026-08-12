@@ -73,6 +73,14 @@ data class CreateListingRequest(
     val kind: ListingKind,
     val mrpPaise: Long,
     val sellingPricePaise: Long,
+    val category: String? = null,
+    val brand: String? = null,
+    val description: String? = null,
+    val petType: String? = null,
+    val lifeStage: String? = null,
+    val packLabel: String? = null,
+    val sku: String? = null,
+    val imageUrls: List<String>? = null,
 )
 
 @RestController
@@ -101,6 +109,14 @@ class CatalogInventoryApiController(
                 mrpPaise = request.mrpPaise,
                 sellingPricePaise = request.sellingPricePaise,
                 capabilities = outlet.capabilities,
+                category = request.category ?: "other",
+                brand = request.brand,
+                description = request.description,
+                petType = request.petType,
+                lifeStage = request.lifeStage,
+                packLabel = request.packLabel,
+                sku = request.sku,
+                imageUrls = request.imageUrls.orEmpty(),
             ),
             idempotencyKey,
         )

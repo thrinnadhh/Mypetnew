@@ -5,6 +5,7 @@ import `in`.mypetnew.common.idempotency.IdempotencyStore
 import `in`.mypetnew.provider.domain.ProviderCapability
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.time.Instant
 import java.util.UUID
 
 enum class ListingKind { PRODUCT, MEDICINE }
@@ -21,6 +22,14 @@ data class CreateListingCommand(
     val mrpPaise: Long,
     val sellingPricePaise: Long,
     val capabilities: Set<ProviderCapability>,
+    val category: String = "other",
+    val brand: String? = null,
+    val description: String? = null,
+    val petType: String? = null,
+    val lifeStage: String? = null,
+    val packLabel: String? = null,
+    val sku: String? = null,
+    val imageUrls: List<String> = emptyList(),
 )
 
 data class Listing(
@@ -34,6 +43,15 @@ data class Listing(
     val commerceMode: CommerceMode,
     val mrpPaise: Long,
     val sellingPricePaise: Long,
+    val category: String = "other",
+    val brand: String? = null,
+    val description: String? = null,
+    val petType: String? = null,
+    val lifeStage: String? = null,
+    val packLabel: String? = null,
+    val sku: String? = null,
+    val imageUrls: List<String> = emptyList(),
+    val createdAt: Instant = Instant.now(),
 )
 
 interface CatalogPersistence {
@@ -54,11 +72,22 @@ class CatalogService(
 ) {
     fun createListing(command: CreateListingCommand, actionKey: String): Listing {
         val normalized = BarcodeNormalizer.normalize(command.barcodeType, command.barcode)
-        validate(command)
+        val cleanedCategory = command.category.trim().lowercase().ifBlank { "other" }
+        val cleanedCommand = command.copy(
+            category = cleanedCategory,
+            brand = cleanOptional(command.brand, 100),
+            description = cleanOptional(command.description, 2000),
+            petType = cleanOptional(command.petType, 40),
+            lifeStage = cleanOptional(command.lifeStage, 40),
+            packLabel = cleanOptional(command.packLabel, 80),
+            sku = cleanOptional(command.sku, 80),
+            imageUrls = command.imageUrls.map { it.trim() },
+        )
+        validate(cleanedCommand)
         validateActionKey(actionKey)
-        val commerceMode = if (command.kind == ListingKind.MEDICINE) CommerceMode.VIEW_ONLY else CommerceMode.COMMERCE
-        val fingerprint = fingerprint(command, normalized, commerceMode)
-        return persistence.create(command, normalized, commerceMode, actionKey, fingerprint)
+        val commerceMode = if (cleanedCommand.kind == ListingKind.MEDICINE) CommerceMode.VIEW_ONLY else CommerceMode.COMMERCE
+        val fingerprint = fingerprint(cleanedCommand, normalized, commerceMode)
+        return persistence.create(cleanedCommand, normalized, commerceMode, actionKey, fingerprint)
     }
 
     fun getListing(listingId: UUID): Listing = persistence.get(listingId)
@@ -82,6 +111,20 @@ class CatalogService(
         ) {
             throw DomainException("CAPABILITY_REQUIRED", "The outlet cannot publish medicine listings")
         }
+        if (!command.category.matches(Regex("[a-z0-9][a-z0-9-]{0,79}"))) {
+            throw DomainException("LISTING_CATEGORY_INVALID", "The category must be a valid lowercase slug")
+        }
+        if (command.imageUrls.size > 5) {
+            throw DomainException("LISTING_IMAGE_INVALID", "A listing cannot have more than 5 images")
+        }
+        if (command.imageUrls.distinct().size != command.imageUrls.size) {
+            throw DomainException("LISTING_IMAGE_INVALID", "Listing image URLs must be unique")
+        }
+        command.imageUrls.forEach { url ->
+            if (url.length > 2048 || !url.startsWith("https://", ignoreCase = true)) {
+                throw DomainException("LISTING_IMAGE_INVALID", "Image URLs must be valid HTTPS URLs up to 2048 characters")
+            }
+        }
     }
 
     private fun validateActionKey(actionKey: String) {
@@ -101,10 +144,28 @@ class CatalogService(
             commerceMode,
             command.mrpPaise,
             command.sellingPricePaise,
+            command.category,
+            command.brand.orEmpty(),
+            command.description.orEmpty(),
+            command.petType.orEmpty(),
+            command.lifeStage.orEmpty(),
+            command.packLabel.orEmpty(),
+            command.sku.orEmpty(),
+            command.imageUrls.joinToString(","),
         ).joinToString(":")
         return MessageDigest.getInstance("SHA-256")
             .digest(canonical.toByteArray(StandardCharsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
+    }
+
+    private fun cleanOptional(value: String?, maxLength: Int): String? {
+        if (value == null) return null
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) return null
+        if (trimmed.length > maxLength) {
+            throw DomainException("LISTING_METADATA_INVALID", "Metadata field exceeds maximum allowed length of $maxLength characters")
+        }
+        return trimmed
     }
 }
 
@@ -140,6 +201,15 @@ private class InMemoryCatalogPersistence : CatalogPersistence {
             commerceMode = commerceMode,
             mrpPaise = command.mrpPaise,
             sellingPricePaise = command.sellingPricePaise,
+            category = command.category,
+            brand = command.brand,
+            description = command.description,
+            petType = command.petType,
+            lifeStage = command.lifeStage,
+            packLabel = command.packLabel,
+            sku = command.sku,
+            imageUrls = command.imageUrls,
+            createdAt = Instant.now(),
         ).also {
             listings[unique] = it
             listingsById[it.id] = it

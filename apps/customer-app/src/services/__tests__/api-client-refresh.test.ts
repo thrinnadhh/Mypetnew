@@ -80,7 +80,7 @@ describe('ApiClient central token refresh & security behavior', () => {
     expect(refreshHandler).not.toHaveBeenCalled();
   });
 
-  it('clears auth state when refresh returns null or fails without recursive loops', async () => {
+  it('clears auth state when refresh returns null without recursive loops', async () => {
     const fetchMock = global.fetch as jest.MockedFunction<typeof fetch>;
     apiClient.setSessionToken('dead-token');
 
@@ -118,23 +118,25 @@ describe('ApiClient central token refresh & security behavior', () => {
     expect(clearAuthHandler).toHaveBeenCalledTimes(1);
   });
 
-  it('does NOT attempt refresh when DELETE /api/v1/auth/sessions/current returns 401', async () => {
+  it('does NOT refresh or clear a newer session when an auth lifecycle endpoint returns 401', async () => {
     const fetchMock = global.fetch as jest.MockedFunction<typeof fetch>;
     const refreshHandler = jest.fn();
     const clearAuthHandler = jest.fn();
 
     apiClient.setRefreshHandler(refreshHandler);
     apiClient.setClearAuthHandler(clearAuthHandler);
+    apiClient.setSessionToken('current-token');
 
     fetchMock.mockResolvedValueOnce(mockResponse({ code: 'AUTHENTICATION_REQUIRED' }, 401));
 
     await expect(apiClient.delete('/api/v1/auth/sessions/current')).rejects.toThrow(ApiError);
 
     expect(refreshHandler).not.toHaveBeenCalled();
-    expect(clearAuthHandler).toHaveBeenCalledTimes(1);
+    expect(clearAuthHandler).not.toHaveBeenCalled();
+    expect(apiClient.getSessionToken()).toBe('current-token');
   });
 
-  it('ignores refresh result if signOut/setSessionToken(null) occurs while refresh is in-flight', async () => {
+  it('ignores a refresh result when signOut occurs while refresh is in-flight', async () => {
     const fetchMock = global.fetch as jest.MockedFunction<typeof fetch>;
     apiClient.setSessionToken('expiring-token');
 
@@ -151,17 +153,83 @@ describe('ApiClient central token refresh & security behavior', () => {
     fetchMock.mockResolvedValueOnce(mockResponse({ code: 'AUTHENTICATION_REQUIRED' }, 401));
 
     const requestPromise = apiClient.get('/api/v1/protected-data');
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // Allow fetch & response reading to complete microtasks
-    await new Promise((r) => setTimeout(r, 0));
-
-    // Simulate user signing out while refresh is in-flight
     apiClient.setSessionToken(null);
-
-    // Resolve the in-flight refresh with a new token
     resolveRefresh('late-new-token');
 
-    await expect(requestPromise).rejects.toThrow();
-    expect(clearAuthHandler).toHaveBeenCalled();
+    await expect(requestPromise).rejects.toThrow(ApiError);
+    expect(clearAuthHandler).not.toHaveBeenCalled();
+    expect(apiClient.getSessionToken()).toBeNull();
+  });
+
+  it('never lets a stale refresh clear a newly established login generation', async () => {
+    const fetchMock = global.fetch as jest.MockedFunction<typeof fetch>;
+    apiClient.setSessionToken('session-a-token');
+
+    let resolveRefresh: (val: string | null) => void = () => {};
+    const oldRefresh = new Promise<string | null>((resolve) => {
+      resolveRefresh = resolve;
+    });
+
+    const refreshHandler = jest.fn().mockImplementation(() => oldRefresh);
+    const clearAuthHandler = jest.fn();
+    apiClient.setRefreshHandler(refreshHandler);
+    apiClient.setClearAuthHandler(clearAuthHandler);
+
+    fetchMock.mockResolvedValueOnce(mockResponse({ code: 'AUTHENTICATION_REQUIRED' }, 401));
+    const oldRequest = apiClient.get('/api/v1/session-a-resource');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    apiClient.advanceAuthEpoch();
+    apiClient.setSessionToken('session-b-token');
+    resolveRefresh('stale-session-a-rotated-token');
+
+    await expect(oldRequest).rejects.toThrow(ApiError);
+    expect(clearAuthHandler).not.toHaveBeenCalled();
+    expect(apiClient.getSessionToken()).toBe('session-b-token');
+  });
+
+  it('does not let an old refresh finalizer drop a newer in-flight refresh', async () => {
+    const fetchMock = global.fetch as jest.MockedFunction<typeof fetch>;
+    apiClient.setSessionToken('session-a-token');
+
+    let resolveA: (val: string | null) => void = () => {};
+    let resolveB: (val: string | null) => void = () => {};
+    const refreshA = new Promise<string | null>((resolve) => { resolveA = resolve; });
+    const refreshB = new Promise<string | null>((resolve) => { resolveB = resolve; });
+    const refreshHandler = jest.fn()
+      .mockImplementationOnce(() => refreshA)
+      .mockImplementationOnce(() => refreshB);
+    apiClient.setRefreshHandler(refreshHandler);
+
+    fetchMock
+      .mockResolvedValueOnce(mockResponse({ code: 'AUTHENTICATION_REQUIRED' }, 401))
+      .mockResolvedValueOnce(mockResponse({ code: 'AUTHENTICATION_REQUIRED' }, 401))
+      .mockResolvedValueOnce(mockResponse({ code: 'AUTHENTICATION_REQUIRED' }, 401))
+      .mockResolvedValueOnce(mockResponse({ ok: 'b' }, 200))
+      .mockResolvedValueOnce(mockResponse({ ok: 'c' }, 200));
+
+    const requestA = apiClient.get('/api/v1/a');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    apiClient.advanceAuthEpoch();
+    apiClient.setSessionToken('session-b-token');
+    const requestB = apiClient.get('/api/v1/b');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    resolveA('stale-a-token');
+    await expect(requestA).rejects.toThrow(ApiError);
+
+    const requestC = apiClient.get('/api/v1/c');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(refreshHandler).toHaveBeenCalledTimes(2);
+
+    apiClient.setSessionToken('rotated-b-token');
+    resolveB('rotated-b-token');
+
+    await expect(requestB).resolves.toEqual({ ok: 'b' });
+    await expect(requestC).resolves.toEqual({ ok: 'c' });
+    expect(refreshHandler).toHaveBeenCalledTimes(2);
   });
 });

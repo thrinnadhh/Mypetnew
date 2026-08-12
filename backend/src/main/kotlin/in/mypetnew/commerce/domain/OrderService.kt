@@ -207,7 +207,7 @@ class OrderService(
         return checkout(
             quote,
             UUID(0L, 0L),
-            lines.keys.associateWith(UUID::toString),
+            lines.keys.associateWith { it.toString() },
             idempotencyKey,
             InventoryService.SYSTEM_ACTOR_ID,
             InventoryService.SYSTEM_TRACE_ID,
@@ -407,10 +407,12 @@ private class InMemoryOrderPersistence : OrderPersistence {
         orders[order.id] = order
     }
 
-    override fun deleteOrder(orderId: UUID) = synchronized(monitor) {
-        orders.remove(orderId)
-        reservations.keys.removeIf { it.first == orderId }
-        checkoutKeys.entries.removeIf { it.value.second == orderId }
+    override fun deleteOrder(orderId: UUID) {
+        synchronized(monitor) {
+            orders.remove(orderId)
+            reservations.keys.removeIf { it.first == orderId }
+            checkoutKeys.entries.removeIf { it.value.second == orderId }
+        }
     }
 
     override fun get(orderId: UUID): ProductOrder = synchronized(monitor) {

@@ -77,6 +77,7 @@ describe('customer service foundations', () => {
       expect(mockedFetch).toHaveBeenCalledWith('https://api.mypet.test/api/v1/example', {
         method: 'POST',
         headers: {
+          Accept: 'application/json',
           'Content-Type': 'application/json',
           Authorization: 'Bearer session-token',
           'X-Request-Id': 'request-1',

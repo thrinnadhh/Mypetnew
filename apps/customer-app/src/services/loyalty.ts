@@ -59,6 +59,24 @@ async function apiError(response: Response, fallback: string): Promise<Error> {
   return new Error(body?.message || body?.error || fallback);
 }
 
+export interface CustomerLoyaltyBalanceResponse {
+  organizationId: string;
+  availableStars: number;
+  rewards: number;
+}
+
+export async function fetchCustomerLoyaltyBalance(
+  organizationId: string,
+  accessToken: string,
+): Promise<CustomerLoyaltyBalanceResponse> {
+  const response = await fetch(
+    `${appConfig.apiBaseUrl}/api/v1/customer/loyalty/${encodeURIComponent(organizationId)}`,
+    { headers: authHeaders(accessToken) },
+  );
+  if (!response.ok) throw await apiError(response, 'Could not fetch customer loyalty balance');
+  return (await response.json()) as CustomerLoyaltyBalanceResponse;
+}
+
 export async function fetchLoyaltyProgress(
   providerId: string,
   accessToken: string,

@@ -12,10 +12,10 @@ This document presents the authoritative inventory of Customer HTTP contracts in
 | OTP Verification | POST | `supabase.auth.verifyOtp` (SDK) | `/api/v1/auth/otp/verify` | **MISMATCH** | T2 |
 | Session Refresh | POST | `supabase.auth.getSession` (SDK) | `/api/v1/auth/sessions/refresh` | **MISMATCH** | T2 |
 | Session Logout | DELETE | `supabase.auth.signOut` (SDK) | `/api/v1/auth/sessions/current` | **MISMATCH** | T2 |
-| Public Catalog Listings | GET | Legacy provider/catalog routes (Canonical `/api/v1/public/catalog` not yet consumed) | `/api/v1/public/catalog` | **MISMATCH** | T2 |
-| Legacy Provider Discovery | GET | `/api/v1/discovery/providers` | N/A (Replaced by `/api/v1/public/catalog`) | **LEGACY_ONLY** | T2 |
-| Legacy Provider Profile | GET | `/api/v1/providers/{id}` | N/A (Embedded in catalog/listings) | **LEGACY_ONLY** | T2 |
-| Legacy Catalog Offerings | GET | `/api/v1/catalog/offerings` | `/api/v1/public/catalog` | **LEGACY_ONLY** | T2 |
+| Public Catalog Listings & Outlets | GET | `/api/v1/public/outlets`, `/api/v1/public/catalog` | `/api/v1/public/outlets`, `/api/v1/public/catalog` | **MATCH** | T2B2 |
+| Legacy Provider Discovery | GET | Replaced by `/api/v1/public/outlets` | `/api/v1/public/outlets` | **MIGRATED** | T2B2 |
+| Legacy Provider Profile | GET | Replaced by `/api/v1/public/outlets/{id}` | `/api/v1/public/outlets/{id}` | **MIGRATED** | T2B2 |
+| Legacy Catalog Offerings | GET | Replaced by `/api/v1/public/catalog` | `/api/v1/public/catalog` | **MIGRATED** | T2B2 |
 | Pickup Quote Creation | POST | `/api/v1/checkout/quote` | `/api/v1/customer/quotes/pickup` | **MISMATCH** | T2 |
 | Product Checkout Order | POST | `/api/v1/orders` | `/api/v1/customer/orders` | **MISMATCH** | T2 |
 | POS Association Challenge | POST | `/api/v1/customer/pos-association-challenges` | `/api/v1/customer/pos-association-challenges` | **MATCH** | T1 |
@@ -57,34 +57,18 @@ This document presents the authoritative inventory of Customer HTTP contracts in
 
 ### 2.2 Public Catalog & Discovery (`PublicCatalogController.kt`)
 
-- **Status**: **MISMATCH**
-- **Current Client Mechanism**: Live non-demo flows in `customer-catalog.ts` and `provider-discovery.ts` issue HTTP GET requests to:
-  - `/api/v1/discovery/providers`
-  - `/api/v1/providers/{id}`
-  - `/api/v1/catalog/offerings`
-  - `/api/v1/catalog/offerings/{id}`
-- **Canonical MyPetNew Endpoint (`PublicCatalogController.kt`)**:
-  - `GET /api/v1/public/catalog?page=0&pageSize=20`
-  - Response DTO: `PageResponse<PublicListingSummary>`
-    ```json
-    {
-      "items": [
-        {
-          "id": "uuid-string",
-          "outletId": "uuid-string",
-          "name": "Offering Name",
-          "sellingPricePaise": 25000,
-          "currency": "INR",
-          "commerceMode": "COMMERCE"
-        }
-      ],
-      "page": 0,
-      "pageSize": 20,
-      "hasNext": false
-    }
-  ```
-- **DTO & Path Differences**: Legacy client expected separate provider search/detail endpoints and individual offering objects with float `price` in rupees. `MyPetNew` consolidates public catalog browsing into `GET /api/v1/public/catalog` page responses with integer `sellingPricePaise`.
-- **Owning Follow-up Ticket**: **T2** (Full Catalog DTO & UI Migration).
+- **Status**: **MATCH** (Migrated in T2B2)
+- **Current Client Mechanism**: `customer-catalog.ts` and customer UI components call canonical endpoints via `apiClient`:
+  - `GET /api/v1/public/outlets`
+  - `GET /api/v1/public/outlets/{outletId}`
+  - `GET /api/v1/public/catalog`
+  - `GET /api/v1/public/catalog/{listingId}`
+- **Canonical MyPetNew Endpoints (`PublicCatalogController.kt`)**:
+  - `GET /api/v1/public/outlets?capability=PRODUCT_STORE`
+  - `GET /api/v1/public/catalog?page=0&pageSize=50`
+  - Response DTOs: `PageResponse<PublicOutletSummary>`, `PageResponse<PublicListingSummary>`, `PublicListingDetail`
+- **DTO & Path Alignment**: Fully aligned. Client maps `sellingPricePaise / 100` and `mrpPaise / 100`, preserves exact backend listing IDs, single compatibility variants, and enforces commerce eligibility for products vs view-only medicine.
+- **Owning Ticket**: **T2B2** (Completed).
 
 ---
 

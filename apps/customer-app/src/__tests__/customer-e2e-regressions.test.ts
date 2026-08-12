@@ -21,7 +21,7 @@ describe('customer end-to-end regression contracts', () => {
     expect(shop).toMatch(/fetchShopProfile/);
     expect(favourites).toMatch(/fetchCommerceProduct/);
     expect(favourites).toMatch(/fetchShopProfile/);
-    expect(discovery).toMatch(/fetchProviders\('PET_STORE'/);
+    expect(discovery).toMatch(/fetchPublicOutlets/);
     expect(`${category}\n${aliasRoute}\n${product}\n${shop}\n${favourites}\n${discovery}\n${registry}`).not.toMatch(
       /SAMPLE_PRODUCTS|SHOPS_DATA/,
     );

@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { AppIcon } from '@/components/app-icon';
@@ -7,17 +7,15 @@ import { AppBar, StateView } from '@/components/foundation/primitives';
 import { ScreenShell } from '@/components/foundation/screen-shell';
 import { ThemedText } from '@/components/themed-text';
 import { StatusBadge } from '@/components/ui/status-badge';
-import type { LaunchMarket } from '@/config/markets';
 import { useCart } from '@/context/CartContext';
-import { useLocation } from '@/context/LocationContext';
 import { radii, shadows, spacing, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
-import { isOfflineError } from '@/services/customer-profile';
 import {
-  fetchProviders,
-  type ProviderSummary,
-} from '@/services/provider-discovery';
+  fetchPublicOutlets,
+  type PublicOutletSummary,
+} from '@/services/customer-catalog';
+import { isOfflineError } from '@/services/customer-profile';
 
 type LoadState = 'loading' | 'ready' | 'offline' | 'error';
 
@@ -58,20 +56,20 @@ export function ShopCategoryNav() {
   );
 }
 
-function LiveStoreCards({ stores }: { stores: ProviderSummary[] }) {
+function LiveStoreCards({ stores }: { stores: PublicOutletSummary[] }) {
   const router = useRouter();
   const theme = useTheme();
 
   return (
     <View style={styles.section}>
-      <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Nearby Pet Stores</ThemedText>
+      <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Available Pet Stores</ThemedText>
       <View style={styles.shopGrid}>
         {stores.map((store) => (
           <Pressable
             key={store.id}
             onPress={() => router.push(`/shop/${store.id}` as never)}
             accessibilityRole="button"
-            accessibilityLabel={`${store.name}, ${store.distanceKm.toFixed(1)} kilometres away`}
+            accessibilityLabel={`${store.name}, ${store.pickupEnabled ? 'Store pickup available' : 'Pickup unavailable'}`}
             style={({ pressed }) => [
               styles.shopCard,
               shadows.raised,
@@ -87,14 +85,14 @@ function LiveStoreCards({ stores }: { stores: ProviderSummary[] }) {
                 <ThemedText style={[styles.shopTitle, { color: theme.text }]} numberOfLines={1}>
                   {store.name}
                 </ThemedText>
-                <StatusBadge label={`${store.rating.toFixed(1)} ★`} color={theme.warning} />
+                <StatusBadge
+                  label={store.pickupEnabled ? 'Pickup Available' : 'Pickup Unavailable'}
+                  color={store.pickupEnabled ? theme.success : theme.textSecondary}
+                />
               </View>
-              <ThemedText style={{ fontSize: 12, color: theme.textSecondary }} numberOfLines={2}>
-                {store.description || 'Verified local pet supplies and essentials'}
-              </ThemedText>
               <View style={styles.rowBetween}>
-                <ThemedText style={{ fontSize: 12, color: theme.primary, fontWeight: '700' }}>
-                  {store.distanceKm.toFixed(1)} km away
+                <ThemedText style={{ fontSize: 12, color: theme.textSecondary }}>
+                  Product Store
                 </ThemedText>
                 <ThemedText style={{ color: theme.primary, fontWeight: '800' }}>Explore →</ThemedText>
               </View>
@@ -110,30 +108,21 @@ export default function CommerceDiscoveryScreen() {
   const router = useRouter();
   const theme = useTheme();
   const { t } = useTranslation();
-  const { activeCity } = useLocation();
   const { providerName, totalItemsCount, subtotalAmount } = useCart();
-  const [stores, setStores] = useState<ProviderSummary[]>([]);
+  const [stores, setStores] = useState<PublicOutletSummary[]>([]);
   const [state, setState] = useState<LoadState>('loading');
-
-  const market = useMemo<LaunchMarket>(() => ({
-    id: activeCity.id,
-    city: activeCity.displayName,
-    state: activeCity.state,
-    latitude: activeCity.centerLatitude,
-    longitude: activeCity.centerLongitude,
-    discoveryRadiusKm: activeCity.radiusKm,
-  }), [activeCity]);
 
   const load = useCallback(async () => {
     setState('loading');
     try {
-      setStores(await fetchProviders('PET_STORE', market));
+      const response = await fetchPublicOutlets({ capability: 'PRODUCT_STORE' });
+      setStores(response.items);
       setState('ready');
     } catch (error) {
       setStores([]);
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, [market]);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -141,13 +130,13 @@ export default function CommerceDiscoveryScreen() {
 
   return (
     <ScreenShell
-      header={<AppBar title={t('commerceFoundation.title')} subtitle={`Live pet stores in ${activeCity.displayName}`} />}
+      header={<AppBar title={t('commerceFoundation.title')} subtitle="Available Pet Stores" />}
       testID="commerce-discovery-screen"
     >
       <View style={styles.container}>
         <ShopCategoryNav />
         {state === 'loading' ? (
-          <StateView kind="loading" title="Finding nearby stores" />
+          <StateView kind="loading" title="Finding active pet stores" />
         ) : null}
         {state === 'offline' || state === 'error' ? (
           <StateView
@@ -161,8 +150,8 @@ export default function CommerceDiscoveryScreen() {
         {state === 'ready' && stores.length === 0 ? (
           <StateView
             kind="empty"
-            title="No active pet stores nearby"
-            message={`MyPet has not enabled product delivery in ${activeCity.displayName} yet.`}
+            title="No active pet stores available"
+            message="No active pet stores are currently available."
           />
         ) : null}
         {state === 'ready' && stores.length > 0 ? <LiveStoreCards stores={stores} /> : null}

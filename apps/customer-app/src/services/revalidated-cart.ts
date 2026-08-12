@@ -1,6 +1,7 @@
 import type { CartItem } from '@/context/CartContext';
-import type { ReorderValidationResult } from '@/services/customer-orders';
+import { isCommerceEligible } from '@/services/commerce-eligibility';
 import { fetchCommerceProduct } from '@/services/customer-catalog';
+import type { ReorderValidationResult } from '@/services/customer-orders';
 
 export async function buildCartFromRevalidation(
   result: ReorderValidationResult,
@@ -21,6 +22,9 @@ export async function buildCartFromRevalidation(
   return products.map((product, index) => {
     if (product.providerId !== result.providerId) {
       throw new Error('Revalidated item belongs to a different provider.');
+    }
+    if (!isCommerceEligible(product)) {
+      throw new Error(`${product.name} is not eligible for online purchase or pickup.`);
     }
     const variant = product.variants[0];
     if (!variant?.inStock) {

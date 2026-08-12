@@ -84,6 +84,37 @@ data class PageResponse<T>(
     val hasNext: Boolean,
 )
 
+object PaginationHelper {
+    fun validate(page: Int, pageSize: Int) {
+        if (page < 0 || pageSize !in 1..100) {
+            throw DomainException("PAGE_SIZE_INVALID", "Pagination values are outside the allowed range")
+        }
+    }
+
+    fun <T> paginate(items: List<T>, page: Int, pageSize: Int): PageResponse<T> {
+        validate(page, pageSize)
+        val total = items.size.toLong()
+        val offset = page.toLong() * pageSize.toLong()
+        if (offset >= total) {
+            return PageResponse(
+                items = emptyList(),
+                page = page,
+                pageSize = pageSize,
+                hasNext = false,
+            )
+        }
+        val from = offset.toInt()
+        val to = (offset + pageSize.toLong()).coerceAtMost(total).toInt()
+        val pagedItems = items.subList(from, to)
+        return PageResponse(
+            items = pagedItems,
+            page = page,
+            pageSize = pageSize,
+            hasNext = to.toLong() < total,
+        )
+    }
+}
+
 @RestController
 @RequestMapping("/api/v1/public/outlets")
 class PublicOutletController(
@@ -96,9 +127,6 @@ class PublicOutletController(
         @RequestParam(required = false) capability: ProviderCapability?,
         @RequestParam(required = false) q: String?,
     ): PageResponse<PublicOutletSummary> {
-        if (page < 0 || pageSize !in 1..100) {
-            throw DomainException("PAGE_SIZE_INVALID", "Pagination values are outside the allowed range")
-        }
         val query = q?.trim()?.lowercase()
         val visible = providers.allOutlets()
             .filter { outlet ->
@@ -107,19 +135,17 @@ class PublicOutletController(
                 (query.isNullOrEmpty() || outlet.name.lowercase().contains(query))
             }
             .sortedWith(compareBy<ProviderOutlet> { it.name.lowercase() }.thenBy { it.id.toString() })
+            .map { outlet ->
+                PublicOutletSummary(
+                    id = outlet.id.toString(),
+                    organizationId = outlet.organizationId.toString(),
+                    name = outlet.name,
+                    capabilities = outlet.capabilities.sortedBy { it.name },
+                    pickupEnabled = outlet.pickupEnabled,
+                )
+            }
 
-        val from = (page * pageSize).coerceAtMost(visible.size)
-        val to = (from + pageSize).coerceAtMost(visible.size)
-        val items = visible.subList(from, to).map { outlet ->
-            PublicOutletSummary(
-                id = outlet.id.toString(),
-                organizationId = outlet.organizationId.toString(),
-                name = outlet.name,
-                capabilities = outlet.capabilities.sortedBy { it.name },
-                pickupEnabled = outlet.pickupEnabled,
-            )
-        }
-        return PageResponse(items, page, pageSize, to < visible.size)
+        return PaginationHelper.paginate(visible, page, pageSize)
     }
 
     @GetMapping("/{outletId}")
@@ -160,9 +186,6 @@ class PublicCatalogController(
         @RequestParam(required = false) availability: AvailabilityFilter?,
         @RequestParam(required = false) sort: CatalogSortOption?,
     ): PageResponse<PublicListingSummary> {
-        if (page < 0 || pageSize !in 1..100) {
-            throw DomainException("PAGE_SIZE_INVALID", "Pagination values are outside the allowed range")
-        }
         val activeOutlets = providers.allOutlets()
             .filter { it.status == ProviderStatus.ACTIVE }
             .associateBy { it.id }
@@ -196,9 +219,7 @@ class PublicCatalogController(
 
         val sorted = sortListings(filtered, sort ?: CatalogSortOption.NAME)
 
-        val from = (page * pageSize).coerceAtMost(sorted.size)
-        val to = (from + pageSize).coerceAtMost(sorted.size)
-        val items = sorted.subList(from, to).map { item ->
+        val summaries = sorted.map { item ->
             val l = item.listing
             val o = item.outlet
             PublicListingSummary(
@@ -223,7 +244,7 @@ class PublicCatalogController(
                 createdAt = l.createdAt,
             )
         }
-        return PageResponse(items, page, pageSize, to < sorted.size)
+        return PaginationHelper.paginate(summaries, page, pageSize)
     }
 
     @GetMapping("/{listingId}")

@@ -68,14 +68,14 @@ class BarcodeCatalogContractTest {
     }
 
     @Test
-    fun `category slug validation enforces lowercase alphanumeric slug`() {
+    fun `category slug validation enforces lowercase alphanumeric slug and rejects blank`() {
         val service = CatalogService()
         val base = productCommand(UUID.randomUUID(), UUID.randomUUID())
 
         val valid = service.createListing(base.copy(category = "  DOG-FOOD-1  "), "cat-1")
         assertEquals("dog-food-1", valid.category)
 
-        listOf("Invalid Category", "food!", "-dog", "cat$").forEach { badCat ->
+        listOf("", "   ", "Invalid Category", "food!", "-dog", "cat$").forEach { badCat ->
             assertThrows(DomainException::class.java) {
                 service.createListing(base.copy(category = badCat), "cat-bad")
             }
@@ -114,7 +114,7 @@ class BarcodeCatalogContractTest {
     }
 
     @Test
-    fun `image URLs enforce HTTPS scheme, limit of 5, uniqueness and length`() {
+    fun `image URLs enforce structural HTTPS validation, limit of 5, uniqueness and length`() {
         val service = CatalogService()
         val base = productCommand(UUID.randomUUID(), UUID.randomUUID())
 
@@ -122,16 +122,21 @@ class BarcodeCatalogContractTest {
         val created = service.createListing(base.copy(imageUrls = validImages), "img-1")
         assertEquals(validImages, created.imageUrls)
 
-        // Non-HTTPS schemes fail closed
+        // Non-HTTPS, malformed, or user-info URLs fail closed
         listOf(
             "http://example.com/img.jpg",
             "file:///tmp/img.png",
             "data:image/png;base64,12345",
             "javascript:alert(1)",
+            "https://",
+            "https:///image.jpg",
+            "https://?x=1",
+            "https://user:password@example.com/image.jpg",
         ).forEach { badUrl ->
-            assertThrows(DomainException::class.java) {
+            val ex = assertThrows(DomainException::class.java) {
                 service.createListing(base.copy(imageUrls = listOf(badUrl)), "img-bad-scheme")
             }
+            assertEquals("LISTING_IMAGE_INVALID", ex.code)
         }
 
         // More than 5 images fails
@@ -157,9 +162,46 @@ class BarcodeCatalogContractTest {
         val cmd2 = productCommand(orgId, outletId).copy(brand = "Brand B")
 
         service.createListing(cmd1, "same-idempotency-key")
-        assertThrows(DomainException::class.java) {
+        val ex = assertThrows(DomainException::class.java) {
             service.createListing(cmd2, "same-idempotency-key")
         }
+        assertEquals("IDEMPOTENCY_FINGERPRINT_MISMATCH", ex.code)
+    }
+
+    @Test
+    fun `delimiter collision payloads produce fingerprint mismatch`() {
+        val service = CatalogService()
+        val orgId = UUID.randomUUID()
+        val outletId = UUID.randomUUID()
+
+        val cmdA = productCommand(orgId, outletId).copy(brand = "A:B", description = "C")
+        val cmdB = productCommand(orgId, outletId).copy(brand = "A", description = "B:C")
+
+        service.createListing(cmdA, "delim-key-1")
+        val ex = assertThrows(DomainException::class.java) {
+            service.createListing(cmdB, "delim-key-1")
+        }
+        assertEquals("IDEMPOTENCY_FINGERPRINT_MISMATCH", ex.code)
+    }
+
+    @Test
+    fun `changed image order under same idempotency key produces fingerprint mismatch`() {
+        val service = CatalogService()
+        val orgId = UUID.randomUUID()
+        val outletId = UUID.randomUUID()
+
+        val cmdA = productCommand(orgId, outletId).copy(
+            imageUrls = listOf("https://example.com/1.jpg", "https://example.com/2.jpg"),
+        )
+        val cmdB = productCommand(orgId, outletId).copy(
+            imageUrls = listOf("https://example.com/2.jpg", "https://example.com/1.jpg"),
+        )
+
+        service.createListing(cmdA, "order-key-1")
+        val ex = assertThrows(DomainException::class.java) {
+            service.createListing(cmdB, "order-key-1")
+        }
+        assertEquals("IDEMPOTENCY_FINGERPRINT_MISMATCH", ex.code)
     }
 
     private fun productCommand(organizationId: UUID, outletId: UUID) = CreateListingCommand(

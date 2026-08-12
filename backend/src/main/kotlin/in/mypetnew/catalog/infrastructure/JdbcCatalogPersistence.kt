@@ -29,28 +29,8 @@ class JdbcCatalogPersistence(
             return transactions.execute {
                 replay(command.outletId, actionKey, requestFingerprint)?.let { return@execute it }
                 findByBarcode(command, normalizedBarcode)?.let { return@execute it }
+                val listingId = UUID.randomUUID()
                 val now = Instant.now()
-                val listing = Listing(
-                    id = UUID.randomUUID(),
-                    organizationId = command.organizationId,
-                    outletId = command.outletId,
-                    barcodeType = command.barcodeType,
-                    normalizedBarcode = normalizedBarcode,
-                    name = command.name.trim(),
-                    kind = command.kind,
-                    commerceMode = commerceMode,
-                    mrpPaise = command.mrpPaise,
-                    sellingPricePaise = command.sellingPricePaise,
-                    category = command.category,
-                    brand = command.brand,
-                    description = command.description,
-                    petType = command.petType,
-                    lifeStage = command.lifeStage,
-                    packLabel = command.packLabel,
-                    sku = command.sku,
-                    imageUrls = command.imageUrls,
-                    createdAt = now,
-                )
                 jdbc.update(
                     """
                     INSERT INTO mypet.catalog_listing (
@@ -61,41 +41,42 @@ class JdbcCatalogPersistence(
                         create_request_fingerprint, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, 0, ?, ?, ?, ?)
                     """.trimIndent(),
-                    listing.id,
-                    listing.organizationId,
-                    listing.outletId,
-                    listing.barcodeType.name,
-                    listing.normalizedBarcode,
+                    listingId,
+                    command.organizationId,
+                    command.outletId,
+                    command.barcodeType.name,
+                    normalizedBarcode,
                     command.barcode.take(128),
-                    listing.name,
-                    listing.kind.name,
-                    listing.commerceMode.name,
-                    listing.mrpPaise,
-                    listing.sellingPricePaise,
-                    listing.category,
-                    listing.brand,
-                    listing.description,
-                    listing.petType,
-                    listing.lifeStage,
-                    listing.packLabel,
-                    listing.sku,
+                    command.name.trim(),
+                    command.kind.name,
+                    commerceMode.name,
+                    command.mrpPaise,
+                    command.sellingPricePaise,
+                    command.category,
+                    command.brand,
+                    command.description,
+                    command.petType,
+                    command.lifeStage,
+                    command.packLabel,
+                    command.sku,
                     actionKey,
                     requestFingerprint,
                     java.sql.Timestamp.from(now),
                     java.sql.Timestamp.from(now),
                 )
-                listing.imageUrls.forEachIndexed { position, url ->
+                command.imageUrls.forEachIndexed { position, url ->
                     jdbc.update(
                         """
                         INSERT INTO mypet.catalog_listing_image (listing_id, position, image_url)
                         VALUES (?, ?, ?)
                         """.trimIndent(),
-                        listing.id,
+                        listingId,
                         position,
                         url,
                     )
                 }
-                listing
+                // Return authoritative database-persisted Listing
+                get(listingId) ?: throw DomainException("PERSISTENCE_ERROR", "Failed to retrieve newly created listing")
             }
         } catch (duplicate: DuplicateKeyException) {
             replay(command.outletId, actionKey, requestFingerprint)?.let { return it }
@@ -228,26 +209,30 @@ class JdbcCatalogPersistence(
         val createdAt: Instant,
     )
 
-    private fun mapRow(rs: ResultSet): ListingRow = ListingRow(
-        id = rs.getObject("id", UUID::class.java),
-        organizationId = rs.getObject("organization_id", UUID::class.java),
-        outletId = rs.getObject("outlet_id", UUID::class.java),
-        barcodeType = BarcodeType.valueOf(rs.getString("barcode_type")),
-        normalizedBarcode = rs.getString("normalized_barcode"),
-        name = rs.getString("name"),
-        kind = ListingKind.valueOf(rs.getString("listing_kind")),
-        commerceMode = CommerceMode.valueOf(rs.getString("commerce_mode")),
-        mrpPaise = rs.getLong("mrp_paise"),
-        sellingPricePaise = rs.getLong("selling_price_paise"),
-        category = rs.getString("category") ?: "other",
-        brand = rs.getString("brand"),
-        description = rs.getString("description"),
-        petType = rs.getString("pet_type"),
-        lifeStage = rs.getString("life_stage"),
-        packLabel = rs.getString("pack_label"),
-        sku = rs.getString("sku"),
-        createdAt = rs.getTimestamp("created_at")?.toInstant() ?: Instant.now(),
-    )
+    private fun mapRow(rs: ResultSet): ListingRow {
+        val timestamp = rs.getTimestamp("created_at")
+            ?: throw DomainException("DATABASE_CORRUPT", "Missing created_at for catalog listing")
+        return ListingRow(
+            id = rs.getObject("id", UUID::class.java),
+            organizationId = rs.getObject("organization_id", UUID::class.java),
+            outletId = rs.getObject("outlet_id", UUID::class.java),
+            barcodeType = BarcodeType.valueOf(rs.getString("barcode_type")),
+            normalizedBarcode = rs.getString("normalized_barcode"),
+            name = rs.getString("name"),
+            kind = ListingKind.valueOf(rs.getString("listing_kind")),
+            commerceMode = CommerceMode.valueOf(rs.getString("commerce_mode")),
+            mrpPaise = rs.getLong("mrp_paise"),
+            sellingPricePaise = rs.getLong("selling_price_paise"),
+            category = rs.getString("category") ?: "other",
+            brand = rs.getString("brand"),
+            description = rs.getString("description"),
+            petType = rs.getString("pet_type"),
+            lifeStage = rs.getString("life_stage"),
+            packLabel = rs.getString("pack_label"),
+            sku = rs.getString("sku"),
+            createdAt = timestamp.toInstant(),
+        )
+    }
 
     private fun listing(row: ListingRow, imageUrls: List<String>): Listing = Listing(
         id = row.id,

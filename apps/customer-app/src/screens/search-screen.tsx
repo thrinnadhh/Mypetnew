@@ -10,7 +10,10 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { useLocation } from '@/context/LocationContext';
 import { radii, shadows, spacing, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
+import { type CommerceProduct, SAMPLE_PRODUCTS } from '@/services/catalog-data';
+import { fetchAllPublicOutlets, fetchCatalogPage } from '@/services/customer-catalog';
 import { isOfflineError } from '@/services/customer-profile';
+import { DEMO_PROVIDER_FIXTURES } from '@/services/demo-customer-data';
 import { appConfig } from '@/utils/app-config';
 
 export interface SearchResultItem {
@@ -27,7 +30,7 @@ export interface SearchResultItem {
 }
 
 const RECENT_SEARCHES_KEY = 'mypet_recent_searches_v1';
-const FILTER_TYPES = [
+const ALL_FILTER_TYPES = [
   { id: 'ALL', label: 'All' },
   { id: 'PRODUCT', label: 'Products' },
   { id: 'PET_SHOP', label: 'Shops' },
@@ -50,6 +53,10 @@ export default function UniversalSearchScreen() {
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [state, setState] = useState<SearchState>(params.q ? 'loading' : 'idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const availableFilters = appConfig.allowDemoMode
+    ? ALL_FILTER_TYPES
+    : ALL_FILTER_TYPES.filter((f) => ['ALL', 'PRODUCT', 'PET_SHOP'].includes(f.id));
 
   useEffect(() => {
     const loadRecent = async () => {
@@ -91,24 +98,81 @@ export default function UniversalSearchScreen() {
     setState('loading');
     setErrorMessage(null);
     try {
-      const searchParams = new URLSearchParams({
-        q: normalizedQuery,
-        city: activeCity.cityIdentity,
-      });
-      if (type !== 'ALL') searchParams.set('type', type);
+      if (appConfig.allowDemoMode) {
+        const queryLower = normalizedQuery.toLowerCase();
+        const demoResults: SearchResultItem[] = [];
 
-      const response = await fetch(
-        `${appConfig.apiBaseUrl}/api/v1/discovery/search?${searchParams.toString()}`,
-        { headers: { Accept: 'application/json' } },
-      );
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null;
-        throw new Error(body?.message || body?.error || `Search failed (${response.status})`);
+        if (type === 'ALL' || type === 'PRODUCT') {
+          const matchedProducts = SAMPLE_PRODUCTS.filter(
+            (p: CommerceProduct) => p.name.toLowerCase().includes(queryLower) || p.category.toLowerCase().includes(queryLower),
+          );
+          for (const item of matchedProducts) {
+            demoResults.push({
+              id: item.id,
+              type: 'PRODUCT',
+              title: item.name,
+              subtitle: item.brand || item.providerName,
+              price: `₹${item.price}`,
+              route: `/commerce/product-detail?id=${encodeURIComponent(item.id)}`,
+            });
+          }
+        }
+
+        if (type === 'ALL' || type === 'PET_SHOP') {
+          const matchedStores = DEMO_PROVIDER_FIXTURES.PET_STORE.filter((s) =>
+            s.name.toLowerCase().includes(queryLower),
+          );
+          for (const store of matchedStores) {
+            demoResults.push({
+              id: store.id,
+              type: 'PET_SHOP',
+              title: store.name,
+              subtitle: 'Store pickup available',
+              route: `/shop/${encodeURIComponent(store.id)}`,
+            });
+          }
+        }
+
+        setResults(demoResults);
+        setState('ready');
+        await saveRecentSearch(normalizedQuery);
+        return;
       }
 
-      const data = (await response.json()) as { results?: SearchResultItem[] } | SearchResultItem[];
-      const nextResults = Array.isArray(data) ? data : data.results ?? [];
-      setResults(nextResults);
+      // Canonical live search using customer-catalog service helpers
+      const combinedResults: SearchResultItem[] = [];
+
+      const searchProducts = type === 'ALL' || type === 'PRODUCT';
+      const searchOutlets = type === 'ALL' || type === 'PET_SHOP';
+
+      if (searchProducts) {
+        const catalogPage = await fetchCatalogPage({ q: normalizedQuery, kind: 'PRODUCT', pageSize: 20 });
+        for (const item of catalogPage.items) {
+          combinedResults.push({
+            id: item.id,
+            type: 'PRODUCT',
+            title: item.name,
+            subtitle: item.brand || item.outletName,
+            price: `₹${(item.sellingPricePaise / 100).toFixed(0)}`,
+            route: `/commerce/product-detail?id=${encodeURIComponent(item.id)}`,
+          });
+        }
+      }
+
+      if (searchOutlets) {
+        const outlets = await fetchAllPublicOutlets({ q: normalizedQuery, capability: 'PRODUCT_STORE' });
+        for (const outlet of outlets) {
+          combinedResults.push({
+            id: outlet.id,
+            type: 'PET_SHOP',
+            title: outlet.name,
+            subtitle: outlet.pickupEnabled ? 'Store pickup available' : 'Pickup unavailable',
+            route: `/shop/${encodeURIComponent(outlet.id)}`,
+          });
+        }
+      }
+
+      setResults(combinedResults);
       setState('ready');
       await saveRecentSearch(normalizedQuery);
     } catch (error) {
@@ -137,7 +201,7 @@ export default function UniversalSearchScreen() {
           <TextInput
             value={query}
             onChangeText={setQuery}
-            placeholder="Search food, clinics, grooming, guides..."
+            placeholder="Search products or stores..."
             placeholderTextColor={theme.textSecondary}
             style={[styles.searchInput, { color: theme.text }]}
             autoFocus={!params.q}
@@ -156,7 +220,7 @@ export default function UniversalSearchScreen() {
         <FlatList
           horizontal
           showsHorizontalScrollIndicator={false}
-          data={FILTER_TYPES}
+          data={availableFilters}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.filterList}
           renderItem={({ item }) => (
@@ -172,7 +236,7 @@ export default function UniversalSearchScreen() {
       {state === 'loading' ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={theme.primary} />
-          <ThemedText style={{ color: theme.textSecondary, marginTop: 8 }}>Searching active providers...</ThemedText>
+          <ThemedText style={{ color: theme.textSecondary, marginTop: 8 }}>Searching active catalog...</ThemedText>
         </View>
       ) : state === 'offline' || state === 'error' ? (
         <StateView
@@ -207,9 +271,9 @@ export default function UniversalSearchScreen() {
             </>
           ) : null}
 
-          <ThemedText style={[styles.recentTitle, { marginTop: spacing.x6 }]}>Popular Categories</ThemedText>
+          <ThemedText style={[styles.recentTitle, { marginTop: spacing.x6 }]}>Popular Searches</ThemedText>
           <View style={styles.chipGrid}>
-            {['Maxi Puppy Food', '24/7 Vet ICU', 'Full Grooming Bath', 'Puppy Teething Guide'].map((term) => (
+            {['Adult Dog Food', 'Cat Treats', 'Chew Toys', 'Grooming Shampoo'].map((term) => (
               <Pressable
                 key={term}
                 onPress={() => setQuery(term)}
@@ -226,7 +290,7 @@ export default function UniversalSearchScreen() {
           <AppIcon name="search" color={theme.textSecondary} size={40} />
           <ThemedText style={{ fontWeight: '700', fontSize: 16, marginTop: 12 }}>No matching results</ThemedText>
           <ThemedText style={{ color: theme.textSecondary, fontSize: 13, marginTop: 4 }}>
-            Try searching for food, vet hospitals, grooming spas, or guides in {activeCity.displayName}.
+            Try searching for products or store names.
           </ThemedText>
         </View>
       ) : (
@@ -252,7 +316,7 @@ export default function UniversalSearchScreen() {
               {item.subtitle ? <ThemedText style={{ fontSize: 13, color: theme.textSecondary }}>{item.subtitle}</ThemedText> : null}
               <View style={styles.resultFooter}>
                 {item.price ? <ThemedText style={{ fontWeight: '700', color: theme.primary }}>{item.price}</ThemedText> : null}
-                {item.distanceKm != null ? (
+                {appConfig.allowDemoMode && item.distanceKm != null ? (
                   <ThemedText style={{ fontSize: 12, color: theme.textSecondary }}>
                     {item.distanceKm.toFixed(1)} km away
                   </ThemedText>

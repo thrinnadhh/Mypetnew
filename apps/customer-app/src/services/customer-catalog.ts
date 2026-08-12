@@ -256,15 +256,28 @@ export async function fetchCatalogListing(listingId: string): Promise<PublicList
   return apiClient.get<PublicListingDetail>(url);
 }
 
+export function normalizeDemoCommerceProduct(product: CommerceProduct): CommerceProduct {
+  const stock = product.stockCount ?? 1;
+  const availableQty = product.availableQuantity ?? stock;
+  return {
+    ...product,
+    kind: product.kind ?? 'PRODUCT',
+    commerceMode: product.commerceMode ?? 'COMMERCE',
+    availableQuantity: availableQty,
+    stockCount: stock,
+    pickupEnabled: product.pickupEnabled ?? true,
+    inStock: product.inStock ?? (availableQty > 0),
+  };
+}
+
 export async function fetchCommerceProduct(listingId: string): Promise<CommerceProduct> {
   if (appConfig.allowDemoMode) {
-    const product =
-      SAMPLE_PRODUCTS.find((item) => item.id === listingId) ??
-      DEMO_PROVIDER_FIXTURES.PET_STORE.flatMap((provider) =>
-        demoProductsForProvider(provider.id),
-      ).find((item) => item.id === listingId);
-
-    if (product) return { ...product };
+    const demo = SAMPLE_PRODUCTS.find((p) => p.id === listingId);
+    if (!demo) throw new Error('DEMO_PRODUCT_NOT_FOUND');
+    return normalizeDemoCommerceProduct({
+      ...demo,
+      galleryImages: demo.galleryImages.length > 0 ? demo.galleryImages : [demo.imageUrl || ''],
+    });
   }
 
   const detail = await fetchCatalogListing(listingId);
@@ -284,13 +297,15 @@ export async function fetchCommerceProducts(
       );
     }
     if (query.onlyNewArrivals) products = products.filter((product) => product.isNewArrival);
-    return products.map((product) => ({
-      ...product,
-      galleryImages:
-        product.galleryImages.length > 0
-          ? product.galleryImages
-          : [product.imageUrl || ''],
-    }));
+    return products.map((product) =>
+      normalizeDemoCommerceProduct({
+        ...product,
+        galleryImages:
+          product.galleryImages.length > 0
+            ? product.galleryImages
+            : [product.imageUrl || ''],
+      }),
+    );
   }
 
   const catalogQuery: PublicCatalogQuery = {
@@ -345,21 +360,23 @@ export async function fetchShopProfile(outletId: string): Promise<ShopProfileDat
 
 function demoProductsForProvider(providerId: string): CommerceProduct[] {
   const direct = SAMPLE_PRODUCTS.filter((product) => product.providerId === providerId);
-  if (direct.length > 0) return direct.map((product) => ({ ...product }));
+  if (direct.length > 0) return direct.map((product) => normalizeDemoCommerceProduct(product));
 
   const provider = DEMO_PROVIDER_FIXTURES.PET_STORE.find((item) => item.id === providerId);
   if (!provider) return [];
-  return SAMPLE_PRODUCTS.slice(0, 4).map((product, index) => ({
-    ...product,
-    id: `${providerId}-${product.id}-${index}`,
-    providerId,
-    providerName: provider.name,
-    sellerInfo: {
-      ...product.sellerInfo,
-      id: providerId,
-      name: provider.name,
-      address: provider.description,
-      rating: `${provider.rating.toFixed(1)} ★`,
-    },
-  }));
+  return SAMPLE_PRODUCTS.slice(0, 4).map((product, index) =>
+    normalizeDemoCommerceProduct({
+      ...product,
+      id: `${providerId}-${product.id}-${index}`,
+      providerId,
+      providerName: provider.name,
+      sellerInfo: {
+        ...product.sellerInfo,
+        id: providerId,
+        name: provider.name,
+        address: provider.description,
+        rating: `${provider.rating.toFixed(1)} ★`,
+      },
+    }),
+  );
 }

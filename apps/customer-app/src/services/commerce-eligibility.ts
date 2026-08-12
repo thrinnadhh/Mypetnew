@@ -14,7 +14,7 @@ export function isCommerceEligible(
 
   const isProduct = target.kind === 'PRODUCT';
   const isCommerce = target.commerceMode === 'COMMERCE';
-  const qty = target.availableQuantity ?? target.stockCount;
+  const qty = target.availableQuantity;
   const hasQuantity = typeof qty === 'number' && Number.isFinite(qty) && qty > 0;
   const pickupOk = target.pickupEnabled === true;
   const stockOk = target.inStock !== false;

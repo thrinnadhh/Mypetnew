@@ -44,7 +44,9 @@ function clampQuantity(value: number, maxStock: number): number {
 }
 
 function stockFor(product: CommerceProduct, variant?: ProductVariant): number {
-  return Math.max(0, variant?.stockCount ?? product.stockCount);
+  const productStock = product.availableQuantity ?? product.stockCount;
+  const variantStock = variant?.stockCount ?? productStock;
+  return Math.max(0, Math.min(productStock, variantStock));
 }
 
 function storageIdentity(userId?: string | null): string {
@@ -54,6 +56,32 @@ function storageIdentity(userId?: string | null): string {
 function matchesCartLine(item: CartItem, productId: string, variantId?: string): boolean {
   return item.product.id === productId &&
     (variantId === undefined || item.selectedVariant?.id === variantId);
+}
+
+export function sanitizeCartItemsForRevalidation(currentItems: CartItem[]): { items: CartItem[]; valid: boolean } {
+  let valid = true;
+  const items = currentItems.flatMap((item) => {
+    if (!isCommerceEligible(item.product)) {
+      valid = false;
+      return [];
+    }
+
+    const maxStock = stockFor(item.product, item.selectedVariant);
+
+    if (!item.product.inStock || (item.selectedVariant && !item.selectedVariant.inStock) || maxStock <= 0) {
+      valid = false;
+      return [];
+    }
+
+    if (item.quantity > maxStock) {
+      valid = false;
+      return [{ ...item, quantity: maxStock }];
+    }
+
+    return [item];
+  });
+
+  return { items, valid };
 }
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
@@ -274,20 +302,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, [removeFromCart, saveCartToStorage]);
 
   const revalidateCart = useCallback((): boolean => {
-    let valid = true;
+    let resultValid = true;
     setItems((current) => {
-      const next = current.flatMap((item) => {
-        const maxStock = stockFor(item.product, item.selectedVariant);
-        if (!item.product.inStock || !item.selectedVariant?.inStock || maxStock <= 0) {
-          valid = false;
-          return [];
-        }
-        if (item.quantity > maxStock) {
-          valid = false;
-          return [{ ...item, quantity: maxStock }];
-        }
-        return [item];
-      });
+      const { items: next, valid } = sanitizeCartItemsForRevalidation(current);
+      resultValid = valid;
       const first = next[0];
       setProviderId(first?.product.providerId ?? null);
       setProviderName(first?.product.providerName ?? null);
@@ -296,7 +314,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       );
       return next;
     });
-    return valid;
+    return resultValid;
   }, [saveCartToStorage, storageKey]);
 
   const totalItemsCount = items.reduce((total, item) => total + item.quantity, 0);

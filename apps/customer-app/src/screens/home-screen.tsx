@@ -8,14 +8,18 @@ import { LocationModal, NotifyCityModal } from '@/components/location-modal';
 import { ThemedText } from '@/components/themed-text';
 import { BannerCarousel } from '@/components/ui/banner-carousel';
 import { ResilientRemoteImage } from '@/components/ui/resilient-remote-image';
+import { StatusBadge } from '@/components/ui/status-badge';
 import { PROMO_BANNERS } from '@/constants/content';
 import { Radius, Shadows, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { useLocation } from '@/context/LocationContext';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
+import { type CommerceProduct } from '@/services/catalog-data';
 import { fetchBanners, fetchGuides, type GuideArticle, type PromoBanner } from '@/services/content';
+import { fetchCommerceProducts } from '@/services/customer-catalog';
 import { DEMO_MEDIA } from '@/services/demo-customer-data';
+import { appConfig } from '@/utils/app-config';
 
 const CARD_WIDTH = 236;
 const CARD_GAP = 12;
@@ -299,6 +303,8 @@ export default function HomeScreen() {
   const [banners, setBanners] = useState<PromoBanner[]>(PROMO_BANNERS);
   const [guideItems, setGuideItems] = useState<DiscoveryCardItem[]>(GUIDES);
 
+  const [liveFoodProducts, setLiveFoodProducts] = useState<CommerceProduct[]>([]);
+
   useEffect(() => {
     void fetchBanners()
       .then((items) => setBanners(items.length > 0 ? items : PROMO_BANNERS))
@@ -323,6 +329,12 @@ export default function HomeScreen() {
         })));
       })
       .catch(() => setGuideItems(GUIDES));
+
+    if (!appConfig.allowDemoMode) {
+      void fetchCommerceProducts({ category: 'food' })
+        .then((items) => setLiveFoodProducts(items.slice(0, 6)))
+        .catch(() => setLiveFoodProducts([]));
+    }
   }, []);
 
   const firstName = useMemo(() => {
@@ -331,6 +343,10 @@ export default function HomeScreen() {
     }
     return t('common.petParent');
   }, [t, user]);
+
+  const activeFilters = appConfig.allowDemoMode
+    ? ['All', 'Dry Food', 'Wet Food', 'Puppy', 'Adult', 'Senior']
+    : ['All', 'Puppy', 'Adult', 'Senior'];
 
   return (
     <>
@@ -370,7 +386,7 @@ export default function HomeScreen() {
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholder="Search for 'Pedigree' or 'Grooming'..."
+            placeholder="Search for 'Pedigree' or 'Food'..."
             placeholderTextColor={theme.textSecondary}
             style={[styles.searchInput, { color: theme.text }]}
             returnKeyType="search"
@@ -430,7 +446,10 @@ export default function HomeScreen() {
                 style={({ pressed }) => [styles.categoryItem, pressed && styles.pressed]}
               >
                 <View style={[styles.categoryImageWrap, { backgroundColor: theme.muted }]}>
-                  <ResilientRemoteImage uri={category.image} fallbackUri={DEMO_MEDIA.store} style={styles.categoryImage} />
+                  <ResilientRemoteImage
+                    uri={appConfig.allowDemoMode ? category.image : undefined}
+                    style={styles.categoryImage}
+                  />
                 </View>
                 <ThemedText style={[styles.categoryLabel, { color: theme.textSecondary }]} numberOfLines={2}>{category.label}</ThemedText>
               </Pressable>
@@ -438,7 +457,7 @@ export default function HomeScreen() {
           </ScrollView>
 
           <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-            {FILTERS.map((filter) => {
+            {activeFilters.map((filter) => {
               const active = activeFilter === filter;
               return (
                 <Pressable
@@ -453,9 +472,67 @@ export default function HomeScreen() {
           </ScrollView>
         </View>
 
-        <HorizontalCardSection title="Food & Nutrition Nearby 🏆" items={FOOD_AND_NUTRITION} actionLabel="View all" onAction={() => router.push('/category/food' as never)} />
-        <HorizontalCardSection title="Grooming Nearby ✂️" items={GROOMING_NEARBY} actionLabel="View spas" onAction={() => router.push('/groom' as never)} />
-        <HorizontalCardSection title="Hospitals & Care Nearby 🏥" items={HOSPITALS_AND_CARE} actionLabel="View hospitals" onAction={() => router.push('/vet' as never)} />
+        {!appConfig.allowDemoMode ? (
+          liveFoodProducts.length > 0 ? (
+            <View style={styles.section}>
+              <SectionHeading
+                title="Food & Nutrition Products"
+                actionLabel="View all"
+                onAction={() => router.push('/category/food' as never)}
+              />
+              <ScrollView
+                horizontal
+                nestedScrollEnabled
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.horizontalCards}
+              >
+                {liveFoodProducts.map((product) => (
+                  <Pressable
+                    key={product.id}
+                    onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(product.id)}` as never)}
+                    style={({ pressed }) => [
+                      styles.discoveryCard,
+                      { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <View style={styles.cardImageWrap}>
+                      <ResilientRemoteImage uri={product.imageUrl} style={styles.cardImage} />
+                    </View>
+                    <View style={styles.cardBody}>
+                      {product.brand ? (
+                        <ThemedText style={{ fontSize: 11, color: theme.textSecondary }} numberOfLines={1}>
+                          {product.brand}
+                        </ThemedText>
+                      ) : null}
+                      <ThemedText style={[styles.cardTitle, { color: theme.text }]} numberOfLines={1}>
+                        {product.name}
+                      </ThemedText>
+                      <ThemedText style={{ fontSize: 12, color: theme.textSecondary }} numberOfLines={1}>
+                        {product.providerName}
+                      </ThemedText>
+                      <View style={styles.metaRow}>
+                        <ThemedText style={{ fontWeight: '800', color: theme.primary, fontSize: 14 }}>
+                          ₹{product.price}
+                        </ThemedText>
+                        <StatusBadge
+                          label={product.pickupEnabled ? 'Pickup Available' : 'Pickup Unavailable'}
+                          color={product.pickupEnabled ? theme.success : theme.textSecondary}
+                        />
+                      </View>
+                    </View>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          ) : null
+        ) : (
+          <>
+            <HorizontalCardSection title="Food & Nutrition Nearby 🏆" items={FOOD_AND_NUTRITION} actionLabel="View all" onAction={() => router.push('/category/food' as never)} />
+            <HorizontalCardSection title="Grooming Nearby ✂️" items={GROOMING_NEARBY} actionLabel="View spas" onAction={() => router.push('/groom' as never)} />
+            <HorizontalCardSection title="Hospitals & Care Nearby 🏥" items={HOSPITALS_AND_CARE} actionLabel="View hospitals" onAction={() => router.push('/vet' as never)} />
+          </>
+        )}
         <HorizontalCardSection title="Guides 🩺" items={guideItems} actionLabel="All guides" onAction={() => router.push('/guides' as never)} />
       </ScrollView>
       <LocationModal />

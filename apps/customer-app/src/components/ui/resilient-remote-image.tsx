@@ -19,8 +19,9 @@ export function ResilientRemoteImage({
   contentFit?: ImageContentFit;
 }) {
   const theme = useTheme();
-  const defaultFallback = appConfig.allowDemoMode ? DEMO_MEDIA.store : undefined;
-  const effectiveFallback = fallbackUri ?? defaultFallback;
+  const effectiveFallback = appConfig.allowDemoMode
+    ? (fallbackUri ?? DEMO_MEDIA.store)
+    : undefined;
 
   const primary = uri?.trim() || effectiveFallback;
   const [sourceUri, setSourceUri] = useState<string | undefined>(primary);

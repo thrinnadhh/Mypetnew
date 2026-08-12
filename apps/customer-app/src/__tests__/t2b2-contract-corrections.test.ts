@@ -1,11 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { sanitizeCartItemsForRevalidation } from '../context/CartContext';
 import { isCommerceEligible } from '../services/commerce-eligibility';
 import {
   fetchAllPublicOutlets,
   type PublicOutletSummary,
   type PageResponse,
+  type CommerceProduct,
 } from '../services/customer-catalog';
 
 jest.mock('../services/api-client', () => ({
@@ -22,12 +24,44 @@ function source(relativePath: string): string {
   return readFileSync(join(process.cwd(), relativePath), 'utf8');
 }
 
+function makeProduct(overrides: Partial<CommerceProduct> = {}): CommerceProduct {
+  return {
+    id: 'prod-1',
+    name: 'Sample Product',
+    category: 'food',
+    price: 100,
+    mrpPaise: 10000,
+    sellingPricePaise: 10000,
+    inStock: true,
+    stockCount: 10,
+    availableQuantity: 10,
+    imageUrl: 'https://example.com/item.jpg',
+    galleryImages: ['https://example.com/item.jpg'],
+    createdAt: '2026-08-12T00:00:00Z',
+    providerId: 'outlet-1',
+    providerName: 'Sample Outlet',
+    kind: 'PRODUCT',
+    commerceMode: 'COMMERCE',
+    pickupEnabled: true,
+    variants: [
+      {
+        id: 'prod-1',
+        name: 'Sample Product',
+        price: 100,
+        inStock: true,
+        stockCount: 10,
+      },
+    ],
+    ...overrides,
+  };
+}
+
 describe('T2B2 Contract Corrections', () => {
   beforeEach(() => {
     jest.resetAllMocks();
   });
 
-  describe('isCommerceEligible (Fail Closed Rule)', () => {
+  describe('isCommerceEligible (Strict Fail-Closed Rule)', () => {
     it('returns false when kind is missing', () => {
       expect(
         isCommerceEligible({
@@ -54,6 +88,19 @@ describe('T2B2 Contract Corrections', () => {
           kind: 'PRODUCT',
           commerceMode: 'COMMERCE',
           pickupEnabled: true,
+        }),
+      ).toBe(false);
+    });
+
+    it('returns false when availableQuantity is missing even if stockCount > 0', () => {
+      expect(
+        isCommerceEligible({
+          kind: 'PRODUCT',
+          commerceMode: 'COMMERCE',
+          availableQuantity: undefined,
+          stockCount: 10,
+          pickupEnabled: true,
+          inStock: true,
         }),
       ).toBe(false);
     });
@@ -124,11 +171,105 @@ describe('T2B2 Contract Corrections', () => {
     });
   });
 
-  describe('CartContext.revalidateCart Enforcement', () => {
-    it('uses isCommerceEligible to remove ineligible items during cart revalidation', () => {
-      const cartContext = source('src/context/CartContext.tsx');
-      expect(cartContext).toMatch(/revalidateCart/);
-      expect(cartContext).toMatch(/if \(!isCommerceEligible\(item\.product\)\)/);
+  describe('sanitizeCartItemsForRevalidation Behavioral Tests', () => {
+    it('retains valid PRODUCT + COMMERCE + availableQuantity > 0 + pickupEnabled = true lines', () => {
+      const product = makeProduct({ availableQuantity: 5 });
+      const cartItem = {
+        product,
+        selectedVariant: product.variants[0],
+        quantity: 2,
+        unitPrice: 100,
+      };
+
+      const result = sanitizeCartItemsForRevalidation([cartItem]);
+      expect(result.valid).toBe(true);
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].quantity).toBe(2);
+    });
+
+    it('removes VIEW_ONLY items', () => {
+      const product = makeProduct({ commerceMode: 'VIEW_ONLY' });
+      const cartItem = {
+        product,
+        selectedVariant: product.variants[0],
+        quantity: 1,
+        unitPrice: 100,
+      };
+
+      const result = sanitizeCartItemsForRevalidation([cartItem]);
+      expect(result.valid).toBe(false);
+      expect(result.items).toHaveLength(0);
+    });
+
+    it('removes MEDICINE items', () => {
+      const product = makeProduct({ kind: 'MEDICINE' });
+      const cartItem = {
+        product,
+        selectedVariant: product.variants[0],
+        quantity: 1,
+        unitPrice: 100,
+      };
+
+      const result = sanitizeCartItemsForRevalidation([cartItem]);
+      expect(result.valid).toBe(false);
+      expect(result.items).toHaveLength(0);
+    });
+
+    it('removes pickupEnabled = false items', () => {
+      const product = makeProduct({ pickupEnabled: false });
+      const cartItem = {
+        product,
+        selectedVariant: product.variants[0],
+        quantity: 1,
+        unitPrice: 100,
+      };
+
+      const result = sanitizeCartItemsForRevalidation([cartItem]);
+      expect(result.valid).toBe(false);
+      expect(result.items).toHaveLength(0);
+    });
+
+    it('removes availableQuantity = 0 items', () => {
+      const product = makeProduct({ availableQuantity: 0 });
+      const cartItem = {
+        product,
+        selectedVariant: product.variants[0],
+        quantity: 1,
+        unitPrice: 100,
+      };
+
+      const result = sanitizeCartItemsForRevalidation([cartItem]);
+      expect(result.valid).toBe(false);
+      expect(result.items).toHaveLength(0);
+    });
+
+    it('removes missing availableQuantity items even if stockCount > 0', () => {
+      const product = makeProduct({ availableQuantity: undefined, stockCount: 10 });
+      const cartItem = {
+        product,
+        selectedVariant: product.variants[0],
+        quantity: 1,
+        unitPrice: 100,
+      };
+
+      const result = sanitizeCartItemsForRevalidation([cartItem]);
+      expect(result.valid).toBe(false);
+      expect(result.items).toHaveLength(0);
+    });
+
+    it('clamps item quantity when stored quantity exceeds available stock', () => {
+      const product = makeProduct({ availableQuantity: 3 });
+      const cartItem = {
+        product,
+        selectedVariant: product.variants[0],
+        quantity: 10,
+        unitPrice: 100,
+      };
+
+      const result = sanitizeCartItemsForRevalidation([cartItem]);
+      expect(result.valid).toBe(false);
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].quantity).toBe(3);
     });
   });
 
@@ -185,7 +326,7 @@ describe('T2B2 Contract Corrections', () => {
 
       expect(categoryTemplate).toMatch(/if \(!appConfig\.allowDemoMode\)\s*{\s*return undefined;/);
       expect(providerProfileTemplate).toMatch(/if \(!appConfig\.allowDemoMode\)\s*{\s*return undefined;/);
-      expect(resilientImage).toMatch(/appConfig\.allowDemoMode \? DEMO_MEDIA\.store : undefined/);
+      expect(resilientImage).toMatch(/effectiveFallback = appConfig\.allowDemoMode/);
     });
 
     it('does not render providerName in brand position when brand is absent', () => {

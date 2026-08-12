@@ -86,10 +86,12 @@ export function ProviderProfileTemplate({ shop }: ProviderProfileTemplateProps) 
             <View style={styles.badgeRow}>
               {shop.rating ? <StatusBadge label={`${shop.rating} (${shop.reviewCount} reviews)`} color={theme.warning} /> : null}
               {shop.deliveryEta ? <StatusBadge label={shop.deliveryEta} color={theme.success} /> : null}
-              <StatusBadge
-                label={shop.pickupEnabled !== false ? 'Store Pickup Available' : 'Pickup Unavailable'}
-                color={shop.pickupEnabled !== false ? theme.success : theme.textSecondary}
-              />
+              {shop.pickupEnabled !== undefined ? (
+                <StatusBadge
+                  label={shop.pickupEnabled === true ? 'Store Pickup Available' : 'Pickup Unavailable'}
+                  color={shop.pickupEnabled === true ? theme.success : theme.textSecondary}
+                />
+              ) : null}
               {shop.isVerified ? <StatusBadge label="Verified Partner" color={theme.primary} /> : null}
             </View>
 

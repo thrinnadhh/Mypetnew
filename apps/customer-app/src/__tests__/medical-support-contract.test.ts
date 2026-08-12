@@ -43,12 +43,9 @@ describe('medical documents and support cases', () => {
       'Private merchant-verification, medical, support, and proof objects use private Supabase Storage buckets',
       'short-lived, purpose-bound signed access',
     ]);
-    expectAll(matrix, [
-      'Medical Documents',
-      'Customer Support Cases',
-      '2.6.3 Medical Documents',
-      '2.6.4 Support Cases',
-      'DEFERRED',
-    ]);
+    expect(matrix).toContain('### 2.6.3 Medical Documents (`DEFERRED`)');
+    expect(matrix).toContain('| Medical Documents | POST/GET | `/api/v1/medical-documents/reservations` (Legacy client route) | N/A (Backend service deferred; DD-012 private storage active) | **DEFERRED** | Post-Sprint 1 |');
+    expect(matrix).toContain('### 2.6.4 Support Cases (`DEFERRED`)');
+    expect(matrix).toContain('| Customer Support Cases | POST | `/api/v1/orders/customer-cases` (Legacy client route) | N/A (Backend case service deferred) | **DEFERRED** | Post-Sprint 1 |');
   });
 });

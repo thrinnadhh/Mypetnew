@@ -107,9 +107,9 @@ describe('T1 API Convention Normalization', () => {
     expect(identityBackend).toContain('@PostMapping("/sessions/refresh")');
     expect(identityBackend).toContain('@DeleteMapping("/sessions/current")');
 
-    expect(otpAuthClient).toContain('supabase.auth.signInWithOtp');
-    expect(otpAuthClient).toContain('supabase.auth.verifyOtp');
-    expect(authContextClient).toContain('supabase.auth.onAuthStateChange');
+    expect(otpAuthClient).toContain('/api/v1/auth/otp/request');
+    expect(otpAuthClient).toContain('/api/v1/auth/otp/verify');
+    expect(authContextClient).toContain('apiClient');
 
     expect(matrixDoc).toContain('Customer Authentication');
     expect(matrixDoc).toContain('MISMATCH');

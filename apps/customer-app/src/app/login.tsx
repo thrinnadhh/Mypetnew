@@ -3,8 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { parseAuthIntent } from '@/auth/auth-intent';
-import { signInWithGoogle } from '@/auth/google-auth';
-import { type OtpChannel, OtpAuthError, resendOtp, sendOtp, verifyOtp } from '@/auth/otp-auth';
+import { OtpAuthError, resendOtpCode, requestOtp, verifyOtpCode } from '@/auth/otp-auth';
 import { AppBar, PrimaryAction } from '@/components/foundation/primitives';
 import { ScreenShell } from '@/components/foundation/screen-shell';
 import { ThemedText } from '@/components/themed-text';
@@ -13,20 +12,9 @@ import { useAuthIntent } from '@/context/AuthIntentContext';
 import { radii, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
-import { syncCommunicationContact } from '@/services/communication-contact';
-import { supabase } from '@/utils/supabase';
+import { getOrCreateInstallationId } from '@/utils/installation-id';
 
-type Step = 'identifier' | 'code' | 'name';
-const RESEND_SECONDS = 30;
-const PHONE_CHANNEL: OtpChannel = 'phone';
-
-async function syncContactBestEffort(accessToken: string) {
-  try {
-    await syncCommunicationContact(accessToken);
-  } catch (error) {
-    console.warn('Communication contact sync deferred:', error);
-  }
-}
+type Step = 'identifier' | 'code';
 
 export default function LoginScreen() {
   const params = useLocalSearchParams<{ intent?: string; fresh?: string }>();
@@ -35,13 +23,14 @@ export default function LoginScreen() {
   const router = useRouter();
   const theme = useTheme();
   const { t } = useTranslation();
-  const { markOtpVerified } = useAuth();
+  const { markOtpVerified, setSession } = useAuth();
   const { clearPendingIntent, resumePendingIntent } = useAuthIntent();
+
   const [step, setStep] = useState<Step>('identifier');
   const [identifierInput, setIdentifierInput] = useState('');
   const [identifier, setIdentifier] = useState('');
+  const [challengeId, setChallengeId] = useState('');
   const [code, setCode] = useState('');
-  const [displayName, setDisplayName] = useState('');
   const [seconds, setSeconds] = useState(0);
   const [loading, setLoading] = useState(false);
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -61,6 +50,7 @@ export default function LoginScreen() {
       RATE_LIMITED: 'auth.rateLimited',
       NETWORK: 'auth.network',
       PROVIDER_UNAVAILABLE: 'auth.providerUnavailable',
+      AUTHENTICATION_REQUIRED: 'auth.authenticationRequired',
       UNKNOWN: 'auth.unknown',
     };
     return t(key[errorCode] ?? 'auth.unknown');
@@ -83,71 +73,36 @@ export default function LoginScreen() {
     await resumePendingIntent(parsedIntent);
   }, [parsedIntent, resumePendingIntent]);
 
-  const googleSignIn = useCallback(() => run(async () => {
-    let session = await signInWithGoogle();
-    markOtpVerified();
-    const metadata = session.user.user_metadata ?? {};
-    const name = typeof metadata.full_name === 'string'
-      ? metadata.full_name.trim()
-      : typeof metadata.name === 'string'
-        ? metadata.name.trim()
-        : '';
-    if (name) {
-      if (metadata.full_name !== name) {
-        const updated = await supabase.auth.updateUser({ data: { full_name: name, role: 'CUSTOMER' } });
-        if (updated.error) throw updated.error;
-        const refreshed = await supabase.auth.refreshSession();
-        if (!refreshed.error && refreshed.data.session) session = refreshed.data.session;
-      }
-      await syncContactBestEffort(session.access_token);
-      await finish();
-      return;
-    }
-    await syncContactBestEffort(session.access_token);
-    setStep('name');
-  }), [finish, markOtpVerified, run]);
-
   const send = useCallback(() => run(async () => {
-    const normalized = await sendOtp(PHONE_CHANNEL, identifierInput);
-    setIdentifier(normalized);
+    const deviceId = await getOrCreateInstallationId();
+    const { mobile, challenge } = await requestOtp(identifierInput, deviceId);
+    setIdentifier(mobile);
+    setChallengeId(challenge.challengeId);
     setCode('');
-    setSeconds(RESEND_SECONDS);
+    setSeconds(challenge.retryAfterSeconds || 30);
     setStep('code');
   }), [identifierInput, run]);
 
   const verify = useCallback(() => run(async () => {
-    const session = await verifyOtp(PHONE_CHANNEL, identifier, code);
+    const newSession = await verifyOtpCode(challengeId, identifier, code);
+    await setSession(newSession);
     markOtpVerified();
-    await syncContactBestEffort(session.access_token);
-    const name = typeof session.user.user_metadata?.full_name === 'string'
-      ? session.user.user_metadata.full_name.trim()
-      : '';
-    if (!name) setStep('name');
-    else await finish();
-  }), [code, finish, identifier, markOtpVerified, run]);
-
-  const saveName = useCallback(() => run(async () => {
-    const name = displayName.trim();
-    if (name.length < 2) throw new OtpAuthError('INVALID_INPUT', 'Display name is required.');
-    const { error } = await supabase.auth.updateUser({ data: { full_name: name, role: 'CUSTOMER' } });
-    if (error) throw error;
-    const refreshed = await supabase.auth.refreshSession();
-    if (!refreshed.error && refreshed.data.session) {
-      await syncContactBestEffort(refreshed.data.session.access_token);
-    }
     await finish();
-  }), [displayName, finish, run]);
+  }), [challengeId, code, finish, identifier, markOtpVerified, run, setSession]);
 
   const resend = useCallback(() => run(async () => {
     if (seconds > 0) return;
-    await resendOtp(PHONE_CHANNEL, identifier);
-    setSeconds(RESEND_SECONDS);
+    const deviceId = await getOrCreateInstallationId();
+    const challenge = await resendOtpCode(identifier, deviceId);
+    setChallengeId(challenge.challengeId);
+    setSeconds(challenge.retryAfterSeconds || 30);
   }), [identifier, run, seconds]);
 
   const reset = useCallback(() => {
     setStep('identifier');
     setIdentifier('');
     setIdentifierInput('');
+    setChallengeId('');
     setCode('');
     setErrorCode(null);
     setSeconds(0);
@@ -166,12 +121,6 @@ export default function LoginScreen() {
     >
       {step === 'identifier' ? (
         <View style={styles.stack}>
-          <PrimaryAction label={t('auth.continueGoogle')} onPress={() => void googleSignIn()} loading={loading} />
-          <View style={styles.dividerRow}>
-            <View style={[styles.divider, { backgroundColor: theme.border }]} />
-            <ThemedText themeColor="textSecondary">{t('auth.orMobile')}</ThemedText>
-            <View style={[styles.divider, { backgroundColor: theme.border }]} />
-          </View>
           <TextInput
             value={identifierInput}
             onChangeText={setIdentifierInput}
@@ -214,23 +163,6 @@ export default function LoginScreen() {
         </View>
       ) : null}
 
-      {step === 'name' ? (
-        <View style={styles.stack}>
-          <ThemedText style={styles.heading}>{t('auth.nameTitle')}</ThemedText>
-          <ThemedText themeColor="textSecondary">{t('auth.nameSubtitle')}</ThemedText>
-          <TextInput
-            value={displayName}
-            onChangeText={setDisplayName}
-            placeholder={t('auth.namePlaceholder')}
-            placeholderTextColor={theme.textSecondary}
-            autoCapitalize="words"
-            style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
-            accessibilityLabel={t('auth.namePlaceholder')}
-          />
-          <PrimaryAction label={t('auth.saveName')} onPress={() => void saveName()} loading={loading} disabled={displayName.trim().length < 2} />
-        </View>
-      ) : null}
-
       {errorMessage ? (
         <View style={[styles.error, { backgroundColor: theme.errorSoft }]} accessibilityLiveRegion="assertive">
           <ThemedText style={{ color: theme.danger }}>{errorMessage}</ThemedText>
@@ -250,8 +182,6 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   stack: { gap: spacing.x4 },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.x3 },
-  divider: { height: 1, flex: 1 },
   heading: { ...typography.title },
   input: { minHeight: touchTarget, borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x4, ...typography.body },
   code: { fontSize: 26, letterSpacing: 8, textAlign: 'center' },

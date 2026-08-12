@@ -51,14 +51,14 @@ export default function ProfileScreen() {
     if (!session) return;
     setLoadingAddress(true); setAddressError(null);
     try {
-      const saved = await fetchDefaultAddress(session.access_token);
+      const saved = await fetchDefaultAddress(session.accessToken);
       setHasAddress(Boolean(saved));
       if (saved) {
         setAddress({
           label: saved.label ?? '', line1: saved.line1, line2: saved.line2 ?? '', city: saved.city, state: saved.state,
           pincode: saved.pincode, geoLat: String(saved.geoLat), geoLng: String(saved.geoLng),
         });
-        const contact = await fetchDeliveryContact(session.access_token, saved.addressId);
+        const contact = await fetchDeliveryContact(session.accessToken, saved.addressId);
         setDeliveryPhone(contact?.phoneNumber ?? user?.phone ?? '');
       } else {
         setDeliveryPhone(user?.phone ?? '');
@@ -70,7 +70,7 @@ export default function ProfileScreen() {
   const loadPets = useCallback(async () => {
     if (!session) return;
     setLoadingPets(true); setPetsError(null);
-    try { setPets(await fetchCustomerPets(session.access_token)); }
+    try { setPets(await fetchCustomerPets(session.accessToken)); }
     catch (error) { setPetsError(isOfflineError(error) ? 'offline' : 'error'); }
     finally { setLoadingPets(false); }
   }, [session]);
@@ -88,7 +88,7 @@ export default function ProfileScreen() {
   }, [deliveryPhone]);
 
   const verifiedAuthPhone = useMemo(() => {
-    if (!user?.phone || !user.phone_confirmed_at) return null;
+    if (!user?.phone) return null;
     try { return normalizeDeliveryPhone(user.phone); }
     catch { return null; }
   }, [user]);
@@ -98,10 +98,9 @@ export default function ProfileScreen() {
   );
 
   const profileRows = useMemo(() => user ? [
-    { label: t('profileFoundation.displayName'), value: String(user.user_metadata?.full_name ?? ''), complete: Boolean(user.user_metadata?.full_name) },
-    { label: t('profileFoundation.verifiedMobile'), value: user.phone ?? '—', complete: Boolean(user.phone_confirmed_at) },
+    { label: t('profileFoundation.displayName'), value: user.displayName ?? '—', complete: Boolean(user.displayName) },
+    { label: t('profileFoundation.verifiedMobile'), value: user.phone ?? '—', complete: Boolean(user.phone) },
     { label: t('profileFoundation.deliveryContact'), value: normalizedDeliveryPhone ?? '—', complete: Boolean(normalizedDeliveryPhone) },
-    { label: t('profileFoundation.emailOptional'), value: user.email ?? '—', complete: true },
   ] : [], [normalizedDeliveryPhone, t, user]);
 
   const save = useCallback(async () => {
@@ -119,8 +118,8 @@ export default function ProfileScreen() {
 
     setSaving(true);
     try {
-      const savedAddress = await createDefaultAddress(session.access_token, input);
-      await saveDeliveryContact(session.access_token, savedAddress.addressId, normalizedDeliveryPhone);
+      const savedAddress = await createDefaultAddress(session.accessToken, input);
+      await saveDeliveryContact(session.accessToken, savedAddress.addressId, normalizedDeliveryPhone);
       setDeliveryPhone(normalizedDeliveryPhone);
       setHasAddress(true);
       Alert.alert(t('common.success'), t('profileFoundation.addressAndContactSaved'));
@@ -151,7 +150,7 @@ export default function ProfileScreen() {
         species: petDraft.species,
         breed: petDraft.breed.trim() || null,
         dateOfBirth: petDraft.dateOfBirth.trim() || null,
-      }, session.access_token);
+      }, session.accessToken);
       setPets((current) => [...current, created]);
       setPetDraft(emptyPet);
       setShowAddPet(false);
@@ -179,7 +178,7 @@ export default function ProfileScreen() {
   );
 
   return (
-    <ScreenShell header={<AppBar title={t('profileFoundation.title')} subtitle={user.email ?? user.phone ?? undefined} />} testID="profile-screen">
+    <ScreenShell header={<AppBar title={t('profileFoundation.title')} subtitle={user.phone ?? undefined} />} testID="profile-screen">
       <SectionHeader title={t('profileFoundation.account')} />
       <View style={styles.stack}>{profileRows.map((row) => <View key={row.label} style={[styles.rowCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}><View style={styles.flex}><ThemedText style={styles.label}>{row.label}</ThemedText><ThemedText themeColor="textSecondary">{row.value}</ThemedText></View><StatusBadge label={t(row.complete ? 'profileFoundation.complete' : 'profileFoundation.incomplete')} tone={row.complete ? 'success' : 'warning'} /></View>)}</View>
 

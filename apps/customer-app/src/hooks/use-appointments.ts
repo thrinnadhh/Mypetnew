@@ -24,7 +24,7 @@ export function useAppointments() {
     if (!user || !session) return;
     setState('loading');
     try {
-      const data = await fetchCustomerAppointments(user.id, session.access_token);
+      const data = await fetchCustomerAppointments(user.id, session.accessToken);
       setAppointments(data);
       setState('ready');
     } catch (error) {
@@ -64,7 +64,7 @@ export function useAppointments() {
       if (!session) return;
       setActionLoading(true);
       try {
-        await cancelAppointment(appointmentId, reason, session.access_token);
+        await cancelAppointment(appointmentId, reason, session.accessToken);
         await load();
       } finally {
         setActionLoading(false);
@@ -78,7 +78,7 @@ export function useAppointments() {
       if (!session) return;
       setActionLoading(true);
       try {
-        await rescheduleAppointment(appointmentId, newSlotId, session.access_token);
+        await rescheduleAppointment(appointmentId, newSlotId, session.accessToken);
         await load();
       } finally {
         setActionLoading(false);
@@ -98,7 +98,7 @@ export function useAppointments() {
           targetId: input.targetId,
           rating: input.rating,
           comment: input.comment,
-          accessToken: session.access_token,
+          accessToken: session.accessToken,
         });
         await load();
         return result;

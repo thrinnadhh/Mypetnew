@@ -44,7 +44,7 @@ export default function AppointmentPaymentScreen() {
   const demoPayment = appConfig.allowDemoMode && appointmentId.startsWith('demo-appointment-');
 
   const finishAppointment = async (paymentId?: string) => {
-    await confirmAppointmentHold(appointmentId, session?.access_token, paymentId);
+    await confirmAppointmentHold(appointmentId, session?.accessToken, paymentId);
     Alert.alert(
       'Appointment confirmed',
       `${serviceName} for ${petName} is confirmed at ${providerName}.`,
@@ -61,11 +61,10 @@ export default function AppointmentPaymentScreen() {
         return;
       }
 
-      const metadata = user.user_metadata as Record<string, unknown> | undefined;
       const initialization = await initiateAppointmentPayment(user.id, appointmentId, amount, {
-        phone: user.phone || String(metadata?.phone || metadata?.mobile || ''),
-        email: user.email,
-        name: String(metadata?.full_name || metadata?.name || '').trim() || null,
+        phone: user.phone,
+        email: null,
+        name: user.displayName,
       });
       await openCashfreeOrder(initialization);
       const payment = await waitForReferencePaymentOutcome(appointmentId);

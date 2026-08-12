@@ -88,7 +88,7 @@ export default function ChatScreen() {
     title?: string;
   }>();
   const { user, session } = useAuth();
-  const accessToken = session?.access_token;
+  const accessToken = session?.accessToken;
 
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);

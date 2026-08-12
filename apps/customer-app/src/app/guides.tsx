@@ -26,20 +26,20 @@ export default function GuidesScreen() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
-    void fetchGuides(category, session?.access_token)
+    void fetchGuides(category, session?.accessToken)
       .then(setArticles)
       .catch(() => setArticles([]));
-  }, [category, session?.access_token]);
+  }, [category, session?.accessToken]);
 
   const likeArticle = async (articleId: string) => {
-    if (!session?.access_token) {
+    if (!session?.accessToken) {
       router.push('/login' as never);
       return;
     }
 
     setBusyId(articleId);
     try {
-      const result = await toggleGuideLike(articleId, session.access_token);
+      const result = await toggleGuideLike(articleId, session.accessToken);
       setArticles((current) => current.map((article) => (
         article.id === articleId ? { ...article, likeCount: result.likeCount } : article
       )));

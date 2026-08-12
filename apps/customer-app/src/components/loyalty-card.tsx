@@ -28,7 +28,7 @@ export function LoyaltyCard({
 }: LoyaltyCardProps) {
   const theme = useTheme();
   const { session } = useAuth();
-  const effectiveAccessToken = accessToken ?? session?.access_token ?? null;
+  const effectiveAccessToken = accessToken ?? session?.accessToken ?? null;
   const effectiveProviderId = providerId ?? progress?.providerId ?? null;
   const [currentProgress, setCurrentProgress] = useState<LoyaltyProgressDto | null>(
     progress ?? null,

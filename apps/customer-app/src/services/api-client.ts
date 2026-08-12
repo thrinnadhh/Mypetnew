@@ -3,17 +3,36 @@ import { appConfig } from '../utils/app-config';
 
 export { ApiError } from '../contracts/api-error';
 
-interface RequestOptions {
+export interface RequestOptions {
   method?: string;
   body?: unknown;
   headers?: Record<string, string>;
+  _isRetry?: boolean;
 }
+
+export type RefreshHandler = () => Promise<string | null>;
+export type ClearAuthHandler = () => void;
 
 class ApiClient {
   private sessionToken: string | null = null;
+  private refreshHandler: RefreshHandler | null = null;
+  private clearAuthHandler: ClearAuthHandler | null = null;
+  private refreshPromise: Promise<string | null> | null = null;
 
   public setSessionToken(token: string | null) {
     this.sessionToken = token;
+  }
+
+  public getSessionToken(): string | null {
+    return this.sessionToken;
+  }
+
+  public setRefreshHandler(handler: RefreshHandler | null) {
+    this.refreshHandler = handler;
+  }
+
+  public setClearAuthHandler(handler: ClearAuthHandler | null) {
+    this.clearAuthHandler = handler;
   }
 
   private getBaseUrl(): string {
@@ -43,8 +62,16 @@ class ApiClient {
     return headers;
   }
 
+  private isAuthEndpoint(path: string): boolean {
+    return (
+      path.includes('/api/v1/auth/sessions/refresh') ||
+      path.includes('/api/v1/auth/otp/verify') ||
+      path.includes('/api/v1/auth/otp/request')
+    );
+  }
+
   public async request<T = any>(path: string, options: RequestOptions = {}): Promise<T> {
-    const { method = 'GET', body, headers: customHeaders } = options;
+    const { method = 'GET', body, headers: customHeaders, _isRetry = false } = options;
     const baseUrl = this.getBaseUrl();
     const url = path.startsWith('http://') || path.startsWith('https://')
       ? path
@@ -60,7 +87,49 @@ class ApiClient {
     }
 
     const response = await fetch(url, config);
-    if (!response.ok) throw await apiErrorFromResponse(response);
+
+    if (!response.ok) {
+      const error = await apiErrorFromResponse(response);
+
+      // Handle 401 Authentication Required
+      if (response.status === 401) {
+        // Do NOT refresh if auth endpoint or already retried
+        if (this.isAuthEndpoint(path) || _isRetry) {
+          if (this.clearAuthHandler) {
+            this.clearAuthHandler();
+          }
+          throw error;
+        }
+
+        if (this.refreshHandler) {
+          // Coalesce concurrent 401 requests into ONE in-flight refresh Promise
+          if (!this.refreshPromise) {
+            this.refreshPromise = this.refreshHandler().finally(() => {
+              this.refreshPromise = null;
+            });
+          }
+
+          const newToken = await this.refreshPromise;
+          if (newToken) {
+            return this.request<T>(path, { ...options, _isRetry: true });
+          } else {
+            if (this.clearAuthHandler) {
+              this.clearAuthHandler();
+            }
+            throw error;
+          }
+        } else {
+          if (this.clearAuthHandler) {
+            this.clearAuthHandler();
+          }
+          throw error;
+        }
+      }
+
+      // 403 or other non-401 error: NEVER refresh!
+      throw error;
+    }
+
     if (response.status === 204) return {} as T;
 
     const responseBody = await response.text();

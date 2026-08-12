@@ -326,8 +326,8 @@ export default function HomeScreen() {
   }, []);
 
   const firstName = useMemo(() => {
-    if (typeof user?.user_metadata?.full_name === 'string') {
-      return user.user_metadata.full_name.split(' ')[0];
+    if (typeof user?.displayName === 'string' && user.displayName) {
+      return user.displayName.split(' ')[0];
     }
     return t('common.petParent');
   }, [t, user]);

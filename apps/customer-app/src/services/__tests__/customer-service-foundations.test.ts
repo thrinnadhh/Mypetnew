@@ -1,5 +1,3 @@
-import type { Session } from '@supabase/supabase-js';
-
 import { ApiError, apiClient } from '../api-client';
 import { fetchBanners, fetchGuides, toggleGuideLike } from '../content';
 import {
@@ -10,7 +8,6 @@ import {
 } from '../customer-cases';
 import { fetchProviders } from '../provider-discovery';
 import { fetchProviderProfile } from '../provider-profile';
-import { syncAuthenticatedProfile } from '@/utils/profile-sync';
 
 jest.mock('@/utils/app-config', () => ({
   appConfig: {
@@ -256,41 +253,6 @@ describe('customer service foundations', () => {
         Accept: 'application/json',
       });
       expect(mockedFetch.mock.calls[4][0]).toContain('/case/1/evidence/evidence/1/signed-link');
-    });
-  });
-
-  describe('profile synchronization', () => {
-    it('syncs the authenticated session with bearer token and fallback role', async () => {
-      mockedFetch.mockResolvedValueOnce(response({ body: {
-        userId: 'customer-1',
-        role: 'CUSTOMER',
-        fullName: 'Trinadh',
-        phoneNumber: '9876543210',
-      } }));
-      const session = { access_token: 'access-token' } as Session;
-
-      await expect(syncAuthenticatedProfile(session, 'CUSTOMER')).resolves.toMatchObject({
-        userId: 'customer-1',
-        role: 'CUSTOMER',
-      });
-      expect(mockedFetch).toHaveBeenCalledWith(
-        'https://api.mypet.test//api/v1/profiles/sync',
-        expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            Authorization: 'Bearer access-token',
-            'X-User-Role': 'CUSTOMER',
-          }),
-        }),
-      );
-    });
-
-    it('retains server status and response text when profile sync fails', async () => {
-      mockedFetch.mockResolvedValueOnce(response({ status: 403, text: 'role mismatch' }));
-
-      await expect(
-        syncAuthenticatedProfile({ access_token: 'access-token' } as Session, 'CAPTAIN'),
-      ).rejects.toThrow('Profile sync failed: 403 role mismatch');
     });
   });
 });

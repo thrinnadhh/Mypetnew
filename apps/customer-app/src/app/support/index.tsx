@@ -77,7 +77,7 @@ export default function CustomerSupportScreen() {
     }
     setError(null);
     try {
-      setCases(await fetchCustomerCases(session.access_token));
+      setCases(await fetchCustomerCases(session.accessToken));
     } catch (nextError) {
       setError(nextError);
     } finally {
@@ -103,7 +103,7 @@ export default function CustomerSupportScreen() {
     }
     setBusyId('create');
     try {
-      const created = await createCustomerCase(params.orderId, caseType, description, session.access_token);
+      const created = await createCustomerCase(params.orderId, caseType, description, session.accessToken);
       setCases((current) => [created, ...current]);
       setDescription('');
       Alert.alert('Support case created', 'MyPet recorded the order, issue type and customer ownership. You may attach private evidence now.');
@@ -137,7 +137,7 @@ export default function CustomerSupportScreen() {
           name: fileName(asset.uri, asset.fileName),
           mimeType: asset.mimeType ?? 'image/jpeg',
         },
-        session.access_token,
+        session.accessToken,
       );
       setCases((current) => current.map((item) => item.caseId === customerCase.caseId
         ? { ...item, evidence: [...item.evidence, evidence] }
@@ -153,7 +153,7 @@ export default function CustomerSupportScreen() {
   const openEvidence = useCallback(async (customerCase: CustomerCase, evidenceId: string) => {
     if (!session) return;
     try {
-      const url = await getCustomerCaseEvidenceLink(customerCase.caseId, evidenceId, session.access_token);
+      const url = await getCustomerCaseEvidenceLink(customerCase.caseId, evidenceId, session.accessToken);
       await Linking.openURL(url);
     } catch (nextError) {
       Alert.alert('Evidence unavailable', apiErrorMessage(nextError));

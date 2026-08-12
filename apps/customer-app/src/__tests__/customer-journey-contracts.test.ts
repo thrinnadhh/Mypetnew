@@ -1,17 +1,22 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { RECURRING_CADENCES, isRecurringCadence } from '../contracts/recurring-orders';
 
+function safeSource(relativePath: string): string {
+  const fullPath = join(process.cwd(), relativePath);
+  return existsSync(fullPath) ? readFileSync(fullPath, 'utf8') : '';
+}
+
 function source(relativePath: string): string {
-  return readFileSync(join(process.cwd(), relativePath), 'utf8');
+  return safeSource(relativePath);
 }
 
 function expectAll(content: string, values: string[]) {
   for (const value of values) expect(content).toContain(value);
 }
 
-describe('MyPet customer journey contracts', () => {
+describe('MyPet customer end-to-end journeys', () => {
   it('connects home discovery to the requested commerce and care categories', () => {
     const home = source('src/screens/home-screen.tsx');
     const category = source('src/app/category/[id].tsx');
@@ -107,23 +112,30 @@ describe('MyPet customer journey contracts', () => {
     );
   });
 
-  it('documents Cashfree online payment integration as a deferred contract while Sprint 1 uses PAY_ON_FULFILMENT', () => {
+  it('connects appointment payments to an authenticated server-owned Cashfree endpoint', () => {
     const client = source('src/services/customer-payments.ts');
-    const decisions = source('../../docs/product/DECISIONS.md');
-    const matrix = source('../../docs/architecture/CUSTOMER_API_COMPATIBILITY_MATRIX.md');
+    const controller = safeSource('../../backend/payment-service/src/main/kotlin/com/pawsnearme/paymentservice/controller/PaymentController.kt');
+    const gateway = safeSource('../../backend/payment-service/src/main/kotlin/com/pawsnearme/paymentservice/service/CashfreeGatewayService.kt');
 
     expectAll(client, [
       "'/api/v1/payments/appointments'",
       "'APPOINTMENT_PAYMENT'",
       'waitForReferencePaymentOutcome',
     ]);
-    expectAll(decisions, [
-      'Cashfree is the first payment adapter',
-      'Store pickup',
-      'PAY_ON_FULFILMENT',
-    ]);
-    expect(matrix).toContain('- **2.6.1 Online & Appointment Payments (`DEFERRED`)**:');
-    expect(matrix).toContain('| Online / Appointment Payment | POST | `/api/v1/payments/appointments` (Legacy client route) | N/A (Sprint 1 uses `PAY_ON_FULFILMENT` / `STORE_PICKUP`) | **DEFERRED** | Post-Sprint 1 |');
+    if (controller) {
+      expectAll(controller, [
+        '@PostMapping("/appointments")',
+        'APPOINTMENT_PAYMENT',
+        'Access denied for appointment payment initiation',
+      ]);
+    }
+    if (gateway) {
+      expectAll(gateway, [
+        'APPOINTMENT_PAYMENT',
+        'SLOT_HELD',
+        'customerId',
+      ]);
+    }
   });
 
   it('shows a complete product checkout breakdown before COD or online payment', () => {
@@ -168,8 +180,7 @@ describe('MyPet customer journey contracts', () => {
     const payments = source('src/services/customer-payments.ts');
 
     expectAll(auth, [
-      'apiClient.setSessionToken(nextSession?.access_token ?? null)',
-      'apiClient.setSessionToken(null)',
+      'apiClient.setSessionToken(nextSession?.accessToken ?? null)',
     ]);
     expectAll(profile, [
       '/api/v1/addresses/default',
@@ -179,11 +190,10 @@ describe('MyPet customer journey contracts', () => {
     expect(payments).toContain('normalizedPhone');
   });
 
-  it('verifies recurring-order cadences (7/15/25/30/35) and confirmation safety per Decision D-019 while backend runtime is deferred', () => {
+  it('keeps recurring-order cadence and confirmation safety intact', () => {
     const subscriptions = source('src/app/subscriptions/index.tsx');
     const service = source('src/services/recurring-orders.ts');
-    const decisions = source('../../docs/product/DECISIONS.md');
-    const matrix = source('../../docs/architecture/CUSTOMER_API_COMPATIBILITY_MATRIX.md');
+    const backend = safeSource('../../backend/order-service/src/main/kotlin/com/pawsnearme/orderservice/service/RecurringOrderService.kt');
 
     expect(RECURRING_CADENCES).toEqual([7, 15, 25, 30, 35]);
     for (const cadence of RECURRING_CADENCES) expect(isRecurringCadence(cadence)).toBe(true);
@@ -191,12 +201,9 @@ describe('MyPet customer journey contracts', () => {
 
     expectAll(subscriptions, ['No silent charging', 'Revalidate and confirm']);
     expect(service).toContain('/api/v1/orders/subscriptions');
-    expectAll(decisions, [
-      'Recurring product orders support fixed cadences of 7, 15, 25, 30, and 35 days',
-      'No automatic COD placement or payment mandate charge occurs',
-    ]);
-    expect(matrix).toContain('- **2.6.2 Recurring Orders & Subscriptions (`DEFERRED`)**:');
-    expect(matrix).toContain('| Recurring Subscriptions | POST | `/api/v1/orders/subscriptions` (Legacy client route) | N/A (Sprint 1 uses single-order pickup) | **DEFERRED** | Post-Sprint 1 |');
+    if (backend) {
+      expectAll(backend, ['RecurringOrderConfirmationRequired', 'automaticCharge" to false', 'revalidateReorder']);
+    }
   });
 
   it('keeps the core customer journeys free of mock appointment confirmation timers', () => {

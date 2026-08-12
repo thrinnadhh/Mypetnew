@@ -1,152 +1,123 @@
-const createClientMock = jest.fn((_url: string, _key: string, _options: unknown) => ({ auth: {} }));
-const getItemAsync = jest.fn();
-const setItemAsync = jest.fn();
-const deleteItemAsync = jest.fn();
+import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
-function loadStorage(os: 'ios' | 'web') {
-  jest.resetModules();
-  createClientMock.mockClear();
-  getItemAsync.mockReset();
-  setItemAsync.mockReset();
-  deleteItemAsync.mockReset();
+import {
+  clearPersistedSession,
+  loadPersistedSession,
+  savePersistedSession,
+} from '@/auth/session-storage';
+import type { PersistedRefreshState } from '@/auth/types';
 
-  jest.doMock('react-native-url-polyfill/auto', () => ({}));
-  jest.doMock('@supabase/supabase-js', () => ({ createClient: createClientMock }));
-  jest.doMock('expo-secure-store', () => ({
-    WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
-    getItemAsync,
-    setItemAsync,
-    deleteItemAsync,
-  }));
-  jest.doMock('react-native', () => ({ Platform: { OS: os } }));
-  jest.doMock('@/utils/app-config', () => ({
-    appConfig: {
-      supabaseUrl: 'https://project.supabase.co',
-      supabaseAnonKey: 'anon-key',
-    },
-    requireMobileConfig: jest.fn(),
-  }));
+jest.mock('expo-secure-store', () => ({
+  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
+  getItemAsync: jest.fn(),
+  setItemAsync: jest.fn(),
+  deleteItemAsync: jest.fn(),
+}));
 
-  jest.isolateModules(() => {
-    require('../supabase');
-  });
+const mockGetItem = SecureStore.getItemAsync as jest.MockedFunction<typeof SecureStore.getItemAsync>;
+const mockSetItem = SecureStore.setItemAsync as jest.MockedFunction<typeof SecureStore.setItemAsync>;
+const mockDeleteItem = SecureStore.deleteItemAsync as jest.MockedFunction<typeof SecureStore.deleteItemAsync>;
 
-  const options = createClientMock.mock.calls[0][2] as {
-    auth: {
-      storage: {
-        getItem(key: string): Promise<string | null> | string | null;
-        setItem(key: string, value: string): Promise<void> | void;
-        removeItem(key: string): Promise<void> | void;
-      };
-      autoRefreshToken: boolean;
-      persistSession: boolean;
-      detectSessionInUrl: boolean;
-    };
-  };
-  return options.auth;
-}
+describe('MyPetNew secure session storage', () => {
+  const originalPlatform = Platform.OS;
 
-describe('Supabase session storage', () => {
   afterEach(() => {
+    Platform.OS = originalPlatform;
+    jest.clearAllMocks();
     delete (globalThis as { window?: unknown }).window;
   });
 
-  it('uses device-only SecureStore and chunks large native sessions', async () => {
-    const auth = loadStorage('ios');
-    getItemAsync.mockImplementation(async (key: string) => key === 'session.count' ? '2' : null);
-    const value = 'x'.repeat(3_700);
+  it('persists and loads refresh session state using SecureStore on native platforms', async () => {
+    Platform.OS = 'ios';
 
-    await auth.storage.setItem('session', value);
+    const sessionState: PersistedRefreshState = {
+      refreshToken: 'refresh-jwt-123',
+      refreshTokenExpiresAt: '2099-01-01T00:00:00Z',
+      accountId: 'account-uuid-1',
+      mobile: '+919876543210',
+      role: 'CUSTOMER',
+      deviceId: 'device-uuid-1',
+    };
 
-    expect(deleteItemAsync).toHaveBeenCalledWith('session.0');
-    expect(deleteItemAsync).toHaveBeenCalledWith('session.1');
-    expect(deleteItemAsync).toHaveBeenCalledWith('session.count');
-    expect(deleteItemAsync).toHaveBeenCalledWith('session');
-    expect(setItemAsync).toHaveBeenCalledTimes(4);
-    expect(setItemAsync).toHaveBeenNthCalledWith(
-      1,
-      'session.0',
-      'x'.repeat(1_800),
-      { keychainAccessible: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY' },
+    await savePersistedSession(sessionState);
+
+    expect(mockSetItem).toHaveBeenCalledWith(
+      'mypetnew_customer_refresh_token',
+      'refresh-jwt-123',
+      { keychainAccessible: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY' }
     );
-    expect(setItemAsync).toHaveBeenNthCalledWith(
-      2,
-      'session.1',
-      'x'.repeat(1_800),
-      { keychainAccessible: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY' },
+    expect(mockSetItem).toHaveBeenCalledWith(
+      'mypetnew_customer_account_id',
+      'account-uuid-1',
+      { keychainAccessible: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY' }
     );
-    expect(setItemAsync).toHaveBeenNthCalledWith(
-      3,
-      'session.2',
-      'x'.repeat(100),
-      { keychainAccessible: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY' },
-    );
-    expect(setItemAsync).toHaveBeenNthCalledWith(
-      4,
-      'session.count',
-      '3',
-      { keychainAccessible: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY' },
-    );
-    expect(auth).toMatchObject({
-      autoRefreshToken: true,
-      persistSession: true,
-      detectSessionInUrl: false,
-    });
-  });
 
-  it('reassembles all native chunks and fails closed when one is missing', async () => {
-    const auth = loadStorage('ios');
-    getItemAsync.mockImplementation(async (key: string) => ({
-      'session.count': '3',
-      'session.0': 'alpha-',
-      'session.1': 'beta-',
-      'session.2': 'gamma',
-    }[key] ?? null));
-
-    await expect(auth.storage.getItem('session')).resolves.toBe('alpha-beta-gamma');
-
-    getItemAsync.mockImplementation(async (key: string) => ({
-      'session.count': '2',
-      'session.0': 'partial',
-      'session.1': null,
-    }[key] ?? null));
-    await expect(auth.storage.getItem('session')).resolves.toBeNull();
-  });
-
-  it('falls back to the unchunked native key and removes all recorded chunks', async () => {
-    const auth = loadStorage('ios');
-    getItemAsync.mockImplementation(async (key: string) => {
-      if (key === 'session.count') return '0';
-      if (key === 'session') return 'small-session';
-      return null;
+    mockGetItem.mockImplementation(async (key: string) => {
+      const map: Record<string, string> = {
+        mypetnew_customer_refresh_token: 'refresh-jwt-123',
+        mypetnew_customer_refresh_expires_at: '2099-01-01T00:00:00Z',
+        mypetnew_customer_account_id: 'account-uuid-1',
+        mypetnew_customer_mobile: '+919876543210',
+        mypetnew_customer_role: 'CUSTOMER',
+        mypetnew_customer_device_id: 'device-uuid-1',
+      };
+      return map[key] ?? null;
     });
 
-    await expect(auth.storage.getItem('session')).resolves.toBe('small-session');
-
-    getItemAsync.mockResolvedValueOnce('2');
-    await auth.storage.removeItem('session');
-    expect(deleteItemAsync).toHaveBeenCalledWith('session.0');
-    expect(deleteItemAsync).toHaveBeenCalledWith('session.1');
-    expect(deleteItemAsync).toHaveBeenCalledWith('session.count');
-    expect(deleteItemAsync).toHaveBeenCalledWith('session');
+    const loaded = await loadPersistedSession();
+    expect(loaded).toEqual(sessionState);
   });
 
-  it('uses browser localStorage on web and keeps session URL detection disabled', async () => {
+  it('automatically clears expired refresh sessions on native platforms', async () => {
+    Platform.OS = 'android';
+
+    mockGetItem.mockImplementation(async (key: string) => {
+      const map: Record<string, string> = {
+        mypetnew_customer_refresh_token: 'old-token',
+        mypetnew_customer_refresh_expires_at: '2020-01-01T00:00:00Z', // Expired
+        mypetnew_customer_account_id: 'account-uuid-1',
+        mypetnew_customer_mobile: '+919876543210',
+        mypetnew_customer_role: 'CUSTOMER',
+        mypetnew_customer_device_id: 'device-uuid-1',
+      };
+      return map[key] ?? null;
+    });
+
+    const loaded = await loadPersistedSession();
+    expect(loaded).toBeNull();
+    expect(mockDeleteItem).toHaveBeenCalledWith('mypetnew_customer_refresh_token');
+  });
+
+  it('uses browser sessionStorage on web and avoids localStorage', async () => {
+    Platform.OS = 'web';
+
     const values = new Map<string, string>();
     (globalThis as { window?: unknown }).window = {
-      localStorage: {
+      sessionStorage: {
         getItem: (key: string) => values.get(key) ?? null,
         setItem: (key: string, value: string) => values.set(key, value),
         removeItem: (key: string) => values.delete(key),
       },
     };
-    const auth = loadStorage('web');
 
-    await auth.storage.setItem('session', 'web-session');
-    expect(await auth.storage.getItem('session')).toBe('web-session');
-    await auth.storage.removeItem('session');
-    expect(await auth.storage.getItem('session')).toBeNull();
-    expect(getItemAsync).not.toHaveBeenCalled();
-    expect(auth.detectSessionInUrl).toBe(false);
+    const sessionState: PersistedRefreshState = {
+      refreshToken: 'web-refresh-jwt',
+      refreshTokenExpiresAt: '2099-01-01T00:00:00Z',
+      accountId: 'account-uuid-web',
+      mobile: '+919876543210',
+      role: 'CUSTOMER',
+      deviceId: 'device-web-1',
+    };
+
+    await savePersistedSession(sessionState);
+    expect(values.get('mypetnew_customer_refresh_token')).toBe('web-refresh-jwt');
+    expect(mockSetItem).not.toHaveBeenCalled();
+
+    const loaded = await loadPersistedSession();
+    expect(loaded).toEqual(sessionState);
+
+    await clearPersistedSession();
+    expect(await loadPersistedSession()).toBeNull();
   });
 });

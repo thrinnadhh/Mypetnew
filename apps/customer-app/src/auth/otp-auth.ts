@@ -1,8 +1,6 @@
-import type { AuthError } from '@supabase/supabase-js';
+import { ApiError, apiClient } from '@/services/api-client';
+import type { CustomerAuthSession } from './types';
 
-import { supabase } from '@/utils/supabase';
-
-export type OtpChannel = 'phone' | 'email';
 export type OtpErrorCode =
   | 'INVALID_INPUT'
   | 'INVALID_CODE'
@@ -10,6 +8,7 @@ export type OtpErrorCode =
   | 'RATE_LIMITED'
   | 'NETWORK'
   | 'PROVIDER_UNAVAILABLE'
+  | 'AUTHENTICATION_REQUIRED'
   | 'CANCELLED'
   | 'UNKNOWN';
 
@@ -19,39 +18,49 @@ export class OtpAuthError extends Error {
   }
 }
 
+export interface OtpChallengeResponse {
+  challengeId: string;
+  expiresAt: string;
+  retryAfterSeconds: number;
+}
+
 export function normalizeOtpError(error: unknown): OtpAuthError {
   if (error instanceof OtpAuthError) return error;
-  const authError = error as (Partial<AuthError> & { code?: string }) | undefined;
-  const message = authError?.message?.toLowerCase() ?? '';
-  const providerCode = authError?.code?.toLowerCase() ?? '';
-  const status = authError?.status;
 
-  if (
-    providerCode === 'phone_provider_disabled' ||
-    message.includes('unsupported phone provider') ||
-    message.includes('phone provider disabled')
-  ) {
-    return new OtpAuthError('PROVIDER_UNAVAILABLE', 'Mobile verification is temporarily unavailable.');
+  if (error instanceof ApiError) {
+    const code = error.code ? String(error.code).toUpperCase() : '';
+    const status = error.status;
+
+    if (code === 'OTP_PURPOSE_INVALID' || code === 'MOBILE_INVALID' || code === 'INVALID_INPUT') {
+      return new OtpAuthError('INVALID_INPUT', 'Enter a valid mobile number.');
+    }
+    if (code === 'OTP_EXPIRED') {
+      return new OtpAuthError('EXPIRED_CODE', 'This code has expired. Request a new code.');
+    }
+    if (code === 'OTP_INVALID' || code === 'OTP_NOT_FOUND') {
+      return new OtpAuthError('INVALID_CODE', 'The code is invalid. Check it and try again.');
+    }
+    if (code === 'OTP_REPLAYED' || code === 'OTP_ALREADY_USED') {
+      return new OtpAuthError('EXPIRED_CODE', 'This code has already been used. Request a new code.');
+    }
+    if (code === 'RATE_LIMITED' || code === 'ATTEMPT_EXHAUSTED' || status === 429) {
+      return new OtpAuthError('RATE_LIMITED', 'Too many attempts. Try again later.');
+    }
+    if (status === 401 || code === 'AUTHENTICATION_REQUIRED') {
+      return new OtpAuthError('AUTHENTICATION_REQUIRED', 'Authentication is required.');
+    }
+    if (status === 503 || code === 'PROVIDER_UNAVAILABLE') {
+      return new OtpAuthError('PROVIDER_UNAVAILABLE', 'Mobile verification is temporarily unavailable.');
+    }
+    return new OtpAuthError('UNKNOWN', error.message || 'Authentication could not be completed.');
   }
-  if (
-    providerCode === 'email_address_invalid' ||
-    (message.includes('email address') && message.includes('invalid'))
-  ) {
-    return new OtpAuthError('INVALID_INPUT', 'Enter a valid email address.');
-  }
-  if (status === 429 || message.includes('rate') || message.includes('too many')) {
-    return new OtpAuthError('RATE_LIMITED', 'Too many attempts. Try again later.');
-  }
-  if (message.includes('expired')) {
-    return new OtpAuthError('EXPIRED_CODE', 'This code has expired. Request a new code.');
-  }
-  if (message.includes('invalid') || message.includes('token')) {
-    return new OtpAuthError('INVALID_CODE', 'The code is invalid. Check it and try again.');
-  }
-  if (message.includes('network') || message.includes('fetch')) {
+
+  const errMessage = String((error as { message?: string })?.message ?? '').toLowerCase();
+  if (errMessage.includes('network') || errMessage.includes('fetch')) {
     return new OtpAuthError('NETWORK', 'Network unavailable. Check your connection and retry.');
   }
-  return new OtpAuthError('UNKNOWN', authError?.message ?? 'Authentication could not be completed.');
+
+  return new OtpAuthError('UNKNOWN', (error as Error)?.message || 'Authentication could not be completed.');
 }
 
 export function normalizePhone(value: string): string {
@@ -62,36 +71,52 @@ export function normalizePhone(value: string): string {
   throw new OtpAuthError('INVALID_INPUT', 'Enter a valid mobile number.');
 }
 
-export function normalizeEmail(value: string): string {
-  const email = value.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    throw new OtpAuthError('INVALID_INPUT', 'Enter a valid email address.');
+export async function requestOtp(mobile: string, deviceId: string): Promise<{ mobile: string; challenge: OtpChallengeResponse }> {
+  try {
+    const normalizedMobile = normalizePhone(mobile);
+    const response = await apiClient.post<OtpChallengeResponse>('/api/v1/auth/otp/request', {
+      mobile: normalizedMobile,
+      purpose: 'LOGIN',
+      deviceId,
+    });
+    return { mobile: normalizedMobile, challenge: response };
+  } catch (error) {
+    throw normalizeOtpError(error);
   }
-  return email;
 }
 
-export async function sendOtp(channel: OtpChannel, rawIdentifier: string): Promise<string> {
-  const identifier = channel === 'phone' ? normalizePhone(rawIdentifier) : normalizeEmail(rawIdentifier);
-  const result = channel === 'phone'
-    ? await supabase.auth.signInWithOtp({ phone: identifier, options: { shouldCreateUser: true, data: { role: 'CUSTOMER' } } })
-    : await supabase.auth.signInWithOtp({ email: identifier, options: { shouldCreateUser: true, data: { role: 'CUSTOMER' } } });
-  if (result.error) throw normalizeOtpError(result.error);
-  return identifier;
+export async function verifyOtpCode(
+  challengeId: string,
+  mobile: string,
+  code: string
+): Promise<CustomerAuthSession> {
+  const trimmedCode = code.trim();
+  if (!/^\d{6}$/.test(trimmedCode)) {
+    throw new OtpAuthError('INVALID_INPUT', 'Enter the six-digit code.');
+  }
+
+  try {
+    const response = await apiClient.post<CustomerAuthSession>('/api/v1/auth/otp/verify', {
+      challengeId,
+      mobile,
+      purpose: 'LOGIN',
+      code: trimmedCode,
+    });
+    return response;
+  } catch (error) {
+    throw normalizeOtpError(error);
+  }
 }
 
-export async function verifyOtp(channel: OtpChannel, identifier: string, token: string) {
-  if (!/^\d{6}$/.test(token.trim())) throw new OtpAuthError('INVALID_INPUT', 'Enter the six-digit code.');
-  const result = channel === 'phone'
-    ? await supabase.auth.verifyOtp({ phone: identifier, token: token.trim(), type: 'sms' })
-    : await supabase.auth.verifyOtp({ email: identifier, token: token.trim(), type: 'email' });
-  if (result.error) throw normalizeOtpError(result.error);
-  if (!result.data.session) throw new OtpAuthError('UNKNOWN', 'The session could not be created.');
-  return result.data.session;
-}
-
-export async function resendOtp(channel: OtpChannel, identifier: string) {
-  const result = channel === 'phone'
-    ? await supabase.auth.resend({ type: 'sms', phone: identifier })
-    : await supabase.auth.signInWithOtp({ email: identifier, options: { shouldCreateUser: true, data: { role: 'CUSTOMER' } } });
-  if (result.error) throw normalizeOtpError(result.error);
+export async function resendOtpCode(mobile: string, deviceId: string): Promise<OtpChallengeResponse> {
+  try {
+    const response = await apiClient.post<OtpChallengeResponse>('/api/v1/auth/otp/request', {
+      mobile,
+      purpose: 'LOGIN',
+      deviceId,
+    });
+    return response;
+  } catch (error) {
+    throw normalizeOtpError(error);
+  }
 }

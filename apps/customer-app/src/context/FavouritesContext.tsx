@@ -48,9 +48,9 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
     const loadFavourites = async () => {
       setLoading(true);
       try {
-        if (session?.access_token) {
+        if (session?.accessToken) {
           const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/customer/favourites`, {
-            headers: authHeaders(session.access_token),
+            headers: authHeaders(session.accessToken),
           });
           if (!response.ok) throw await serverError(response);
           const data = (await response.json()) as FavouriteItem[];
@@ -71,7 +71,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
     return () => {
       active = false;
     };
-  }, [session?.access_token, user?.id]);
+  }, [session?.accessToken, user?.id]);
 
   const isFavourite = useCallback(
     (targetType: 'PRODUCT' | 'SHOP', targetId: string): boolean =>
@@ -92,7 +92,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
           favourite.targetId === targetId,
       );
 
-      if (!session?.access_token) {
+      if (!session?.accessToken) {
         await requireAuth({ action: 'FAVOURITE', returnTo: '/favourites' });
         return currentlyFavourite;
       }
@@ -103,7 +103,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
             `${appConfig.apiBaseUrl}/api/v1/customer/favourites?targetType=${encodeURIComponent(normalizedType)}&targetId=${encodeURIComponent(targetId)}`,
             {
               method: 'DELETE',
-              headers: authHeaders(session.access_token),
+              headers: authHeaders(session.accessToken),
             },
           );
           if (!response.ok) throw await serverError(response);
@@ -121,7 +121,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
 
         const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/customer/favourites`, {
           method: 'POST',
-          headers: authHeaders(session.access_token),
+          headers: authHeaders(session.accessToken),
           body: JSON.stringify({ targetType: normalizedType, targetId }),
         });
         if (!response.ok) throw await serverError(response);

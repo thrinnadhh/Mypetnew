@@ -21,6 +21,7 @@ import java.util.UUID
 data class OtpRequestBody(val mobile: String, val purpose: OtpPurpose, val deviceId: String)
 data class OtpVerifyBody(val challengeId: UUID, val mobile: String, val purpose: OtpPurpose, val code: String)
 data class OtpSessionResponse(
+    val accountId: UUID,
     val accessToken: String,
     val refreshToken: String,
     val tokenType: String = "Bearer",
@@ -51,6 +52,7 @@ class IdentityController(
         val session = sessions.create(verified.subjectId, verified.mobile, Role.CUSTOMER, verified.deviceId)
         val principal = Principal(verified.subjectId, Role.CUSTOMER, sessionId = session.sessionId)
         return OtpSessionResponse(
+            accountId = session.accountId,
             accessToken = tokens.issue(principal),
             refreshToken = session.refreshToken,
             accessTokenExpiresAt = verified.verifiedAt.plusSeconds(3_600),
@@ -64,6 +66,7 @@ class IdentityController(
         val session = sessions.rotate(body.refreshToken)
         val now = Instant.now()
         return OtpSessionResponse(
+            accountId = session.accountId,
             accessToken = tokens.issue(Principal(session.accountId, session.role, sessionId = session.sessionId)),
             refreshToken = session.refreshToken,
             accessTokenExpiresAt = now.plusSeconds(3_600),

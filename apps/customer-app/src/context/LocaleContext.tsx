@@ -16,13 +16,13 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    if (!session?.access_token) {
+    if (!session?.accessToken) {
       const next = supported(i18n.language);
       setLocale(next);
       void i18n.changeLanguage(next).then(() => { if (!cancelled) setReady(true); });
       return () => { cancelled = true; };
     }
-    void fetchLocale(session.access_token).then(async (preferred) => {
+    void fetchLocale(session.accessToken).then(async (preferred) => {
       if (cancelled) return;
       const next = supported(preferred);
       setLocale(next);
@@ -36,14 +36,14 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
       setReady(true);
     });
     return () => { cancelled = true; };
-  }, [session?.access_token]);
+  }, [session?.accessToken]);
 
   const changeLocale = useCallback(async (next: LanguageId) => {
     const normalized = supported(next);
     setLocale(normalized);
     await i18n.changeLanguage(normalized);
-    await updateLocale(normalized, session?.access_token);
-  }, [session?.access_token]);
+    await updateLocale(normalized, session?.accessToken);
+  }, [session?.accessToken]);
 
   const value = useMemo(() => ({ locale, changeLocale, ready }), [changeLocale, locale, ready]);
   return <LocaleContext.Provider value={value}>{children}</LocaleContext.Provider>;

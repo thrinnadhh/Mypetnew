@@ -31,7 +31,7 @@ export default function AppointmentDetailRoute() {
   useEffect(() => {
     if (!id || !session) return;
     setLoading(true);
-    fetchAppointmentDetails(id, session.access_token)
+    fetchAppointmentDetails(id, session.accessToken)
       .then((data) => {
         setAppt(data);
         setError(null);
@@ -45,7 +45,7 @@ export default function AppointmentDetailRoute() {
   const handleCancel = async () => {
     if (!appt || !session) return;
     try {
-      await cancelAppointment(appt.id, 'Cancelled from appointment details', session.access_token);
+      await cancelAppointment(appt.id, 'Cancelled from appointment details', session.accessToken);
       Alert.alert(t('common.success'), 'Appointment cancelled successfully.');
       router.back();
     } catch (err: any) {

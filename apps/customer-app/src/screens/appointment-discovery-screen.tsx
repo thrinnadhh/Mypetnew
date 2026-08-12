@@ -77,7 +77,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
     }
     setPetsLoading(true);
     try {
-      const values = await fetchCustomerPets(session.access_token);
+      const values = await fetchCustomerPets(session.accessToken);
       setPets(values);
       setSelectedPetId((current) =>
         current && values.some((pet) => pet.petId === current)
@@ -113,7 +113,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
     try {
       const created = await createCustomerPet(
         { name: petName.trim(), species: petSpecies },
-        session.access_token,
+        session.accessToken,
       );
       setPets((current) => [...current, created]);
       setSelectedPetId(created.petId);
@@ -139,7 +139,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
         slot,
         userId: user.id,
         petId: selectedPetId,
-        accessToken: session.access_token,
+        accessToken: session.accessToken,
       });
       const selectedPet = pets.find((pet) => pet.petId === selectedPetId);
       router.push({

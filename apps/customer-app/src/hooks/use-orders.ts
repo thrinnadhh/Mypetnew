@@ -28,7 +28,7 @@ export function useOrders() {
     if (!user || !session) return;
     setState('loading');
     try {
-      const data = await fetchCustomerOrders(user.id, session.access_token);
+      const data = await fetchCustomerOrders(user.id, session.accessToken);
       setOrders(data);
       setState('ready');
     } catch (error) {
@@ -66,7 +66,7 @@ export function useOrders() {
       if (!session) return;
       setActionLoading(true);
       try {
-        await cancelOrder(orderId, reason, session.access_token);
+        await cancelOrder(orderId, reason, session.accessToken);
         await load();
       } finally {
         setActionLoading(false);
@@ -80,7 +80,7 @@ export function useOrders() {
       if (!session) return null;
       setActionLoading(true);
       try {
-        const result = await reorderItems(orderId, session.access_token);
+        const result = await reorderItems(orderId, session.accessToken);
         if (result.canReorder) {
           const nextItems = await buildCartFromRevalidation(result);
           await replaceCart(nextItems);

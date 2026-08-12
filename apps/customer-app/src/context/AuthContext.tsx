@@ -1,87 +1,149 @@
-import type { Session, User } from '@supabase/supabase-js';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { isFreshOtp } from '@/auth/fresh-otp';
+import { clearPersistedSession, loadPersistedSession, savePersistedSession } from '@/auth/session-storage';
+import type { CustomerAuthSession, CustomerAuthUser } from '@/auth/types';
+import { getOrCreateInstallationId } from '@/utils/installation-id';
 import { apiClient } from '@/services/api-client';
-import { syncCommunicationContact } from '@/services/communication-contact';
-import { syncAuthenticatedProfile } from '@/utils/profile-sync';
-import { supabase } from '@/utils/supabase';
 
 interface AuthContextType {
-  user: User | null;
-  session: Session | null;
-  role: string | null;
+  user: CustomerAuthUser | null;
+  session: CustomerAuthSession | null;
+  role: 'CUSTOMER' | null;
   loading: boolean;
   lastOtpVerifiedAt: number | null;
   markOtpVerified: () => void;
   hasFreshOtp: (maxAgeMs?: number) => boolean;
+  setSession: (session: CustomerAuthSession | null) => Promise<void>;
   signOut: () => Promise<void>;
-  signInWithMockPhone?: (phone: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSessionState] = useState<CustomerAuthSession | null>(null);
   const [loading, setLoading] = useState(true);
   const lastOtpVerifiedAtRef = useRef<number | null>(null);
-  const lastContactFingerprintRef = useRef<string | null>(null);
   const [lastOtpVerifiedAt, setLastOtpVerifiedAt] = useState<number | null>(null);
+  const activeSessionRef = useRef<CustomerAuthSession | null>(null);
 
-  const applySession = useCallback((nextSession: Session | null) => {
-    apiClient.setSessionToken(nextSession?.access_token ?? null);
-    setSession(nextSession);
-    setLoading(false);
+  const applySessionState = useCallback((nextSession: CustomerAuthSession | null) => {
+    activeSessionRef.current = nextSession;
+    apiClient.setSessionToken(nextSession?.accessToken ?? null);
+    setSessionState(nextSession);
+  }, []);
 
+  const setSession = useCallback(async (nextSession: CustomerAuthSession | null) => {
     if (!nextSession) {
-      lastContactFingerprintRef.current = null;
+      applySessionState(null);
+      await clearPersistedSession();
       return;
     }
 
-    void syncAuthenticatedProfile(nextSession, 'CUSTOMER').catch((error) => {
-      console.warn('Profile sync failed', error);
+    const deviceId = await getOrCreateInstallationId();
+    applySessionState(nextSession);
+    await savePersistedSession({
+      refreshToken: nextSession.refreshToken,
+      refreshTokenExpiresAt: nextSession.refreshTokenExpiresAt,
+      accountId: nextSession.accountId,
+      mobile: nextSession.mobile,
+      role: 'CUSTOMER',
+      deviceId,
     });
+  }, [applySessionState]);
 
-    const metadata = nextSession.user.user_metadata ?? {};
-    const fingerprint = [
-      nextSession.user.id,
-      nextSession.user.email ?? '',
-      nextSession.user.phone ?? '',
-      typeof metadata.full_name === 'string' ? metadata.full_name : '',
-      typeof metadata.name === 'string' ? metadata.name : '',
-    ].join('|');
+  const refreshActiveSession = useCallback(async (): Promise<string | null> => {
+    try {
+      const persisted = await loadPersistedSession();
+      if (!persisted) {
+        applySessionState(null);
+        await clearPersistedSession();
+        return null;
+      }
 
-    if (lastContactFingerprintRef.current !== fingerprint) {
-      void syncCommunicationContact(nextSession.access_token)
-        .then(() => {
-          lastContactFingerprintRef.current = fingerprint;
-        })
-        .catch((error) => {
-          console.warn('Communication contact sync failed', error);
-        });
+      const rotatedSession = await apiClient.post<CustomerAuthSession>('/api/v1/auth/sessions/refresh', {
+        refreshToken: persisted.refreshToken,
+      });
+
+      const deviceId = persisted.deviceId || (await getOrCreateInstallationId());
+      const completeSession: CustomerAuthSession = {
+        ...rotatedSession,
+        mobile: rotatedSession.mobile || persisted.mobile,
+        role: 'CUSTOMER',
+      };
+
+      applySessionState(completeSession);
+      await savePersistedSession({
+        refreshToken: completeSession.refreshToken,
+        refreshTokenExpiresAt: completeSession.refreshTokenExpiresAt,
+        accountId: completeSession.accountId,
+        mobile: completeSession.mobile,
+        role: 'CUSTOMER',
+        deviceId,
+      });
+
+      return completeSession.accessToken;
+    } catch (error) {
+      console.warn('Session refresh failed:', error);
+      applySessionState(null);
+      await clearPersistedSession();
+      return null;
     }
-  }, []);
+  }, [applySessionState]);
 
+  const clearAuthState = useCallback(() => {
+    lastOtpVerifiedAtRef.current = null;
+    setLastOtpVerifiedAt(null);
+    applySessionState(null);
+    void clearPersistedSession();
+  }, [applySessionState]);
+
+  // Wire apiClient callbacks
+  useEffect(() => {
+    apiClient.setRefreshHandler(refreshActiveSession);
+    apiClient.setClearAuthHandler(clearAuthState);
+
+    return () => {
+      apiClient.setRefreshHandler(null);
+      apiClient.setClearAuthHandler(null);
+    };
+  }, [clearAuthState, refreshActiveSession]);
+
+  // Cold start session restoration
   useEffect(() => {
     let active = true;
 
-    void supabase.auth.getSession().then(({ data, error }) => {
-      if (!active) return;
-      if (error) console.warn('Session restoration failed', error);
-      applySession(error ? null : data.session);
-    });
+    async function restore() {
+      try {
+        const persisted = await loadPersistedSession();
+        if (!persisted) {
+          if (active) {
+            applySessionState(null);
+            setLoading(false);
+          }
+          return;
+        }
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (active) applySession(nextSession);
-    });
+        // Rotate session on cold start
+        const accessToken = await refreshActiveSession();
+        if (!active) return;
+        if (!accessToken) {
+          applySessionState(null);
+        }
+      } catch (error) {
+        console.warn('Cold start session restoration failed:', error);
+        if (active) applySessionState(null);
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    void restore();
 
     return () => {
       active = false;
-      subscription.unsubscribe();
     };
-  }, [applySession]);
+  }, [applySessionState, refreshActiveSession]);
 
   const markOtpVerified = useCallback(() => {
     const now = Date.now();
@@ -94,29 +156,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    const currentToken = activeSessionRef.current?.accessToken;
     lastOtpVerifiedAtRef.current = null;
-    lastContactFingerprintRef.current = null;
     setLastOtpVerifiedAt(null);
-    apiClient.setSessionToken(null);
+    applySessionState(null);
+    await clearPersistedSession();
 
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-  }, []);
+    if (currentToken) {
+      try {
+        await apiClient.delete('/api/v1/auth/sessions/current', {
+          Authorization: `Bearer ${currentToken}`,
+        });
+      } catch (error) {
+        console.warn('Backend logout call failed, session cleared locally:', error);
+      }
+    }
+  }, [applySessionState]);
+
+  const user = useMemo<CustomerAuthUser | null>(() => {
+    if (!session) return null;
+    return {
+      id: session.accountId,
+      phone: session.mobile,
+      displayName: null,
+    };
+  }, [session]);
 
   const value = useMemo<AuthContextType>(
     () => ({
-      user: session?.user ?? null,
+      user,
       session,
-      role:
-        (session?.user?.app_metadata?.role as string | undefined) ??
-        (session ? 'CUSTOMER' : null),
+      role: session ? 'CUSTOMER' : null,
       loading,
       lastOtpVerifiedAt,
       markOtpVerified,
       hasFreshOtp,
+      setSession,
       signOut,
     }),
-    [hasFreshOtp, lastOtpVerifiedAt, loading, markOtpVerified, session, signOut],
+    [hasFreshOtp, lastOtpVerifiedAt, loading, markOtpVerified, session, setSession, signOut, user]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

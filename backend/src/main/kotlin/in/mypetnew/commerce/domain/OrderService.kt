@@ -19,8 +19,16 @@ enum class OrderStatus {
     CANCELLED,
 }
 
+enum class OrderActor {
+    CUSTOMER,
+    MERCHANT,
+    SYSTEM,
+}
+
 data class OrderHistoryEntry(
     val status: OrderStatus,
+    val fromStatus: OrderStatus? = null,
+    val actorRole: OrderActor,
     val occurredAt: Instant = Instant.now(),
     val commandKey: String,
     val fromStatus: OrderStatus? = null,

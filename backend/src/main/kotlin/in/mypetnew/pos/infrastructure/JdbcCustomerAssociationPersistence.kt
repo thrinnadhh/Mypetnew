@@ -82,7 +82,7 @@ class JdbcCustomerAssociationPersistence(
             )
             if (updated != 1) invalid()
             challenge.customerId
-        } ?: throw IllegalStateException("Association transaction returned no result")
+        }
 
     private fun replay(customerId: UUID, idempotencyKey: String, requestFingerprint: String): CustomerAssociationChallenge? {
         val row = jdbc.query(

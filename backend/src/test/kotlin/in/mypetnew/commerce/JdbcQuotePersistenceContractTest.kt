@@ -20,7 +20,7 @@ class JdbcQuotePersistenceContractTest {
     @Test
     fun `quote survives service restart and retains expiry and server pricing`() {
         val dataSource = DriverManagerDataSource(
-            "jdbc:h2:mem=quote_${UUID.randomUUID().toString().replace("-", "")};MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
+            "jdbc:h2:mem:quote_${UUID.randomUUID().toString().replace("-", "")};MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
             "sa",
             "",
         )

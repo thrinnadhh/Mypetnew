@@ -80,9 +80,30 @@ class CommerceInventoryContractTest {
         val orders = OrderService(inventory)
         val customerId = UUID.randomUUID()
         val outletId = UUID.randomUUID()
+        val organizationId = UUID.randomUUID()
+        val quote = QuoteService().createPickupQuote(
+            customerId = customerId,
+            outletId = outletId,
+            lines = mapOf(listingId to Pair(1, 12_500L)),
+        )
+        val listingNames = mapOf(listingId to "Dog Food")
 
-        val first = orders.checkout(customerId, outletId, mapOf(listingId to 1), 13_500, "checkout-1")
-        val replay = orders.checkout(customerId, outletId, mapOf(listingId to 1), 13_500, "checkout-1")
+        val first = orders.checkout(
+            quote,
+            organizationId,
+            listingNames,
+            "checkout-1",
+            customerId,
+            "trace-checkout-1",
+        )
+        val replay = orders.checkout(
+            quote,
+            organizationId,
+            listingNames,
+            "checkout-1",
+            customerId,
+            "trace-checkout-2",
+        )
         assertEquals(first.id, replay.id)
 
         assertThrows(DomainException::class.java) {

@@ -18,6 +18,9 @@ import `in`.mypetnew.loyalty.infrastructure.JdbcLoyaltyPersistence
 import `in`.mypetnew.pos.domain.PosPersistence
 import `in`.mypetnew.pos.domain.PosService
 import `in`.mypetnew.pos.infrastructure.JdbcPosPersistence
+import `in`.mypetnew.provider.domain.ProviderPersistence
+import `in`.mypetnew.provider.domain.ProviderService
+import `in`.mypetnew.provider.infrastructure.JdbcProviderPersistence
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Profile
@@ -27,6 +30,13 @@ import org.springframework.transaction.support.TransactionTemplate
 @Configuration
 @Profile("!test & !development")
 class PersistenceConfiguration {
+    @Bean
+    fun providerPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): ProviderPersistence =
+        JdbcProviderPersistence(jdbc, transactions)
+
+    @Bean
+    fun productionProviderService(persistence: ProviderPersistence): ProviderService = ProviderService(persistence)
+
     @Bean
     fun catalogPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): CatalogPersistence =
         JdbcCatalogPersistence(jdbc, transactions)

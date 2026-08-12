@@ -108,7 +108,7 @@ class JdbcLoyaltyPersistence(
                 merchantId,
             )
             LoyaltyAward(sourceReference, true, availableStars)
-        } ?: throw IllegalStateException("Loyalty transaction returned no result")
+        }
     }
 
     override fun balance(customerId: UUID, merchantId: UUID): Int = jdbc.query(

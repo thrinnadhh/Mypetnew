@@ -18,15 +18,18 @@ class ApiClient {
   private refreshHandler: RefreshHandler | null = null;
   private clearAuthHandler: ClearAuthHandler | null = null;
   private refreshPromise: Promise<string | null> | null = null;
-
   private authEpoch = 0;
 
   public setSessionToken(token: string | null) {
     this.sessionToken = token;
     if (token === null) {
-      this.authEpoch++;
-      this.refreshPromise = null;
+      this.advanceAuthEpoch();
     }
+  }
+
+  public advanceAuthEpoch() {
+    this.authEpoch++;
+    this.refreshPromise = null;
   }
 
   public getSessionToken(): string | null {
@@ -102,44 +105,53 @@ class ApiClient {
     if (!response.ok) {
       const error = await apiErrorFromResponse(response);
 
-      // Handle 401 Authentication Required
       if (response.status === 401) {
-        // Do NOT refresh if auth endpoint or already retried
-        if (this.isAuthEndpoint(path) || _isRetry) {
-          if (this.clearAuthHandler) {
-            this.clearAuthHandler();
-          }
+        // Auth lifecycle endpoints own their own failure semantics. Never recurse into refresh
+        // and never let an old auth request clear a newer session generation.
+        if (this.isAuthEndpoint(path)) {
+          throw error;
+        }
+
+        if (_isRetry) {
+          this.clearAuthHandler?.();
           throw error;
         }
 
         if (this.refreshHandler) {
           const startEpoch = this.authEpoch;
-          // Coalesce concurrent 401 requests into ONE in-flight refresh Promise
+
           if (!this.refreshPromise) {
-            this.refreshPromise = this.refreshHandler().finally(() => {
-              this.refreshPromise = null;
+            const refresh = this.refreshHandler();
+            const trackedRefresh = refresh.finally(() => {
+              if (this.refreshPromise === trackedRefresh) {
+                this.refreshPromise = null;
+              }
             });
+            this.refreshPromise = trackedRefresh;
           }
 
           const activeRefresh = this.refreshPromise;
           const newToken = await activeRefresh;
-          if (newToken && this.authEpoch === startEpoch) {
-            return this.request<T>(path, { ...options, _isRetry: true });
-          } else {
-            if (this.clearAuthHandler) {
-              this.clearAuthHandler();
-            }
+
+          // A logout or a newly established login superseded this request. The old request
+          // must fail without mutating the newer auth state.
+          if (this.authEpoch !== startEpoch) {
             throw error;
           }
-        } else {
-          if (this.clearAuthHandler) {
-            this.clearAuthHandler();
+
+          if (newToken) {
+            return this.request<T>(path, { ...options, _isRetry: true });
           }
+
+          this.clearAuthHandler?.();
           throw error;
         }
+
+        this.clearAuthHandler?.();
+        throw error;
       }
 
-      // 403 or other non-401 error: NEVER refresh!
+      // 403 or any other non-401 error never triggers token refresh.
       throw error;
     }
 

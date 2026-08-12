@@ -31,8 +31,7 @@ describe('recurring order contract', () => {
     expect(decisions).toContain('D-019');
     expect(decisions).toContain('7, 15, 25, 30, and 35 days');
     expect(decisions).toContain('No automatic COD placement or payment mandate charge occurs');
-    expect(matrix).toContain('Recurring Subscriptions');
-    expect(matrix).toContain('2.6.2 Recurring Orders & Subscriptions');
-    expect(matrix).toContain('DEFERRED');
+    expect(matrix).toContain('### 2.6.2 Recurring Orders & Subscriptions (`DEFERRED`)');
+    expect(matrix).toContain('| Recurring Subscriptions | POST | `/api/v1/orders/subscriptions` (Legacy client route) | N/A (Sprint 1 uses single-order pickup) | **DEFERRED** | Post-Sprint 1 |');
   });
 });

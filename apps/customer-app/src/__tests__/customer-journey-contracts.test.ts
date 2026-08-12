@@ -122,7 +122,7 @@ describe('MyPet customer journey contracts', () => {
       'Store pickup',
       'PAY_ON_FULFILMENT',
     ]);
-    expect(matrix).toContain('### 2.6.1 Online & Appointment Payments (`DEFERRED`)');
+    expect(matrix).toContain('- **2.6.1 Online & Appointment Payments (`DEFERRED`)**:');
     expect(matrix).toContain('| Online / Appointment Payment | POST | `/api/v1/payments/appointments` (Legacy client route) | N/A (Sprint 1 uses `PAY_ON_FULFILMENT` / `STORE_PICKUP`) | **DEFERRED** | Post-Sprint 1 |');
   });
 
@@ -195,7 +195,7 @@ describe('MyPet customer journey contracts', () => {
       'Recurring product orders support fixed cadences of 7, 15, 25, 30, and 35 days',
       'No automatic COD placement or payment mandate charge occurs',
     ]);
-    expect(matrix).toContain('### 2.6.2 Recurring Orders & Subscriptions (`DEFERRED`)');
+    expect(matrix).toContain('- **2.6.2 Recurring Orders & Subscriptions (`DEFERRED`)**:');
     expect(matrix).toContain('| Recurring Subscriptions | POST | `/api/v1/orders/subscriptions` (Legacy client route) | N/A (Sprint 1 uses single-order pickup) | **DEFERRED** | Post-Sprint 1 |');
   });
 

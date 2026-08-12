@@ -1,5 +1,13 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { ApiError } from '../../contracts/api-error';
 import { apiClient } from '../api-client';
 import { fetchCustomerLoyaltyBalance } from '../loyalty';
+
+function source(relativePath: string): string {
+  return readFileSync(join(process.cwd(), relativePath), 'utf8');
+}
 
 describe('T1 API Convention Normalization', () => {
   const originalFetch = global.fetch;
@@ -49,5 +57,102 @@ describe('T1 API Convention Normalization', () => {
     expect(authHeader).toBe('Bearer session-xyz');
     expect(result.availableStars).toBe(10);
     expect(result.rewards).toBe(2);
+  });
+
+  it('preserves status, code, traceId, and fieldErrors on fetchCustomerLoyaltyBalance ApiError failure', async () => {
+    global.fetch = jest.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            code: 'RESOURCE_NOT_FOUND',
+            message: 'The requested resource is unavailable',
+            traceId: 'trace-abc-789',
+            fieldErrors: { organizationId: 'invalid' },
+          }),
+          {
+            status: 404,
+            statusText: 'Not Found',
+            headers: { 'x-trace-id': 'trace-abc-789' },
+          },
+        ),
+      ),
+    );
+
+    let thrown: unknown;
+    try {
+      await fetchCustomerLoyaltyBalance('org-invalid', 'token-123');
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(ApiError);
+    const apiErr = thrown as ApiError;
+    expect(apiErr.status).toBe(404);
+    expect(apiErr.code).toBe('RESOURCE_NOT_FOUND');
+    expect(apiErr.traceId).toBe('trace-abc-789');
+    expect(apiErr.message).toBe('The requested resource is unavailable');
+    expect(apiErr.fieldErrors).toEqual({ organizationId: ['invalid'] });
+  });
+
+  it('verifies IdentityController contract and classifies direct Supabase Auth in customer app as mismatch', () => {
+    const identityBackend = source(
+      '../../backend/src/main/kotlin/in/mypetnew/application/web/IdentityController.kt',
+    );
+    const otpAuthClient = source('src/auth/otp-auth.ts');
+    const authContextClient = source('src/context/AuthContext.tsx');
+    const matrixDoc = source('../../docs/architecture/CUSTOMER_API_COMPATIBILITY_MATRIX.md');
+
+    expect(identityBackend).toContain('@PostMapping("/otp/request")');
+    expect(identityBackend).toContain('@PostMapping("/otp/verify")');
+    expect(identityBackend).toContain('@PostMapping("/sessions/refresh")');
+    expect(identityBackend).toContain('@DeleteMapping("/sessions/current")');
+
+    expect(otpAuthClient).toContain('supabase.auth.signInWithOtp');
+    expect(otpAuthClient).toContain('supabase.auth.verifyOtp');
+    expect(authContextClient).toContain('supabase.auth.onAuthStateChange');
+
+    expect(matrixDoc).toContain('Customer Authentication');
+    expect(matrixDoc).toContain('MISMATCH');
+  });
+
+  it('verifies catalog legacy paths and classifies customer catalog as mismatch against GET /api/v1/public/catalog', () => {
+    const publicCatalogBackend = source(
+      '../../backend/src/main/kotlin/in/mypetnew/application/web/PublicCatalogController.kt',
+    );
+    const customerCatalogClient = source('src/services/customer-catalog.ts');
+    const providerDiscoveryClient = source('src/services/provider-discovery.ts');
+    const matrixDoc = source('../../docs/architecture/CUSTOMER_API_COMPATIBILITY_MATRIX.md');
+
+    expect(publicCatalogBackend).toContain('@RequestMapping("/api/v1/public/catalog")');
+    expect(publicCatalogBackend).toContain('PublicListingSummary');
+
+    expect(customerCatalogClient).toContain('/api/v1/catalog/offerings');
+    expect(customerCatalogClient).toContain('/api/v1/providers');
+    expect(providerDiscoveryClient).toContain('/api/v1/discovery/providers');
+
+    expect(matrixDoc).toContain('/api/v1/discovery/providers');
+    expect(matrixDoc).toContain('/api/v1/public/catalog');
+    expect(matrixDoc).toContain('MISMATCH');
+  });
+
+  it('verifies exact ProductOrder backend DTO fields and validates absence of invented fields', () => {
+    const orderServiceBackend = source(
+      '../../backend/src/main/kotlin/in/mypetnew/commerce/domain/OrderService.kt',
+    );
+
+    expect(orderServiceBackend).toContain('data class ProductOrder(');
+    expect(orderServiceBackend).toContain('val id: UUID');
+    expect(orderServiceBackend).toContain('val customerId: UUID');
+    expect(orderServiceBackend).toContain('val outletId: UUID');
+    expect(orderServiceBackend).toContain('val lines: Map<UUID, Int>');
+    expect(orderServiceBackend).toContain('val grandTotalPaise: Long');
+    expect(orderServiceBackend).toContain('val platformFeePaise: Long');
+    expect(orderServiceBackend).toContain('val merchantCommissionPaise: Long');
+    expect(orderServiceBackend).toContain('val paymentMethod: String');
+    expect(orderServiceBackend).toContain('val status: OrderStatus');
+    expect(orderServiceBackend).toContain('val history: List<OrderHistoryEntry>');
+
+    expect(orderServiceBackend).not.toContain('val totalAmountPaise');
+    expect(orderServiceBackend).not.toContain('val placedAt: Instant');
   });
 });

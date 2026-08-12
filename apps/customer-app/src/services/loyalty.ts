@@ -1,3 +1,4 @@
+import { apiErrorFromResponse } from '@/contracts/api-error';
 import { appConfig } from '@/utils/app-config';
 
 export interface LoyaltyProgressDto {
@@ -73,7 +74,7 @@ export async function fetchCustomerLoyaltyBalance(
     `${appConfig.apiBaseUrl}/api/v1/customer/loyalty/${encodeURIComponent(organizationId)}`,
     { headers: authHeaders(accessToken) },
   );
-  if (!response.ok) throw await apiError(response, 'Could not fetch customer loyalty balance');
+  if (!response.ok) throw await apiErrorFromResponse(response);
   return (await response.json()) as CustomerLoyaltyBalanceResponse;
 }
 

@@ -85,7 +85,7 @@ class JdbcInventoryPersistenceContractTest {
     }
 
     private fun fixture(): Fixture {
-        val databaseName = "inventory_${UUID.randomUUID().toString().replace("-", "")}" 
+        val databaseName = "inventory_${UUID.randomUUID().toString().replace("-", "")}"
         val dataSource = DriverManagerDataSource(
             "jdbc:h2:mem:$databaseName;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=10000",
             "sa",

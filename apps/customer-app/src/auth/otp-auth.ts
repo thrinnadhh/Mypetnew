@@ -21,7 +21,28 @@ export class OtpAuthError extends Error {
 export interface OtpChallengeResponse {
   challengeId: string;
   expiresAt: string;
-  retryAfterSeconds: number;
+  resendAfterSeconds: number;
+}
+
+export interface OtpSessionResponse {
+  accountId: string;
+  accessToken: string;
+  refreshToken: string;
+  tokenType: string;
+  accessTokenExpiresAt: string;
+  refreshTokenExpiresAt: string;
+  role: string;
+}
+
+export function validateServerRole(role: unknown): 'CUSTOMER' {
+  if (role === 'CUSTOMER') {
+    return 'CUSTOMER';
+  }
+  throw new ApiError(403, {
+    code: 'AUTHORIZATION_REQUIRED',
+    message: `Access denied for role '${String(role)}'. Customer application requires CUSTOMER role.`,
+    fieldErrors: {},
+  });
 }
 
 export function normalizeOtpError(error: unknown): OtpAuthError {
@@ -90,19 +111,30 @@ export async function verifyOtpCode(
   mobile: string,
   code: string
 ): Promise<CustomerAuthSession> {
+  const normalizedMobile = normalizePhone(mobile);
   const trimmedCode = code.trim();
   if (!/^\d{6}$/.test(trimmedCode)) {
     throw new OtpAuthError('INVALID_INPUT', 'Enter the six-digit code.');
   }
 
   try {
-    const response = await apiClient.post<CustomerAuthSession>('/api/v1/auth/otp/verify', {
+    const response = await apiClient.post<OtpSessionResponse>('/api/v1/auth/otp/verify', {
       challengeId,
-      mobile,
+      mobile: normalizedMobile,
       purpose: 'LOGIN',
       code: trimmedCode,
     });
-    return response;
+    validateServerRole(response.role);
+    return {
+      accountId: response.accountId,
+      accessToken: response.accessToken,
+      refreshToken: response.refreshToken,
+      tokenType: response.tokenType || 'Bearer',
+      accessTokenExpiresAt: response.accessTokenExpiresAt,
+      refreshTokenExpiresAt: response.refreshTokenExpiresAt,
+      role: 'CUSTOMER',
+      mobile: normalizedMobile,
+    };
   } catch (error) {
     throw normalizeOtpError(error);
   }

@@ -79,7 +79,7 @@ export default function LoginScreen() {
     setIdentifier(mobile);
     setChallengeId(challenge.challengeId);
     setCode('');
-    setSeconds(challenge.retryAfterSeconds || 30);
+    setSeconds(challenge.resendAfterSeconds);
     setStep('code');
   }), [identifierInput, run]);
 
@@ -95,7 +95,7 @@ export default function LoginScreen() {
     const deviceId = await getOrCreateInstallationId();
     const challenge = await resendOtpCode(identifier, deviceId);
     setChallengeId(challenge.challengeId);
-    setSeconds(challenge.retryAfterSeconds || 30);
+    setSeconds(challenge.resendAfterSeconds);
   }), [identifier, run, seconds]);
 
   const reset = useCallback(() => {

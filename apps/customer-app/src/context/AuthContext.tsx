@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { isFreshOtp } from '@/auth/fresh-otp';
+import { validateServerRole, type OtpSessionResponse } from '@/auth/otp-auth';
 import { clearPersistedSession, loadPersistedSession, savePersistedSession } from '@/auth/session-storage';
 import type { CustomerAuthSession, CustomerAuthUser } from '@/auth/types';
 import { getOrCreateInstallationId } from '@/utils/installation-id';
@@ -26,6 +27,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const lastOtpVerifiedAtRef = useRef<number | null>(null);
   const [lastOtpVerifiedAt, setLastOtpVerifiedAt] = useState<number | null>(null);
   const activeSessionRef = useRef<CustomerAuthSession | null>(null);
+  const authEpochRef = useRef(0);
 
   const applySessionState = useCallback((nextSession: CustomerAuthSession | null) => {
     activeSessionRef.current = nextSession;
@@ -35,13 +37,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const setSession = useCallback(async (nextSession: CustomerAuthSession | null) => {
     if (!nextSession) {
+      authEpochRef.current += 1;
       applySessionState(null);
       await clearPersistedSession();
       return;
     }
 
+    validateServerRole(nextSession.role);
+    if (!nextSession.mobile?.trim()) {
+      throw new Error('CustomerAuthSession mobile is required');
+    }
+
     const deviceId = await getOrCreateInstallationId();
-    applySessionState(nextSession);
+    // 1. Persist restart state FIRST
     await savePersistedSession({
       refreshToken: nextSession.refreshToken,
       refreshTokenExpiresAt: nextSession.refreshTokenExpiresAt,
@@ -50,9 +58,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       role: 'CUSTOMER',
       deviceId,
     });
+
+    // 2. Publish authenticated state ONLY if persistence succeeds
+    applySessionState(nextSession);
   }, [applySessionState]);
 
   const refreshActiveSession = useCallback(async (): Promise<string | null> => {
+    const epochAtStart = authEpochRef.current;
     try {
       const persisted = await loadPersistedSession();
       if (!persisted) {
@@ -61,18 +73,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return null;
       }
 
-      const rotatedSession = await apiClient.post<CustomerAuthSession>('/api/v1/auth/sessions/refresh', {
+      const rotatedSession = await apiClient.post<OtpSessionResponse>('/api/v1/auth/sessions/refresh', {
         refreshToken: persisted.refreshToken,
       });
 
+      // Race check: if user signed out while refresh was in-flight, discard!
+      if (authEpochRef.current !== epochAtStart) {
+        applySessionState(null);
+        await clearPersistedSession();
+        return null;
+      }
+
+      validateServerRole(rotatedSession.role);
+
       const deviceId = persisted.deviceId || (await getOrCreateInstallationId());
       const completeSession: CustomerAuthSession = {
-        ...rotatedSession,
-        mobile: rotatedSession.mobile || persisted.mobile,
+        accountId: rotatedSession.accountId,
+        accessToken: rotatedSession.accessToken,
+        refreshToken: rotatedSession.refreshToken,
+        tokenType: rotatedSession.tokenType || 'Bearer',
+        accessTokenExpiresAt: rotatedSession.accessTokenExpiresAt,
+        refreshTokenExpiresAt: rotatedSession.refreshTokenExpiresAt,
         role: 'CUSTOMER',
+        mobile: persisted.mobile,
       };
 
-      applySessionState(completeSession);
+      // 1. Persist restart state FIRST
       await savePersistedSession({
         refreshToken: completeSession.refreshToken,
         refreshTokenExpiresAt: completeSession.refreshTokenExpiresAt,
@@ -82,6 +108,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         deviceId,
       });
 
+      // 2. Race check AGAIN after async save
+      if (authEpochRef.current !== epochAtStart) {
+        applySessionState(null);
+        await clearPersistedSession();
+        return null;
+      }
+
+      applySessionState(completeSession);
       return completeSession.accessToken;
     } catch (error) {
       console.warn('Session refresh failed:', error);
@@ -92,6 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [applySessionState]);
 
   const clearAuthState = useCallback(() => {
+    authEpochRef.current += 1;
     lastOtpVerifiedAtRef.current = null;
     setLastOtpVerifiedAt(null);
     applySessionState(null);
@@ -156,6 +191,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    authEpochRef.current += 1;
     const currentToken = activeSessionRef.current?.accessToken;
     lastOtpVerifiedAtRef.current = null;
     setLastOtpVerifiedAt(null);

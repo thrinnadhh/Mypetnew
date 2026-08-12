@@ -89,6 +89,46 @@ describe('MyPetNew secure session storage', () => {
     expect(mockDeleteItem).toHaveBeenCalledWith('mypetnew_customer_refresh_token');
   });
 
+  it('automatically clears persisted session when timestamp is malformed (NaN)', async () => {
+    Platform.OS = 'android';
+
+    mockGetItem.mockImplementation(async (key: string) => {
+      const map: Record<string, string> = {
+        mypetnew_customer_refresh_token: 'some-token',
+        mypetnew_customer_refresh_expires_at: 'invalid-date-string', // NaN
+        mypetnew_customer_account_id: 'account-uuid-1',
+        mypetnew_customer_mobile: '+919876543210',
+        mypetnew_customer_role: 'CUSTOMER',
+        mypetnew_customer_device_id: 'device-uuid-1',
+      };
+      return map[key] ?? null;
+    });
+
+    const loaded = await loadPersistedSession();
+    expect(loaded).toBeNull();
+    expect(mockDeleteItem).toHaveBeenCalledWith('mypetnew_customer_refresh_token');
+  });
+
+  it('automatically clears persisted session when required fields are blank or role is non-CUSTOMER', async () => {
+    Platform.OS = 'android';
+
+    mockGetItem.mockImplementation(async (key: string) => {
+      const map: Record<string, string> = {
+        mypetnew_customer_refresh_token: 'token-1',
+        mypetnew_customer_refresh_expires_at: '2099-01-01T00:00:00Z',
+        mypetnew_customer_account_id: 'account-1',
+        mypetnew_customer_mobile: '  ', // blank mobile
+        mypetnew_customer_role: 'MERCHANT', // non-customer role
+        mypetnew_customer_device_id: 'device-1',
+      };
+      return map[key] ?? null;
+    });
+
+    const loaded = await loadPersistedSession();
+    expect(loaded).toBeNull();
+    expect(mockDeleteItem).toHaveBeenCalledWith('mypetnew_customer_refresh_token');
+  });
+
   it('uses browser sessionStorage on web and avoids localStorage', async () => {
     Platform.OS = 'web';
 

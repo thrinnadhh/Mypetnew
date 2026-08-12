@@ -19,12 +19,22 @@ class ApiClient {
   private clearAuthHandler: ClearAuthHandler | null = null;
   private refreshPromise: Promise<string | null> | null = null;
 
+  private authEpoch = 0;
+
   public setSessionToken(token: string | null) {
     this.sessionToken = token;
+    if (token === null) {
+      this.authEpoch++;
+      this.refreshPromise = null;
+    }
   }
 
   public getSessionToken(): string | null {
     return this.sessionToken;
+  }
+
+  public getAuthEpoch(): number {
+    return this.authEpoch;
   }
 
   public setRefreshHandler(handler: RefreshHandler | null) {
@@ -65,6 +75,7 @@ class ApiClient {
   private isAuthEndpoint(path: string): boolean {
     return (
       path.includes('/api/v1/auth/sessions/refresh') ||
+      path.includes('/api/v1/auth/sessions/current') ||
       path.includes('/api/v1/auth/otp/verify') ||
       path.includes('/api/v1/auth/otp/request')
     );
@@ -102,6 +113,7 @@ class ApiClient {
         }
 
         if (this.refreshHandler) {
+          const startEpoch = this.authEpoch;
           // Coalesce concurrent 401 requests into ONE in-flight refresh Promise
           if (!this.refreshPromise) {
             this.refreshPromise = this.refreshHandler().finally(() => {
@@ -109,8 +121,9 @@ class ApiClient {
             });
           }
 
-          const newToken = await this.refreshPromise;
-          if (newToken) {
+          const activeRefresh = this.refreshPromise;
+          const newToken = await activeRefresh;
+          if (newToken && this.authEpoch === startEpoch) {
             return this.request<T>(path, { ...options, _isRetry: true });
           } else {
             if (this.clearAuthHandler) {

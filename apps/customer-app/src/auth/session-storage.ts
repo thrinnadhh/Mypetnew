@@ -62,24 +62,32 @@ export async function loadPersistedSession(): Promise<PersistedRefreshState | nu
     ]);
   }
 
-  if (!refreshToken || !refreshTokenExpiresAt || !accountId || !mobile || role !== 'CUSTOMER') {
+  if (
+    !refreshToken?.trim() ||
+    !refreshTokenExpiresAt?.trim() ||
+    !accountId?.trim() ||
+    !mobile?.trim() ||
+    !deviceId?.trim() ||
+    role !== 'CUSTOMER'
+  ) {
+    await clearPersistedSession();
     return null;
   }
 
-  // Check expiration timestamp
+  // Check expiration timestamp strictly
   const expiresAtMs = Date.parse(refreshTokenExpiresAt);
-  if (!Number.isNaN(expiresAtMs) && expiresAtMs <= Date.now()) {
+  if (Number.isNaN(expiresAtMs) || expiresAtMs <= Date.now()) {
     await clearPersistedSession();
     return null;
   }
 
   return {
-    refreshToken,
-    refreshTokenExpiresAt,
-    accountId,
-    mobile,
+    refreshToken: refreshToken.trim(),
+    refreshTokenExpiresAt: refreshTokenExpiresAt.trim(),
+    accountId: accountId.trim(),
+    mobile: mobile.trim(),
     role: 'CUSTOMER',
-    deviceId: deviceId ?? '',
+    deviceId: deviceId.trim(),
   };
 }
 

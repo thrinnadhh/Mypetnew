@@ -20,7 +20,7 @@ describe('ApiClient central token refresh & security behavior', () => {
       ok: status >= 200 && status < 300,
       status,
       json: async () => body,
-      text: async () => typeof body === 'string' ? body : JSON.stringify(body),
+      text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
     } as Response;
   }
 
@@ -48,7 +48,6 @@ describe('ApiClient central token refresh & security behavior', () => {
     });
     apiClient.setRefreshHandler(refreshHandler);
 
-    // Initial 401 for 3 concurrent requests, followed by 200 for retries
     fetchMock
       .mockResolvedValueOnce(mockResponse({ code: 'AUTHENTICATION_REQUIRED' }, 401))
       .mockResolvedValueOnce(mockResponse({ code: 'AUTHENTICATION_REQUIRED' }, 401))
@@ -64,7 +63,6 @@ describe('ApiClient central token refresh & security behavior', () => {
     const results = await Promise.all([p1, p2, p3]);
 
     expect(results).toEqual([{ res: 'req1-ok' }, { res: 'req2-ok' }, { res: 'req3-ok' }]);
-    // Crucial requirement: Exactly ONE refresh call despite 3 concurrent 401s!
     expect(refreshCallCount).toBe(1);
     expect(refreshHandler).toHaveBeenCalledTimes(1);
   });
@@ -87,7 +85,7 @@ describe('ApiClient central token refresh & security behavior', () => {
     apiClient.setSessionToken('dead-token');
 
     const clearAuthHandler = jest.fn();
-    const refreshHandler = jest.fn().mockResolvedValue(null); // Terminal refresh failure
+    const refreshHandler = jest.fn().mockResolvedValue(null);
 
     apiClient.setRefreshHandler(refreshHandler);
     apiClient.setClearAuthHandler(clearAuthHandler);
@@ -109,20 +107,18 @@ describe('ApiClient central token refresh & security behavior', () => {
     apiClient.setRefreshHandler(refreshHandler);
     apiClient.setClearAuthHandler(clearAuthHandler);
 
-    // Initial call 401, retry call ALSO 401
     fetchMock
       .mockResolvedValueOnce(mockResponse({ code: 'AUTHENTICATION_REQUIRED' }, 401))
       .mockResolvedValueOnce(mockResponse({ code: 'AUTHENTICATION_REQUIRED' }, 401));
 
     await expect(apiClient.get('/api/v1/resource')).rejects.toThrow(ApiError);
 
-    // Total fetch calls = 2 (1 initial + 1 retry). No infinite loop!
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(refreshHandler).toHaveBeenCalledTimes(1);
     expect(clearAuthHandler).toHaveBeenCalledTimes(1);
   });
 
-  it('does NOT attempt refresh when auth endpoints themselves return 401', async () => {
+  it('does NOT attempt refresh when DELETE /api/v1/auth/sessions/current returns 401', async () => {
     const fetchMock = global.fetch as jest.MockedFunction<typeof fetch>;
     const refreshHandler = jest.fn();
     const clearAuthHandler = jest.fn();
@@ -132,9 +128,40 @@ describe('ApiClient central token refresh & security behavior', () => {
 
     fetchMock.mockResolvedValueOnce(mockResponse({ code: 'AUTHENTICATION_REQUIRED' }, 401));
 
-    await expect(apiClient.post('/api/v1/auth/sessions/refresh', { refreshToken: 'bad' })).rejects.toThrow(ApiError);
+    await expect(apiClient.delete('/api/v1/auth/sessions/current')).rejects.toThrow(ApiError);
 
     expect(refreshHandler).not.toHaveBeenCalled();
     expect(clearAuthHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores refresh result if signOut/setSessionToken(null) occurs while refresh is in-flight', async () => {
+    const fetchMock = global.fetch as jest.MockedFunction<typeof fetch>;
+    apiClient.setSessionToken('expiring-token');
+
+    let resolveRefresh: (val: string | null) => void = () => {};
+    const refreshPromise = new Promise<string | null>((resolve) => {
+      resolveRefresh = resolve;
+    });
+
+    const refreshHandler = jest.fn().mockImplementation(() => refreshPromise);
+    const clearAuthHandler = jest.fn();
+    apiClient.setRefreshHandler(refreshHandler);
+    apiClient.setClearAuthHandler(clearAuthHandler);
+
+    fetchMock.mockResolvedValueOnce(mockResponse({ code: 'AUTHENTICATION_REQUIRED' }, 401));
+
+    const requestPromise = apiClient.get('/api/v1/protected-data');
+
+    // Allow fetch & response reading to complete microtasks
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Simulate user signing out while refresh is in-flight
+    apiClient.setSessionToken(null);
+
+    // Resolve the in-flight refresh with a new token
+    resolveRefresh('late-new-token');
+
+    await expect(requestPromise).rejects.toThrow();
+    expect(clearAuthHandler).toHaveBeenCalled();
   });
 });

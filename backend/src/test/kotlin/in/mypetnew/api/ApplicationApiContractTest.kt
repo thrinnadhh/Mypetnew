@@ -70,6 +70,7 @@ class ApplicationApiContractTest {
         }.andExpect {
             status { isOk() }
             jsonPath("$.challengeId") { isNotEmpty() }
+            jsonPath("$.resendAfterSeconds") { value(30) }
         }.andReturn()
         val challengeId = objectMapper.readTree(requested.response.contentAsString).path("challengeId").asString()
         val code = (otpProvider as InMemoryOtpProvider).codeFor(java.util.UUID.fromString(challengeId))

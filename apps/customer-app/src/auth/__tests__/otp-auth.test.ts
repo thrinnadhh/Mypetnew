@@ -5,6 +5,7 @@ import {
   OtpAuthError,
   requestOtp,
   resendOtpCode,
+  validateServerRole,
   verifyOtpCode,
 } from '@/auth/otp-auth';
 
@@ -32,11 +33,11 @@ describe('MyPetNew OTP authentication service', () => {
     expect(() => normalizePhone('1234')).toThrow('valid mobile number');
   });
 
-  it('requests OTP challenge via MyPetNew identity endpoint', async () => {
+  it('requests OTP challenge via MyPetNew identity endpoint returning canonical resendAfterSeconds', async () => {
     mockPost.mockResolvedValueOnce({
       challengeId: 'challenge-123',
       expiresAt: '2026-08-12T19:00:00Z',
-      retryAfterSeconds: 30,
+      resendAfterSeconds: 30,
     });
 
     const result = await requestOtp('9876543210', 'device-uuid-1');
@@ -45,7 +46,7 @@ describe('MyPetNew OTP authentication service', () => {
     expect(result.challenge).toEqual({
       challengeId: 'challenge-123',
       expiresAt: '2026-08-12T19:00:00Z',
-      retryAfterSeconds: 30,
+      resendAfterSeconds: 30,
     });
     expect(mockPost).toHaveBeenCalledWith('/api/v1/auth/otp/request', {
       mobile: '+919876543210',
@@ -54,8 +55,8 @@ describe('MyPetNew OTP authentication service', () => {
     });
   });
 
-  it('verifies 6-digit OTP code via MyPetNew verify endpoint', async () => {
-    const mockSession = {
+  it('verifies 6-digit OTP code and combines server session with verified mobile', async () => {
+    const mockServerResponse = {
       accountId: 'acc-uuid-1',
       accessToken: 'access-jwt',
       refreshToken: 'refresh-jwt',
@@ -63,19 +64,45 @@ describe('MyPetNew OTP authentication service', () => {
       accessTokenExpiresAt: '2026-08-12T19:00:00Z',
       refreshTokenExpiresAt: '2026-09-11T18:00:00Z',
       role: 'CUSTOMER',
-      mobile: '+919876543210',
     };
-    mockPost.mockResolvedValueOnce(mockSession);
+    mockPost.mockResolvedValueOnce(mockServerResponse);
 
     const session = await verifyOtpCode('challenge-123', '+919876543210', ' 123456 ');
 
-    expect(session).toEqual(mockSession);
+    expect(session).toEqual({
+      ...mockServerResponse,
+      mobile: '+919876543210',
+    });
+    expect(session.mobile).toBe('+919876543210');
     expect(mockPost).toHaveBeenCalledWith('/api/v1/auth/otp/verify', {
       challengeId: 'challenge-123',
       mobile: '+919876543210',
       purpose: 'LOGIN',
       code: '123456',
     });
+  });
+
+  it('strictly validates server role and rejects non-CUSTOMER roles', () => {
+    expect(validateServerRole('CUSTOMER')).toBe('CUSTOMER');
+    expect(() => validateServerRole('MERCHANT')).toThrow(ApiError);
+    expect(() => validateServerRole('CAPTAIN')).toThrow(ApiError);
+    expect(() => validateServerRole('ADMIN')).toThrow(ApiError);
+    expect(() => validateServerRole('UNKNOWN')).toThrow(ApiError);
+    expect(() => validateServerRole(undefined)).toThrow(ApiError);
+  });
+
+  it('rejects OTP verification if backend returns non-CUSTOMER role', async () => {
+    mockPost.mockResolvedValueOnce({
+      accountId: 'acc-uuid-1',
+      accessToken: 'access-jwt',
+      refreshToken: 'refresh-jwt',
+      tokenType: 'Bearer',
+      accessTokenExpiresAt: '2026-08-12T19:00:00Z',
+      refreshTokenExpiresAt: '2026-09-11T18:00:00Z',
+      role: 'MERCHANT',
+    });
+
+    await expect(verifyOtpCode('challenge-123', '+919876543210', '123456')).rejects.toThrow();
   });
 
   it('rejects invalid OTP formats before making network calls', async () => {
@@ -89,7 +116,7 @@ describe('MyPetNew OTP authentication service', () => {
     mockPost.mockResolvedValueOnce({
       challengeId: 'challenge-456',
       expiresAt: '2026-08-12T19:05:00Z',
-      retryAfterSeconds: 45,
+      resendAfterSeconds: 45,
     });
 
     const result = await resendOtpCode('+919876543210', 'device-uuid-1');
@@ -97,7 +124,7 @@ describe('MyPetNew OTP authentication service', () => {
     expect(result).toEqual({
       challengeId: 'challenge-456',
       expiresAt: '2026-08-12T19:05:00Z',
-      retryAfterSeconds: 45,
+      resendAfterSeconds: 45,
     });
     expect(mockPost).toHaveBeenCalledWith('/api/v1/auth/otp/request', {
       mobile: '+919876543210',

@@ -49,7 +49,7 @@ class JdbcQuotePersistence(
             )
         }
         quote
-    } ?: throw IllegalStateException("Quote transaction returned no result")
+    }
 
     override fun get(id: UUID): Quote? {
         val header = jdbc.query(

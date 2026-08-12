@@ -121,7 +121,7 @@ class WalkingSkeletonApiTest {
             jsonPath("$.items[0].payload.route") { value("merchant/orders/detail") }
             jsonPath("$.items[0].payload.resourceId") { value(orderId.toString()) }
         }
-        listOf("ACCEPTED", "PREPARING", "READY_FOR_PICKUP", "DELIVERED").forEachIndexed { index, status ->
+        listOf("ACCEPTED", "PREPARING", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERED").forEachIndexed { index, status ->
             post(
                 "/api/v1/merchant/orders/$orderId/transitions",
                 merchantToken,

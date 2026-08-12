@@ -80,9 +80,30 @@ class CommerceInventoryContractTest {
         val orders = OrderService(inventory)
         val customerId = UUID.randomUUID()
         val outletId = UUID.randomUUID()
+        val organizationId = UUID.randomUUID()
+        val quote = QuoteService().createPickupQuote(
+            customerId = customerId,
+            outletId = outletId,
+            lines = mapOf(listingId to Pair(1, 12_500L)),
+        )
+        val listingNames = mapOf(listingId to "Dog Food")
 
-        val first = orders.checkout(customerId, outletId, mapOf(listingId to 1), 13_500, "checkout-1")
-        val replay = orders.checkout(customerId, outletId, mapOf(listingId to 1), 13_500, "checkout-1")
+        val first = orders.checkout(
+            quote,
+            organizationId,
+            listingNames,
+            "checkout-1",
+            customerId,
+            "trace-checkout-1",
+        )
+        val replay = orders.checkout(
+            quote,
+            organizationId,
+            listingNames,
+            "checkout-1",
+            customerId,
+            "trace-checkout-2",
+        )
         assertEquals(first.id, replay.id)
 
         assertThrows(DomainException::class.java) {
@@ -91,11 +112,42 @@ class CommerceInventoryContractTest {
         orders.transition(first.id, OrderStatus.ACCEPTED, "transition-1")
         orders.transition(first.id, OrderStatus.PREPARING, "transition-2")
         orders.transition(first.id, OrderStatus.READY_FOR_PICKUP, "transition-3")
-        orders.transition(first.id, OrderStatus.DELIVERED, "transition-4")
-        val transitionReplay = orders.transition(first.id, OrderStatus.DELIVERED, "transition-4")
+        orders.transition(first.id, OrderStatus.PICKED_UP, "transition-4")
+        orders.transition(first.id, OrderStatus.DELIVERED, "transition-5")
+        val transitionReplay = orders.transition(first.id, OrderStatus.DELIVERED, "transition-5")
 
         assertEquals(OrderStatus.DELIVERED, transitionReplay.status)
-        assertEquals(5, transitionReplay.history.size)
+        assertEquals(6, transitionReplay.history.size)
+        assertEquals(0, inventory.reserved(listingId))
+        assertEquals(1, inventory.available(listingId))
+    }
+
+    @Test
+    fun `reject and cancel require a reason`() {
+        val inventory = InventoryService()
+        val listingId = UUID.randomUUID()
+        inventory.adjust(listingId, 2, StockReason.RECEIPT, "receive-reason")
+        val orders = OrderService(inventory)
+        val order = orders.checkout(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            mapOf(listingId to 1),
+            13_500,
+            "checkout-reason",
+        )
+
+        assertThrows(DomainException::class.java) {
+            orders.transition(order.id, OrderStatus.REJECTED, "reject-without-reason")
+        }
+        val rejected = orders.transition(
+            order.id,
+            OrderStatus.REJECTED,
+            "reject-with-reason",
+            reason = "Item unavailable after physical verification",
+        )
+
+        assertEquals(OrderStatus.REJECTED, rejected.status)
+        assertEquals(0, inventory.reserved(listingId))
+        assertEquals(2, inventory.available(listingId))
     }
 }
-

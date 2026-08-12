@@ -3,6 +3,8 @@ package `in`.mypetnew.catalog.domain
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.common.idempotency.IdempotencyStore
 import `in`.mypetnew.provider.domain.ProviderCapability
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.UUID
 
 enum class ListingKind { PRODUCT, MEDICINE }
@@ -34,58 +36,35 @@ data class Listing(
     val sellingPricePaise: Long,
 )
 
-class CatalogService {
-    private data class UniqueBarcode(
-        val organizationId: UUID,
-        val outletId: UUID,
-        val type: BarcodeType,
-        val value: String,
-    )
+interface CatalogPersistence {
+    fun create(
+        command: CreateListingCommand,
+        normalizedBarcode: String,
+        commerceMode: CommerceMode,
+        actionKey: String,
+        requestFingerprint: String,
+    ): Listing
 
-    private val listings = mutableMapOf<UniqueBarcode, Listing>()
-    private val listingsById = mutableMapOf<UUID, Listing>()
-    private val idempotency = IdempotencyStore<Listing>()
+    fun get(listingId: UUID): Listing?
+    fun all(): List<Listing>
+}
 
-    @Synchronized
+class CatalogService(
+    private val persistence: CatalogPersistence = InMemoryCatalogPersistence(),
+) {
     fun createListing(command: CreateListingCommand, actionKey: String): Listing {
         val normalized = BarcodeNormalizer.normalize(command.barcodeType, command.barcode)
-        val fingerprint = listOf(
-            command.organizationId,
-            command.outletId,
-            command.barcodeType,
-            normalized,
-            command.name,
-            command.kind,
-            command.mrpPaise,
-            command.sellingPricePaise,
-        ).joinToString(":")
-        return idempotency.execute("listing", actionKey, fingerprint) {
-            validate(command)
-            val unique = UniqueBarcode(command.organizationId, command.outletId, command.barcodeType, normalized)
-            listings[unique] ?: Listing(
-                id = UUID.randomUUID(),
-                organizationId = command.organizationId,
-                outletId = command.outletId,
-                barcodeType = command.barcodeType,
-                normalizedBarcode = normalized,
-                name = command.name.trim(),
-                kind = command.kind,
-                commerceMode = if (command.kind == ListingKind.MEDICINE) CommerceMode.VIEW_ONLY else CommerceMode.COMMERCE,
-                mrpPaise = command.mrpPaise,
-                sellingPricePaise = command.sellingPricePaise,
-            ).also {
-                listings[unique] = it
-                listingsById[it.id] = it
-            }
-        }
+        validate(command)
+        validateActionKey(actionKey)
+        val commerceMode = if (command.kind == ListingKind.MEDICINE) CommerceMode.VIEW_ONLY else CommerceMode.COMMERCE
+        val fingerprint = fingerprint(command, normalized, commerceMode)
+        return persistence.create(command, normalized, commerceMode, actionKey, fingerprint)
     }
 
-    @Synchronized
-    fun getListing(listingId: UUID): Listing = listingsById[listingId]
+    fun getListing(listingId: UUID): Listing = persistence.get(listingId)
         ?: throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
 
-    @Synchronized
-    fun allListings(): List<Listing> = listingsById.values.toList()
+    fun allListings(): List<Listing> = persistence.all()
 
     private fun validate(command: CreateListingCommand) {
         if (command.name.isBlank() || command.name.length > 160) {
@@ -104,4 +83,72 @@ class CatalogService {
             throw DomainException("CAPABILITY_REQUIRED", "The outlet cannot publish medicine listings")
         }
     }
+
+    private fun validateActionKey(actionKey: String) {
+        if (!actionKey.matches(Regex("[A-Za-z0-9._:-]{1,128}"))) {
+            throw DomainException("IDEMPOTENCY_KEY_INVALID", "The idempotency key is invalid")
+        }
+    }
+
+    private fun fingerprint(command: CreateListingCommand, normalized: String, commerceMode: CommerceMode): String {
+        val canonical = listOf(
+            command.organizationId,
+            command.outletId,
+            command.barcodeType,
+            normalized,
+            command.name.trim(),
+            command.kind,
+            commerceMode,
+            command.mrpPaise,
+            command.sellingPricePaise,
+        ).joinToString(":")
+        return MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+}
+
+private class InMemoryCatalogPersistence : CatalogPersistence {
+    private data class UniqueBarcode(
+        val organizationId: UUID,
+        val outletId: UUID,
+        val type: BarcodeType,
+        val value: String,
+    )
+
+    private val listings = mutableMapOf<UniqueBarcode, Listing>()
+    private val listingsById = mutableMapOf<UUID, Listing>()
+    private val idempotency = IdempotencyStore<Listing>()
+
+    @Synchronized
+    override fun create(
+        command: CreateListingCommand,
+        normalizedBarcode: String,
+        commerceMode: CommerceMode,
+        actionKey: String,
+        requestFingerprint: String,
+    ): Listing = idempotency.execute("listing:${command.outletId}", actionKey, requestFingerprint) {
+        val unique = UniqueBarcode(command.organizationId, command.outletId, command.barcodeType, normalizedBarcode)
+        listings[unique] ?: Listing(
+            id = UUID.randomUUID(),
+            organizationId = command.organizationId,
+            outletId = command.outletId,
+            barcodeType = command.barcodeType,
+            normalizedBarcode = normalizedBarcode,
+            name = command.name.trim(),
+            kind = command.kind,
+            commerceMode = commerceMode,
+            mrpPaise = command.mrpPaise,
+            sellingPricePaise = command.sellingPricePaise,
+        ).also {
+            listings[unique] = it
+            listingsById[it.id] = it
+        }
+    }
+
+    @Synchronized
+    override fun get(listingId: UUID): Listing? = listingsById[listingId]
+
+    @Synchronized
+    override fun all(): List<Listing> = listingsById.values.toList()
 }

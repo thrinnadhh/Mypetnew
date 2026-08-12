@@ -18,6 +18,23 @@ jest.mock('expo-secure-store', () => ({
 const mockGetItem = SecureStore.getItemAsync as jest.MockedFunction<typeof SecureStore.getItemAsync>;
 const mockSetItem = SecureStore.setItemAsync as jest.MockedFunction<typeof SecureStore.setItemAsync>;
 const mockDeleteItem = SecureStore.deleteItemAsync as jest.MockedFunction<typeof SecureStore.deleteItemAsync>;
+const SESSION_KEY = 'mypetnew_customer_session_v1';
+
+function validState(overrides: Partial<PersistedRefreshState> = {}): PersistedRefreshState {
+  return {
+    refreshToken: 'refresh-jwt-123',
+    refreshTokenExpiresAt: '2099-01-01T00:00:00Z',
+    accountId: 'account-uuid-1',
+    mobile: '+919876543210',
+    role: 'CUSTOMER',
+    deviceId: '123e4567-e89b-42d3-a456-426614174000',
+    ...overrides,
+  };
+}
+
+function encoded(state: PersistedRefreshState): string {
+  return JSON.stringify({ version: 1, state });
+}
 
 describe('MyPetNew secure session storage', () => {
   const originalPlatform = Platform.OS;
@@ -28,108 +45,73 @@ describe('MyPetNew secure session storage', () => {
     delete (globalThis as { window?: unknown }).window;
   });
 
-  it('persists and loads refresh session state using SecureStore on native platforms', async () => {
+  it('persists the full native refresh state as one SecureStore record', async () => {
+    Platform.OS = 'ios';
+    const state = validState();
+
+    await savePersistedSession(state);
+
+    expect(mockSetItem).toHaveBeenCalledTimes(1);
+    expect(mockSetItem).toHaveBeenCalledWith(
+      SESSION_KEY,
+      encoded(state),
+      { keychainAccessible: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY' },
+    );
+
+    mockGetItem.mockResolvedValueOnce(encoded(state));
+    await expect(loadPersistedSession()).resolves.toEqual(state);
+  });
+
+  it('clears expired or malformed persisted refresh state', async () => {
+    Platform.OS = 'android';
+
+    mockGetItem.mockResolvedValueOnce(encoded(validState({ refreshTokenExpiresAt: '2020-01-01T00:00:00Z' })));
+    await expect(loadPersistedSession()).resolves.toBeNull();
+    expect(mockDeleteItem).toHaveBeenCalledWith(SESSION_KEY);
+
+    jest.clearAllMocks();
+    mockGetItem.mockResolvedValueOnce('{not-json');
+    await expect(loadPersistedSession()).resolves.toBeNull();
+    expect(mockDeleteItem).toHaveBeenCalledWith(SESSION_KEY);
+  });
+
+  it('clears state with malformed timestamps, wrong role, blank fields, or invalid mobile', async () => {
+    Platform.OS = 'android';
+
+    const invalidStates: PersistedRefreshState[] = [
+      validState({ refreshTokenExpiresAt: 'not-a-date' }),
+      { ...validState(), role: 'MERCHANT' as 'CUSTOMER' },
+      validState({ refreshToken: '   ' }),
+      validState({ mobile: '+915876543210' }),
+      validState({ deviceId: '   ' }),
+    ];
+
+    for (const state of invalidStates) {
+      jest.clearAllMocks();
+      mockGetItem.mockResolvedValueOnce(encoded(state));
+      await expect(loadPersistedSession()).resolves.toBeNull();
+      expect(mockDeleteItem).toHaveBeenCalledWith(SESSION_KEY);
+    }
+  });
+
+  it('rejects invalid state before any native write occurs', async () => {
     Platform.OS = 'ios';
 
-    const sessionState: PersistedRefreshState = {
-      refreshToken: 'refresh-jwt-123',
-      refreshTokenExpiresAt: '2099-01-01T00:00:00Z',
-      accountId: 'account-uuid-1',
-      mobile: '+919876543210',
-      role: 'CUSTOMER',
-      deviceId: 'device-uuid-1',
-    };
-
-    await savePersistedSession(sessionState);
-
-    expect(mockSetItem).toHaveBeenCalledWith(
-      'mypetnew_customer_refresh_token',
-      'refresh-jwt-123',
-      { keychainAccessible: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY' }
+    await expect(savePersistedSession(validState({ mobile: '+14155552671' }))).rejects.toThrow(
+      'Persisted Customer session state is invalid',
     );
-    expect(mockSetItem).toHaveBeenCalledWith(
-      'mypetnew_customer_account_id',
-      'account-uuid-1',
-      { keychainAccessible: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY' }
-    );
-
-    mockGetItem.mockImplementation(async (key: string) => {
-      const map: Record<string, string> = {
-        mypetnew_customer_refresh_token: 'refresh-jwt-123',
-        mypetnew_customer_refresh_expires_at: '2099-01-01T00:00:00Z',
-        mypetnew_customer_account_id: 'account-uuid-1',
-        mypetnew_customer_mobile: '+919876543210',
-        mypetnew_customer_role: 'CUSTOMER',
-        mypetnew_customer_device_id: 'device-uuid-1',
-      };
-      return map[key] ?? null;
-    });
-
-    const loaded = await loadPersistedSession();
-    expect(loaded).toEqual(sessionState);
+    expect(mockSetItem).not.toHaveBeenCalled();
   });
 
-  it('automatically clears expired refresh sessions on native platforms', async () => {
+  it('propagates the single SecureStore write failure without publishing a partial record', async () => {
     Platform.OS = 'android';
+    mockSetItem.mockRejectedValueOnce(new Error('SecureStore write failed'));
 
-    mockGetItem.mockImplementation(async (key: string) => {
-      const map: Record<string, string> = {
-        mypetnew_customer_refresh_token: 'old-token',
-        mypetnew_customer_refresh_expires_at: '2020-01-01T00:00:00Z', // Expired
-        mypetnew_customer_account_id: 'account-uuid-1',
-        mypetnew_customer_mobile: '+919876543210',
-        mypetnew_customer_role: 'CUSTOMER',
-        mypetnew_customer_device_id: 'device-uuid-1',
-      };
-      return map[key] ?? null;
-    });
-
-    const loaded = await loadPersistedSession();
-    expect(loaded).toBeNull();
-    expect(mockDeleteItem).toHaveBeenCalledWith('mypetnew_customer_refresh_token');
+    await expect(savePersistedSession(validState())).rejects.toThrow('SecureStore write failed');
+    expect(mockSetItem).toHaveBeenCalledTimes(1);
   });
 
-  it('automatically clears persisted session when timestamp is malformed (NaN)', async () => {
-    Platform.OS = 'android';
-
-    mockGetItem.mockImplementation(async (key: string) => {
-      const map: Record<string, string> = {
-        mypetnew_customer_refresh_token: 'some-token',
-        mypetnew_customer_refresh_expires_at: 'invalid-date-string', // NaN
-        mypetnew_customer_account_id: 'account-uuid-1',
-        mypetnew_customer_mobile: '+919876543210',
-        mypetnew_customer_role: 'CUSTOMER',
-        mypetnew_customer_device_id: 'device-uuid-1',
-      };
-      return map[key] ?? null;
-    });
-
-    const loaded = await loadPersistedSession();
-    expect(loaded).toBeNull();
-    expect(mockDeleteItem).toHaveBeenCalledWith('mypetnew_customer_refresh_token');
-  });
-
-  it('automatically clears persisted session when required fields are blank or role is non-CUSTOMER', async () => {
-    Platform.OS = 'android';
-
-    mockGetItem.mockImplementation(async (key: string) => {
-      const map: Record<string, string> = {
-        mypetnew_customer_refresh_token: 'token-1',
-        mypetnew_customer_refresh_expires_at: '2099-01-01T00:00:00Z',
-        mypetnew_customer_account_id: 'account-1',
-        mypetnew_customer_mobile: '  ', // blank mobile
-        mypetnew_customer_role: 'MERCHANT', // non-customer role
-        mypetnew_customer_device_id: 'device-1',
-      };
-      return map[key] ?? null;
-    });
-
-    const loaded = await loadPersistedSession();
-    expect(loaded).toBeNull();
-    expect(mockDeleteItem).toHaveBeenCalledWith('mypetnew_customer_refresh_token');
-  });
-
-  it('uses browser sessionStorage on web and avoids localStorage', async () => {
+  it('uses one browser sessionStorage record on web and never localStorage', async () => {
     Platform.OS = 'web';
 
     const values = new Map<string, string>();
@@ -141,23 +123,16 @@ describe('MyPetNew secure session storage', () => {
       },
     };
 
-    const sessionState: PersistedRefreshState = {
-      refreshToken: 'web-refresh-jwt',
-      refreshTokenExpiresAt: '2099-01-01T00:00:00Z',
-      accountId: 'account-uuid-web',
-      mobile: '+919876543210',
-      role: 'CUSTOMER',
-      deviceId: 'device-web-1',
-    };
+    const state = validState({ refreshToken: 'web-refresh-jwt', accountId: 'account-uuid-web' });
+    await savePersistedSession(state);
 
-    await savePersistedSession(sessionState);
-    expect(values.get('mypetnew_customer_refresh_token')).toBe('web-refresh-jwt');
+    expect(values.size).toBe(1);
+    expect(values.get(SESSION_KEY)).toBe(encoded(state));
     expect(mockSetItem).not.toHaveBeenCalled();
-
-    const loaded = await loadPersistedSession();
-    expect(loaded).toEqual(sessionState);
+    await expect(loadPersistedSession()).resolves.toEqual(state);
 
     await clearPersistedSession();
-    expect(await loadPersistedSession()).toBeNull();
+    expect(values.has(SESSION_KEY)).toBe(false);
+    await expect(loadPersistedSession()).resolves.toBeNull();
   });
 });

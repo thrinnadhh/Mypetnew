@@ -34,13 +34,16 @@ data class Quote(
     val expiresAt: Instant,
 )
 
+interface QuotePersistence {
+    fun save(quote: Quote): Quote
+    fun get(id: UUID): Quote?
+}
+
 class QuoteService(
     private val clock: Clock = Clock.systemUTC(),
     private val lifetime: Duration = Duration.ofMinutes(5),
+    private val persistence: QuotePersistence = InMemoryQuotePersistence(),
 ) {
-    private val quotes = mutableMapOf<UUID, Quote>()
-
-    @Synchronized
     fun createPickupQuote(
         customerId: UUID,
         outletId: UUID,
@@ -68,13 +71,11 @@ class QuoteService(
             ),
             expiresAt = clock.instant().plus(lifetime),
         )
-        quotes[quote.id] = quote
-        return quote
+        return persistence.save(quote)
     }
 
-    @Synchronized
     fun requireValid(id: UUID, cartSignature: String, at: Instant = clock.instant()): Quote {
-        val quote = quotes[id] ?: throw DomainException("QUOTE_NOT_FOUND", "The quote is unavailable")
+        val quote = persistence.get(id) ?: throw DomainException("QUOTE_NOT_FOUND", "The quote is unavailable")
         if (quote.cartSignature != cartSignature) {
             throw DomainException("QUOTE_STALE", "The cart changed after this quote was created")
         }
@@ -84,8 +85,7 @@ class QuoteService(
         return quote
     }
 
-    @Synchronized
-    fun get(id: UUID): Quote = quotes[id]
+    fun get(id: UUID): Quote = persistence.get(id)
         ?: throw DomainException("QUOTE_NOT_FOUND", "The quote is unavailable")
 
     private fun signature(customerId: UUID, outletId: UUID, lines: Map<UUID, Pair<Int, Long>>): String {
@@ -99,4 +99,14 @@ class QuoteService(
             .digest(canonical.toByteArray(StandardCharsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
     }
+}
+
+private class InMemoryQuotePersistence : QuotePersistence {
+    private val quotes = mutableMapOf<UUID, Quote>()
+
+    @Synchronized
+    override fun save(quote: Quote): Quote = quote.also { quotes[it.id] = it }
+
+    @Synchronized
+    override fun get(id: UUID): Quote? = quotes[id]
 }

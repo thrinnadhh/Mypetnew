@@ -18,10 +18,31 @@ data class LoyaltyReward(
     val expiresAt: Instant,
 )
 
+interface LoyaltyPersistence {
+    fun award(customerId: UUID, merchantId: UUID, sourceReference: String, eligibleSpendPaise: Long): LoyaltyAward
+    fun balance(customerId: UUID, merchantId: UUID): Int
+    fun rewards(customerId: UUID, merchantId: UUID): List<LoyaltyReward>
+}
+
 class LoyaltyService(
+    private val persistence: LoyaltyPersistence = InMemoryLoyaltyPersistence(),
+) {
+    constructor(minimumSpendPaise: Long, rewardAmountPaise: Long) : this(
+        InMemoryLoyaltyPersistence(minimumSpendPaise, rewardAmountPaise),
+    )
+
+    fun award(customerId: UUID, merchantId: UUID, sourceReference: String, eligibleSpendPaise: Long): LoyaltyAward =
+        persistence.award(customerId, merchantId, sourceReference, eligibleSpendPaise)
+
+    fun balance(customerId: UUID, merchantId: UUID): Int = persistence.balance(customerId, merchantId)
+
+    fun rewards(customerId: UUID, merchantId: UUID): List<LoyaltyReward> = persistence.rewards(customerId, merchantId)
+}
+
+private class InMemoryLoyaltyPersistence(
     private val minimumSpendPaise: Long = 10_000,
     private val rewardAmountPaise: Long = 5_000,
-) {
+) : LoyaltyPersistence {
     private data class Relationship(
         val sources: MutableSet<String> = mutableSetOf(),
         var availableStars: Int = 0,
@@ -31,7 +52,12 @@ class LoyaltyService(
     private val relationships = mutableMapOf<Pair<UUID, UUID>, Relationship>()
 
     @Synchronized
-    fun award(customerId: UUID, merchantId: UUID, sourceReference: String, eligibleSpendPaise: Long): LoyaltyAward {
+    override fun award(
+        customerId: UUID,
+        merchantId: UUID,
+        sourceReference: String,
+        eligibleSpendPaise: Long,
+    ): LoyaltyAward {
         val relationship = relationships.getOrPut(customerId to merchantId) { Relationship() }
         if (sourceReference in relationship.sources) {
             return LoyaltyAward(sourceReference, false, relationship.availableStars)
@@ -56,11 +82,10 @@ class LoyaltyService(
     }
 
     @Synchronized
-    fun balance(customerId: UUID, merchantId: UUID): Int =
+    override fun balance(customerId: UUID, merchantId: UUID): Int =
         relationships[customerId to merchantId]?.availableStars ?: 0
 
     @Synchronized
-    fun rewards(customerId: UUID, merchantId: UUID): List<LoyaltyReward> =
+    override fun rewards(customerId: UUID, merchantId: UUID): List<LoyaltyReward> =
         relationships[customerId to merchantId]?.rewards?.toList().orEmpty()
 }
-

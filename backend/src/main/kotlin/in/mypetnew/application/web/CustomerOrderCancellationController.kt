@@ -1,17 +1,19 @@
 package `in`.mypetnew.application.web
 
-import `in`.mypetnew.commerce.domain.OrderActor
+import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.commerce.domain.OrderService
 import `in`.mypetnew.commerce.domain.OrderStatus
 import `in`.mypetnew.commerce.domain.ProductOrder
 import `in`.mypetnew.common.auth.Authorizer
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
+import org.slf4j.MDC
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import java.util.UUID
 
@@ -25,6 +27,7 @@ class CustomerOrderCancellationController(
         authentication: Authentication,
         @PathVariable orderId: UUID,
         @RequestHeader("Idempotency-Key") idempotencyKey: String,
+        @RequestParam reason: String,
     ): ProductOrder {
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
@@ -36,7 +39,10 @@ class CustomerOrderCancellationController(
             orderId = order.id,
             target = OrderStatus.CANCELLED,
             idempotencyKey = idempotencyKey,
-            actor = OrderActor.CUSTOMER,
+            actorId = customer.actorId,
+            actorRole = Role.CUSTOMER,
+            reason = reason,
+            traceId = MDC.get("traceId") ?: InventoryService.SYSTEM_TRACE_ID,
         )
     }
 }

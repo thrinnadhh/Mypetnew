@@ -2,9 +2,9 @@ package `in`.mypetnew.commerce
 
 import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.catalog.domain.StockReason
-import `in`.mypetnew.commerce.domain.OrderActor
 import `in`.mypetnew.commerce.domain.OrderService
 import `in`.mypetnew.commerce.domain.OrderStatus
+import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -18,25 +18,34 @@ class OrderLifecycleActorContractTest {
     @Test
     fun `customer can cancel placed order and reservation is released exactly once`() {
         val fixture = fixture()
+        val customerId = fixture.orders.get(fixture.orderId).customerId
 
         val cancelled = fixture.orders.transition(
-            fixture.orderId,
-            OrderStatus.CANCELLED,
-            "customer-cancel-1",
-            OrderActor.CUSTOMER,
+            orderId = fixture.orderId,
+            target = OrderStatus.CANCELLED,
+            idempotencyKey = "customer-cancel-1",
+            actorId = customerId,
+            actorRole = Role.CUSTOMER,
+            reason = "Changed mind",
+            traceId = "trace-customer-cancel",
         )
         val replay = fixture.orders.transition(
-            fixture.orderId,
-            OrderStatus.CANCELLED,
-            "customer-cancel-1",
-            OrderActor.CUSTOMER,
+            orderId = fixture.orderId,
+            target = OrderStatus.CANCELLED,
+            idempotencyKey = "customer-cancel-1",
+            actorId = customerId,
+            actorRole = Role.CUSTOMER,
+            reason = "Changed mind",
+            traceId = "trace-customer-cancel-replay",
         )
 
         assertThat(cancelled.status).isEqualTo(OrderStatus.CANCELLED)
         assertThat(replay).isEqualTo(cancelled)
         assertThat(cancelled.history).hasSize(2)
-        assertThat(cancelled.history.last().actorRole).isEqualTo(OrderActor.CUSTOMER)
+        assertThat(cancelled.history.last().actorRole).isEqualTo(Role.CUSTOMER)
+        assertThat(cancelled.history.last().actorId).isEqualTo(customerId)
         assertThat(cancelled.history.last().fromStatus).isEqualTo(OrderStatus.PLACED)
+        assertThat(cancelled.history.last().reason).isEqualTo("Changed mind")
         assertThat(fixture.inventory.reserved(fixture.listingId)).isZero()
         assertThat(fixture.inventory.available(fixture.listingId)).isEqualTo(1)
     }
@@ -47,10 +56,10 @@ class OrderLifecycleActorContractTest {
 
         assertThatThrownBy {
             fixture.orders.transition(
-                fixture.orderId,
-                OrderStatus.ACCEPTED,
-                "customer-accept-attempt",
-                OrderActor.CUSTOMER,
+                orderId = fixture.orderId,
+                target = OrderStatus.ACCEPTED,
+                idempotencyKey = "customer-accept-attempt",
+                actorRole = Role.CUSTOMER,
             )
         }
             .isInstanceOf(DomainException::class.java)
@@ -66,10 +75,11 @@ class OrderLifecycleActorContractTest {
 
         assertThatThrownBy {
             fixture.orders.transition(
-                fixture.orderId,
-                OrderStatus.CANCELLED,
-                "merchant-cancel-before-accept",
-                OrderActor.MERCHANT,
+                orderId = fixture.orderId,
+                target = OrderStatus.CANCELLED,
+                idempotencyKey = "merchant-cancel-before-accept",
+                actorRole = Role.MERCHANT,
+                reason = "Merchant cancellation attempt",
             )
         }
             .isInstanceOf(DomainException::class.java)
@@ -81,30 +91,35 @@ class OrderLifecycleActorContractTest {
     @Test
     fun `customer cancel racing merchant accept produces exactly one winning transition`() {
         val fixture = fixture()
+        val customerId = fixture.orders.get(fixture.orderId).customerId
         val ready = CountDownLatch(2)
         val start = CountDownLatch(1)
         val executor = Executors.newFixedThreadPool(2)
 
         val customer = executor.submit<Result<OrderStatus>> {
             raceTransition(
-                ready,
-                start,
-                fixture.orders,
-                fixture.orderId,
-                OrderStatus.CANCELLED,
-                "race-customer-cancel",
-                OrderActor.CUSTOMER,
+                ready = ready,
+                start = start,
+                orders = fixture.orders,
+                orderId = fixture.orderId,
+                target = OrderStatus.CANCELLED,
+                key = "race-customer-cancel",
+                actorId = customerId,
+                actorRole = Role.CUSTOMER,
+                reason = "Changed mind",
             )
         }
         val merchant = executor.submit<Result<OrderStatus>> {
             raceTransition(
-                ready,
-                start,
-                fixture.orders,
-                fixture.orderId,
-                OrderStatus.ACCEPTED,
-                "race-merchant-accept",
-                OrderActor.MERCHANT,
+                ready = ready,
+                start = start,
+                orders = fixture.orders,
+                orderId = fixture.orderId,
+                target = OrderStatus.ACCEPTED,
+                key = "race-merchant-accept",
+                actorId = UUID.randomUUID(),
+                actorRole = Role.MERCHANT,
+                reason = null,
             )
         }
 
@@ -134,11 +149,23 @@ class OrderLifecycleActorContractTest {
         orderId: UUID,
         target: OrderStatus,
         key: String,
-        actor: OrderActor,
+        actorId: UUID,
+        actorRole: Role,
+        reason: String?,
     ): Result<OrderStatus> {
         ready.countDown()
         start.await(2, TimeUnit.SECONDS)
-        return runCatching { orders.transition(orderId, target, key, actor).status }
+        return runCatching {
+            orders.transition(
+                orderId = orderId,
+                target = target,
+                idempotencyKey = key,
+                actorId = actorId,
+                actorRole = actorRole,
+                reason = reason,
+                traceId = "trace-$key",
+            ).status
+        }
     }
 
     private fun fixture(): Fixture {

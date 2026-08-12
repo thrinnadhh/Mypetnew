@@ -26,11 +26,13 @@ describe('MyPetNew OTP authentication service', () => {
     jest.clearAllMocks();
   });
 
-  it('normalizes supported Indian and international mobile formats', () => {
+  it('normalizes only Indian mobile formats accepted by the backend', () => {
     expect(normalizePhone('98765 43210')).toBe('+919876543210');
     expect(normalizePhone('91 98765 43210')).toBe('+919876543210');
-    expect(normalizePhone('+1 (415) 555-2671')).toBe('+14155552671');
-    expect(() => normalizePhone('1234')).toThrow('valid mobile number');
+    expect(normalizePhone('+91 98765 43210')).toBe('+919876543210');
+    expect(() => normalizePhone('+1 (415) 555-2671')).toThrow('valid Indian mobile number');
+    expect(() => normalizePhone('5876543210')).toThrow('valid Indian mobile number');
+    expect(() => normalizePhone('1234')).toThrow('valid Indian mobile number');
   });
 
   it('requests OTP challenge via MyPetNew identity endpoint returning canonical resendAfterSeconds', async () => {
@@ -112,14 +114,14 @@ describe('MyPetNew OTP authentication service', () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  it('resends OTP challenge using same mobile and deviceId', async () => {
+  it('resends OTP challenge using same normalized mobile and deviceId', async () => {
     mockPost.mockResolvedValueOnce({
       challengeId: 'challenge-456',
       expiresAt: '2026-08-12T19:05:00Z',
       resendAfterSeconds: 45,
     });
 
-    const result = await resendOtpCode('+919876543210', 'device-uuid-1');
+    const result = await resendOtpCode('+91 98765 43210', 'device-uuid-1');
 
     expect(result).toEqual({
       challengeId: 'challenge-456',

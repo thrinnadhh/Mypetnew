@@ -1,0 +1,28 @@
+{
+  "auth": {
+    "subtitle": "Google से जारी रखें या अपना मोबाइल नंबर सत्यापित करें।",
+    "continueGoogle": "Google से जारी रखें",
+    "orMobile": "या मोबाइल से जारी रखें",
+    "changeIdentifier": "दूसरा मोबाइल नंबर उपयोग करें",
+    "providerUnavailable": "मोबाइल सत्यापन अभी उपलब्ध नहीं है। Google से साइन इन करें या बाद में फिर प्रयास करें।"
+  },
+  "profileFoundation": {
+    "mobileVerificationTitle": "मोबाइल नंबर सत्यापित करें",
+    "mobileVerificationMessage": "रिकवरी और प्रमाणीकरण के लिए सत्यापित मोबाइल नंबर को इस MyPet अकाउंट से जोड़ें।",
+    "sendMobileCode": "सत्यापन कोड भेजें",
+    "mobileCodeSent": "आपके मोबाइल नंबर के लिए सत्यापन कोड भेजने का अनुरोध किया गया है।",
+    "mobileCodeFor": "{{phone}} पर भेजा गया 6 अंकों का कोड दर्ज करें।",
+    "verifyMobile": "मोबाइल नंबर सत्यापित करें",
+    "mobileVerified": "आपका मोबाइल नंबर सत्यापित होकर इस अकाउंट से जुड़ गया है।",
+    "deliveryContact": "डिलीवरी संपर्क नंबर",
+    "deliveryContactMessage": "इस पते के लिए वह मोबाइल नंबर जोड़ें जिस पर स्टोर या डिलीवरी कैप्टन आपको कॉल कर सके। Google Sign-In आपके अकाउंट को सत्यापित करता है; इस संपर्क नंबर के लिए OTP आवश्यक नहीं है।",
+    "deliveryContactPlaceholder": "+91 99999 99999",
+    "deliveryContactRequired": "पता सेव करने से पहले एक मान्य 10 अंकों का भारतीय डिलीवरी मोबाइल नंबर जोड़ें।",
+    "addressAndContactSaved": "डिलीवरी पता और संपर्क नंबर सेव हो गए।",
+    "contactVerifiedByAuth": "सत्यापित फोन",
+    "contactCustomerProvided": "ग्राहक द्वारा दिया गया संपर्क"
+  },
+  "states": {
+    "unauthenticatedMessage": "यह सुरक्षित कार्रवाई है। Google से साइन इन करें या अपना मोबाइल नंबर सत्यापित करें।"
+  }
+}

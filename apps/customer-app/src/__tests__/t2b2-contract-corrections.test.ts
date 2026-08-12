@@ -4,8 +4,10 @@ import { join } from 'node:path';
 import { sanitizeCartItemsForRevalidation } from '../context/CartContext';
 import { isCommerceEligible } from '../services/commerce-eligibility';
 import {
+  fetchAllCatalogItems,
   fetchAllPublicOutlets,
   type PublicOutletSummary,
+  type PublicListingSummary,
   type PageResponse,
   type CommerceProduct,
 } from '../services/customer-catalog';
@@ -273,6 +275,69 @@ describe('T2B2 Contract Corrections', () => {
     });
   });
 
+  describe('fetchAllCatalogItems Multi-page Catalog Search Pagination', () => {
+    it('aggregates across page 0 (hasNext=true) and page 1 (hasNext=false) for live search', async () => {
+      const page0: PageResponse<PublicListingSummary> = {
+        items: [
+          {
+            id: 'prod-1',
+            organizationId: 'org-1',
+            outletId: 'outlet-1',
+            outletName: 'Outlet One',
+            name: 'Dog Food 1',
+            kind: 'PRODUCT',
+            category: 'food',
+            mrpPaise: 50000,
+            sellingPricePaise: 50000,
+            currency: 'INR',
+            commerceMode: 'COMMERCE',
+            availableQuantity: 10,
+            pickupEnabled: true,
+            createdAt: '2026-08-12T00:00:00Z',
+          },
+        ],
+        page: 0,
+        pageSize: 1,
+        hasNext: true,
+      };
+
+      const page1: PageResponse<PublicListingSummary> = {
+        items: [
+          {
+            id: 'prod-2',
+            organizationId: 'org-1',
+            outletId: 'outlet-1',
+            outletName: 'Outlet One',
+            name: 'Dog Food 2',
+            kind: 'PRODUCT',
+            category: 'food',
+            mrpPaise: 60000,
+            sellingPricePaise: 60000,
+            currency: 'INR',
+            commerceMode: 'COMMERCE',
+            availableQuantity: 5,
+            pickupEnabled: true,
+            createdAt: '2026-08-12T00:00:00Z',
+          },
+        ],
+        page: 1,
+        pageSize: 1,
+        hasNext: false,
+      };
+
+      mockedApiClient.get
+        .mockResolvedValueOnce(page0)
+        .mockResolvedValueOnce(page1);
+
+      const items = await fetchAllCatalogItems({ q: 'Dog', kind: 'PRODUCT', pageSize: 1 });
+
+      expect(items).toHaveLength(2);
+      expect(items[0].name).toBe('Dog Food 1');
+      expect(items[1].name).toBe('Dog Food 2');
+      expect(mockedApiClient.get).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('fetchAllPublicOutlets Multi-page Pagination', () => {
     it('aggregates across page 0 (hasNext=true) and page 1 (hasNext=false)', async () => {
       const page0: PageResponse<PublicOutletSummary> = {
@@ -315,6 +380,14 @@ describe('T2B2 Contract Corrections', () => {
       expect(outlets[0].name).toBe('Outlet One');
       expect(outlets[1].name).toBe('Outlet Two');
       expect(mockedApiClient.get).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('Live Home Filter Removal', () => {
+    it('does not expose Dry Food, Wet Food, Puppy, Adult, Senior filter controls in live mode', () => {
+      const homeScreen = source('src/screens/home-screen.tsx');
+      expect(homeScreen).toMatch(/appConfig\.allowDemoMode \?\s*\(\s*<ScrollView[^>]*contentContainerStyle=\{styles\.filterRow\}/);
+      expect(homeScreen).not.toMatch(/const activeFilters/);
     });
   });
 

@@ -344,10 +344,6 @@ export default function HomeScreen() {
     return t('common.petParent');
   }, [t, user]);
 
-  const activeFilters = appConfig.allowDemoMode
-    ? ['All', 'Dry Food', 'Wet Food', 'Puppy', 'Adult', 'Senior']
-    : ['All', 'Puppy', 'Adult', 'Senior'];
-
   return (
     <>
       <ScrollView
@@ -456,20 +452,22 @@ export default function HomeScreen() {
             ))}
           </ScrollView>
 
-          <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-            {activeFilters.map((filter) => {
-              const active = activeFilter === filter;
-              return (
-                <Pressable
-                  key={filter}
-                  onPress={() => setActiveFilter(filter)}
-                  style={[styles.filterChip, { backgroundColor: active ? theme.primary : theme.muted }]}
-                >
-                  <ThemedText style={[styles.filterText, { color: active ? '#FFFFFF' : theme.textSecondary }]}>{filter}</ThemedText>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
+          {appConfig.allowDemoMode ? (
+            <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+              {['All', 'Dry Food', 'Wet Food', 'Puppy', 'Adult', 'Senior'].map((filter) => {
+                const active = activeFilter === filter;
+                return (
+                  <Pressable
+                    key={filter}
+                    onPress={() => setActiveFilter(filter)}
+                    style={[styles.filterChip, { backgroundColor: active ? theme.primary : theme.muted }]}
+                  >
+                    <ThemedText style={[styles.filterText, { color: active ? '#FFFFFF' : theme.textSecondary }]}>{filter}</ThemedText>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          ) : null}
         </View>
 
         {!appConfig.allowDemoMode ? (

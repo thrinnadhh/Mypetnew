@@ -11,7 +11,7 @@ import { useLocation } from '@/context/LocationContext';
 import { radii, shadows, spacing, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { type CommerceProduct, SAMPLE_PRODUCTS } from '@/services/catalog-data';
-import { fetchAllPublicOutlets, fetchCatalogPage } from '@/services/customer-catalog';
+import { fetchAllCatalogItems, fetchAllPublicOutlets } from '@/services/customer-catalog';
 import { isOfflineError } from '@/services/customer-profile';
 import { DEMO_PROVIDER_FIXTURES } from '@/services/demo-customer-data';
 import { appConfig } from '@/utils/app-config';
@@ -142,12 +142,13 @@ export default function UniversalSearchScreen() {
       // Canonical live search using customer-catalog service helpers
       const combinedResults: SearchResultItem[] = [];
 
-      const searchProducts = type === 'ALL' || type === 'PRODUCT';
-      const searchOutlets = type === 'ALL' || type === 'PET_SHOP';
+      if (type === 'ALL') {
+        const [catalogItems, outlets] = await Promise.all([
+          fetchAllCatalogItems({ q: normalizedQuery, kind: 'PRODUCT', pageSize: 20 }),
+          fetchAllPublicOutlets({ q: normalizedQuery, capability: 'PRODUCT_STORE' }),
+        ]);
 
-      if (searchProducts) {
-        const catalogPage = await fetchCatalogPage({ q: normalizedQuery, kind: 'PRODUCT', pageSize: 20 });
-        for (const item of catalogPage.items) {
+        for (const item of catalogItems) {
           combinedResults.push({
             id: item.id,
             type: 'PRODUCT',
@@ -157,9 +158,29 @@ export default function UniversalSearchScreen() {
             route: `/commerce/product-detail?id=${encodeURIComponent(item.id)}`,
           });
         }
-      }
 
-      if (searchOutlets) {
+        for (const outlet of outlets) {
+          combinedResults.push({
+            id: outlet.id,
+            type: 'PET_SHOP',
+            title: outlet.name,
+            subtitle: outlet.pickupEnabled ? 'Store pickup available' : 'Pickup unavailable',
+            route: `/shop/${encodeURIComponent(outlet.id)}`,
+          });
+        }
+      } else if (type === 'PRODUCT') {
+        const catalogItems = await fetchAllCatalogItems({ q: normalizedQuery, kind: 'PRODUCT', pageSize: 20 });
+        for (const item of catalogItems) {
+          combinedResults.push({
+            id: item.id,
+            type: 'PRODUCT',
+            title: item.name,
+            subtitle: item.brand || item.outletName,
+            price: `₹${(item.sellingPricePaise / 100).toFixed(0)}`,
+            route: `/commerce/product-detail?id=${encodeURIComponent(item.id)}`,
+          });
+        }
+      } else if (type === 'PET_SHOP') {
         const outlets = await fetchAllPublicOutlets({ q: normalizedQuery, capability: 'PRODUCT_STORE' });
         for (const outlet of outlets) {
           combinedResults.push({

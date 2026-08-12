@@ -9,6 +9,12 @@ import `in`.mypetnew.commerce.domain.QuotePersistence
 import `in`.mypetnew.commerce.domain.QuoteService
 import `in`.mypetnew.commerce.infrastructure.JdbcOrderPersistence
 import `in`.mypetnew.commerce.infrastructure.JdbcQuotePersistence
+import `in`.mypetnew.loyalty.domain.LoyaltyPersistence
+import `in`.mypetnew.loyalty.domain.LoyaltyService
+import `in`.mypetnew.loyalty.infrastructure.JdbcLoyaltyPersistence
+import `in`.mypetnew.pos.domain.PosPersistence
+import `in`.mypetnew.pos.domain.PosService
+import `in`.mypetnew.pos.infrastructure.JdbcPosPersistence
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Profile
@@ -39,4 +45,22 @@ class PersistenceConfiguration {
     @Bean
     fun productionOrderService(inventory: InventoryService, persistence: OrderPersistence): OrderService =
         OrderService(inventory, persistence)
+
+    @Bean
+    fun loyaltyPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): LoyaltyPersistence =
+        JdbcLoyaltyPersistence(jdbc, transactions)
+
+    @Bean
+    fun productionLoyaltyService(persistence: LoyaltyPersistence): LoyaltyService = LoyaltyService(persistence)
+
+    @Bean
+    fun posPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): PosPersistence =
+        JdbcPosPersistence(jdbc, transactions)
+
+    @Bean
+    fun productionPosService(
+        inventory: InventoryService,
+        loyalty: LoyaltyService,
+        persistence: PosPersistence,
+    ): PosService = PosService(inventory, loyalty, persistence)
 }

@@ -262,7 +262,7 @@ describe('connected customer services', () => {
     expect(cart[0]).toMatchObject({ quantity: 2, unitPrice: 499 });
   });
 
-  it('fetches orders, quotes, reorders and creates orders with server responses', async () => {
+  it('fetches orders, canonical pickup quotes, reorders and creates orders with server responses', async () => {
     const providerId = '11111111-1111-4111-8111-111111111111';
     const orderId = '99999999-9999-4999-8999-999999999999';
     mockedFetch
@@ -289,16 +289,28 @@ describe('connected customer services', () => {
 
     mockedFetch.mockResolvedValueOnce(
       jsonResponse({
-        quoteToken: 'Q-1',
-        subtotal: 499,
-        itemDiscount: 0,
-        couponDiscount: 0,
-        loyaltyDiscount: 0,
-        deliveryFee: 49,
-        tax: 24.95,
-        roundOff: 0,
-        payableTotal: 572.95,
-        isCodAvailable: true,
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        customerId: '77777777-7777-4777-8777-777777777777',
+        outletId: providerId,
+        lines: {
+          '22222222-2222-4222-8222-222222222222': [1, 49900],
+        },
+        cartSignature: 'signed-cart',
+        fulfilmentMode: 'STORE_PICKUP',
+        paymentMethod: 'PAY_ON_FULFILMENT',
+        pricing: {
+          itemSubtotalPaise: 49900,
+          itemDiscountPaise: 0,
+          couponDiscountPaise: 0,
+          loyaltyRewardPaise: 0,
+          taxPaise: 0,
+          platformFeePaise: 1000,
+          deliveryFeePaise: 0,
+          merchantCommissionPaise: 1000,
+          grandTotalPaise: 50900,
+          currency: 'INR',
+          ruleVersion: 's1-v1',
+        },
         expiresAt: '2026-08-05T10:15:00Z',
       }),
     );
@@ -308,10 +320,29 @@ describe('connected customer services', () => {
         providerId,
         deliveryAddressId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         items: [{ offeringId: '22222222-2222-4222-8222-222222222222', quantity: 1 }],
+        couponCode: 'IGNORED_BY_S1_QUOTE',
+        paymentMethod: 'UPI',
       },
       'token',
     );
-    expect(quote.quoteToken).toBe('Q-1');
+    expect(quote).toMatchObject({
+      quoteToken: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      quoteId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      cartSignature: 'signed-cart',
+      fulfilmentMode: 'STORE_PICKUP',
+      paymentMethod: 'PAY_ON_FULFILMENT',
+      subtotal: 499,
+      platformFee: 10,
+      deliveryFee: 0,
+      payableTotal: 509,
+      currency: 'INR',
+      ruleVersion: 's1-v1',
+    });
+    expect(mockedFetch.mock.calls[2][0]).toContain('/api/v1/customer/quotes/pickup');
+    expect(JSON.parse(mockedFetch.mock.calls[2][1]?.body as string)).toEqual({
+      outletId: providerId,
+      lines: [{ listingId: '22222222-2222-4222-8222-222222222222', quantity: 1 }],
+    });
 
     mockedFetch.mockResolvedValueOnce(
       jsonResponse({

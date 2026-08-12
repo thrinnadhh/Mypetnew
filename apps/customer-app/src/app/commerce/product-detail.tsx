@@ -13,6 +13,7 @@ import { useFavourites } from '@/context/FavouritesContext';
 import { radii, shadows, spacing, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import type { CommerceProduct, ProductVariant } from '@/services/catalog-data';
+import { isCommerceEligible } from '@/services/commerce-eligibility';
 import { fetchCommerceProduct } from '@/services/customer-catalog';
 import { isOfflineError } from '@/services/customer-profile';
 
@@ -82,14 +83,25 @@ export default function ProductDetailScreen() {
   const qtyInCart = cartItem?.quantity ?? 0;
   const currentPrice = selectedVariant.price;
   const currentOriginalPrice = selectedVariant.originalPrice ?? product.originalPrice;
+  const eligible = isCommerceEligible(product);
+
+  const viewOnlyMode = product.kind === 'MEDICINE' || product.commerceMode === 'VIEW_ONLY';
+  const pickupDisabled = product.pickupEnabled === false;
+  const outOfStock = !selectedVariant.inStock || (product.availableQuantity !== undefined && product.availableQuantity <= 0);
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <ScreenHeader title={product.brand} subtitle={product.name} />
+      <ScreenHeader title={product.brand || 'Product'} subtitle={product.name} />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.imageCard}>
-          <Image source={{ uri: product.imageUrl }} style={styles.mainImage} resizeMode="cover" />
+          {product.imageUrl ? (
+            <Image source={{ uri: product.imageUrl }} style={styles.mainImage} resizeMode="cover" />
+          ) : (
+            <View style={[styles.mainImage, { backgroundColor: theme.muted, alignItems: 'center', justifyContent: 'center' }]}>
+              <AppIcon name="store" color={theme.textSecondary} size={48} />
+            </View>
+          )}
           <Pressable
             onPress={() => void toggleFavourite('PRODUCT', product.id)}
             style={[styles.favBadge, { backgroundColor: theme.background }]}
@@ -103,12 +115,13 @@ export default function ProductDetailScreen() {
 
         <View style={styles.section}>
           <View style={styles.badgeRow}>
-            <StatusBadge label={product.rating} color={theme.warning} />
-            <StatusBadge label={`Delivery: ${product.deliveryTime}`} color={theme.success} />
+            {product.rating ? <StatusBadge label={product.rating} color={theme.warning} /> : null}
+            {product.deliveryTime ? <StatusBadge label={`Delivery: ${product.deliveryTime}`} color={theme.success} /> : null}
             <StatusBadge
               label={selectedVariant.inStock ? `In stock (${selectedVariant.stockCount})` : 'Out of stock'}
               color={selectedVariant.inStock ? theme.primary : theme.danger}
             />
+            {viewOnlyMode ? <StatusBadge label="View Only" color={theme.textSecondary} /> : null}
           </View>
 
           <ThemedText style={[styles.title, { color: theme.text }]}>{product.name}</ThemedText>
@@ -136,22 +149,26 @@ export default function ProductDetailScreen() {
           </View>
         ) : null}
 
-        <View style={styles.section}>
-          <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Description</ThemedText>
-          <ThemedText style={[styles.bodyText, { color: theme.textSecondary }]}>{product.description}</ThemedText>
-        </View>
-
-        <View style={styles.section}>
-          <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Specifications</ThemedText>
-          <View style={[styles.specCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-            {Object.entries(product.specifications).map(([key, value]) => (
-              <View key={key} style={styles.specRow}>
-                <ThemedText style={{ fontSize: 13, color: theme.textSecondary, width: 120 }}>{key}</ThemedText>
-                <ThemedText style={{ fontSize: 13, color: theme.text, fontWeight: '600', flex: 1 }}>{value}</ThemedText>
-              </View>
-            ))}
+        {product.description ? (
+          <View style={styles.section}>
+            <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Description</ThemedText>
+            <ThemedText style={[styles.bodyText, { color: theme.textSecondary }]}>{product.description}</ThemedText>
           </View>
-        </View>
+        ) : null}
+
+        {product.specifications && Object.keys(product.specifications).length > 0 ? (
+          <View style={styles.section}>
+            <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Specifications</ThemedText>
+            <View style={[styles.specCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+              {Object.entries(product.specifications).map(([key, value]) => (
+                <View key={key} style={styles.specRow}>
+                  <ThemedText style={{ fontSize: 13, color: theme.textSecondary, width: 120 }}>{key}</ThemedText>
+                  <ThemedText style={{ fontSize: 13, color: theme.text, fontWeight: '600', flex: 1 }}>{value}</ThemedText>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
 
         {product.ingredients && product.ingredients.length > 0 ? (
           <View style={styles.section}>
@@ -162,14 +179,16 @@ export default function ProductDetailScreen() {
           </View>
         ) : null}
 
-        <View style={styles.section}>
-          <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Suitable For</ThemedText>
-          <View style={styles.chipGrid}>
-            {product.suitability.map((tag) => (
-              <StatusBadge key={tag} label={`✓ ${tag}`} color={theme.primary} />
-            ))}
+        {product.suitability && product.suitability.length > 0 ? (
+          <View style={styles.section}>
+            <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Suitable For</ThemedText>
+            <View style={styles.chipGrid}>
+              {product.suitability.map((tag) => (
+                <StatusBadge key={tag} label={`✓ ${tag}`} color={theme.primary} />
+              ))}
+            </View>
           </View>
-        </View>
+        ) : null}
 
         <Pressable
           onPress={() => router.push(`/shop/${product.providerId}` as never)}
@@ -178,27 +197,38 @@ export default function ProductDetailScreen() {
           <AppIcon name="store" color={theme.primary} size={24} />
           <View style={{ flex: 1 }}>
             <ThemedText style={{ fontWeight: '700', fontSize: 14, color: theme.text }}>{product.providerName}</ThemedText>
-            <ThemedText style={{ fontSize: 12, color: theme.textSecondary }}>{product.sellerInfo.address}</ThemedText>
+            {product.sellerInfo?.address ? (
+              <ThemedText style={{ fontSize: 12, color: theme.textSecondary }}>{product.sellerInfo.address}</ThemedText>
+            ) : null}
+            <ThemedText style={{ fontSize: 12, color: product.pickupEnabled ? theme.success : theme.textSecondary, fontWeight: '600' }}>
+              {product.pickupEnabled ? 'Store pickup available' : 'Pickup unavailable'}
+            </ThemedText>
           </View>
           <ThemedText style={{ color: theme.primary, fontWeight: '700', fontSize: 13 }}>Visit Store →</ThemedText>
         </Pressable>
 
-        <View style={[styles.policyBox, { backgroundColor: theme.muted }]}>
-          <View style={styles.policyRow}>
-            <AppIcon name="location" color={theme.primary} size={18} />
-            <ThemedText style={{ fontSize: 13, color: theme.text, flex: 1 }}>
-              <ThemedText style={{ fontWeight: '700' }}>Delivery: </ThemedText>
-              {product.deliveryEstimate}
-            </ThemedText>
+        {product.deliveryEstimate || product.returnPolicy ? (
+          <View style={[styles.policyBox, { backgroundColor: theme.muted }]}>
+            {product.deliveryEstimate ? (
+              <View style={styles.policyRow}>
+                <AppIcon name="location" color={theme.primary} size={18} />
+                <ThemedText style={{ fontSize: 13, color: theme.text, flex: 1 }}>
+                  <ThemedText style={{ fontWeight: '700' }}>Delivery: </ThemedText>
+                  {product.deliveryEstimate}
+                </ThemedText>
+              </View>
+            ) : null}
+            {product.returnPolicy ? (
+              <View style={styles.policyRow}>
+                <AppIcon name="warning" color={theme.textSecondary} size={18} />
+                <ThemedText style={{ fontSize: 13, color: theme.text, flex: 1 }}>
+                  <ThemedText style={{ fontWeight: '700' }}>Return Policy: </ThemedText>
+                  {product.returnPolicy}
+                </ThemedText>
+              </View>
+            ) : null}
           </View>
-          <View style={styles.policyRow}>
-            <AppIcon name="warning" color={theme.textSecondary} size={18} />
-            <ThemedText style={{ fontSize: 13, color: theme.text, flex: 1 }}>
-              <ThemedText style={{ fontWeight: '700' }}>Return Policy: </ThemedText>
-              {product.returnPolicy}
-            </ThemedText>
-          </View>
-        </View>
+        ) : null}
       </ScrollView>
 
       <View style={[styles.stickyFooter, shadows.raised, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
@@ -207,21 +237,36 @@ export default function ProductDetailScreen() {
           <ThemedText style={[styles.footerPrice, { color: theme.primary }]}>₹{currentPrice * (qtyInCart || 1)}</ThemedText>
         </View>
 
-        {qtyInCart > 0 ? (
-          <View style={[styles.stepper, { backgroundColor: theme.primarySoft, borderColor: theme.primary }]}>
-            <Pressable onPress={() => updateQuantity(product.id, selectedVariant.id, qtyInCart - 1)} style={styles.stepBtn}>
-              <ThemedText style={{ color: theme.primary, fontWeight: '800', fontSize: 16 }}>-</ThemedText>
-            </Pressable>
-            <ThemedText style={{ color: theme.primary, fontWeight: '800', fontSize: 15, paddingHorizontal: 12 }}>{qtyInCart}</ThemedText>
-            <Pressable onPress={() => updateQuantity(product.id, selectedVariant.id, qtyInCart + 1)} style={styles.stepBtn}>
-              <ThemedText style={{ color: theme.primary, fontWeight: '800', fontSize: 16 }}>+</ThemedText>
-            </Pressable>
-          </View>
+        {eligible ? (
+          qtyInCart > 0 ? (
+            <View style={[styles.stepper, { backgroundColor: theme.primarySoft, borderColor: theme.primary }]}>
+              <Pressable onPress={() => updateQuantity(product.id, selectedVariant.id, qtyInCart - 1)} style={styles.stepBtn}>
+                <ThemedText style={{ color: theme.primary, fontWeight: '800', fontSize: 16 }}>-</ThemedText>
+              </Pressable>
+              <ThemedText style={{ color: theme.primary, fontWeight: '800', fontSize: 15, paddingHorizontal: 12 }}>{qtyInCart}</ThemedText>
+              <Pressable onPress={() => updateQuantity(product.id, selectedVariant.id, qtyInCart + 1)} style={styles.stepBtn}>
+                <ThemedText style={{ color: theme.primary, fontWeight: '800', fontSize: 16 }}>+</ThemedText>
+              </Pressable>
+            </View>
+          ) : (
+            <PrimaryButton
+              label="ADD TO CART"
+              onPress={() => addToCart(product, selectedVariant)}
+            />
+          )
         ) : (
           <PrimaryButton
-            label="ADD TO CART"
-            disabled={!selectedVariant.inStock}
-            onPress={() => addToCart(product, selectedVariant)}
+            label={
+              viewOnlyMode
+                ? 'View only — online purchase is unavailable'
+                : pickupDisabled
+                  ? 'Pickup unavailable'
+                  : outOfStock
+                    ? 'Out of stock'
+                    : 'Unavailable'
+            }
+            disabled
+            onPress={() => {}}
           />
         )}
       </View>

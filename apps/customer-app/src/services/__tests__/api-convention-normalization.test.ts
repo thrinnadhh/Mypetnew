@@ -115,24 +115,24 @@ describe('T1 API Convention Normalization', () => {
     expect(matrixDoc).toContain('MISMATCH');
   });
 
-  it('verifies catalog legacy paths and classifies customer catalog as mismatch against GET /api/v1/public/catalog', () => {
+  it('verifies catalog public paths and classifies customer catalog as MATCH against GET /api/v1/public/catalog', () => {
     const publicCatalogBackend = source(
       '../../backend/src/main/kotlin/in/mypetnew/application/web/PublicCatalogController.kt',
     );
     const customerCatalogClient = source('src/services/customer-catalog.ts');
-    const providerDiscoveryClient = source('src/services/provider-discovery.ts');
     const matrixDoc = source('../../docs/architecture/CUSTOMER_API_COMPATIBILITY_MATRIX.md');
 
     expect(publicCatalogBackend).toContain('@RequestMapping("/api/v1/public/catalog")');
     expect(publicCatalogBackend).toContain('PublicListingSummary');
 
-    expect(customerCatalogClient).toContain('/api/v1/catalog/offerings');
-    expect(customerCatalogClient).toContain('/api/v1/providers');
-    expect(providerDiscoveryClient).toContain('/api/v1/discovery/providers');
+    expect(customerCatalogClient).toContain('/api/v1/public/catalog');
+    expect(customerCatalogClient).toContain('/api/v1/public/outlets');
+    expect(customerCatalogClient).not.toContain('/api/v1/catalog/offerings');
+    expect(customerCatalogClient).not.toContain('/api/v1/discovery/providers');
 
-    expect(matrixDoc).toContain('/api/v1/discovery/providers');
     expect(matrixDoc).toContain('/api/v1/public/catalog');
-    expect(matrixDoc).toContain('MISMATCH');
+    expect(matrixDoc).toContain('/api/v1/public/outlets');
+    expect(matrixDoc).toContain('MATCH');
   });
 
   it('verifies exact ProductOrder backend DTO fields and validates absence of invented fields', () => {

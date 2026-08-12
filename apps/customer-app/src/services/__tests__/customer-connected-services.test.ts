@@ -35,6 +35,7 @@ function jsonResponse(body: unknown, status = 200) {
     ok: status >= 200 && status < 300,
     status,
     json: jest.fn().mockResolvedValue(body),
+    text: jest.fn().mockResolvedValue(typeof body === 'string' ? body : JSON.stringify(body)),
   } as unknown as Response;
 }
 
@@ -48,31 +49,30 @@ describe('connected customer services', () => {
   });
 
   it('maps live provider offerings into orderable commerce products', async () => {
-    mockedFetchProviders.mockResolvedValue([
-      {
-        id: '11111111-1111-4111-8111-111111111111',
-        name: 'Tirupati Pet Store',
-        description: 'Verified local store',
-        distanceKm: 2.5,
-        rating: 4.7,
-        ratingCount: 38,
-      },
-    ]);
     mockedFetch.mockResolvedValueOnce(
-      jsonResponse([
-        {
-          offeringId: '22222222-2222-4222-8222-222222222222',
-          providerId: '11111111-1111-4111-8111-111111111111',
-          name: 'Adult Dog Food',
-          description: 'Balanced nutrition',
-          category: 'Food & Nutrition',
-          price: '499.00',
-          status: 'ACTIVE',
-          stockQuantity: 12,
-          sku: 'DOG-FOOD-1',
-          createdAt: new Date().toISOString(),
-        },
-      ]),
+      jsonResponse({
+        items: [
+          {
+            id: '22222222-2222-4222-8222-222222222222',
+            organizationId: '11111111-1111-4111-8111-111111111111',
+            outletId: '11111111-1111-4111-8111-111111111111',
+            outletName: 'Tirupati Pet Store',
+            name: 'Adult Dog Food',
+            kind: 'PRODUCT',
+            category: 'food',
+            mrpPaise: 49900,
+            sellingPricePaise: 49900,
+            currency: 'INR',
+            commerceMode: 'COMMERCE',
+            availableQuantity: 12,
+            pickupEnabled: true,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+        page: 0,
+        pageSize: 50,
+        hasNext: false,
+      }),
     );
 
     const products = await fetchCommerceProducts({ category: 'food' });
@@ -94,39 +94,48 @@ describe('connected customer services', () => {
   });
 
   it('loads a live product and shop profile from public APIs', async () => {
-    const offering = {
-      offeringId: '22222222-2222-4222-8222-222222222222',
-      providerId: '11111111-1111-4111-8111-111111111111',
+    const listingDetail = {
+      id: '22222222-2222-4222-8222-222222222222',
+      organizationId: 'org-1',
+      outletId: '11111111-1111-4111-8111-111111111111',
+      outletName: 'Happy Tails',
       name: 'Chew Toy',
-      description: 'Durable toy',
-      category: 'Toys',
-      price: 299,
-      status: 'ACTIVE',
-      stockQuantity: 4,
-    };
-    const provider = {
-      providerId: offering.providerId,
-      providerType: 'PET_STORE',
-      fulfillmentType: 'DELIVERY',
-      name: 'Happy Tails',
-      description: 'Local store',
-      city: 'Tirupati',
-      status: 'ACTIVE',
-      ratingAvg: '4.8',
-      ratingCount: 25,
+      kind: 'PRODUCT',
+      category: 'toys',
+      mrpPaise: 29900,
+      sellingPricePaise: 29900,
+      currency: 'INR',
+      commerceMode: 'COMMERCE',
+      availableQuantity: 4,
+      pickupEnabled: true,
+      imageUrls: [],
+      createdAt: new Date().toISOString(),
     };
 
-    mockedFetch
-      .mockResolvedValueOnce(jsonResponse(offering))
-      .mockResolvedValueOnce(jsonResponse(provider));
-    const product = await fetchCommerceProduct(offering.offeringId);
+    const outletSummary = {
+      id: '11111111-1111-4111-8111-111111111111',
+      organizationId: 'org-1',
+      name: 'Happy Tails',
+      capabilities: ['PRODUCT_STORE'],
+      pickupEnabled: true,
+    };
+
+    mockedFetch.mockResolvedValueOnce(jsonResponse(listingDetail));
+    const product = await fetchCommerceProduct(listingDetail.id);
     expect(product.name).toBe('Chew Toy');
     expect(product.providerName).toBe('Happy Tails');
 
     mockedFetch
-      .mockResolvedValueOnce(jsonResponse(provider))
-      .mockResolvedValueOnce(jsonResponse([offering]));
-    const shop = await fetchShopProfile(provider.providerId);
+      .mockResolvedValueOnce(jsonResponse(outletSummary))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [listingDetail],
+          page: 0,
+          pageSize: 50,
+          hasNext: false,
+        }),
+      );
+    const shop = await fetchShopProfile(outletSummary.id);
     expect(shop.name).toBe('Happy Tails');
     expect(shop.products).toHaveLength(1);
     expect(shop.categories).toEqual(['toys']);
@@ -191,44 +200,45 @@ describe('connected customer services', () => {
   });
 
   it('reconstructs a validated cart with current live products', async () => {
-    const product = {
+    const product: customerCatalog.CommerceProduct = {
       id: '22222222-2222-4222-8222-222222222222',
       name: 'Adult Dog Food',
-      brand: 'Store',
+      brand: 'Royal Canin',
       category: 'food',
       price: 499,
-      rating: '4.8 ★',
-      reviewCount: 1,
-      deliveryTime: 'Same-day delivery',
+      mrpPaise: 49900,
+      sellingPricePaise: 49900,
       inStock: true,
       stockCount: 5,
+      availableQuantity: 5,
       imageUrl: 'https://example.com/product.jpg',
       galleryImages: ['https://example.com/product.jpg'],
       description: 'Food',
       createdAt: '2026-08-01T00:00:00Z',
       isNewArrival: true,
       providerId: '11111111-1111-4111-8111-111111111111',
-      providerName: 'Store',
+      providerName: 'Tirupati Pet Store',
+      organizationId: 'org-1',
+      outletId: '11111111-1111-4111-8111-111111111111',
+      kind: 'PRODUCT',
+      commerceMode: 'COMMERCE',
+      pickupEnabled: true,
       variants: [
         {
-          id: '22222222-2222-4222-8222-222222222222:default',
-          name: 'Standard',
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'Adult Dog Food',
           price: 499,
           inStock: true,
           stockCount: 5,
         },
       ],
-      specifications: {},
-      suitability: ['Pets'],
+      specifications: { Category: 'food', Availability: 'In stock' },
+      suitability: ['Dog'],
       sellerInfo: {
         id: '11111111-1111-4111-8111-111111111111',
-        name: 'Store',
-        address: 'Tirupati',
-        verified: true,
-        rating: '4.8 ★',
+        name: 'Tirupati Pet Store',
+        pickupEnabled: true,
       },
-      deliveryEstimate: 'Same day',
-      returnPolicy: 'Seller policy',
     };
     jest.spyOn(customerCatalog, 'fetchCommerceProduct').mockResolvedValue(product);
 

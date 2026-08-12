@@ -181,8 +181,8 @@ export default function FavouritesScreen() {
                         </Pressable>
                       </View>
                       <View style={styles.metaRow}>
-                        <StatusBadge label={shop.rating} color={theme.warning} />
-                        <ThemedText type="small" themeColor="textSecondary">{shop.deliveryEta}</ThemedText>
+                        {shop.rating ? <StatusBadge label={shop.rating} color={theme.warning} /> : null}
+                        {shop.deliveryEta ? <ThemedText type="small" themeColor="textSecondary">{shop.deliveryEta}</ThemedText> : null}
                       </View>
                       <View style={styles.addressRow}>
                         <AppIcon name="location" color={theme.textSecondary} size={16} />

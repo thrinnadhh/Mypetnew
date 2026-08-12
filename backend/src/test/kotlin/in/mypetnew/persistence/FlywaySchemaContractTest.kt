@@ -21,7 +21,7 @@ class FlywaySchemaContractTest {
             .load()
 
         val result = flyway.migrate()
-        assertEquals(9, result.migrationsExecuted)
+        assertEquals(10, result.migrationsExecuted)
 
         DriverManager.getConnection(url, "sa", "").use { connection ->
             val tables = connection.prepareStatement(
@@ -33,6 +33,7 @@ class FlywaySchemaContractTest {
                 "identity_account",
                 "provider_outlet",
                 "catalog_listing",
+                "catalog_listing_image",
                 "inventory_balance",
                 "inventory_movement",
                 "product_order",
@@ -76,8 +77,8 @@ class FlywaySchemaContractTest {
             """
             insert into mypet.catalog_listing(
                 id, organization_id, outlet_id, barcode_type, normalized_barcode, name,
-                listing_kind, commerce_mode, mrp_paise, selling_price_paise, active
-            ) values (?, ?, ?, 'GTIN_13', ?, 'Food', 'PRODUCT', 'COMMERCE', 15000, 12500, true)
+                listing_kind, commerce_mode, mrp_paise, selling_price_paise, active, category
+            ) values (?, ?, ?, 'GTIN_13', ?, 'Food', 'PRODUCT', 'COMMERCE', 15000, 12500, true, 'food')
             """.trimIndent(),
         ).use {
             it.setObject(1, id)

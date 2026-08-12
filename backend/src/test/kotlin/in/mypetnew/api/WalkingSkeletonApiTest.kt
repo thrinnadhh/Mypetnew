@@ -83,7 +83,7 @@ class WalkingSkeletonApiTest {
             "/api/v1/merchant/listings",
             merchantToken,
             "listing-create",
-            """{"outletId":"$outletId","barcodeType":"GTIN_13","barcode":"4006381333931","name":"Dog Food","kind":"PRODUCT","mrpPaise":15000,"sellingPricePaise":12500}""",
+            """{"outletId":"$outletId","barcodeType":"GTIN_13","barcode":"4006381333931","name":"Dog Food","kind":"PRODUCT","mrpPaise":15000,"sellingPricePaise":12500,"category":"food"}""",
         )
         val listingId = listing.uuid("id")
         post(

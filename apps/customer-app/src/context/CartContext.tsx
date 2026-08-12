@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { Alert } from 'react-native';
 
 import { useAuth } from '@/context/AuthContext';
+import { isCommerceEligible } from '@/services/commerce-eligibility';
 import type { CommerceProduct, ProductVariant } from '@/services/catalog-data';
 
 export interface CartItem {
@@ -43,7 +44,9 @@ function clampQuantity(value: number, maxStock: number): number {
 }
 
 function stockFor(product: CommerceProduct, variant?: ProductVariant): number {
-  return Math.max(0, variant?.stockCount ?? product.stockCount);
+  const productStock = product.availableQuantity ?? product.stockCount;
+  const variantStock = variant?.stockCount ?? productStock;
+  return Math.max(0, Math.min(productStock, variantStock));
 }
 
 function storageIdentity(userId?: string | null): string {
@@ -53,6 +56,32 @@ function storageIdentity(userId?: string | null): string {
 function matchesCartLine(item: CartItem, productId: string, variantId?: string): boolean {
   return item.product.id === productId &&
     (variantId === undefined || item.selectedVariant?.id === variantId);
+}
+
+export function sanitizeCartItemsForRevalidation(currentItems: CartItem[]): { items: CartItem[]; valid: boolean } {
+  let valid = true;
+  const items = currentItems.flatMap((item) => {
+    if (!isCommerceEligible(item.product)) {
+      valid = false;
+      return [];
+    }
+
+    const maxStock = stockFor(item.product, item.selectedVariant);
+
+    if (!item.product.inStock || (item.selectedVariant && !item.selectedVariant.inStock) || maxStock <= 0) {
+      valid = false;
+      return [];
+    }
+
+    if (item.quantity > maxStock) {
+      valid = false;
+      return [{ ...item, quantity: maxStock }];
+    }
+
+    return [item];
+  });
+
+  return { items, valid };
 }
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
@@ -140,6 +169,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     const normalized = nextItems
       .map((item) => {
+        if (!isCommerceEligible(item.product)) return null;
         const maxStock = stockFor(item.product, item.selectedVariant);
         if (!item.product.inStock || maxStock <= 0) return null;
         const quantity = clampQuantity(item.quantity, maxStock);
@@ -161,8 +191,16 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const addToCart = useCallback(
     (product: CommerceProduct, variant?: ProductVariant, qty = 1): boolean => {
-      const maxStock = stockFor(product, variant);
-      if (!product.inStock || !variant?.inStock || maxStock <= 0) {
+      const selectedVariant = variant ?? product.variants[0];
+      if (!isCommerceEligible(product)) {
+        Alert.alert(
+          'Item Unavailable',
+          `${product.name} cannot be added to cart (view only, zero stock, or pickup unavailable).`,
+        );
+        return false;
+      }
+      const maxStock = stockFor(product, selectedVariant);
+      if (!product.inStock || (selectedVariant && !selectedVariant.inStock) || maxStock <= 0) {
         Alert.alert('Out of stock', `${product.name} is currently unavailable.`);
         return false;
       }
@@ -180,9 +218,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
                 const quantity = clampQuantity(qty, maxStock);
                 const newItems: CartItem[] = [{
                   product,
-                  selectedVariant: variant,
+                  selectedVariant,
                   quantity,
-                  unitPrice: variant.price,
+                  unitPrice: selectedVariant?.price ?? product.price,
                 }];
                 applyCart(newItems);
                 void saveCartToStorage(newItems).catch((error) =>
@@ -197,7 +235,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
       setItems((current) => {
         const existingIndex = current.findIndex(
-          (item) => item.product.id === product.id && item.selectedVariant?.id === variant.id,
+          (item) => item.product.id === product.id && item.selectedVariant?.id === selectedVariant?.id,
         );
         let next: CartItem[];
         if (existingIndex >= 0) {
@@ -206,8 +244,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           next[existingIndex] = {
             ...existing,
             product,
-            selectedVariant: variant,
-            unitPrice: variant.price,
+            selectedVariant,
+            unitPrice: selectedVariant?.price ?? product.price,
             quantity: Math.min(existing.quantity + Math.max(1, Math.floor(qty)), maxStock),
           };
         } else {
@@ -215,9 +253,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
             ...current,
             {
               product,
-              selectedVariant: variant,
+              selectedVariant,
               quantity: clampQuantity(qty, maxStock),
-              unitPrice: variant.price,
+              unitPrice: selectedVariant?.price ?? product.price,
             },
           ];
         }
@@ -264,20 +302,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, [removeFromCart, saveCartToStorage]);
 
   const revalidateCart = useCallback((): boolean => {
-    let valid = true;
+    let resultValid = true;
     setItems((current) => {
-      const next = current.flatMap((item) => {
-        const maxStock = stockFor(item.product, item.selectedVariant);
-        if (!item.product.inStock || !item.selectedVariant?.inStock || maxStock <= 0) {
-          valid = false;
-          return [];
-        }
-        if (item.quantity > maxStock) {
-          valid = false;
-          return [{ ...item, quantity: maxStock }];
-        }
-        return [item];
-      });
+      const { items: next, valid } = sanitizeCartItemsForRevalidation(current);
+      resultValid = valid;
       const first = next[0];
       setProviderId(first?.product.providerId ?? null);
       setProviderName(first?.product.providerName ?? null);
@@ -286,7 +314,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       );
       return next;
     });
-    return valid;
+    return resultValid;
   }, [saveCartToStorage, storageKey]);
 
   const totalItemsCount = items.reduce((total, item) => total + item.quantity, 0);

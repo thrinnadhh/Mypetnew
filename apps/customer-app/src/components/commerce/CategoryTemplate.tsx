@@ -10,14 +10,13 @@ import {
 } from 'react-native';
 
 import { AppIcon } from '@/components/app-icon';
-import { ScreenShell } from '@/components/foundation/screen-shell';
 import { FilterChip, StateView } from '@/components/foundation/primitives';
+import { ScreenShell } from '@/components/foundation/screen-shell';
 import { ThemedText } from '@/components/themed-text';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { ResilientRemoteImage } from '@/components/ui/resilient-remote-image';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { BottomTabInset } from '@/constants/theme';
 import { useCart } from '@/context/CartContext';
 import { useFavourites } from '@/context/FavouritesContext';
 import {
@@ -29,7 +28,9 @@ import {
 } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import type { CommerceProduct } from '@/services/catalog-data';
+import { isCommerceEligible } from '@/services/commerce-eligibility';
 import { DEMO_MEDIA } from '@/services/demo-customer-data';
+import { appConfig } from '@/utils/app-config';
 
 interface CategoryTemplateProps {
   title: string;
@@ -49,7 +50,10 @@ const FOOD_FILTERS: ReadonlyArray<{ id: FoodFilter; label: string }> = [
   { id: 'SENIOR', label: 'Senior' },
 ];
 
-function fallbackForProduct(product: CommerceProduct): string {
+function fallbackForProduct(product: CommerceProduct): string | undefined {
+  if (!appConfig.allowDemoMode) {
+    return undefined;
+  }
   switch (product.category) {
     case 'food': return DEMO_MEDIA.food;
     case 'treats': return DEMO_MEDIA.treats;
@@ -86,7 +90,7 @@ export function CategoryTemplate({
   );
 
   const brands = useMemo(
-    () => Array.from(new Set(products.map((product) => product.brand))).sort(),
+    () => Array.from(new Set(products.map((product) => product.brand).filter((b): b is string => Boolean(b)))).sort(),
     [products],
   );
 
@@ -98,7 +102,7 @@ export function CategoryTemplate({
       list = list.filter(
         (product) =>
           product.name.toLowerCase().includes(query) ||
-          product.brand.toLowerCase().includes(query) ||
+          (product.brand && product.brand.toLowerCase().includes(query)) ||
           product.providerName.toLowerCase().includes(query),
       );
     }
@@ -117,7 +121,7 @@ export function CategoryTemplate({
     if (selectedSort === 'PRICE_LOW') list.sort((a, b) => a.price - b.price);
     if (selectedSort === 'PRICE_HIGH') list.sort((a, b) => b.price - a.price);
     if (selectedSort === 'RATING') {
-      list.sort((a, b) => Number.parseFloat(b.rating) - Number.parseFloat(a.rating));
+      list.sort((a, b) => Number.parseFloat(b.rating ?? '0') - Number.parseFloat(a.rating ?? '0'));
     }
 
     return list;
@@ -154,12 +158,14 @@ export function CategoryTemplate({
       active: selectedSort === 'PRICE_HIGH',
       onPress: () => setSelectedSort(selectedSort === 'PRICE_HIGH' ? 'RELEVANCE' : 'PRICE_HIGH'),
     },
-    {
-      id: 'RATING',
-      label: 'Top rated',
-      active: selectedSort === 'RATING',
-      onPress: () => setSelectedSort(selectedSort === 'RATING' ? 'RELEVANCE' : 'RATING'),
-    },
+    ...(appConfig.allowDemoMode
+      ? [{
+          id: 'RATING',
+          label: 'Top rated',
+          active: selectedSort === 'RATING',
+          onPress: () => setSelectedSort(selectedSort === 'RATING' ? 'RELEVANCE' : 'RATING'),
+        }]
+      : []),
     ...brands.map((brand) => ({
       id: `brand-${brand}`,
       label: brand,
@@ -171,7 +177,7 @@ export function CategoryTemplate({
   return (
     <ScreenShell
       scroll={false}
-      header={<ScreenHeader title={title} subtitle={subtitle ?? 'Same-day local delivery'} />}
+      header={<ScreenHeader title={title} subtitle={subtitle ?? 'Live stock & store pickup'} />}
       contentContainerStyle={styles.shellContent}
       testID="customer-category-screen"
     >
@@ -201,7 +207,7 @@ export function CategoryTemplate({
           ) : null}
         </View>
 
-        {isFoodCatalog ? (
+        {isFoodCatalog && appConfig.allowDemoMode ? (
           <FlatList
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -253,12 +259,13 @@ export function CategoryTemplate({
             const favourite = isFavourite('PRODUCT', item.id);
             const cartItem = items.find((entry) => entry.product.id === item.id);
             const quantity = cartItem?.quantity ?? 0;
+            const eligible = isCommerceEligible(item);
 
             return (
               <Pressable
                 onPress={() => router.push(`/commerce/product-detail?id=${item.id}` as never)}
                 accessibilityRole="button"
-                accessibilityLabel={`${item.name}. ${item.brand}. ₹${item.price}. ${item.inStock ? 'In stock' : 'Out of stock'}.`}
+                accessibilityLabel={`${item.name}. ${item.brand ? `${item.brand}. ` : ''}₹${item.price}. ${item.inStock ? 'In stock' : 'Out of stock'}.`}
                 style={({ pressed }) => [
                   styles.productCard,
                   columns > 1 && styles.productCardWide,
@@ -302,15 +309,19 @@ export function CategoryTemplate({
 
                 <View style={styles.productDetails}>
                   <View style={styles.brandRow}>
-                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.flex}>
-                      {item.brand}
-                    </ThemedText>
-                    <StatusBadge label={item.rating} color={theme.warning} />
+                    {item.brand ? (
+                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.flex}>
+                        {item.brand}
+                      </ThemedText>
+                    ) : (
+                      <View style={styles.flex} />
+                    )}
+                    {item.rating ? <StatusBadge label={item.rating} color={theme.warning} /> : null}
                   </View>
 
                   <ThemedText style={[styles.productName, { color: theme.text }]} numberOfLines={2}>{item.name}</ThemedText>
                   <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                    {item.deliveryTime} · {item.providerName}
+                    {item.deliveryTime ? `${item.deliveryTime} · ` : ''}{item.providerName}
                   </ThemedText>
 
                   <View style={styles.priceFooter}>
@@ -330,37 +341,49 @@ export function CategoryTemplate({
                       </ThemedText>
                     </View>
 
-                    {quantity > 0 ? (
-                      <View
-                        style={[styles.stepper, { backgroundColor: theme.primarySoft, borderColor: theme.primary }]}
-                        accessibilityRole="adjustable"
-                        accessibilityLabel={`${item.name} quantity`}
-                        accessibilityValue={{ min: 0, now: quantity }}
-                      >
-                        <Pressable
-                          onPress={() => updateQuantity(item.id, undefined, quantity - 1)}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Decrease ${item.name} quantity`}
-                          style={({ pressed }) => [styles.stepButton, pressed && styles.pressed]}
+                    {eligible ? (
+                      quantity > 0 ? (
+                        <View
+                          style={[styles.stepper, { backgroundColor: theme.primarySoft, borderColor: theme.primary }]}
+                          accessibilityRole="adjustable"
+                          accessibilityLabel={`${item.name} quantity`}
+                          accessibilityValue={{ min: 0, now: quantity }}
                         >
-                          <ThemedText style={{ color: theme.primary, fontWeight: '800' }}>−</ThemedText>
-                        </Pressable>
-                        <ThemedText style={{ color: theme.primary, fontWeight: '800', minWidth: 22, textAlign: 'center' }}>{quantity}</ThemedText>
-                        <Pressable
-                          onPress={() => updateQuantity(item.id, undefined, quantity + 1)}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Increase ${item.name} quantity`}
-                          style={({ pressed }) => [styles.stepButton, pressed && styles.pressed]}
-                        >
-                          <ThemedText style={{ color: theme.primary, fontWeight: '800' }}>+</ThemedText>
-                        </Pressable>
-                      </View>
+                          <Pressable
+                            onPress={() => updateQuantity(item.id, undefined, quantity - 1)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Decrease ${item.name} quantity`}
+                            style={({ pressed }) => [styles.stepButton, pressed && styles.pressed]}
+                          >
+                            <ThemedText style={{ color: theme.primary, fontWeight: '800' }}>−</ThemedText>
+                          </Pressable>
+                          <ThemedText style={{ color: theme.primary, fontWeight: '800', minWidth: 22, textAlign: 'center' }}>{quantity}</ThemedText>
+                          <Pressable
+                            onPress={() => updateQuantity(item.id, undefined, quantity + 1)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Increase ${item.name} quantity`}
+                            style={({ pressed }) => [styles.stepButton, pressed && styles.pressed]}
+                          >
+                            <ThemedText style={{ color: theme.primary, fontWeight: '800' }}>+</ThemedText>
+                          </Pressable>
+                        </View>
+                      ) : (
+                        <PrimaryButton
+                          label="Add"
+                          style={{ minHeight: 36, paddingHorizontal: 12 }}
+                          onPress={() => addToCart(item, item.variants[0])}
+                        />
+                      )
                     ) : (
-                      <PrimaryButton
-                        label="Add"
-                        disabled={!item.inStock}
-                        onPress={() => addToCart(item, item.variants[0])}
-                        style={styles.addButton}
+                      <StatusBadge
+                        label={
+                          item.kind === 'MEDICINE' || item.commerceMode === 'VIEW_ONLY'
+                            ? 'VIEW ONLY'
+                            : item.pickupEnabled === false
+                              ? 'NO PICKUP'
+                              : 'OUT OF STOCK'
+                        }
+                        color={theme.textSecondary}
                       />
                     )}
                   </View>
@@ -375,34 +398,136 @@ export function CategoryTemplate({
 }
 
 const styles = StyleSheet.create({
-  shellContent: { paddingHorizontal: spacing.x4, paddingTop: spacing.x3, gap: spacing.x3 },
+  shellContent: { gap: spacing.x3, paddingHorizontal: spacing.x4, paddingBottom: spacing.x4 },
   controls: { gap: spacing.x2 },
-  flex: { flex: 1, minWidth: 0 },
-  searchBox: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: spacing.x2, borderWidth: 1, borderRadius: radii.card, paddingLeft: spacing.x4, paddingRight: spacing.x1 },
-  searchInput: { flex: 1, minHeight: 54, ...typography.body, paddingVertical: 0 },
-  iconButton: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
-  chipRow: { flexGrow: 0, minHeight: touchTarget },
-  chipList: { gap: spacing.x2, paddingRight: spacing.x6 },
+  searchBox: {
+    height: 44,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    paddingHorizontal: spacing.x3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.x2,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
+    paddingVertical: 0,
+  },
+  chipRow: { maxHeight: 36 },
+  chipList: { gap: spacing.x2, paddingRight: spacing.x2 },
   productList: { flex: 1 },
-  listContent: { gap: spacing.x3, paddingBottom: BottomTabInset + spacing.x8 },
+  listContent: { gap: spacing.x3, paddingBottom: spacing.x6 },
   columnRow: { gap: spacing.x3 },
-  productCard: { flex: 1, minHeight: 164, flexDirection: 'row', alignItems: 'stretch', borderRadius: radii.card, borderWidth: StyleSheet.hairlineWidth, padding: spacing.x3, gap: spacing.x3, overflow: 'hidden' },
-  productCardWide: { flexDirection: 'column', minWidth: 0 },
-  imageContainer: { width: 112, minHeight: 132, borderRadius: radii.compact, overflow: 'hidden', position: 'relative', alignSelf: 'stretch' },
-  imageContainerWide: { width: '100%', height: 190 },
-  productImage: { width: '100%', height: '100%' },
-  favouriteButton: { position: 'absolute', top: spacing.x1, right: spacing.x1, width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, alignItems: 'center', justifyContent: 'center', ...shadows.card },
-  newArrivalTag: { position: 'absolute', bottom: spacing.x2, left: spacing.x2, borderRadius: radii.pill, paddingHorizontal: spacing.x2, paddingVertical: spacing.x1 },
-  productDetails: { flex: 1, minWidth: 0, gap: spacing.x1 },
-  brandRow: { minHeight: 30, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.x2 },
-  productName: { ...typography.label, fontSize: 15, lineHeight: 21, flexShrink: 1 },
-  priceFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: spacing.x2, marginTop: 'auto' },
-  priceBlock: { flex: 1, minWidth: 0 },
-  priceRow: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: spacing.x1 },
-  priceText: { ...typography.title, fontSize: 18, lineHeight: 24 },
-  strikethrough: { textDecorationLine: 'line-through' },
-  stepper: { minHeight: touchTarget, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: radii.compact },
-  stepButton: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
-  addButton: { minWidth: 84, minHeight: touchTarget, paddingHorizontal: spacing.x3 },
-  pressed: { opacity: 0.82 },
+  productCard: {
+    borderRadius: radii.card,
+    borderWidth: 1,
+    overflow: 'hidden',
+    gap: spacing.x2,
+  },
+  productCardWide: {
+    flex: 1,
+  },
+  imageContainer: {
+    height: 180,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  imageContainerWide: {
+    height: 160,
+  },
+  productImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  favouriteButton: {
+    position: 'absolute',
+    top: spacing.x2,
+    right: spacing.x2,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  newArrivalTag: {
+    position: 'absolute',
+    top: spacing.x2,
+    left: spacing.x2,
+    paddingHorizontal: spacing.x2,
+    paddingVertical: 2,
+    borderRadius: radii.compact,
+  },
+  productDetails: {
+    padding: spacing.x3,
+    gap: spacing.x1,
+  },
+  brandRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  flex: {
+    flex: 1,
+  },
+  productName: {
+    ...typography.headline,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  priceFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    marginTop: spacing.x2,
+  },
+  priceBlock: {
+    gap: 2,
+  },
+  priceRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: spacing.x1,
+  },
+  priceText: {
+    ...typography.headline,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  strikethrough: {
+    textDecorationLine: 'line-through',
+    fontSize: 12,
+  },
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    height: 36,
+    paddingHorizontal: 4,
+  },
+  stepButton: {
+    minWidth: 28,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconButton: {
+    width: touchTarget,
+    height: touchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pressed: {
+    opacity: 0.85,
+  },
 });

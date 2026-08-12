@@ -11,7 +11,7 @@ function expectAll(content: string, values: string[]) {
   for (const value of values) expect(content).toContain(value);
 }
 
-describe('MyPet customer end-to-end journeys', () => {
+describe('MyPet customer journey contracts', () => {
   it('connects home discovery to the requested commerce and care categories', () => {
     const home = source('src/screens/home-screen.tsx');
     const category = source('src/app/category/[id].tsx');
@@ -122,7 +122,11 @@ describe('MyPet customer end-to-end journeys', () => {
       'Store pickup',
       'PAY_ON_FULFILMENT',
     ]);
-    expect(matrix).toContain('DEFERRED');
+    expectAll(matrix, [
+      'Online / Appointment Payment',
+      '2.6.1 Online & Appointment Payments',
+      'DEFERRED',
+    ]);
   });
 
   it('shows a complete product checkout breakdown before COD or online payment', () => {
@@ -194,7 +198,11 @@ describe('MyPet customer end-to-end journeys', () => {
       'Recurring product orders support fixed cadences of 7, 15, 25, 30, and 35 days',
       'No automatic COD placement or payment mandate charge occurs',
     ]);
-    expect(matrix).toContain('DEFERRED');
+    expectAll(matrix, [
+      'Recurring Subscriptions',
+      '2.6.2 Recurring Orders & Subscriptions',
+      'DEFERRED',
+    ]);
   });
 
   it('keeps the core customer journeys free of mock appointment confirmation timers', () => {

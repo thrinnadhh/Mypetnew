@@ -43,6 +43,12 @@ describe('medical documents and support cases', () => {
       'Private merchant-verification, medical, support, and proof objects use private Supabase Storage buckets',
       'short-lived, purpose-bound signed access',
     ]);
-    expect(matrix).toContain('DEFERRED');
+    expectAll(matrix, [
+      'Medical Documents',
+      'Customer Support Cases',
+      '2.6.3 Medical Documents',
+      '2.6.4 Support Cases',
+      'DEFERRED',
+    ]);
   });
 });

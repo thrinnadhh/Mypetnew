@@ -23,18 +23,24 @@ No direct customer app runtime dependency or production mobile bundle code is af
 | **Advisories** | GHSA-w3rx-r6r6-pgpr (ICNS infinite loop DoS), GHSA-5p2g-fcmc-qvqq (JXL/HEIF infinite loop DoS) |
 | **Dependency Path** | `apps/customer-app` → `expo` → `@expo/cli` → `@expo/metro` → `metro` → `metro-config` / `metro-transform-worker` → `image-size` |
 | **Classification** | **Development / Build-only** (Metro bundler asset dimension parsing during local development and Expo export) |
-| **Runtime Reachability** | **NOT REACHABLE AT RUNTIME**. `image-size` is a Node.js CLI build tool component used by Metro bundler to calculate image dimensions during JS bundle creation. It is never included in the compiled Expo React Native JavaScript application bundle shipped to iOS or Android physical devices. |
+| **Runtime Reachability** | Not production-mobile-runtime reachable through the currently identified Metro build dependency path. `image-size` is a Node.js CLI build tool component used by Metro bundler to calculate image dimensions during JS bundle creation. It is never included in the compiled Expo React Native JavaScript application bundle shipped to iOS or Android physical devices. |
 | **Affected Behavior** | If a developer attempts to bundle a maliciously crafted `.icns`, `.jxl`, or `.heif` asset file during local Metro compilation, the Metro process could enter an infinite CPU loop. Standard application `.png`, `.jpeg`, and `.webp` assets are completely unaffected. |
-| **Fix Version** | Downstream Metro / Expo CLI toolchain patch in future Expo SDK release. |
+| **Upstream Status** | No patched image-size version is currently recorded by the reviewed GitHub advisories. |
 | **Action** | **Accepted Temporary Exception**. Do not force-downgrade Expo SDK 56 or React Native 0.85.3. Retain current Expo SDK 56 dependencies. |
-| **Remaining Risk** | Minimal. Restricted strictly to developer workstation build time if an untrusted `.icns` or `.jxl` asset is added to the source repository. Zero risk to production mobile app runtime on user devices. |
+| **Residual Risk** | Developer/CI availability risk remains if a malicious or untrusted crafted image asset enters the source/build pipeline. The package is not production-runtime reachable under the currently verified dependency path. |
 
 ---
 
-## 3. Expo SDK 56 Compatibility Decision
+## 3. Review Triggers & Re-evaluation Protocol
+
+Re-evaluate this exception when:
+1. GitHub advisory records a patched `image-size` version.
+2. `image-size` dependency changes.
+3. Expo / Metro dependency graph changes.
+4. Expo SDK 56 receives a compatible toolchain patch.
 
 - **Expo Version**: `~56.0.19`
 - **React Native Version**: `0.85.3`
 - **React Version**: `19.2.3`
 
-Running `npm audit fix --force` breaks the Expo SDK 56 toolchain by attempting to downgrade `react-native` to `0.72.17` and `expo` to `53.0.27`. This exception is documented and tracked for upstream resolution in the next Expo SDK patch release.
+Running `npm audit fix --force` breaks the Expo SDK 56 toolchain by attempting to downgrade `react-native` to `0.72.17` and `expo` to `53.0.27`.

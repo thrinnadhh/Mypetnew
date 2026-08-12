@@ -1,0 +1,10 @@
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration
+
+# Local development intentionally uses the in-memory beans declared under
+# the `development` Spring profile. Production/default configuration keeps
+# JDBC + Flyway enabled and still requires the real PostgreSQL/Supabase
+# credentials from application.yml.

@@ -37,6 +37,7 @@ class FlywaySchemaContractTest {
                 "inventory_movement",
                 "product_order",
                 "pos_sale",
+                "pos_customer_association_challenge",
                 "loyalty_source",
                 "outbox_event",
                 "device_registration",

@@ -64,7 +64,7 @@ class JdbcCatalogPersistence(
                     requestFingerprint,
                 )
                 listing
-            } ?: throw IllegalStateException("Catalog transaction returned no result")
+            }
         } catch (duplicate: DuplicateKeyException) {
             replay(command.outletId, actionKey, requestFingerprint)?.let { return it }
             findByBarcode(command, normalizedBarcode)?.let { return it }

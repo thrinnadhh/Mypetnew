@@ -395,21 +395,21 @@ interface CanonicalPickupQuote {
 
 export interface CheckoutQuoteOutput {
   quoteToken: string;
-  quoteId: string;
-  cartSignature: string;
-  fulfilmentMode: 'STORE_PICKUP';
-  paymentMethod: 'PAY_ON_FULFILMENT';
+  quoteId?: string;
+  cartSignature?: string;
+  fulfilmentMode?: 'STORE_PICKUP';
+  paymentMethod?: CustomerPaymentMethod | 'PAY_ON_FULFILMENT' | string | null;
   subtotal: number;
   itemDiscount: number;
   couponDiscount: number;
   loyaltyDiscount: number;
   deliveryFee: number;
   tax: number;
-  platformFee: number;
+  platformFee?: number;
   roundOff: number;
   payableTotal: number;
-  currency: string;
-  ruleVersion: string;
+  currency?: string;
+  ruleVersion?: string;
   couponCode?: string | null;
   isCodAvailable: boolean;
   codRejectionReason?: string | null;

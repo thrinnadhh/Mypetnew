@@ -79,7 +79,8 @@ class JdbcOrderPersistenceContractTest {
             "trace-receive",
         )
         val actor = UUID.randomUUID()
-        val firstQuote = fixture.quote(listingId, quantity = 1, unitPricePaise = 12_500)
+        val customerId = UUID.randomUUID()
+        val firstQuote = fixture.quote(listingId, quantity = 1, unitPricePaise = 12_500, customerId = customerId)
         fixture.orders.checkout(
             firstQuote,
             fixture.organizationId,
@@ -88,7 +89,7 @@ class JdbcOrderPersistenceContractTest {
             actor,
             "trace-checkout",
         )
-        val changedQuote = fixture.quote(listingId, quantity = 2, unitPricePaise = 12_500)
+        val changedQuote = fixture.quote(listingId, quantity = 2, unitPricePaise = 12_500, customerId = customerId)
 
         assertThrows(DomainException::class.java) {
             fixture.orders.checkout(
@@ -401,11 +402,16 @@ class JdbcOrderPersistenceContractTest {
             return listingId
         }
 
-        fun quote(listingId: UUID, quantity: Int, unitPricePaise: Long): Quote {
+        fun quote(
+            listingId: UUID,
+            quantity: Int,
+            unitPricePaise: Long,
+            customerId: UUID = UUID.randomUUID(),
+        ): Quote {
             val subtotal = Math.multiplyExact(quantity.toLong(), unitPricePaise)
             return Quote(
                 id = UUID.randomUUID(),
-                customerId = UUID.randomUUID(),
+                customerId = customerId,
                 outletId = outletId,
                 lines = mapOf(listingId to Pair(quantity, unitPricePaise)),
                 cartSignature = UUID.randomUUID().toString(),

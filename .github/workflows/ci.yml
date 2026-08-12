@@ -44,6 +44,9 @@ jobs:
       - name: Verify Sprint 1 source baseline
         run: ./scripts/verify.sh
 
+      # The GitHub dependency-review action is unavailable for this private repository
+      # without the repository security feature it requires. Keep the production
+      # dependency audit mandatory through the repository-owned audit script instead.
       - name: Audit production JavaScript dependencies
         run: ./scripts/dependency-audit.sh
 
@@ -57,14 +60,3 @@ jobs:
             backend/build/reports/tests/test
             backend/build/reports/jacoco/test/html
             coverage
-
-  dependency-review:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: high

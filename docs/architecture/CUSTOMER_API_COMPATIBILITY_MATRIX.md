@@ -46,7 +46,7 @@ This document presents the authoritative inventory of Customer HTTP contracts in
     - Response DTO: `OtpSessionResponse`
   - `DELETE /api/v1/auth/sessions/current`
     - Header: `Authorization: Bearer <accessToken>`
-- **Session Model Difference**: Per Decision `D-024`, Supabase Auth is not an authority for business domain flows. The current baseline implementation uses `InMemorySessionStore`, whereas the production target architecture requires backend-owned PostgreSQL persistence (`JdbcSessionStore`) per `D-003` and `D-024`. Canonical `MyPetNew` relies on Spring Boot JWT Bearer tokens + `SessionStore` + session rotation.
+- **Session Model Difference**: Per Decision `D-024`, Supabase Auth is not an authority for business domain flows. The repository uses `InMemorySessionStore` only under `test` and `development` profiles, while `JdbcSessionStore` is the non-test/non-development implementation backed by PostgreSQL. Canonical `MyPetNew` relies on Spring Boot JWT Bearer tokens + `SessionStore` + session rotation.
 - **Owning Follow-up Ticket**: **T2** (Full Auth & Session Migration).
 
 ---

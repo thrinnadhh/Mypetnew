@@ -50,7 +50,10 @@ const FOOD_FILTERS: ReadonlyArray<{ id: FoodFilter; label: string }> = [
   { id: 'SENIOR', label: 'Senior' },
 ];
 
-function fallbackForProduct(product: CommerceProduct): string {
+function fallbackForProduct(product: CommerceProduct): string | undefined {
+  if (!appConfig.allowDemoMode) {
+    return undefined;
+  }
   switch (product.category) {
     case 'food': return DEMO_MEDIA.food;
     case 'treats': return DEMO_MEDIA.treats;
@@ -306,9 +309,13 @@ export function CategoryTemplate({
 
                 <View style={styles.productDetails}>
                   <View style={styles.brandRow}>
-                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.flex}>
-                      {item.brand || item.providerName}
-                    </ThemedText>
+                    {item.brand ? (
+                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.flex}>
+                        {item.brand}
+                      </ThemedText>
+                    ) : (
+                      <View style={styles.flex} />
+                    )}
                     {item.rating ? <StatusBadge label={item.rating} color={theme.warning} /> : null}
                   </View>
 

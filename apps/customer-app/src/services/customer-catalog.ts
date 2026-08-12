@@ -192,6 +192,23 @@ export async function fetchPublicOutlets(
   return apiClient.get<PageResponse<PublicOutletSummary>>(url);
 }
 
+export async function fetchAllPublicOutlets(
+  query: PublicOutletQuery = {},
+): Promise<PublicOutletSummary[]> {
+  const items: PublicOutletSummary[] = [];
+  let page = 0;
+  let hasNext = true;
+
+  while (hasNext) {
+    const response = await fetchPublicOutlets({ ...query, page, pageSize: query.pageSize ?? 50 });
+    items.push(...response.items);
+    hasNext = response.hasNext;
+    page += 1;
+  }
+
+  return items;
+}
+
 export async function fetchPublicOutlet(outletId: string): Promise<PublicOutletSummary> {
   const url = `/api/v1/public/outlets/${encodeURIComponent(outletId)}`;
   return apiClient.get<PublicOutletSummary>(url);

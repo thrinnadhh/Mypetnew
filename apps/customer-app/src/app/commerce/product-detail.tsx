@@ -199,9 +199,10 @@ export default function ProductDetailScreen() {
             <ThemedText style={{ fontWeight: '700', fontSize: 14, color: theme.text }}>{product.providerName}</ThemedText>
             {product.sellerInfo?.address ? (
               <ThemedText style={{ fontSize: 12, color: theme.textSecondary }}>{product.sellerInfo.address}</ThemedText>
-            ) : (
-              <ThemedText style={{ fontSize: 12, color: theme.textSecondary }}>Store pickup available</ThemedText>
-            )}
+            ) : null}
+            <ThemedText style={{ fontSize: 12, color: product.pickupEnabled ? theme.success : theme.textSecondary, fontWeight: '600' }}>
+              {product.pickupEnabled ? 'Store pickup available' : 'Pickup unavailable'}
+            </ThemedText>
           </View>
           <ThemedText style={{ color: theme.primary, fontWeight: '700', fontSize: 13 }}>Visit Store →</ThemedText>
         </Pressable>

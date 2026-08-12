@@ -200,44 +200,45 @@ describe('connected customer services', () => {
   });
 
   it('reconstructs a validated cart with current live products', async () => {
-    const product = {
+    const product: customerCatalog.CommerceProduct = {
       id: '22222222-2222-4222-8222-222222222222',
       name: 'Adult Dog Food',
-      brand: 'Store',
+      brand: 'Royal Canin',
       category: 'food',
       price: 499,
-      rating: '4.8 ★',
-      reviewCount: 1,
-      deliveryTime: 'Same-day delivery',
+      mrpPaise: 49900,
+      sellingPricePaise: 49900,
       inStock: true,
       stockCount: 5,
+      availableQuantity: 5,
       imageUrl: 'https://example.com/product.jpg',
       galleryImages: ['https://example.com/product.jpg'],
       description: 'Food',
       createdAt: '2026-08-01T00:00:00Z',
       isNewArrival: true,
       providerId: '11111111-1111-4111-8111-111111111111',
-      providerName: 'Store',
+      providerName: 'Tirupati Pet Store',
+      organizationId: 'org-1',
+      outletId: '11111111-1111-4111-8111-111111111111',
+      kind: 'PRODUCT',
+      commerceMode: 'COMMERCE',
+      pickupEnabled: true,
       variants: [
         {
-          id: '22222222-2222-4222-8222-222222222222:default',
-          name: 'Standard',
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'Adult Dog Food',
           price: 499,
           inStock: true,
           stockCount: 5,
         },
       ],
-      specifications: {},
-      suitability: ['Pets'],
+      specifications: { Category: 'food', Availability: 'In stock' },
+      suitability: ['Dog'],
       sellerInfo: {
         id: '11111111-1111-4111-8111-111111111111',
-        name: 'Store',
-        address: 'Tirupati',
-        verified: true,
-        rating: '4.8 ★',
+        name: 'Tirupati Pet Store',
+        pickupEnabled: true,
       },
-      deliveryEstimate: 'Same day',
-      returnPolicy: 'Seller policy',
     };
     jest.spyOn(customerCatalog, 'fetchCommerceProduct').mockResolvedValue(product);
 

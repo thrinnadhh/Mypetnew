@@ -12,7 +12,7 @@ import { radii, shadows, spacing, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
 import {
-  fetchPublicOutlets,
+  fetchAllPublicOutlets,
   type PublicOutletSummary,
 } from '@/services/customer-catalog';
 import { isOfflineError } from '@/services/customer-profile';
@@ -115,8 +115,8 @@ export default function CommerceDiscoveryScreen() {
   const load = useCallback(async () => {
     setState('loading');
     try {
-      const response = await fetchPublicOutlets({ capability: 'PRODUCT_STORE' });
-      setStores(response.items);
+      const allStores = await fetchAllPublicOutlets({ capability: 'PRODUCT_STORE' });
+      setStores(allStores);
       setState('ready');
     } catch (error) {
       setStores([]);

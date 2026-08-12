@@ -17,12 +17,16 @@ import { useTheme } from '@/hooks/use-theme';
 import { type CommerceProduct, type ShopProfileData } from '@/services/catalog-data';
 import { isCommerceEligible } from '@/services/commerce-eligibility';
 import { DEMO_MEDIA } from '@/services/demo-customer-data';
+import { appConfig } from '@/utils/app-config';
 
 interface ProviderProfileTemplateProps {
   shop: ShopProfileData;
 }
 
-function fallbackForProduct(product: CommerceProduct): string {
+function fallbackForProduct(product: CommerceProduct): string | undefined {
+  if (!appConfig.allowDemoMode) {
+    return undefined;
+  }
   switch (product.category) {
     case 'food': return DEMO_MEDIA.food;
     case 'treats': return DEMO_MEDIA.treats;
@@ -56,7 +60,11 @@ export function ProviderProfileTemplate({ shop }: ProviderProfileTemplateProps) 
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={[styles.heroCard, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-          <ResilientRemoteImage uri={shop.heroImageUrl} fallbackUri={DEMO_MEDIA.store} style={styles.heroImage} />
+          <ResilientRemoteImage
+            uri={shop.heroImageUrl}
+            fallbackUri={appConfig.allowDemoMode ? DEMO_MEDIA.store : undefined}
+            style={styles.heroImage}
+          />
 
           <View style={styles.heroBody}>
             <View style={styles.titleRow}>

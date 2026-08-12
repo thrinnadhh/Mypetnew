@@ -305,23 +305,29 @@ class MerchantCommerceApiController(
         val customerId = request.associationChallengeId?.let {
             associations.consume(it, outlet.organizationId, outlet.id)
         }
+        val listingNames = mutableMapOf<UUID, String>()
         val lines = request.lines.associate { line ->
             val listing = catalog.getListing(line.listingId)
             if (
                 listing.outletId != outlet.id ||
                 listing.commerceMode != CommerceMode.COMMERCE ||
+                line.quantity <= 0 ||
                 inventory.available(listing.id) < line.quantity
             ) throw DomainException("LISTING_UNAVAILABLE", "A POS item is unavailable")
+            listingNames[listing.id] = listing.name
             listing.id to Pair(line.quantity, listing.sellingPricePaise)
         }
         if (lines.size != request.lines.size) throw DomainException("POS_LINE_INVALID", "The POS cart contains duplicate lines")
         val sale = pos.complete(
-            outlet.organizationId,
-            outlet.id,
-            customerId,
-            lines,
-            request.paymentDeclaration,
-            idempotencyKey,
+            merchantId = outlet.organizationId,
+            outletId = outlet.id,
+            customerId = customerId,
+            lines = lines,
+            payment = request.paymentDeclaration,
+            idempotencyKey = idempotencyKey,
+            listingNames = listingNames,
+            cashierId = principal.actorId,
+            traceId = currentTraceId(),
         )
         if (sale.customerId != null && sale.loyaltyAwarded) {
             notifications.enqueue(

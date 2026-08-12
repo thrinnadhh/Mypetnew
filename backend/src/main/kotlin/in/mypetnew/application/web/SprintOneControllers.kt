@@ -183,14 +183,33 @@ class CustomerCommerceApiController(
         Authorizer.requireRole(customer, Role.CUSTOMER)
         val quote = quotes.requireValid(request.quoteId, request.cartSignature)
         if (quote.customerId != customer.actorId) resourceUnavailable()
+
+        val outlet = providers.getOutlet(quote.outletId)
+        if (outlet.status != ProviderStatus.ACTIVE || !outlet.capabilities.contains(ProviderCapability.PRODUCT_STORE)) {
+            throw DomainException("QUOTE_STALE", "The provider changed after this quote was created")
+        }
+        val listingNames = quote.lines.map { (listingId, quotedLine) ->
+            val listing = catalog.getListing(listingId)
+            val (quantity, quotedUnitPrice) = quotedLine
+            if (
+                listing.outletId != outlet.id ||
+                listing.commerceMode != CommerceMode.COMMERCE ||
+                listing.sellingPricePaise != quotedUnitPrice ||
+                inventory.available(listing.id) < quantity
+            ) {
+                throw DomainException("QUOTE_STALE", "A cart item changed after this quote was created")
+            }
+            listingId to listing.name
+        }.toMap()
+
         val order = orders.checkout(
-            customer.actorId,
-            quote.outletId,
-            quote.lines.mapValues { it.value.first },
-            quote.pricing.grandTotalPaise,
-            idempotencyKey,
+            quote = quote,
+            organizationId = outlet.organizationId,
+            listingNames = listingNames,
+            idempotencyKey = idempotencyKey,
+            actorId = customer.actorId,
+            traceId = currentTraceId(),
         )
-        val outlet = providers.getOutlet(order.outletId)
         notifications.enqueue(
             sourceEventId = order.id,
             recipientId = outlet.ownerActorId,
@@ -232,7 +251,7 @@ class CustomerCommerceApiController(
     }
 }
 
-data class TransitionRequest(val target: OrderStatus)
+data class TransitionRequest(val target: OrderStatus, val reason: String? = null)
 data class PosSaleRequest(
     val outletId: UUID,
     val associationChallengeId: UUID?,
@@ -260,7 +279,15 @@ class MerchantCommerceApiController(
     ): ProductOrder {
         val principal = authentication.domainPrincipal()
         val order = authorizedOrder(principal, orderId)
-        return orders.transition(order.id, request.target, idempotencyKey)
+        return orders.transition(
+            orderId = order.id,
+            target = request.target,
+            idempotencyKey = idempotencyKey,
+            actorId = principal.actorId,
+            actorRole = principal.role,
+            reason = request.reason,
+            traceId = currentTraceId(),
+        )
     }
 
     @GetMapping("/orders/{orderId}")
@@ -335,7 +362,7 @@ private fun authorizedActiveOutlet(
     return outlet
 }
 
-private fun currentTraceId(): String = MDC.get("traceId") ?: TraceIdFilter.TRACE_ATTRIBUTE
+private fun currentTraceId(): String = MDC.get("traceId") ?: InventoryService.SYSTEM_TRACE_ID
 
 private fun resourceUnavailable(): Nothing = throw DomainException(
     "RESOURCE_NOT_FOUND",

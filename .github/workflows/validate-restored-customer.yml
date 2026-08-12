@@ -1,9 +1,17 @@
 name: validate-restored-customer
 
 on:
+  pull_request:
+    branches:
+      - main
+      - trial/s1-recovery-certification
+      - restore/customer-app-from-mypet
+      - "trial/*"
   push:
     branches:
+      - main
       - restore/customer-app-from-mypet
+      - "trial/*"
 
 permissions:
   contents: read

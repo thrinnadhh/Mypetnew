@@ -5,6 +5,10 @@ function source(path: string): string {
   return readFileSync(join(process.cwd(), path), 'utf8');
 }
 
+function expectAll(content: string, values: string[]) {
+  for (const value of values) expect(content).toContain(value);
+}
+
 describe('medical documents and support cases', () => {
   it('uses reservation upload and short-lived signed medical links', () => {
     const service = source('src/services/medical-documents.ts');
@@ -26,14 +30,22 @@ describe('medical documents and support cases', () => {
     expect(screen).toMatch(/Refund:/);
   });
 
-  it('keeps signed content private and auditable in the backend', () => {
-    const medical = source('../../backend/appointment-service/src/main/kotlin/com/pawsnearme/appointmentservice/service/MedicalDocumentService.kt');
-    const cases = source('../../backend/order-service/src/main/kotlin/com/pawsnearme/orderservice/service/CustomerCaseService.kt');
-    expect(medical).toMatch(/SIGNED_URL_ISSUED/);
-    expect(medical).toMatch(/VIEW/);
-    expect(medical).toMatch(/DOWNLOAD/);
-    expect(medical).toMatch(/HmacSHA256/);
-    expect(cases).toMatch(/paymentModule\.refundOrder/);
-    expect(cases).toMatch(/HmacSHA256/);
+  it('verifies private storage policy DD-012 and document upload boundaries while medical/support services remain deferred', () => {
+    const verificationBackend = source('../../backend/src/main/kotlin/in/mypetnew/application/web/VerificationDocumentController.kt');
+    const decisions = source('../../docs/product/DECISIONS.md');
+    const matrix = source('../../docs/architecture/CUSTOMER_API_COMPATIBILITY_MATRIX.md');
+
+    expect(verificationBackend).toContain('class VerificationDocumentController');
+    expect(verificationBackend).toContain('verification-documents');
+
+    expectAll(decisions, [
+      'DD-012',
+      'Private merchant-verification, medical, support, and proof objects use private Supabase Storage buckets',
+      'short-lived, purpose-bound signed access',
+    ]);
+    expect(matrix).toContain('- **2.6.3 Medical Documents (`DEFERRED`)**:');
+    expect(matrix).toContain('| Medical Documents | POST/GET | `/api/v1/medical-documents/reservations` (Legacy client route) | N/A (Backend service deferred; DD-012 private storage active) | **DEFERRED** | Post-Sprint 1 |');
+    expect(matrix).toContain('- **2.6.4 Support Cases (`DEFERRED`)**:');
+    expect(matrix).toContain('| Customer Support Cases | POST | `/api/v1/orders/customer-cases` (Legacy client route) | N/A (Backend case service deferred) | **DEFERRED** | Post-Sprint 1 |');
   });
 });

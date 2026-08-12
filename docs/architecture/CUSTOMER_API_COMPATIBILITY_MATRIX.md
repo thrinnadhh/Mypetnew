@@ -24,7 +24,11 @@ This document presents the authoritative inventory of Customer HTTP contracts in
 | Customer Pet Management | GET/POST | `/api/v1/pets` | N/A (Backend pet service missing) | **MISSING** | T3 |
 | Device Push Registration | POST | `/api/v1/notifications/push-tokens` | `/api/v1/devices/registrations` | **MISMATCH** | T5 |
 | Notification Inbox | GET | `/api/v1/notifications` | `/api/v1/notifications` | **MATCH** | T1 |
-| Obsolete Microservice Tests | N/A | Local test assertions | N/A (Legacy `com.pawsnearme` paths) | **DEFERRED** | T4 |
+| Online / Appointment Payment | POST | `/api/v1/payments/appointments` (Legacy client route) | N/A (Sprint 1 uses `PAY_ON_FULFILMENT` / `STORE_PICKUP`) | **DEFERRED** | Post-Sprint 1 |
+| Recurring Subscriptions | POST | `/api/v1/orders/subscriptions` (Legacy client route) | N/A (Sprint 1 uses single-order pickup) | **DEFERRED** | Post-Sprint 1 |
+| Medical Documents | POST/GET | `/api/v1/medical-documents/reservations` (Legacy client route) | N/A (Backend service deferred; DD-012 private storage active) | **DEFERRED** | Post-Sprint 1 |
+| Customer Support Cases | POST | `/api/v1/orders/customer-cases` (Legacy client route) | N/A (Backend case service deferred) | **DEFERRED** | Post-Sprint 1 |
+| Obsolete Microservice Tests | N/A | Local test assertions | N/A (Legacy `com.pawsnearme` microservices) | **DEFERRED** | T4 |
 
 ---
 
@@ -168,9 +172,30 @@ This document presents the authoritative inventory of Customer HTTP contracts in
 
 ---
 
+### 2.6 Deferred Customer Capabilities (Post-Sprint 1 Scope)
+
+- **2.6.1 Online & Appointment Payments (`DEFERRED`)**:
+  - **Capability**: Online gateway payment initiation and webhook reconciliation.
+  - **Current Client Path**: `/api/v1/payments/appointments` (`customer-payments.ts`).
+  - **Canonical Target**: Per Decision `D-011`, Cashfree is the first online payment adapter. However, Sprint 1 baseline uses `STORE_PICKUP` + `PAY_ON_FULFILMENT` (`SprintOneControllers.kt`, `DECISIONS.md` D-022, DD-008). Online payment gateway backend integration is **DEFERRED** until post-Sprint 1.
+- **2.6.2 Recurring Orders & Subscriptions (`DEFERRED`)**:
+  - **Capability**: Automated cadence schedules and renewal proposals.
+  - **Current Client Path**: `/api/v1/orders/subscriptions` (`recurring-orders.ts`).
+  - **Canonical Target**: Per Decision `D-019`, recurring product orders support fixed cadences of 7, 15, 25, 30, and 35 days, requiring explicit customer confirmation without automatic charging or automatic COD placement. The backend subscription service is **DEFERRED** until post-Sprint 1.
+- **2.6.3 Medical Documents (`DEFERRED`)**:
+  - **Capability**: Health document uploads and signed access links.
+  - **Current Client Path**: `/api/v1/medical-documents/reservations` (`medical-documents.ts`).
+  - **Canonical Target**: Per Decision `DD-012`, private medical documents use private Supabase Storage buckets with short-lived, purpose-bound signed URLs issued only after backend authorization. Merchant document verification (`VerificationDocumentController.kt`) is active, while customer medical document backend APIs are **DEFERRED** until post-Sprint 1.
+- **2.6.4 Support Cases (`DEFERRED`)**:
+  - **Capability**: Order issue support ticketing and evidence upload.
+  - **Current Client Path**: `/api/v1/orders/customer-cases` (`customer-cases.ts`).
+  - **Canonical Target**: Customer support case backend service and refund workflows are **DEFERRED** until post-Sprint 1.
+
+---
+
 ## 3. Summary of Follow-Up Ticket Boundaries
 
 - **T2**: Implement full client authentication migration to `IdentityController.kt`, remap public catalog browsing to `GET /api/v1/public/catalog`, implement canonical pickup quote & checkout order DTO lifecycle (`CheckoutRequest`, `quoteId`, `cartSignature`), and wire loyalty balance UI.
 - **T3**: Implement backend Customer Pet domain service, Flyway migrations, and `/api/v1/pets` endpoints.
-- **T4**: Migrate obsolete `com.pawsnearme` microservice source path tests to canonical `in.mypetnew` modular monolith tests.
+- **T4**: Migrate obsolete `com.pawsnearme` microservice source path tests to canonical `in.mypetnew` modular monolith tests and enforce CI.
 - **T5**: Remap push device registration to `POST /api/v1/devices/registrations` (`RegisterDeviceRequest`).

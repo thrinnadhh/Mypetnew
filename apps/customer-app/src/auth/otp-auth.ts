@@ -35,9 +35,8 @@ export interface OtpSessionResponse {
 }
 
 export function validateServerRole(role: unknown): 'CUSTOMER' {
-  if (role === 'CUSTOMER') {
-    return 'CUSTOMER';
-  }
+  if (role === 'CUSTOMER') return 'CUSTOMER';
+
   throw new ApiError(403, {
     code: 'AUTHORIZATION_REQUIRED',
     message: `Access denied for role '${String(role)}'. Customer application requires CUSTOMER role.`,
@@ -86,10 +85,13 @@ export function normalizeOtpError(error: unknown): OtpAuthError {
 
 export function normalizePhone(value: string): string {
   const digits = value.replace(/\D/g, '');
-  if (digits.length === 10) return `+91${digits}`;
-  if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
-  if (value.startsWith('+') && digits.length >= 10 && digits.length <= 15) return `+${digits}`;
-  throw new OtpAuthError('INVALID_INPUT', 'Enter a valid mobile number.');
+  const localDigits = digits.length === 12 && digits.startsWith('91') ? digits.slice(2) : digits;
+
+  if (localDigits.length === 10 && /^[6-9][0-9]{9}$/.test(localDigits)) {
+    return `+91${localDigits}`;
+  }
+
+  throw new OtpAuthError('INVALID_INPUT', 'Enter a valid Indian mobile number.');
 }
 
 export async function requestOtp(mobile: string, deviceId: string): Promise<{ mobile: string; challenge: OtpChallengeResponse }> {
@@ -109,7 +111,7 @@ export async function requestOtp(mobile: string, deviceId: string): Promise<{ mo
 export async function verifyOtpCode(
   challengeId: string,
   mobile: string,
-  code: string
+  code: string,
 ): Promise<CustomerAuthSession> {
   const normalizedMobile = normalizePhone(mobile);
   const trimmedCode = code.trim();
@@ -124,7 +126,7 @@ export async function verifyOtpCode(
       purpose: 'LOGIN',
       code: trimmedCode,
     });
-    validateServerRole(response.role);
+    const role = validateServerRole(response.role);
     return {
       accountId: response.accountId,
       accessToken: response.accessToken,
@@ -132,7 +134,7 @@ export async function verifyOtpCode(
       tokenType: response.tokenType || 'Bearer',
       accessTokenExpiresAt: response.accessTokenExpiresAt,
       refreshTokenExpiresAt: response.refreshTokenExpiresAt,
-      role: 'CUSTOMER',
+      role,
       mobile: normalizedMobile,
     };
   } catch (error) {
@@ -142,12 +144,12 @@ export async function verifyOtpCode(
 
 export async function resendOtpCode(mobile: string, deviceId: string): Promise<OtpChallengeResponse> {
   try {
-    const response = await apiClient.post<OtpChallengeResponse>('/api/v1/auth/otp/request', {
-      mobile,
+    const normalizedMobile = normalizePhone(mobile);
+    return await apiClient.post<OtpChallengeResponse>('/api/v1/auth/otp/request', {
+      mobile: normalizedMobile,
       purpose: 'LOGIN',
       deviceId,
     });
-    return response;
   } catch (error) {
     throw normalizeOtpError(error);
   }

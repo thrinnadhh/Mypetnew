@@ -45,7 +45,7 @@ export default function OrderDetailRoute() {
     if (!id || !session) return;
     if (showLoading) setLoading(true);
     try {
-      const next = await fetchOrderDetails(id, session.access_token);
+      const next = await fetchOrderDetails(id, session.accessToken);
       if (next.paymentMethod && next.paymentMethod !== 'COD') {
         try {
           const payment = await fetchOrderPaymentStatus(id);
@@ -81,7 +81,7 @@ export default function OrderDetailRoute() {
     if (!order || !session) return;
     setActionLoading(true);
     try {
-      await cancelOrder(order.id, 'Cancelled from customer order detail', session.access_token);
+      await cancelOrder(order.id, 'Cancelled from customer order detail', session.accessToken);
       await loadOrder(false);
       Alert.alert(t('common.success'), 'Order cancelled successfully.');
     } catch (cause: unknown) {
@@ -95,7 +95,7 @@ export default function OrderDetailRoute() {
     if (!order || !session) return;
     setActionLoading(true);
     try {
-      const result = await reorderItems(order.id, session.access_token);
+      const result = await reorderItems(order.id, session.accessToken);
       if (!result.canReorder) {
         const unavailable = result.items
           .filter((item) => !item.isAvailable)
@@ -126,11 +126,10 @@ export default function OrderDetailRoute() {
     if (!order || !user) return;
     setActionLoading(true);
     try {
-      const metadata = user.user_metadata as Record<string, unknown> | undefined;
       const initialization = await initiateOrderPayment(user.id, order.id, order.rawTotal, {
-        phone: user.phone || String(metadata?.phone || metadata?.mobile || ''),
-        email: user.email,
-        name: String(metadata?.full_name || metadata?.name || '').trim() || null,
+        phone: user.phone,
+        email: null,
+        name: user.displayName,
       });
       await openCashfreeOrder(initialization);
       const payment = await waitForPaymentOutcome(order.id);

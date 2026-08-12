@@ -168,8 +168,8 @@ describe('MyPet customer journey contracts', () => {
     const payments = source('src/services/customer-payments.ts');
 
     expectAll(auth, [
-      'apiClient.setSessionToken(nextSession?.access_token ?? null)',
-      'apiClient.setSessionToken(null)',
+      'apiClient.setSessionToken(nextSession?.accessToken ?? null)',
+      'applySessionState(null)',
     ]);
     expectAll(profile, [
       '/api/v1/addresses/default',

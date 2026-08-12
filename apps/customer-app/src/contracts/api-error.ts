@@ -109,18 +109,20 @@ export async function apiErrorFromResponse(response: Response): Promise<ApiError
     }
   }
 
+  const getHeader = (name: string) => (typeof response.headers?.get === 'function' ? response.headers.get(name) : null);
+
   const payload = normalizeApiErrorPayload(
     response.status,
     response.statusText,
     raw,
-    response.headers.get('x-request-id') ?? response.headers.get('x-trace-id'),
+    getHeader('x-request-id') ?? getHeader('x-trace-id'),
   );
 
   return new ApiError(
     response.status,
     payload,
     raw,
-    parseRetryAfter(response.headers.get('retry-after')),
+    parseRetryAfter(getHeader('retry-after')),
   );
 }
 

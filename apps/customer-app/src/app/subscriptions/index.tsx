@@ -65,7 +65,7 @@ export default function RecurringOrdersScreen() {
     }
     setError(null);
     try {
-      setSubscriptions(await fetchRecurringOrders(session.access_token));
+      setSubscriptions(await fetchRecurringOrders(session.accessToken));
     } catch (nextError) {
       setError(nextError);
     } finally {
@@ -91,7 +91,7 @@ export default function RecurringOrdersScreen() {
         params.sourceOrderId,
         cadence,
         quantityMultiplier,
-        session.access_token,
+        session.accessToken,
       );
       setSubscriptions((current) => [created, ...current]);
       Alert.alert('Recurring order created', 'MyPet will remind you before the next order. Payment is never charged automatically.');
@@ -109,7 +109,7 @@ export default function RecurringOrdersScreen() {
     if (!session) return;
     setBusyId(subscription.subscriptionId);
     try {
-      const updated = await updateRecurringOrder(subscription.subscriptionId, nextAction, session.access_token);
+      const updated = await updateRecurringOrder(subscription.subscriptionId, nextAction, session.accessToken);
       setSubscriptions((current) => current.map((item) => item.subscriptionId === updated.subscriptionId ? updated : item));
     } catch (nextError) {
       Alert.alert('Subscription update failed', apiErrorMessage(nextError));
@@ -122,7 +122,7 @@ export default function RecurringOrdersScreen() {
     if (!session) return;
     setBusyId(subscription.subscriptionId);
     try {
-      const result = await confirmRecurringOrder(subscription.subscriptionId, session.access_token);
+      const result = await confirmRecurringOrder(subscription.subscriptionId, session.accessToken);
       setSubscriptions((current) => current.map((item) => item.subscriptionId === result.subscription.subscriptionId ? result.subscription : item));
       if (result.reorder.canReorder) {
         const nextItems = await buildCartFromRevalidation(result.reorder);

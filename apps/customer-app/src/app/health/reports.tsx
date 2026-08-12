@@ -73,7 +73,7 @@ export default function MedicalReportsScreen() {
     }
     setDocumentError(null);
     try {
-      setUploadedDocuments(await fetchMedicalDocuments(session.access_token));
+      setUploadedDocuments(await fetchMedicalDocuments(session.accessToken));
     } catch (error) {
       setDocumentError(error);
     } finally {
@@ -132,7 +132,7 @@ export default function MedicalReportsScreen() {
     if (!session) return;
     try {
       const url = report.kind === 'uploaded'
-        ? await getMedicalDocumentLink(report.document.documentId, session.access_token, disposition)
+        ? await getMedicalDocumentLink(report.document.documentId, session.accessToken, disposition)
         : report.documentUrl;
       const supported = await Linking.canOpenURL(url);
       if (!supported) throw new Error('This report cannot be opened on this device.');
@@ -165,7 +165,7 @@ export default function MedicalReportsScreen() {
           name: fileNameForAsset(asset.uri, asset.fileName),
           mimeType: asset.mimeType ?? 'image/jpeg',
         },
-        session.access_token,
+        session.accessToken,
       );
       setUploadedDocuments((current) => [uploaded, ...current]);
       setUploadVisible(false);

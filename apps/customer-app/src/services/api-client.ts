@@ -3,17 +3,49 @@ import { appConfig } from '../utils/app-config';
 
 export { ApiError } from '../contracts/api-error';
 
-interface RequestOptions {
+export interface RequestOptions {
   method?: string;
   body?: unknown;
   headers?: Record<string, string>;
+  _isRetry?: boolean;
 }
+
+export type RefreshHandler = () => Promise<string | null>;
+export type ClearAuthHandler = () => void;
 
 class ApiClient {
   private sessionToken: string | null = null;
+  private refreshHandler: RefreshHandler | null = null;
+  private clearAuthHandler: ClearAuthHandler | null = null;
+  private refreshPromise: Promise<string | null> | null = null;
+  private authEpoch = 0;
 
   public setSessionToken(token: string | null) {
     this.sessionToken = token;
+    if (token === null) {
+      this.advanceAuthEpoch();
+    }
+  }
+
+  public advanceAuthEpoch() {
+    this.authEpoch++;
+    this.refreshPromise = null;
+  }
+
+  public getSessionToken(): string | null {
+    return this.sessionToken;
+  }
+
+  public getAuthEpoch(): number {
+    return this.authEpoch;
+  }
+
+  public setRefreshHandler(handler: RefreshHandler | null) {
+    this.refreshHandler = handler;
+  }
+
+  public setClearAuthHandler(handler: ClearAuthHandler | null) {
+    this.clearAuthHandler = handler;
   }
 
   private getBaseUrl(): string {
@@ -43,8 +75,17 @@ class ApiClient {
     return headers;
   }
 
+  private isAuthEndpoint(path: string): boolean {
+    return (
+      path.includes('/api/v1/auth/sessions/refresh') ||
+      path.includes('/api/v1/auth/sessions/current') ||
+      path.includes('/api/v1/auth/otp/verify') ||
+      path.includes('/api/v1/auth/otp/request')
+    );
+  }
+
   public async request<T = any>(path: string, options: RequestOptions = {}): Promise<T> {
-    const { method = 'GET', body, headers: customHeaders } = options;
+    const { method = 'GET', body, headers: customHeaders, _isRetry = false } = options;
     const baseUrl = this.getBaseUrl();
     const url = path.startsWith('http://') || path.startsWith('https://')
       ? path
@@ -60,7 +101,60 @@ class ApiClient {
     }
 
     const response = await fetch(url, config);
-    if (!response.ok) throw await apiErrorFromResponse(response);
+
+    if (!response.ok) {
+      const error = await apiErrorFromResponse(response);
+
+      if (response.status === 401) {
+        // Auth lifecycle endpoints own their own failure semantics. Never recurse into refresh
+        // and never let an old auth request clear a newer session generation.
+        if (this.isAuthEndpoint(path)) {
+          throw error;
+        }
+
+        if (_isRetry) {
+          this.clearAuthHandler?.();
+          throw error;
+        }
+
+        if (this.refreshHandler) {
+          const startEpoch = this.authEpoch;
+
+          if (!this.refreshPromise) {
+            const refresh = this.refreshHandler();
+            const trackedRefresh = refresh.finally(() => {
+              if (this.refreshPromise === trackedRefresh) {
+                this.refreshPromise = null;
+              }
+            });
+            this.refreshPromise = trackedRefresh;
+          }
+
+          const activeRefresh = this.refreshPromise;
+          const newToken = await activeRefresh;
+
+          // A logout or a newly established login superseded this request. The old request
+          // must fail without mutating the newer auth state.
+          if (this.authEpoch !== startEpoch) {
+            throw error;
+          }
+
+          if (newToken) {
+            return this.request<T>(path, { ...options, _isRetry: true });
+          }
+
+          this.clearAuthHandler?.();
+          throw error;
+        }
+
+        this.clearAuthHandler?.();
+        throw error;
+      }
+
+      // 403 or any other non-401 error never triggers token refresh.
+      throw error;
+    }
+
     if (response.status === 204) return {} as T;
 
     const responseBody = await response.text();

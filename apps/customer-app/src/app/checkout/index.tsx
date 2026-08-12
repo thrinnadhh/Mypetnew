@@ -219,7 +219,7 @@ export default function CheckoutScreen() {
 
     setState('loading');
     try {
-      const defaultAddress = await fetchDefaultAddress(session.access_token);
+      const defaultAddress = await fetchDefaultAddress(session.accessToken);
       setAddress(defaultAddress);
       if (defaultAddress) {
         setQuote(await fetchCheckoutQuote({
@@ -232,7 +232,7 @@ export default function CheckoutScreen() {
           city: defaultAddress.city,
           latitude: defaultAddress.geoLat,
           longitude: defaultAddress.geoLng,
-        }, session.access_token));
+        }, session.accessToken));
       }
       setState('ready');
     } catch (error) {
@@ -272,7 +272,7 @@ export default function CheckoutScreen() {
       city: address.city,
       latitude: address.geoLat,
       longitude: address.geoLng,
-    }, session.access_token);
+    }, session.accessToken);
     setPendingOrder(created);
     return created;
   };
@@ -301,11 +301,10 @@ export default function CheckoutScreen() {
         return;
       }
 
-      const metadata = user.user_metadata as Record<string, unknown> | undefined;
       const initialization = await initiateOrderPayment(user.id, order.id, order.rawTotal, {
-        phone: user.phone || String(metadata?.phone || metadata?.mobile || ''),
-        email: user.email,
-        name: String(metadata?.full_name || metadata?.name || '').trim() || null,
+        phone: user.phone,
+        email: null,
+        name: user.displayName,
       });
       await openCashfreeOrder(initialization);
       const payment = await waitForPaymentOutcome(order.id);

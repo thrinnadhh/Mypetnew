@@ -31,8 +31,8 @@ describe('customer end-to-end regression contracts', () => {
     const auth = source('src/context/AuthContext.tsx');
     const payments = source('src/services/customer-payments.ts');
 
-    expect(auth).toMatch(/apiClient\.setSessionToken\(nextSession\?\.access_token \?\? null\)/);
-    expect(auth).toMatch(/apiClient\.setSessionToken\(null\)/);
+    expect(auth).toMatch(/apiClient\.setSessionToken\(nextSession\?\.accessToken \?\? null\)/);
+    expect(auth).toMatch(/applySessionState\(null\)/);
     expect(payments).toMatch(/apiClient\.post/);
   });
 

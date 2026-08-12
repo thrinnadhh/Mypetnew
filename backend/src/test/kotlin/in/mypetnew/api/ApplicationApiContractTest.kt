@@ -70,6 +70,7 @@ class ApplicationApiContractTest {
         }.andExpect {
             status { isOk() }
             jsonPath("$.challengeId") { isNotEmpty() }
+            jsonPath("$.resendAfterSeconds") { value(30) }
         }.andReturn()
         val challengeId = objectMapper.readTree(requested.response.contentAsString).path("challengeId").asString()
         val code = (otpProvider as InMemoryOtpProvider).codeFor(java.util.UUID.fromString(challengeId))
@@ -79,16 +80,22 @@ class ApplicationApiContractTest {
             content = """{"challengeId":"$challengeId","mobile":"+919876543210","purpose":"LOGIN","code":"$code"}"""
         }.andExpect {
             status { isOk() }
+            jsonPath("$.accountId") { isNotEmpty() }
             jsonPath("$.accessToken") { isNotEmpty() }
             jsonPath("$.refreshToken") { isNotEmpty() }
             jsonPath("$.role") { value("CUSTOMER") }
         }.andReturn()
         val firstSession = objectMapper.readTree(verified.response.contentAsString)
+        val firstAccountId = firstSession.path("accountId").asString()
+        org.junit.jupiter.api.Assertions.assertNotNull(firstAccountId)
+
         val refreshed = mockMvc.post("/api/v1/auth/sessions/refresh") {
             contentType = MediaType.APPLICATION_JSON
             content = """{"refreshToken":"${firstSession.path("refreshToken").asString()}"}"""
         }.andExpect {
             status { isOk() }
+            jsonPath("$.accountId") { value(firstAccountId) }
+            jsonPath("$.role") { value("CUSTOMER") }
             jsonPath("$.accessToken") { isNotEmpty() }
             jsonPath("$.refreshToken") { isNotEmpty() }
         }.andReturn()
@@ -97,6 +104,13 @@ class ApplicationApiContractTest {
             firstSession.path("refreshToken").asString(),
             secondSession.path("refreshToken").asString(),
         )
+
+        mockMvc.post("/api/v1/auth/sessions/refresh") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"refreshToken":"${firstSession.path("refreshToken").asString()}"}"""
+        }.andExpect {
+            status { isBadRequest() }
+        }
         mockMvc.get("/api/v1/notifications") {
             header("Authorization", "Bearer ${firstSession.path("accessToken").asString()}")
         }.andExpect { status { isUnauthorized() } }

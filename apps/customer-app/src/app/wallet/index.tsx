@@ -48,8 +48,8 @@ export default function WalletScreen() {
     setErrorMessage(null);
     try {
       const [walletData, promotionData] = await Promise.all([
-        fetchCustomerWallet(session.access_token),
-        fetchActivePromotions(session.access_token),
+        fetchCustomerWallet(session.accessToken),
+        fetchActivePromotions(session.accessToken),
       ]);
       setRewards(walletData);
       setPromotions(promotionData);

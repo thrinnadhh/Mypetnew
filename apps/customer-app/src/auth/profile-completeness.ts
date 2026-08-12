@@ -1,4 +1,4 @@
-import type { User } from '@supabase/supabase-js';
+import type { CustomerAuthUser } from './types';
 
 export interface CustomerProfileState {
   displayName?: string | null;
@@ -9,11 +9,11 @@ export interface CustomerProfileState {
 
 export type ProfileRequirement = 'DISPLAY_NAME' | 'VERIFIED_PHONE' | 'DELIVERY_ADDRESS';
 
-export function profileStateFromUser(user: User | null, hasDeliveryAddress = false): CustomerProfileState {
+export function profileStateFromUser(user: CustomerAuthUser | null, hasDeliveryAddress = false): CustomerProfileState {
   return {
-    displayName: typeof user?.user_metadata?.full_name === 'string' ? user.user_metadata.full_name.trim() : null,
-    verifiedPhone: user?.phone_confirmed_at ? user.phone : null,
-    email: user?.email ?? null,
+    displayName: user?.displayName ?? null,
+    verifiedPhone: user?.phone ?? null,
+    email: null,
     hasDeliveryAddress,
   };
 }

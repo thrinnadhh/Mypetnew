@@ -16,7 +16,7 @@ function AppNavigator() {
   const scheme = useColorScheme();
   const { loading, session, user } = useAuth();
   const [fontsLoaded, fontError] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, Inter_800ExtraBold });
-  usePushNotifications(user?.id, session?.access_token);
+  usePushNotifications(user?.id, session?.accessToken);
 
   if (loading || (!fontsLoaded && !fontError)) {
     return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" /></View>;

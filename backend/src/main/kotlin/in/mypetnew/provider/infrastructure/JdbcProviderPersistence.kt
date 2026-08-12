@@ -66,7 +66,7 @@ class JdbcProviderPersistence(
                     )
                 }
                 get(outletId) ?: throw IllegalStateException("Provider insert was not readable")
-            } ?: throw IllegalStateException("Provider transaction returned no result")
+            }
         } catch (duplicate: DuplicateKeyException) {
             replaySubmission(merchant.actorId, idempotencyKey, requestFingerprint)?.let { return it }
             throw DomainException("PROVIDER_CONFLICT", "Provider onboarding changed concurrently; refresh and retry")
@@ -125,7 +125,7 @@ class JdbcProviderPersistence(
             outletId,
         )
         get(outletId) ?: notFound()
-    } ?: throw IllegalStateException("Provider approval transaction returned no result")
+    }
 
     override fun all(): List<ProviderOutlet> = jdbc.query(
         """

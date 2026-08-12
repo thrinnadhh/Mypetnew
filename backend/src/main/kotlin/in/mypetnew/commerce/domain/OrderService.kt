@@ -17,8 +17,16 @@ enum class OrderStatus {
     CANCELLED,
 }
 
+enum class OrderActor {
+    CUSTOMER,
+    MERCHANT,
+    SYSTEM,
+}
+
 data class OrderHistoryEntry(
     val status: OrderStatus,
+    val fromStatus: OrderStatus? = null,
+    val actorRole: OrderActor,
     val occurredAt: Instant = Instant.now(),
     val commandKey: String,
 )
@@ -62,7 +70,7 @@ class OrderService(private val inventory: InventoryService) {
                     reserved += listingId to quantity
                 }
             } catch (error: RuntimeException) {
-                reserved.forEach { (listingId, quantity) ->
+                reserved.asReversed().forEach { (listingId, quantity) ->
                     inventory.release(listingId, quantity, "rollback:$id:$listingId")
                 }
                 throw error
@@ -74,17 +82,28 @@ class OrderService(private val inventory: InventoryService) {
                 lines = lines.toMap(),
                 grandTotalPaise = grandTotalPaise,
                 status = OrderStatus.PLACED,
-                history = listOf(OrderHistoryEntry(OrderStatus.PLACED, commandKey = idempotencyKey)),
+                history = listOf(
+                    OrderHistoryEntry(
+                        status = OrderStatus.PLACED,
+                        actorRole = OrderActor.CUSTOMER,
+                        commandKey = idempotencyKey,
+                    ),
+                ),
             ).also { orders[id] = it }
         }
     }
 
     @Synchronized
-    fun transition(orderId: UUID, target: OrderStatus, idempotencyKey: String): ProductOrder {
-        val fingerprint = "$orderId:$target"
-        return transitionKeys.execute("order-transition", idempotencyKey, fingerprint) {
+    fun transition(
+        orderId: UUID,
+        target: OrderStatus,
+        idempotencyKey: String,
+        actor: OrderActor = OrderActor.MERCHANT,
+    ): ProductOrder {
+        val fingerprint = "$orderId:$actor:$target"
+        return transitionKeys.execute("order-transition:$orderId", idempotencyKey, fingerprint) {
             val order = orders[orderId] ?: throw DomainException("ORDER_NOT_FOUND", "The order is unavailable")
-            if (target !in allowedTargets(order.status)) {
+            if (target !in allowedTargets(order.status, actor)) {
                 throw DomainException("ORDER_TRANSITION_INVALID", "The order cannot move to the requested state")
             }
             if (target == OrderStatus.CANCELLED || target == OrderStatus.REJECTED) {
@@ -99,7 +118,12 @@ class OrderService(private val inventory: InventoryService) {
             }
             order.copy(
                 status = target,
-                history = order.history + OrderHistoryEntry(target, commandKey = idempotencyKey),
+                history = order.history + OrderHistoryEntry(
+                    status = target,
+                    fromStatus = order.status,
+                    actorRole = actor,
+                    commandKey = idempotencyKey,
+                ),
             ).also { orders[orderId] = it }
         }
     }
@@ -108,13 +132,22 @@ class OrderService(private val inventory: InventoryService) {
     fun get(orderId: UUID): ProductOrder = orders[orderId]
         ?: throw DomainException("ORDER_NOT_FOUND", "The order is unavailable")
 
-    private fun allowedTargets(status: OrderStatus): Set<OrderStatus> = when (status) {
-        OrderStatus.PLACED -> setOf(OrderStatus.ACCEPTED, OrderStatus.REJECTED, OrderStatus.CANCELLED)
-        OrderStatus.ACCEPTED -> setOf(OrderStatus.PREPARING, OrderStatus.CANCELLED)
-        OrderStatus.PREPARING -> setOf(OrderStatus.READY_FOR_PICKUP, OrderStatus.CANCELLED)
-        OrderStatus.READY_FOR_PICKUP -> setOf(OrderStatus.PICKED_UP, OrderStatus.DELIVERED, OrderStatus.CANCELLED)
-        OrderStatus.PICKED_UP -> setOf(OrderStatus.DELIVERED)
-        OrderStatus.DELIVERED, OrderStatus.REJECTED, OrderStatus.CANCELLED -> emptySet()
+    private fun allowedTargets(status: OrderStatus, actor: OrderActor): Set<OrderStatus> = when (actor) {
+        OrderActor.CUSTOMER -> when (status) {
+            OrderStatus.PLACED -> setOf(OrderStatus.CANCELLED)
+            else -> emptySet()
+        }
+        OrderActor.MERCHANT -> when (status) {
+            OrderStatus.PLACED -> setOf(OrderStatus.ACCEPTED, OrderStatus.REJECTED)
+            OrderStatus.ACCEPTED -> setOf(OrderStatus.PREPARING, OrderStatus.CANCELLED)
+            OrderStatus.PREPARING -> setOf(OrderStatus.READY_FOR_PICKUP, OrderStatus.CANCELLED)
+            OrderStatus.READY_FOR_PICKUP -> setOf(OrderStatus.DELIVERED, OrderStatus.CANCELLED)
+            OrderStatus.PICKED_UP,
+            OrderStatus.DELIVERED,
+            OrderStatus.REJECTED,
+            OrderStatus.CANCELLED -> emptySet()
+        }
+        OrderActor.SYSTEM -> emptySet()
     }
 
     private fun canonicalLines(lines: Map<UUID, Int>): String = lines
@@ -122,4 +155,3 @@ class OrderService(private val inventory: InventoryService) {
         .entries
         .joinToString(",") { "${it.key}=${it.value}" }
 }
-

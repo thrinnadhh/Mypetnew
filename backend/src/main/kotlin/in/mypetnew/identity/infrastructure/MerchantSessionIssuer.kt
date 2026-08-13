@@ -17,7 +17,7 @@ import java.util.Base64
 import java.util.UUID
 
 interface MerchantSessionIssuer {
-    fun createMerchant(accountId: UUID, mobile: String, deviceId: String): RefreshSession
+    fun createMerchant(mobile: String, deviceId: String): RefreshSession
 }
 
 @Component
@@ -46,8 +46,8 @@ class InMemoryRoleSessionStore(
         return insert(accountId, role, deviceId)
     }
 
-    override fun createMerchant(accountId: UUID, mobile: String, deviceId: String): RefreshSession =
-        create(accountId, mobile, Role.MERCHANT, deviceId)
+    override fun createMerchant(mobile: String, deviceId: String): RefreshSession =
+        create(UUID.nameUUIDFromBytes(mobile.toByteArray(StandardCharsets.UTF_8)), mobile, Role.MERCHANT, deviceId)
 
     @Synchronized
     override fun rotate(refreshToken: String): RefreshSession {

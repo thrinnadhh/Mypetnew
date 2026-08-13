@@ -41,7 +41,10 @@ export default function MerchantEntryScreen() {
   }, []);
 
   useEffect(() => {
-    void restore();
+    const startup = setTimeout(() => {
+      void restore();
+    }, 0);
+    return () => clearTimeout(startup);
   }, [restore]);
 
   async function signOut() {

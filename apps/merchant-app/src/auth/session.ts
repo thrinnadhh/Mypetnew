@@ -28,6 +28,16 @@ let refreshInFlight: Promise<MerchantSessionEnvelope> | null = null;
 function baseUrl(): string {
   const raw = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
   if (!raw) throw new Error("Merchant API configuration is missing");
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("Merchant API configuration is invalid");
+  }
+  const localDevHost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "10.0.2.2";
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && localDevHost)) {
+    throw new Error("Merchant API configuration must use HTTPS");
+  }
   return raw.replace(/\/$/, "");
 }
 
@@ -53,10 +63,12 @@ export function merchantVerifyPayload(challengeId: string, mobile: string, code:
 
 export function assertMerchantEnvelope(value: MerchantSessionEnvelope): MerchantSessionEnvelope {
   if (value.role !== "MERCHANT") throw new Error("The server did not issue a Merchant session");
-  if (!value.accessToken || !value.refreshToken || !value.accountId) {
+  if (!value.accessToken || !value.refreshToken || !value.accountId || value.tokenType !== "Bearer") {
     throw new Error("The Merchant session response is incomplete");
   }
-  if (!value.accessTokenExpiresAt || !value.refreshTokenExpiresAt) {
+  const accessExpiry = Date.parse(value.accessTokenExpiresAt);
+  const refreshExpiry = Date.parse(value.refreshTokenExpiresAt);
+  if (!Number.isFinite(accessExpiry) || !Number.isFinite(refreshExpiry) || refreshExpiry <= Date.now()) {
     throw new Error("The Merchant session response is incomplete");
   }
   return value;
@@ -86,7 +98,8 @@ async function loadRefreshState(): Promise<StoredRefreshState | null> {
       await storageDelete(REFRESH_STATE_KEY);
       return null;
     }
-    if (Date.parse(parsed.refreshTokenExpiresAt) <= Date.now()) {
+    const expiry = Date.parse(parsed.refreshTokenExpiresAt);
+    if (!Number.isFinite(expiry) || expiry <= Date.now()) {
       await storageDelete(REFRESH_STATE_KEY);
       return null;
     }
@@ -201,13 +214,31 @@ export async function merchantApiFetch(path: string, init: RequestInit = {}): Pr
   return response;
 }
 
+async function revokeCurrentSession(): Promise<void> {
+  if (!runtimeAccessToken) {
+    await rotateRefreshToken();
+  }
+  let response = await fetch(`${baseUrl()}/api/v1/auth/sessions/current`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${runtimeAccessToken}`, Accept: "application/json" },
+  });
+  if (response.status === 401) {
+    await rotateRefreshToken();
+    response = await fetch(`${baseUrl()}/api/v1/auth/sessions/current`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${runtimeAccessToken}`, Accept: "application/json" },
+    });
+  }
+  if (!response.ok && response.status !== 401) {
+    throw new Error(`HTTP_${response.status}`);
+  }
+}
+
 export async function logoutMerchant(): Promise<void> {
   try {
-    if (runtimeAccessToken) {
-      await fetch(`${baseUrl()}/api/v1/auth/sessions/current`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${runtimeAccessToken}`, Accept: "application/json" },
-      });
+    const stored = await loadRefreshState();
+    if (runtimeAccessToken || stored) {
+      await revokeCurrentSession();
     }
   } finally {
     runtimeAccessToken = null;

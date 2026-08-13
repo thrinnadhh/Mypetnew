@@ -84,11 +84,24 @@ class CustomerOrderApiController(
     }
 
     private fun ownedOrder(customerId: UUID, orderId: UUID): ProductOrder {
-        val order = orders.get(orderId)
+        val order = try {
+            orders.get(orderId)
+        } catch (error: DomainException) {
+            if (error.code == "ORDER_NOT_FOUND") {
+                throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+            }
+            throw error
+        }
         if (order.customerId != customerId) {
             throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
         }
         return order
+    }
+
+    private fun listingName(listingId: UUID): String? = try {
+        catalog.getListing(listingId).name
+    } catch (error: DomainException) {
+        if (error.code == "RESOURCE_NOT_FOUND") null else throw error
     }
 
     private fun view(order: ProductOrder): CustomerOrderView {
@@ -102,7 +115,7 @@ class CustomerOrderApiController(
             items = order.lines.map { (listingId, quantity) ->
                 CustomerOrderItemView(
                     listingId = listingId,
-                    name = runCatching { catalog.getListing(listingId).name }.getOrNull(),
+                    name = listingName(listingId),
                     quantity = quantity,
                 )
             },

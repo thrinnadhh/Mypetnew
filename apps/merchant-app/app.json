@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "MyPet Merchant",
+    "slug": "mypet-merchant",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "mypetmerchant",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "in.mypetnew.merchant"
+    },
+    "android": {
+      "package": "in.mypetnew.merchant"
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

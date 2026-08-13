@@ -30,12 +30,13 @@ Scope: S1-03, S1-05; identity portions required to make Merchant onboarding real
 2. OTP request and verification;
 3. versioned SecureStore refresh-state persistence on native;
 4. runtime-only access token storage;
-5. one in-flight refresh for concurrent 401s;
+5. one in-flight refresh for concurrent 401s, including staggered stale-token responses;
 6. no refresh on 403 or auth lifecycle endpoints;
 7. role validation requiring `MERCHANT`;
-8. logout that revokes server session and clears local state;
+8. logout that reports success only after the server session is revoked; transient offline/server failure retains local state for retry;
 9. intentional loading, offline, retry and unauthorized UI states;
-10. no mock/demo identity fallback in production paths.
+10. no mock/demo identity fallback in production paths;
+11. serialized secure-storage mutations so an older refresh cannot overwrite newer login/logout credentials.
 
 ## Security invariants
 
@@ -44,7 +45,22 @@ Scope: S1-03, S1-05; identity portions required to make Merchant onboarding real
 - A caller cannot obtain MERCHANT authority by sending a client role field.
 - Session creation rejects unsupported roles.
 - Refresh replay remains invalid after rotation.
+- Protected Merchant requests re-resolve current organization/outlet membership server-side so stale token scopes do not preserve revoked tenant access.
+- Transient refresh/network failure does not erase a still-valid persisted refresh credential; definitive invalid/revoked session responses fail closed.
 - Logs and string representations never expose refresh tokens.
+
+## Dependency and build-tool security boundary
+
+- `apps/merchant-app/package-lock.json` must be generated from the Merchant manifest itself; Customer-only dependencies are not permitted in the Merchant lock graph.
+- The Expo 56 / Metro build dependency graph currently inherits two GitHub-reviewed High `image-size` denial-of-service advisories: `GHSA-w3rx-r6r6-pgpr` and `GHSA-5p2g-fcmc-qvqq`.
+- As of 2026-08-13 GitHub lists no patched `image-size` release for either advisory. Forcing the audit suggestion would downgrade Expo across a breaking major boundary and is not an accepted fix.
+- These advisories are treated as a bounded build-tool exception, not as application-runtime authorization risk. Merchant CI parses `npm audit --omit=dev --json` and fails on any Critical advisory or any High advisory whose direct advisory root is not one of the two explicit GHSAs above.
+- Re-review is mandatory on the next Expo/Metro dependency update, when either GHSA publishes a patched version, or no later than 2026-08-27. Until then, M1A does not claim a zero-advisory npm tree; it claims a guarded, explicitly scoped exception.
+
+## External integration boundary
+
+- The repository supplies an in-memory OTP provider only for `test` and `development`. A production SMS/OTP provider remains swappable behind `OtpProvider` and is not invented by M1A because the product decisions do not lock a vendor.
+- Therefore M1A repository certification covers the canonical OTP/session contract and fail-closed production identity/session authority, but does not claim real SMS sandbox/production delivery evidence.
 
 ## Verification mapping
 

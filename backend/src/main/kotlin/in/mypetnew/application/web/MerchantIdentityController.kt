@@ -26,7 +26,7 @@ class MerchantIdentityController(
             throw DomainException("OTP_PURPOSE_INVALID", "The OTP purpose is invalid for this endpoint")
         }
         val verified = otp.verify(body.challengeId, body.mobile, body.purpose, body.code)
-        val session = sessions.createMerchant(verified.subjectId, verified.mobile, verified.deviceId)
+        val session = sessions.createMerchant(verified.mobile, verified.deviceId)
         val principal = principals.resolve(session.accountId, session.sessionId)
         if (principal.role != Role.MERCHANT || principal.actorId != session.accountId) {
             throw DomainException("SESSION_INVALID", "The session cannot be created")

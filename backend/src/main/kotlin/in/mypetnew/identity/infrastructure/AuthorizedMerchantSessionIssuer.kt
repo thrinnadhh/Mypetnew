@@ -20,9 +20,10 @@ import java.util.UUID
  * Production Merchant session authority.
  *
  * OTP verification only proves control of a mobile number. It must never mint MERCHANT authority.
- * This issuer therefore requires a pre-existing canonical ACTIVE MERCHANT identity before creating
- * a session. Being @Primary ensures MerchantIdentityController resolves this implementation in
- * production even while legacy session issuance remains available for compatibility cleanup.
+ * This issuer resolves the pre-existing canonical ACTIVE MERCHANT identity by verified mobile and
+ * creates the refresh session for that server-owned account. Being @Primary ensures
+ * MerchantIdentityController resolves this implementation in production while the generic session
+ * store remains responsible for refresh rotation and revocation.
  */
 @Component
 @Primary
@@ -34,7 +35,7 @@ class AuthorizedMerchantSessionIssuer(
 ) : MerchantSessionIssuer {
     private val random = SecureRandom()
 
-    override fun createMerchant(accountId: UUID, mobile: String, deviceId: String): RefreshSession = transaction.execute {
+    override fun createMerchant(mobile: String, deviceId: String): RefreshSession = transaction.execute {
         validateInput(mobile, deviceId)
         val authorizedAccount = jdbc.sql(
             """
@@ -49,10 +50,6 @@ class AuthorizedMerchantSessionIssuer(
             .optional()
             .orElseThrow { DomainException("SESSION_INVALID", "The session cannot be created") }
 
-        if (authorizedAccount != accountId) {
-            throw DomainException("SESSION_INVALID", "The session cannot be created")
-        }
-
         val rawToken = ByteArray(32).also(random::nextBytes).let {
             Base64.getUrlEncoder().withoutPadding().encodeToString(it)
         }
@@ -64,12 +61,12 @@ class AuthorizedMerchantSessionIssuer(
             VALUES (:id, :account_id, :token_hash, :device_id, :expires_at)
             """.trimIndent(),
         ).param("id", sessionId)
-            .param("account_id", accountId)
+            .param("account_id", authorizedAccount)
             .param("token_hash", hash(rawToken))
             .param("device_id", deviceId)
             .param("expires_at", expiresAt)
             .update()
-        RefreshSession(sessionId, accountId, Role.MERCHANT, rawToken, expiresAt)
+        RefreshSession(sessionId, authorizedAccount, Role.MERCHANT, rawToken, expiresAt)
     }
 
     private fun validateInput(mobile: String, deviceId: String) {

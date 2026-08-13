@@ -1,0 +1,75 @@
+package `in`.mypetnew.api
+
+import `in`.mypetnew.application.MyPetNewApplication
+import `in`.mypetnew.identity.domain.InMemoryOtpProvider
+import `in`.mypetnew.identity.domain.OtpProvider
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
+import org.springframework.http.MediaType
+import org.springframework.test.context.ActiveProfiles
+import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.post
+import tools.jackson.databind.ObjectMapper
+
+@SpringBootTest(
+    classes = [MyPetNewApplication::class],
+    properties = [
+        "mypet.security.token-secret=test-only-secret-that-is-longer-than-32-bytes",
+        "mypet.security.token-issuer=mypetnew-test-api",
+        "mypet.security.token-audience=mypetnew-test-clients",
+        "spring.datasource.url=jdbc:h2:mem=merchant-identity;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
+        "spring.datasource.username=sa",
+        "spring.datasource.password=",
+        "spring.flyway.enabled=false",
+    ],
+)
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class MerchantIdentityApiTest {
+    @Autowired private lateinit var mockMvc: MockMvc
+    @Autowired private lateinit var json: ObjectMapper
+    @Autowired private lateinit var otpProvider: OtpProvider
+
+    @Test
+    fun `merchant verification fixes role server side and refresh preserves it`() {
+        val mobile = "+919876543210"
+        val requested = mockMvc.post("/api/v1/auth/otp/request") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"mobile":"$mobile","purpose":"LOGIN","deviceId":"merchant-device-a"}"""
+        }.andExpect { status { isOk() } }.andReturn()
+        val challenge = json.readTree(requested.response.contentAsString)
+        val challengeId = challenge.path("challengeId").asString()
+        val code = (otpProvider as InMemoryOtpProvider).codeFor(java.util.UUID.fromString(challengeId))
+
+        val verified = mockMvc.post("/api/v1/auth/merchant/otp/verify") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"challengeId":"$challengeId","mobile":"$mobile","purpose":"LOGIN","code":"$code","role":"ADMIN"}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.role") { value("MERCHANT") }
+            jsonPath("$.accessToken") { isNotEmpty() }
+            jsonPath("$.refreshToken") { isNotEmpty() }
+        }.andReturn()
+
+        val session = json.readTree(verified.response.contentAsString)
+        val refreshToken = session.path("refreshToken").asString()
+        val accessToken = session.path("accessToken").asString()
+
+        mockMvc.post("/api/v1/auth/sessions/refresh") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"refreshToken":"$refreshToken"}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.role") { value("MERCHANT") }
+        }
+
+        mockMvc.post("/api/v1/merchant/outlets") {
+            header("Authorization", "Bearer $accessToken")
+            header("Idempotency-Key", "merchant-bootstrap-outlet")
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"name":"Merchant Bootstrap","capabilities":["PRODUCT_STORE"],"servicePinCodes":["517501"]}"""
+        }.andExpect { status { is2xxSuccessful() } }
+    }
+}

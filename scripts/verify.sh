@@ -6,4 +6,4 @@ cd "$(dirname "$0")/.."
 ./scripts/secret-scan.sh
 ./gradlew :backend:check --no-daemon --no-configuration-cache
 
-echo "Backend source verification passed. Frontend implementation is intentionally absent."
+echo "Backend source verification passed."

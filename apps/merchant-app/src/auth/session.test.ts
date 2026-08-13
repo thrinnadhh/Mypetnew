@@ -85,7 +85,7 @@ describe("Merchant session contract", () => {
       .mockResolvedValueOnce(response(200, merchantSession("access-b", "refresh-b")))
       .mockResolvedValueOnce(response(200, { ok: true }))
       .mockResolvedValueOnce(response(200, { ok: true }));
-    global.fetch = fetchMock as unknown as typeof fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await verifyMerchantOtp("challenge", "+919876543210", "123456");
     const firstRequest = merchantApiFetch("/api/v1/merchant/orders");

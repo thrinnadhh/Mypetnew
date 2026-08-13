@@ -22,6 +22,7 @@ type StoredRefreshState = {
 const REFRESH_STATE_KEY = "mypetnew.merchant.refresh.v1";
 const DEVICE_ID_KEY = "mypetnew.merchant.installation.v1";
 let runtimeAccessToken: string | null = null;
+let runtimeWebInstallationId: string | null = null;
 let refreshInFlight: Promise<MerchantSessionEnvelope> | null = null;
 
 function baseUrl(): string {
@@ -31,23 +32,18 @@ function baseUrl(): string {
 }
 
 async function storageGet(key: string): Promise<string | null> {
-  if (Platform.OS === "web") return globalThis.sessionStorage?.getItem(key) ?? null;
+  // Version 1 Merchant is a native Expo app. Never persist refresh secrets in browser storage.
+  if (Platform.OS === "web") return null;
   return SecureStore.getItemAsync(key);
 }
 
 async function storageSet(key: string, value: string): Promise<void> {
-  if (Platform.OS === "web") {
-    globalThis.sessionStorage?.setItem(key, value);
-    return;
-  }
+  if (Platform.OS === "web") return;
   await SecureStore.setItemAsync(key, value);
 }
 
 async function storageDelete(key: string): Promise<void> {
-  if (Platform.OS === "web") {
-    globalThis.sessionStorage?.removeItem(key);
-    return;
-  }
+  if (Platform.OS === "web") return;
   await SecureStore.deleteItemAsync(key);
 }
 
@@ -58,6 +54,9 @@ export function merchantVerifyPayload(challengeId: string, mobile: string, code:
 export function assertMerchantEnvelope(value: MerchantSessionEnvelope): MerchantSessionEnvelope {
   if (value.role !== "MERCHANT") throw new Error("The server did not issue a Merchant session");
   if (!value.accessToken || !value.refreshToken || !value.accountId) {
+    throw new Error("The Merchant session response is incomplete");
+  }
+  if (!value.accessTokenExpiresAt || !value.refreshTokenExpiresAt) {
     throw new Error("The Merchant session response is incomplete");
   }
   return value;
@@ -87,6 +86,10 @@ async function loadRefreshState(): Promise<StoredRefreshState | null> {
       await storageDelete(REFRESH_STATE_KEY);
       return null;
     }
+    if (Date.parse(parsed.refreshTokenExpiresAt) <= Date.now()) {
+      await storageDelete(REFRESH_STATE_KEY);
+      return null;
+    }
     return parsed as StoredRefreshState;
   } catch {
     await storageDelete(REFRESH_STATE_KEY);
@@ -95,6 +98,10 @@ async function loadRefreshState(): Promise<StoredRefreshState | null> {
 }
 
 export async function installationId(): Promise<string> {
+  if (Platform.OS === "web") {
+    runtimeWebInstallationId ??= Crypto.randomUUID();
+    return runtimeWebInstallationId;
+  }
   const existing = await storageGet(DEVICE_ID_KEY);
   if (existing) return existing;
   const created = Crypto.randomUUID();

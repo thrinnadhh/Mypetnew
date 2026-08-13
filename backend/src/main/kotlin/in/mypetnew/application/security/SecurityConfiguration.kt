@@ -42,6 +42,7 @@ class SecurityConfiguration {
         http: HttpSecurity,
         objectMapper: ObjectMapper,
         bearerAuthenticationFilter: BearerAuthenticationFilter,
+        merchantReauthorizationFilter: MerchantReauthorizationFilter,
     ): SecurityFilterChain {
         val entryPoint = stableAuthenticationEntryPoint(objectMapper)
         http
@@ -67,6 +68,7 @@ class SecurityConfiguration {
                     }
             }
             .addFilterBefore(bearerAuthenticationFilter, AnonymousAuthenticationFilter::class.java)
+            .addFilterAfter(merchantReauthorizationFilter, BearerAuthenticationFilter::class.java)
         return http.build()
     }
 

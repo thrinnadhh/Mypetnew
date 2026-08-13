@@ -16,11 +16,16 @@ jest.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 
 import {
   assertMerchantEnvelope,
+  hasRuntimeMerchantSession,
+  logoutMerchant,
   merchantApiFetch,
   merchantVerifyPayload,
+  restoreMerchantSession,
   verifyMerchantOtp,
   type MerchantSessionEnvelope,
 } from "./session";
+
+const REFRESH_STATE_KEY = "mypetnew.merchant.refresh.v1";
 
 function futureIso(minutes: number): string {
   return new Date(Date.now() + minutes * 60_000).toISOString();
@@ -105,5 +110,44 @@ describe("Merchant session contract", () => {
       .map(([, init]) => (init as RequestInit).headers as Record<string, string>);
     expect(retryAuthorizationHeaders).toHaveLength(2);
     expect(retryAuthorizationHeaders.every((headers) => headers.Authorization === "Bearer access-b")).toBe(true);
+  });
+
+  test("offline sign out keeps the current session available for retry", async () => {
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce(response(200, merchantSession("access-c", "refresh-c")))
+      .mockRejectedValueOnce(new TypeError("Network request failed"));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await verifyMerchantOtp("challenge-c", "+919876543210", "123456");
+    expect(hasRuntimeMerchantSession()).toBe(true);
+    expect(mockSecureStorage.get(REFRESH_STATE_KEY)).toContain("refresh-c");
+
+    await expect(logoutMerchant()).rejects.toThrow("Network request failed");
+    expect(hasRuntimeMerchantSession()).toBe(true);
+    expect(mockSecureStorage.get(REFRESH_STATE_KEY)).toContain("refresh-c");
+
+    globalThis.fetch = jest.fn().mockResolvedValue(response(204)) as unknown as typeof fetch;
+    await logoutMerchant();
+    expect(hasRuntimeMerchantSession()).toBe(false);
+    expect(mockSecureStorage.has(REFRESH_STATE_KEY)).toBe(false);
+  });
+
+  test("transient restore failure preserves the persisted refresh credential", async () => {
+    if (hasRuntimeMerchantSession()) {
+      globalThis.fetch = jest.fn().mockResolvedValue(response(204)) as unknown as typeof fetch;
+      await logoutMerchant();
+    }
+    const stored = {
+      version: 1,
+      accountId: "account",
+      refreshToken: "refresh-retry",
+      refreshTokenExpiresAt: futureIso(60),
+    };
+    mockSecureStorage.set(REFRESH_STATE_KEY, JSON.stringify(stored));
+    globalThis.fetch = jest.fn().mockRejectedValue(new TypeError("Network request failed")) as unknown as typeof fetch;
+
+    await expect(restoreMerchantSession()).rejects.toThrow("Network request failed");
+    expect(mockSecureStorage.get(REFRESH_STATE_KEY)).toContain("refresh-retry");
+    expect(hasRuntimeMerchantSession()).toBe(false);
   });
 });

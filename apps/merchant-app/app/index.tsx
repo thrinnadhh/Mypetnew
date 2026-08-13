@@ -16,6 +16,7 @@ function isLikelyNetworkError(error: unknown): boolean {
 export default function MerchantEntryScreen() {
   const [state, setState] = useState<StartupState>(hasRuntimeMerchantSession() ? "authenticated" : "loading");
   const [message, setMessage] = useState("");
+  const [signingOut, setSigningOut] = useState(false);
 
   const restore = useCallback(async () => {
     if (hasRuntimeMerchantSession()) {
@@ -48,34 +49,50 @@ export default function MerchantEntryScreen() {
   }, [restore]);
 
   async function signOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    setMessage("");
     try {
       await logoutMerchant();
-    } finally {
       setState("signed-out");
-      setMessage("");
+    } catch (error) {
+      if (!hasRuntimeMerchantSession()) {
+        setState("signed-out");
+      } else {
+        setState("authenticated");
+        setMessage(
+          isLikelyNetworkError(error)
+            ? "Sign out did not complete while offline. Reconnect and try again."
+            : "Sign out did not complete. Try again.",
+        );
+      }
+    } finally {
+      setSigningOut(false);
     }
   }
 
   return (
     <SafeAreaView style={styles.page}>
       <Text style={styles.title}>MyPet Merchant</Text>
-
       {state === "loading" ? <Text accessibilityLiveRegion="polite">Restoring your secure session…</Text> : null}
-
       {state === "authenticated" ? (
         <>
           <Text style={styles.body}>Merchant session active.</Text>
-          <Button title="Sign out" onPress={() => void signOut()} accessibilityLabel="Sign out of MyPet Merchant" />
+          {message ? <Text accessibilityRole="alert" style={styles.body}>{message}</Text> : null}
+          <Button
+            title={signingOut ? "Signing out…" : "Sign out"}
+            disabled={signingOut}
+            onPress={() => void signOut()}
+            accessibilityLabel="Sign out of MyPet Merchant"
+          />
         </>
       ) : null}
-
       {state === "signed-out" ? (
         <>
           <Text style={styles.body}>Sign in with your authorized Merchant mobile number to continue.</Text>
           <Link href="/login" accessibilityRole="button">Sign in</Link>
         </>
       ) : null}
-
       {state === "offline" || state === "error" ? (
         <>
           <Text accessibilityRole="alert" style={styles.body}>{message}</Text>

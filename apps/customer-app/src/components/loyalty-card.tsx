@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 
 import { AppIcon } from '@/components/app-icon';
 import { StatusBadge } from '@/components/foundation/primitives';
@@ -7,115 +7,88 @@ import { ThemedText } from '@/components/themed-text';
 import { useAuth } from '@/context/AuthContext';
 import { radii, shadows, spacing, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
+import { fetchPublicOutlet } from '@/services/customer-catalog';
 import {
-  claimWelcomeStar,
-  fetchLoyaltyProgress,
-  type LoyaltyProgressDto,
+  fetchCustomerLoyaltyBalance,
+  type CustomerLoyaltyBalanceResponse,
 } from '@/services/loyalty';
 
 interface LoyaltyCardProps {
   providerId?: string;
-  progress?: LoyaltyProgressDto;
+  organizationId?: string;
   accessToken?: string | null;
-  onProgressUpdated?: (updated: LoyaltyProgressDto) => void;
 }
 
-export function LoyaltyCard({
-  providerId,
-  progress,
-  accessToken,
-  onProgressUpdated,
-}: LoyaltyCardProps) {
+const TARGET_STARS = 10;
+
+export function LoyaltyCard({ providerId, organizationId, accessToken }: LoyaltyCardProps) {
   const theme = useTheme();
   const { session } = useAuth();
   const effectiveAccessToken = accessToken ?? session?.accessToken ?? null;
-  const effectiveProviderId = providerId ?? progress?.providerId ?? null;
-  const [currentProgress, setCurrentProgress] = useState<LoyaltyProgressDto | null>(
-    progress ?? null,
-  );
-  const [claiming, setClaiming] = useState(false);
+  const [balance, setBalance] = useState<CustomerLoyaltyBalanceResponse | null>(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (progress) {
-      setCurrentProgress(progress);
-      return;
-    }
-    if (!effectiveProviderId || !effectiveAccessToken) {
-      setCurrentProgress(null);
+    if (!effectiveAccessToken || (!organizationId && !providerId)) {
+      setBalance(null);
       return;
     }
 
     let active = true;
-    void fetchLoyaltyProgress(effectiveProviderId, effectiveAccessToken)
-      .then((value) => {
-        if (active) setCurrentProgress(value);
-      })
-      .catch((error) => {
-        if (active) {
-          setCurrentProgress(null);
-          console.warn('Could not load store loyalty progress', error);
+    setLoading(true);
+
+    void (async () => {
+      try {
+        const resolvedOrganizationId = organizationId
+          ?? (providerId ? (await fetchPublicOutlet(providerId)).organizationId : null);
+        if (!resolvedOrganizationId) {
+          if (active) setBalance(null);
+          return;
         }
-      });
+        const next = await fetchCustomerLoyaltyBalance(resolvedOrganizationId, effectiveAccessToken);
+        if (active) setBalance(next);
+      } catch (error) {
+        if (active) {
+          setBalance(null);
+          console.warn('Could not load canonical store loyalty balance', error);
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
 
     return () => {
       active = false;
     };
-  }, [effectiveAccessToken, effectiveProviderId, progress]);
+  }, [effectiveAccessToken, organizationId, providerId]);
 
-  if (!currentProgress) return null;
-
-  const handleClaimWelcomeStar = async () => {
-    if (!effectiveAccessToken || claiming) return;
-    setClaiming(true);
-    try {
-      const updated = await claimWelcomeStar(
-        currentProgress.providerId,
-        effectiveAccessToken,
-      );
-      setCurrentProgress(updated);
-      onProgressUpdated?.(updated);
-      Alert.alert(
-        'Welcome Star Claimed! ⭐',
-        'Your first star has been added to your loyalty card.',
-      );
-    } catch (error) {
-      Alert.alert(
-        'Claim Failed',
-        error instanceof Error ? error.message : 'Could not claim welcome star.',
-      );
-    } finally {
-      setClaiming(false);
-    }
-  };
-
-  const stars = Array.from(
-    { length: currentProgress.targetStars || 10 },
-    (_, index) => index < currentProgress.starBalance,
+  const stars = useMemo(
+    () => Array.from({ length: TARGET_STARS }, (_, index) => index < (balance?.availableStars ?? 0)),
+    [balance?.availableStars],
   );
+
+  if (!effectiveAccessToken) return null;
+  if (loading && !balance) {
+    return (
+      <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+        <ThemedText type="small" themeColor="textSecondary">Loading store loyalty…</ThemedText>
+      </View>
+    );
+  }
+  if (!balance) return null;
 
   return (
     <View
-      style={[
-        styles.card,
-        shadows.card,
-        { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-      ]}
+      style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
       testID="loyalty-card"
-      accessibilityLabel={`Store loyalty: ${currentProgress.starBalance} of ${currentProgress.targetStars} stars`}
+      accessibilityLabel={`Store loyalty: ${balance.availableStars} of ${TARGET_STARS} stars`}
     >
       <View style={styles.header}>
         <View style={styles.titleRow}>
           <AppIcon name="sparkle" size={20} color={theme.primary} />
           <ThemedText style={styles.cardTitle}>Store Loyalty Rewards</ThemedText>
         </View>
-        <StatusBadge
-          label={
-            currentProgress.isProgramActive
-              ? `${currentProgress.starBalance}/${currentProgress.targetStars} Stars`
-              : 'Paused'
-          }
-          tone={currentProgress.isProgramActive ? 'success' : 'neutral'}
-        />
+        <StatusBadge label={`${balance.availableStars}/${TARGET_STARS} Stars`} tone="success" />
       </View>
 
       <View style={styles.starsGrid}>
@@ -131,50 +104,25 @@ export function LoyaltyCard({
             ]}
             accessibilityLabel={`Star ${index + 1}: ${filled ? 'earned' : 'not earned'}`}
           >
-            <AppIcon
-              name="sparkle"
-              size={16}
-              color={filled ? '#FFFFFF' : theme.textSecondary}
-            />
+            <AppIcon name="sparkle" size={16} color={filled ? '#FFFFFF' : theme.textSecondary} />
           </View>
         ))}
       </View>
 
       <ThemedText style={styles.rewardCopy}>
-        Collect {currentProgress.targetStars} stars to get ₹{currentProgress.rewardAmount} off your next order!
+        Complete eligible purchases at this merchant to earn stars. Every 10 stars creates a merchant loyalty reward on the server.
       </ThemedText>
 
       <View style={styles.rulesRow}>
         <ThemedText type="small" themeColor="textSecondary">
-          • Min order amount: ₹{currentProgress.minOrderValue}
+          • Stars are merchant-specific and server-authoritative.
         </ThemedText>
-        {currentProgress.cycleCount > 0 ? (
+        {balance.rewards > 0 ? (
           <ThemedText type="small" style={{ color: theme.primary, fontWeight: '700' }}>
-            • Completed cycles: {currentProgress.cycleCount}
+            • Issued rewards: {balance.rewards}
           </ThemedText>
         ) : null}
       </View>
-
-      {!currentProgress.welcomeStarClaimed &&
-      currentProgress.isProgramActive &&
-      effectiveAccessToken ? (
-        <Pressable
-          style={[
-            styles.claimBtn,
-            { backgroundColor: theme.primary, opacity: claiming ? 0.6 : 1 },
-          ]}
-          onPress={() => void handleClaimWelcomeStar()}
-          disabled={claiming}
-          accessibilityRole="button"
-          accessibilityLabel="Add your first welcome star"
-          accessibilityState={{ disabled: claiming }}
-        >
-          <AppIcon name="sparkle" size={16} color="#FFF" />
-          <ThemedText style={styles.claimBtnText}>
-            {claiming ? 'Claiming...' : 'Add your first star (+1 ⭐)'}
-          </ThemedText>
-        </Pressable>
-      ) : null}
     </View>
   );
 }
@@ -217,14 +165,4 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.x2,
   },
-  claimBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.x2,
-    paddingVertical: spacing.x3,
-    borderRadius: radii.compact,
-    marginTop: spacing.x1,
-  },
-  claimBtnText: { color: '#FFF', fontWeight: '800', fontSize: 14 },
 });

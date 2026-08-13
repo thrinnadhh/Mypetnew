@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { OrderFlowStepId } from '@/constants/content';
 import type { CustomerOrderPaymentStatus, CustomerPaymentMethod } from '@/contracts/customer-payment';
 import type { OrderStatus } from '@/contracts/order-contract.generated';
+import { apiClient } from '@/services/api-client';
 import { fetchDeliveryContact } from '@/services/customer-profile';
 import { appConfig } from '@/utils/app-config';
 
@@ -368,18 +369,48 @@ export interface CheckoutQuoteInput {
   longitude?: number | null;
 }
 
+interface CanonicalPickupQuote {
+  id: string;
+  customerId: string;
+  outletId: string;
+  lines: Record<string, [number, number]>;
+  cartSignature: string;
+  fulfilmentMode: 'STORE_PICKUP' | string;
+  paymentMethod: 'PAY_ON_FULFILMENT' | string;
+  pricing: {
+    itemSubtotalPaise: number;
+    itemDiscountPaise: number;
+    couponDiscountPaise: number;
+    loyaltyRewardPaise: number;
+    taxPaise: number;
+    platformFeePaise: number;
+    deliveryFeePaise: number;
+    merchantCommissionPaise: number;
+    grandTotalPaise: number;
+    currency: string;
+    ruleVersion: string;
+  };
+  expiresAt: string;
+}
+
 export interface CheckoutQuoteOutput {
   quoteToken: string;
+  quoteId?: string;
+  cartSignature?: string;
+  fulfilmentMode?: 'STORE_PICKUP';
+  paymentMethod?: CustomerPaymentMethod | 'PAY_ON_FULFILMENT' | string | null;
   subtotal: number;
   itemDiscount: number;
   couponDiscount: number;
   loyaltyDiscount: number;
   deliveryFee: number;
   tax: number;
+  platformFee?: number;
   roundOff: number;
   payableTotal: number;
+  currency?: string;
+  ruleVersion?: string;
   couponCode?: string | null;
-  paymentMethod?: string | null;
   isCodAvailable: boolean;
   codRejectionReason?: string | null;
   expiresAt: string;
@@ -389,14 +420,52 @@ export interface CreateOrderInput extends CheckoutQuoteInput {
   quoteToken?: string | null;
 }
 
+function paiseToRupees(value: number): number {
+  if (!Number.isFinite(value)) throw new Error('Quote service returned invalid pricing.');
+  return value / 100;
+}
+
 export async function fetchCheckoutQuote(input: CheckoutQuoteInput, accessToken?: string | null): Promise<CheckoutQuoteOutput> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/checkout/quote`, {
-    method: 'POST',
-    headers: { ...headers(accessToken), 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  });
-  if (!response.ok) throw await responseError(response, 'Could not calculate checkout quote');
-  return (await response.json()) as CheckoutQuoteOutput;
+  if (!accessToken) throw new Error('Sign in before requesting a checkout quote.');
+
+  const quote = await apiClient.post<CanonicalPickupQuote>(
+    '/api/v1/customer/quotes/pickup',
+    {
+      outletId: input.providerId,
+      lines: input.items.map((item) => ({ listingId: item.offeringId, quantity: item.quantity })),
+    },
+    { Authorization: `Bearer ${accessToken}` },
+  );
+
+  if (quote.fulfilmentMode !== 'STORE_PICKUP' || quote.paymentMethod !== 'PAY_ON_FULFILMENT') {
+    throw new Error('Quote service returned an unsupported Sprint-1 fulfilment contract.');
+  }
+  if (quote.pricing.currency !== 'INR') {
+    throw new Error('Quote service returned an unsupported currency.');
+  }
+
+  return {
+    quoteToken: quote.id,
+    quoteId: quote.id,
+    cartSignature: quote.cartSignature,
+    fulfilmentMode: 'STORE_PICKUP',
+    paymentMethod: 'PAY_ON_FULFILMENT',
+    subtotal: paiseToRupees(quote.pricing.itemSubtotalPaise),
+    itemDiscount: paiseToRupees(quote.pricing.itemDiscountPaise),
+    couponDiscount: paiseToRupees(quote.pricing.couponDiscountPaise),
+    loyaltyDiscount: paiseToRupees(quote.pricing.loyaltyRewardPaise),
+    deliveryFee: paiseToRupees(quote.pricing.deliveryFeePaise),
+    tax: paiseToRupees(quote.pricing.taxPaise),
+    platformFee: paiseToRupees(quote.pricing.platformFeePaise),
+    roundOff: 0,
+    payableTotal: paiseToRupees(quote.pricing.grandTotalPaise),
+    currency: quote.pricing.currency,
+    ruleVersion: quote.pricing.ruleVersion,
+    couponCode: null,
+    isCodAvailable: true,
+    codRejectionReason: null,
+    expiresAt: quote.expiresAt,
+  };
 }
 
 export async function createCustomerOrder(input: CreateOrderInput, accessToken?: string | null): Promise<CustomerOrderRecord> {

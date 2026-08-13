@@ -77,15 +77,16 @@ describe('customer end-to-end regression contracts', () => {
     expect(banner).toMatch(/!target\.includes\(':\/\/'\)/);
   });
 
-  it('isolates carts by customer and rebuilds validated carts', () => {
+  it('isolates carts by customer, rebuilds subscription carts, and keeps order detail server-authoritative', () => {
     const cart = source('src/context/CartContext.tsx');
     const order = source('src/app/orders/[id].tsx');
     const subscriptions = source('src/app/subscriptions/index.tsx');
 
     expect(cart).toMatch(/customer_\$\{userId\}/);
     expect(cart).toMatch(/replaceCart/);
-    expect(order).toMatch(/buildCartFromRevalidation/);
-    expect(order).toMatch(/replaceCart/);
+    expect(order).toMatch(/fetchCustomerOrderDetail/);
+    expect(order).toMatch(/cancelCustomerOrder/);
+    expect(order).not.toMatch(/buildCartFromRevalidation|replaceCart/);
     expect(subscriptions).toMatch(/buildCartFromRevalidation/);
     expect(subscriptions).toMatch(/replaceCart/);
   });

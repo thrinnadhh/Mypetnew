@@ -19,11 +19,17 @@ type StoredRefreshState = {
   refreshTokenExpiresAt: string;
 };
 
+type RefreshFlight = {
+  generation: number;
+  promise: Promise<MerchantSessionEnvelope>;
+};
+
 const REFRESH_STATE_KEY = "mypetnew.merchant.refresh.v1";
 const DEVICE_ID_KEY = "mypetnew.merchant.installation.v1";
 let runtimeAccessToken: string | null = null;
+let accessTokenGeneration = 0;
 let runtimeWebInstallationId: string | null = null;
-let refreshInFlight: Promise<MerchantSessionEnvelope> | null = null;
+let refreshInFlight: RefreshFlight | null = null;
 
 function baseUrl(): string {
   const raw = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
@@ -156,14 +162,19 @@ export async function verifyMerchantOtp(challengeId: string, mobile: string, cod
       body: JSON.stringify(merchantVerifyPayload(challengeId, mobile, code)),
     }),
   );
-  runtimeAccessToken = session.accessToken;
+  // Persist the rotated secret before exposing an authenticated runtime state. If secure storage
+  // fails, login fails closed instead of leaving an unpersisted access token active in memory.
   await saveRefreshState(session);
+  runtimeAccessToken = session.accessToken;
+  accessTokenGeneration += 1;
   return session;
 }
 
 async function rotateRefreshToken(): Promise<MerchantSessionEnvelope> {
-  if (refreshInFlight) return refreshInFlight;
-  refreshInFlight = (async () => {
+  const generationAtStart = accessTokenGeneration;
+  if (refreshInFlight?.generation === generationAtStart) return refreshInFlight.promise;
+
+  const promise = (async () => {
     const stored = await loadRefreshState();
     if (!stored) throw new Error("AUTHENTICATION_REQUIRED");
     const session = assertMerchantEnvelope(
@@ -172,18 +183,28 @@ async function rotateRefreshToken(): Promise<MerchantSessionEnvelope> {
         body: JSON.stringify({ refreshToken: stored.refreshToken }),
       }),
     );
-    runtimeAccessToken = session.accessToken;
+    // A newer login/logout must never be overwritten by an older refresh finishing late.
+    if (accessTokenGeneration !== generationAtStart) throw new Error("AUTH_SESSION_CHANGED");
     await saveRefreshState(session);
+    if (accessTokenGeneration !== generationAtStart) throw new Error("AUTH_SESSION_CHANGED");
+    runtimeAccessToken = session.accessToken;
+    accessTokenGeneration += 1;
     return session;
   })();
+  refreshInFlight = { generation: generationAtStart, promise };
+
   try {
-    return await refreshInFlight;
+    return await promise;
   } catch (error) {
-    runtimeAccessToken = null;
-    await storageDelete(REFRESH_STATE_KEY);
+    // Clear only the generation that actually failed. A newer successful login must survive.
+    if (accessTokenGeneration === generationAtStart) {
+      runtimeAccessToken = null;
+      accessTokenGeneration += 1;
+      await storageDelete(REFRESH_STATE_KEY);
+    }
     throw error;
   } finally {
-    refreshInFlight = null;
+    if (refreshInFlight?.promise === promise) refreshInFlight = null;
   }
 }
 
@@ -193,23 +214,34 @@ export async function restoreMerchantSession(): Promise<MerchantSessionEnvelope 
   return rotateRefreshToken();
 }
 
+function requireRuntimeAccessToken(): string {
+  if (!runtimeAccessToken) throw new Error("AUTHENTICATION_REQUIRED");
+  return runtimeAccessToken;
+}
+
 export async function merchantApiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   if (!runtimeAccessToken) await rotateRefreshToken();
-  const execute = () =>
+  const tokenUsed = requireRuntimeAccessToken();
+  const generationUsed = accessTokenGeneration;
+  const execute = (token: string) =>
     fetch(`${baseUrl()}${path}`, {
       ...init,
       headers: {
         Accept: "application/json",
         ...(init.body ? { "Content-Type": "application/json" } : {}),
         ...(init.headers ?? {}),
-        Authorization: `Bearer ${runtimeAccessToken}`,
+        Authorization: `Bearer ${token}`,
       },
     });
 
-  let response = await execute();
+  let response = await execute(tokenUsed);
   if (response.status === 401 && !path.startsWith("/api/v1/auth/")) {
-    await rotateRefreshToken();
-    response = await execute();
+    // If another request already refreshed this stale token, reuse the newer token instead of
+    // rotating again and revoking the session that the first retry is using.
+    if (accessTokenGeneration === generationUsed && runtimeAccessToken === tokenUsed) {
+      await rotateRefreshToken();
+    }
+    response = await execute(requireRuntimeAccessToken());
   }
   return response;
 }
@@ -220,13 +252,13 @@ async function revokeCurrentSession(): Promise<void> {
   }
   let response = await fetch(`${baseUrl()}/api/v1/auth/sessions/current`, {
     method: "DELETE",
-    headers: { Authorization: `Bearer ${runtimeAccessToken}`, Accept: "application/json" },
+    headers: { Authorization: `Bearer ${requireRuntimeAccessToken()}`, Accept: "application/json" },
   });
   if (response.status === 401) {
     await rotateRefreshToken();
     response = await fetch(`${baseUrl()}/api/v1/auth/sessions/current`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${runtimeAccessToken}`, Accept: "application/json" },
+      headers: { Authorization: `Bearer ${requireRuntimeAccessToken()}`, Accept: "application/json" },
     });
   }
   if (!response.ok && response.status !== 401) {
@@ -242,6 +274,7 @@ export async function logoutMerchant(): Promise<void> {
     }
   } finally {
     runtimeAccessToken = null;
+    accessTokenGeneration += 1;
     await storageDelete(REFRESH_STATE_KEY);
   }
 }

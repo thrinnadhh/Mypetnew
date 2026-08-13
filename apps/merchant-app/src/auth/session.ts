@@ -30,6 +30,7 @@ let runtimeAccessToken: string | null = null;
 let accessTokenGeneration = 0;
 let runtimeWebInstallationId: string | null = null;
 let refreshInFlight: RefreshFlight | null = null;
+let storageMutationTail: Promise<void> = Promise.resolve();
 
 function baseUrl(): string {
   const raw = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
@@ -47,20 +48,27 @@ function baseUrl(): string {
   return raw.replace(/\/$/, "");
 }
 
+function serializeStorageMutation(operation: () => Promise<void>): Promise<void> {
+  const next = storageMutationTail.then(operation, operation);
+  storageMutationTail = next.catch(() => undefined);
+  return next;
+}
+
 async function storageGet(key: string): Promise<string | null> {
   // Version 1 Merchant is a native Expo app. Never persist refresh secrets in browser storage.
   if (Platform.OS === "web") return null;
+  await storageMutationTail;
   return SecureStore.getItemAsync(key);
 }
 
-async function storageSet(key: string, value: string): Promise<void> {
-  if (Platform.OS === "web") return;
-  await SecureStore.setItemAsync(key, value);
+function storageSet(key: string, value: string): Promise<void> {
+  if (Platform.OS === "web") return Promise.resolve();
+  return serializeStorageMutation(() => SecureStore.setItemAsync(key, value));
 }
 
-async function storageDelete(key: string): Promise<void> {
-  if (Platform.OS === "web") return;
-  await SecureStore.deleteItemAsync(key);
+function storageDelete(key: string): Promise<void> {
+  if (Platform.OS === "web") return Promise.resolve();
+  return serializeStorageMutation(() => SecureStore.deleteItemAsync(key));
 }
 
 export function merchantVerifyPayload(challengeId: string, mobile: string, code: string) {
@@ -162,12 +170,22 @@ export async function verifyMerchantOtp(challengeId: string, mobile: string, cod
       body: JSON.stringify(merchantVerifyPayload(challengeId, mobile, code)),
     }),
   );
-  // Persist the rotated secret before exposing an authenticated runtime state. If secure storage
-  // fails, login fails closed instead of leaving an unpersisted access token active in memory.
+  // Persist the rotated secret before exposing an authenticated runtime state. Serialized storage
+  // mutations prevent an older refresh from overwriting a newer login/logout credential.
   await saveRefreshState(session);
   runtimeAccessToken = session.accessToken;
   accessTokenGeneration += 1;
   return session;
+}
+
+function isTerminalRefreshError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    error.message === "REFRESH_TOKEN_INVALID" ||
+    error.message === "AUTHENTICATION_REQUIRED" ||
+    error.message === "SESSION_INVALID" ||
+    /Merchant session|session response is incomplete/i.test(error.message)
+  );
 }
 
 async function rotateRefreshToken(): Promise<MerchantSessionEnvelope> {
@@ -196,8 +214,9 @@ async function rotateRefreshToken(): Promise<MerchantSessionEnvelope> {
   try {
     return await promise;
   } catch (error) {
-    // Clear only the generation that actually failed. A newer successful login must survive.
-    if (accessTokenGeneration === generationAtStart) {
+    // Network/provider/server failures are retryable and must not erase a still-valid persisted
+    // refresh credential. Only a definitive auth/session rejection clears this generation.
+    if (accessTokenGeneration === generationAtStart && isTerminalRefreshError(error)) {
       runtimeAccessToken = null;
       accessTokenGeneration += 1;
       await storageDelete(REFRESH_STATE_KEY);
@@ -267,16 +286,13 @@ async function revokeCurrentSession(): Promise<void> {
 }
 
 export async function logoutMerchant(): Promise<void> {
-  try {
-    const stored = await loadRefreshState();
-    if (runtimeAccessToken || stored) {
-      await revokeCurrentSession();
-    }
-  } finally {
-    runtimeAccessToken = null;
-    accessTokenGeneration += 1;
-    await storageDelete(REFRESH_STATE_KEY);
+  const stored = await loadRefreshState();
+  if (runtimeAccessToken || stored) {
+    await revokeCurrentSession();
   }
+  runtimeAccessToken = null;
+  accessTokenGeneration += 1;
+  await storageDelete(REFRESH_STATE_KEY);
 }
 
 export function hasRuntimeMerchantSession(): boolean {

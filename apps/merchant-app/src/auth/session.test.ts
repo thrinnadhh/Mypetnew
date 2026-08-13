@@ -14,6 +14,7 @@ jest.mock("expo-secure-store", () => ({
 
 jest.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 
+import * as SecureStore from "expo-secure-store";
 import {
   assertMerchantEnvelope,
   hasRuntimeMerchantSession,
@@ -49,6 +50,13 @@ function response(status: number, body: unknown = {}): Response {
     ok: status >= 200 && status < 300,
     json: jest.fn().mockResolvedValue(body),
   } as unknown as Response;
+}
+
+async function waitForFetchCalls(fetchMock: jest.Mock, expected: number): Promise<void> {
+  for (let attempt = 0; attempt < 20 && fetchMock.mock.calls.length < expected; attempt += 1) {
+    await Promise.resolve();
+  }
+  expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(expected);
 }
 
 describe("Merchant session contract", () => {
@@ -149,5 +157,51 @@ describe("Merchant session contract", () => {
     await expect(restoreMerchantSession()).rejects.toThrow("Network request failed");
     expect(mockSecureStorage.get(REFRESH_STATE_KEY)).toContain("refresh-retry");
     expect(hasRuntimeMerchantSession()).toBe(false);
+  });
+
+  test("a stale refresh cannot overwrite a newer OTP login credential", async () => {
+    if (hasRuntimeMerchantSession()) {
+      globalThis.fetch = jest.fn().mockResolvedValue(response(204)) as unknown as typeof fetch;
+      await logoutMerchant();
+    }
+
+    let resolveRefresh!: (value: Response) => void;
+    const refreshResponse = new Promise<Response>((resolve) => { resolveRefresh = resolve; });
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce(response(200, merchantSession("access-old", "refresh-old")))
+      .mockResolvedValueOnce(response(401, { code: "AUTHENTICATION_REQUIRED" }))
+      .mockImplementationOnce(() => refreshResponse)
+      .mockResolvedValueOnce(response(200, merchantSession("access-new", "refresh-new")))
+      .mockResolvedValueOnce(response(200, { ok: true }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await verifyMerchantOtp("challenge-old", "+919876543210", "123456");
+    const staleProtectedRequest = merchantApiFetch("/api/v1/merchant/orders");
+    await waitForFetchCalls(fetchMock, 3);
+
+    let releaseLoginStorage!: () => void;
+    let markLoginStorageStarted!: () => void;
+    const loginStorageStarted = new Promise<void>((resolve) => { markLoginStorageStarted = resolve; });
+    const loginStorageRelease = new Promise<void>((resolve) => { releaseLoginStorage = resolve; });
+    const secureSet = SecureStore.setItemAsync as jest.MockedFunction<typeof SecureStore.setItemAsync>;
+    secureSet.mockImplementationOnce(async (key: string, value: string) => {
+      markLoginStorageStarted();
+      await loginStorageRelease;
+      mockSecureStorage.set(key, value);
+    });
+
+    const newerLogin = verifyMerchantOtp("challenge-new", "+919876543210", "654321");
+    await loginStorageStarted;
+    resolveRefresh(response(200, merchantSession("access-refreshed-old", "refresh-refreshed-old")));
+    releaseLoginStorage();
+
+    await expect(newerLogin).resolves.toMatchObject({ accessToken: "access-new", refreshToken: "refresh-new" });
+    await expect(staleProtectedRequest).rejects.toThrow("AUTH_SESSION_CHANGED");
+    expect(mockSecureStorage.get(REFRESH_STATE_KEY)).toContain("refresh-new");
+    expect(mockSecureStorage.get(REFRESH_STATE_KEY)).not.toContain("refresh-refreshed-old");
+
+    await expect(merchantApiFetch("/api/v1/merchant/orders")).resolves.toMatchObject({ status: 200 });
+    const lastCallHeaders = fetchMock.mock.calls.at(-1)?.[1]?.headers as Record<string, string>;
+    expect(lastCallHeaders.Authorization).toBe("Bearer access-new");
   });
 });

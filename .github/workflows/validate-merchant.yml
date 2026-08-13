@@ -1,0 +1,37 @@
+name: validate-merchant
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, "trial/*", "m1a-*", "m1b-*", "m1c-*", "m1d-*", "m1e-*"]
+
+permissions:
+  contents: read
+
+jobs:
+  merchant-app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/merchant-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/merchant-app/package-lock.json
+      - name: Install Merchant dependencies
+        run: npm ci
+      - name: Typecheck Merchant app
+        run: npm run typecheck
+      - name: Lint Merchant app
+        run: npm run lint
+      - name: Test Merchant app
+        run: npm test
+      - name: Export Merchant production web bundle
+        env:
+          EXPO_PUBLIC_API_BASE_URL: https://api.invalid.example
+        run: npx expo export --platform web --output-dir dist-ci

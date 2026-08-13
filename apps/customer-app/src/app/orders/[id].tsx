@@ -76,7 +76,7 @@ export default function OrderDetailRoute() {
                 <ThemedText style={styles.storeName}>{order.outletName}</ThemedText>
                 {order.placedAt ? <ThemedText type="small" themeColor="textSecondary">Placed {new Date(order.placedAt).toLocaleString()}</ThemedText> : null}
               </View>
-              <StatusBadge label={order.status.replaceAll('_', ' ')} tone={order.status === 'DELIVERED' ? 'success' : order.status === 'CANCELLED' || order.status === 'REJECTED' ? 'danger' : 'warning'} />
+              <StatusBadge label={order.status.replaceAll('_', ' ')} tone={order.status === 'DELIVERED' ? 'success' : order.status === 'CANCELLED' || order.status === 'REJECTED' ? 'error' : 'warning'} />
             </View>
             <ThemedText style={styles.sectionTitle}>Pickup progress</ThemedText>
             <View style={[styles.trackerBox, { backgroundColor: theme.primarySoft }]}><OrderFlowTracker status={order.status} /></View>

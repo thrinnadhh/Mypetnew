@@ -6,6 +6,7 @@ import `in`.mypetnew.identity.domain.RefreshSession
 import `in`.mypetnew.identity.domain.SessionStore
 import org.springframework.context.annotation.Primary
 import org.springframework.context.annotation.Profile
+import org.springframework.core.env.Environment
 import org.springframework.stereotype.Component
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -24,6 +25,7 @@ interface MerchantSessionIssuer {
 @Primary
 @Profile("test", "development")
 class InMemoryRoleSessionStore(
+    environment: Environment,
     private val clock: Clock = Clock.systemUTC(),
 ) : SessionStore, MerchantSessionIssuer {
     private data class Stored(
@@ -39,6 +41,8 @@ class InMemoryRoleSessionStore(
     private val random = SecureRandom()
     private val sessions = mutableMapOf<UUID, Stored>()
     private val byHash = mutableMapOf<String, UUID>()
+    // Unknown access sessions are a test-fixture compatibility only. Development must fail closed.
+    private val acceptUnknownAccessSessions = environment.activeProfiles.contains("test")
 
     @Synchronized
     override fun create(accountId: UUID, mobile: String, role: Role, deviceId: String): RefreshSession {
@@ -66,7 +70,7 @@ class InMemoryRoleSessionStore(
 
     @Synchronized
     override fun isActive(sessionId: UUID): Boolean {
-        val stored = sessions[sessionId] ?: return true
+        val stored = sessions[sessionId] ?: return acceptUnknownAccessSessions
         return stored.revokedAt == null && clock.instant().isBefore(stored.expiresAt)
     }
 

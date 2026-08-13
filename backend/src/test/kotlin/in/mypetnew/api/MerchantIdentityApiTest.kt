@@ -55,18 +55,30 @@ class MerchantIdentityApiTest {
 
         val session = json.readTree(verified.response.contentAsString)
         val refreshToken = session.path("refreshToken").asString()
-        val accessToken = session.path("accessToken").asString()
+        val originalAccessToken = session.path("accessToken").asString()
 
-        mockMvc.post("/api/v1/auth/sessions/refresh") {
+        val refreshed = mockMvc.post("/api/v1/auth/sessions/refresh") {
             contentType = MediaType.APPLICATION_JSON
             content = """{"refreshToken":"$refreshToken"}"""
         }.andExpect {
             status { isOk() }
             jsonPath("$.role") { value("MERCHANT") }
-        }
+            jsonPath("$.accessToken") { isNotEmpty() }
+            jsonPath("$.refreshToken") { isNotEmpty() }
+        }.andReturn()
+        val refreshedAccessToken = json.readTree(refreshed.response.contentAsString).path("accessToken").asString()
 
+        // Rotation revokes the original session, so its access token must fail closed.
         mockMvc.post("/api/v1/merchant/outlets") {
-            header("Authorization", "Bearer $accessToken")
+            header("Authorization", "Bearer $originalAccessToken")
+            header("Idempotency-Key", "merchant-bootstrap-stale-session")
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"name":"Merchant Bootstrap","capabilities":["PRODUCT_STORE"],"servicePinCodes":["517501"]}"""
+        }.andExpect { status { isUnauthorized() } }
+
+        // The newly rotated session preserves MERCHANT authority and is usable for onboarding.
+        mockMvc.post("/api/v1/merchant/outlets") {
+            header("Authorization", "Bearer $refreshedAccessToken")
             header("Idempotency-Key", "merchant-bootstrap-outlet")
             contentType = MediaType.APPLICATION_JSON
             content = """{"name":"Merchant Bootstrap","capabilities":["PRODUCT_STORE"],"servicePinCodes":["517501"]}"""

@@ -57,7 +57,7 @@ export default function MerchantEntryScreen() {
     <SafeAreaView style={styles.page}>
       <Text style={styles.title}>MyPet Merchant</Text>
 
-      {state === "loading" ? <Text accessibilityRole="status">Restoring your secure session…</Text> : null}
+      {state === "loading" ? <Text accessibilityLiveRegion="polite">Restoring your secure session…</Text> : null}
 
       {state === "authenticated" ? (
         <>

@@ -20,7 +20,8 @@ type StoredRefreshState = {
 };
 
 type RefreshFlight = {
-  generation: number;
+  tokenGeneration: number;
+  authOperationGeneration: number;
   promise: Promise<MerchantSessionEnvelope>;
 };
 
@@ -28,6 +29,7 @@ const REFRESH_STATE_KEY = "mypetnew.merchant.refresh.v1";
 const DEVICE_ID_KEY = "mypetnew.merchant.installation.v1";
 let runtimeAccessToken: string | null = null;
 let accessTokenGeneration = 0;
+let authOperationGeneration = 0;
 let runtimeWebInstallationId: string | null = null;
 let refreshInFlight: RefreshFlight | null = null;
 let storageMutationTail: Promise<void> = Promise.resolve();
@@ -48,9 +50,9 @@ function baseUrl(): string {
   return raw.replace(/\/$/, "");
 }
 
-function serializeStorageMutation(operation: () => Promise<void>): Promise<void> {
+function serializeStorageMutation<T>(operation: () => Promise<T>): Promise<T> {
   const next = storageMutationTail.then(operation, operation);
-  storageMutationTail = next.catch(() => undefined);
+  storageMutationTail = next.then(() => undefined, () => undefined);
   return next;
 }
 
@@ -71,6 +73,112 @@ function storageDelete(key: string): Promise<void> {
   return serializeStorageMutation(() => SecureStore.deleteItemAsync(key));
 }
 
+function refreshStateJson(session: MerchantSessionEnvelope): string {
+  const state: StoredRefreshState = {
+    version: 1,
+    accountId: session.accountId,
+    refreshToken: session.refreshToken,
+    refreshTokenExpiresAt: session.refreshTokenExpiresAt,
+  };
+  return JSON.stringify(state);
+}
+
+async function writeRefreshStateDirect(value: string): Promise<void> {
+  if (Platform.OS === "web") return;
+  await SecureStore.setItemAsync(REFRESH_STATE_KEY, value);
+}
+
+async function deleteRefreshStateDirect(): Promise<void> {
+  if (Platform.OS === "web") return;
+  await SecureStore.deleteItemAsync(REFRESH_STATE_KEY);
+}
+
+async function commitLoginSession(session: MerchantSessionEnvelope, expectedAuthOperation: number): Promise<void> {
+  const value = refreshStateJson(session);
+  await serializeStorageMutation(async () => {
+    if (authOperationGeneration !== expectedAuthOperation) throw new Error("AUTH_SESSION_CHANGED");
+    try {
+      await writeRefreshStateDirect(value);
+    } catch (error) {
+      // Never expose a runtime access token when the rotated refresh secret could not be stored.
+      runtimeAccessToken = null;
+      throw error;
+    }
+    // A newer login/logout intent can begin while native secure storage is awaiting completion.
+    // Delete this now-stale credential before releasing the serialized queue.
+    if (authOperationGeneration !== expectedAuthOperation) {
+      runtimeAccessToken = null;
+      await deleteRefreshStateDirect().catch(() => undefined);
+      throw new Error("AUTH_SESSION_CHANGED");
+    }
+    runtimeAccessToken = session.accessToken;
+    accessTokenGeneration += 1;
+  });
+}
+
+async function commitRefreshedSession(
+  session: MerchantSessionEnvelope,
+  expectedTokenGeneration: number,
+  expectedAuthOperation: number,
+): Promise<boolean> {
+  const value = refreshStateJson(session);
+  return serializeStorageMutation(async () => {
+    if (
+      accessTokenGeneration !== expectedTokenGeneration ||
+      authOperationGeneration !== expectedAuthOperation
+    ) {
+      return false;
+    }
+    try {
+      await writeRefreshStateDirect(value);
+    } catch (error) {
+      // The server already rotated the refresh session. The old runtime/storage credentials must
+      // fail closed because they can no longer be trusted to be usable.
+      runtimeAccessToken = null;
+      accessTokenGeneration += 1;
+      await deleteRefreshStateDirect().catch(() => undefined);
+      throw error;
+    }
+    if (
+      accessTokenGeneration !== expectedTokenGeneration ||
+      authOperationGeneration !== expectedAuthOperation
+    ) {
+      runtimeAccessToken = null;
+      await deleteRefreshStateDirect().catch(() => undefined);
+      return false;
+    }
+    runtimeAccessToken = session.accessToken;
+    accessTokenGeneration += 1;
+    return true;
+  });
+}
+
+async function clearRefreshStateForGeneration(
+  expectedTokenGeneration: number,
+  expectedAuthOperation: number,
+): Promise<void> {
+  await serializeStorageMutation(async () => {
+    if (
+      accessTokenGeneration !== expectedTokenGeneration ||
+      authOperationGeneration !== expectedAuthOperation
+    ) {
+      return;
+    }
+    runtimeAccessToken = null;
+    accessTokenGeneration += 1;
+    await deleteRefreshStateDirect().catch(() => undefined);
+  });
+}
+
+async function clearLocalSessionForAuthOperation(expectedAuthOperation: number): Promise<void> {
+  await serializeStorageMutation(async () => {
+    if (authOperationGeneration !== expectedAuthOperation) return;
+    runtimeAccessToken = null;
+    accessTokenGeneration += 1;
+    await deleteRefreshStateDirect();
+  });
+}
+
 export function merchantVerifyPayload(challengeId: string, mobile: string, code: string) {
   return { challengeId, mobile, purpose: "LOGIN" as const, code };
 }
@@ -86,16 +194,6 @@ export function assertMerchantEnvelope(value: MerchantSessionEnvelope): Merchant
     throw new Error("The Merchant session response is incomplete");
   }
   return value;
-}
-
-async function saveRefreshState(session: MerchantSessionEnvelope): Promise<void> {
-  const state: StoredRefreshState = {
-    version: 1,
-    accountId: session.accountId,
-    refreshToken: session.refreshToken,
-    refreshTokenExpiresAt: session.refreshTokenExpiresAt,
-  };
-  await storageSet(REFRESH_STATE_KEY, JSON.stringify(state));
 }
 
 async function loadRefreshState(): Promise<StoredRefreshState | null> {
@@ -164,17 +262,14 @@ export async function requestMerchantOtp(mobile: string) {
 }
 
 export async function verifyMerchantOtp(challengeId: string, mobile: string, code: string) {
+  const authOperation = ++authOperationGeneration;
   const session = assertMerchantEnvelope(
     await jsonRequest<MerchantSessionEnvelope>("/api/v1/auth/merchant/otp/verify", {
       method: "POST",
       body: JSON.stringify(merchantVerifyPayload(challengeId, mobile, code)),
     }),
   );
-  // Persist the rotated secret before exposing an authenticated runtime state. Serialized storage
-  // mutations prevent an older refresh from overwriting a newer login/logout credential.
-  await saveRefreshState(session);
-  runtimeAccessToken = session.accessToken;
-  accessTokenGeneration += 1;
+  await commitLoginSession(session, authOperation);
   return session;
 }
 
@@ -189,8 +284,14 @@ function isTerminalRefreshError(error: unknown): boolean {
 }
 
 async function rotateRefreshToken(): Promise<MerchantSessionEnvelope> {
-  const generationAtStart = accessTokenGeneration;
-  if (refreshInFlight?.generation === generationAtStart) return refreshInFlight.promise;
+  const tokenGenerationAtStart = accessTokenGeneration;
+  const authOperationAtStart = authOperationGeneration;
+  if (
+    refreshInFlight?.tokenGeneration === tokenGenerationAtStart &&
+    refreshInFlight.authOperationGeneration === authOperationAtStart
+  ) {
+    return refreshInFlight.promise;
+  }
 
   const promise = (async () => {
     const stored = await loadRefreshState();
@@ -201,25 +302,27 @@ async function rotateRefreshToken(): Promise<MerchantSessionEnvelope> {
         body: JSON.stringify({ refreshToken: stored.refreshToken }),
       }),
     );
-    // A newer login/logout must never be overwritten by an older refresh finishing late.
-    if (accessTokenGeneration !== generationAtStart) throw new Error("AUTH_SESSION_CHANGED");
-    await saveRefreshState(session);
-    if (accessTokenGeneration !== generationAtStart) throw new Error("AUTH_SESSION_CHANGED");
-    runtimeAccessToken = session.accessToken;
-    accessTokenGeneration += 1;
+    const committed = await commitRefreshedSession(
+      session,
+      tokenGenerationAtStart,
+      authOperationAtStart,
+    );
+    if (!committed) throw new Error("AUTH_SESSION_CHANGED");
     return session;
   })();
-  refreshInFlight = { generation: generationAtStart, promise };
+  refreshInFlight = {
+    tokenGeneration: tokenGenerationAtStart,
+    authOperationGeneration: authOperationAtStart,
+    promise,
+  };
 
   try {
     return await promise;
   } catch (error) {
     // Network/provider/server failures are retryable and must not erase a still-valid persisted
-    // refresh credential. Only a definitive auth/session rejection clears this generation.
-    if (accessTokenGeneration === generationAtStart && isTerminalRefreshError(error)) {
-      runtimeAccessToken = null;
-      accessTokenGeneration += 1;
-      await storageDelete(REFRESH_STATE_KEY);
+    // refresh credential. Only a definitive auth/session rejection clears this exact generation.
+    if (isTerminalRefreshError(error)) {
+      await clearRefreshStateForGeneration(tokenGenerationAtStart, authOperationAtStart);
     }
     throw error;
   } finally {
@@ -265,19 +368,25 @@ export async function merchantApiFetch(path: string, init: RequestInit = {}): Pr
   return response;
 }
 
-async function revokeCurrentSession(): Promise<void> {
+async function revokeCurrentSession(expectedAuthOperation: number): Promise<void> {
+  if (authOperationGeneration !== expectedAuthOperation) throw new Error("AUTH_SESSION_CHANGED");
   if (!runtimeAccessToken) {
     await rotateRefreshToken();
   }
+  if (authOperationGeneration !== expectedAuthOperation) throw new Error("AUTH_SESSION_CHANGED");
+  const token = requireRuntimeAccessToken();
   let response = await fetch(`${baseUrl()}/api/v1/auth/sessions/current`, {
     method: "DELETE",
-    headers: { Authorization: `Bearer ${requireRuntimeAccessToken()}`, Accept: "application/json" },
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
   if (response.status === 401) {
+    if (authOperationGeneration !== expectedAuthOperation) throw new Error("AUTH_SESSION_CHANGED");
     await rotateRefreshToken();
+    if (authOperationGeneration !== expectedAuthOperation) throw new Error("AUTH_SESSION_CHANGED");
+    const refreshedToken = requireRuntimeAccessToken();
     response = await fetch(`${baseUrl()}/api/v1/auth/sessions/current`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${requireRuntimeAccessToken()}`, Accept: "application/json" },
+      headers: { Authorization: `Bearer ${refreshedToken}`, Accept: "application/json" },
     });
   }
   if (!response.ok && response.status !== 401) {
@@ -286,13 +395,20 @@ async function revokeCurrentSession(): Promise<void> {
 }
 
 export async function logoutMerchant(): Promise<void> {
+  const authOperation = ++authOperationGeneration;
   const stored = await loadRefreshState();
   if (runtimeAccessToken || stored) {
-    await revokeCurrentSession();
+    try {
+      await revokeCurrentSession(authOperation);
+    } catch (error) {
+      if (isTerminalRefreshError(error)) {
+        await clearLocalSessionForAuthOperation(authOperation);
+        return;
+      }
+      throw error;
+    }
   }
-  runtimeAccessToken = null;
-  accessTokenGeneration += 1;
-  await storageDelete(REFRESH_STATE_KEY);
+  await clearLocalSessionForAuthOperation(authOperation);
 }
 
 export function hasRuntimeMerchantSession(): boolean {

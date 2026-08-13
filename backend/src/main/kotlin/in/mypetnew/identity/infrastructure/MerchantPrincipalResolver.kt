@@ -10,6 +10,9 @@ import java.util.UUID
 
 interface MerchantPrincipalResolver {
     fun resolve(accountId: UUID, sessionId: UUID): Principal
+
+    /** Revalidate a token principal against current server-owned Merchant authorization. */
+    fun reauthorize(principal: Principal): Principal = resolve(principal.actorId, principal.sessionId)
 }
 
 @Component
@@ -17,6 +20,10 @@ interface MerchantPrincipalResolver {
 class DevelopmentMerchantPrincipalResolver : MerchantPrincipalResolver {
     override fun resolve(accountId: UUID, sessionId: UUID): Principal =
         Principal(actorId = accountId, role = Role.MERCHANT, sessionId = sessionId)
+
+    // Existing contract/API tests construct explicit Merchant scopes. Preserve those test fixtures;
+    // production uses JdbcMerchantPrincipalResolver and never trusts token scopes as current truth.
+    override fun reauthorize(principal: Principal): Principal = principal
 }
 
 @Component
@@ -58,6 +65,11 @@ class JdbcMerchantPrincipalResolver(
             outletIds = outlets,
             sessionId = sessionId,
         )
+    }
+
+    override fun reauthorize(principal: Principal): Principal {
+        if (principal.role != Role.MERCHANT) invalidSession()
+        return resolve(principal.actorId, principal.sessionId)
     }
 
     private fun invalidSession(): Nothing = throw DomainException(

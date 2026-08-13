@@ -47,16 +47,16 @@ class JdbcMerchantPrincipalResolver(
             FROM mypet.merchant_staff
             WHERE account_id = :account_id AND active = TRUE
             """.trimIndent(),
-        ).param("account_id", accountId).query(UUID::class.java).list()
+        ).param("account_id", accountId).query(UUID::class.java).list().filterNotNull()
         if (organizations.size > 1) invalidSession()
 
-        val outlets = jdbc.sql(
+        val outlets: Set<UUID> = jdbc.sql(
             """
             SELECT DISTINCT outlet_id
             FROM mypet.merchant_staff
             WHERE account_id = :account_id AND active = TRUE
             """.trimIndent(),
-        ).param("account_id", accountId).query(UUID::class.java).list().toSet()
+        ).param("account_id", accountId).query(UUID::class.java).list().filterNotNull().toSet()
 
         return Principal(
             actorId = accountId,

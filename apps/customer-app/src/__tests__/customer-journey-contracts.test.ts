@@ -37,13 +37,11 @@ describe('MyPet customer journey contracts', () => {
     const categoryTemplate = source('src/components/commerce/CategoryTemplate.tsx');
     const banners = source('src/components/ui/banner-carousel.tsx');
     const provider = source('src/components/commerce/ProviderProfileTemplate.tsx');
-    const checkout = source('src/app/checkout/index.tsx');
     const resilientImage = source('src/components/ui/resilient-remote-image.tsx');
 
     expectAll(categoryTemplate, ['ResilientRemoteImage', 'fallbackUri']);
     expectAll(banners, ['ResilientRemoteImage', 'DEMO_BANNER_IMAGES', 'fallbackUri={DEMO_MEDIA.store}']);
     expectAll(provider, ['ResilientRemoteImage', 'shop.heroImageUrl', 'item.imageUrl']);
-    expectAll(checkout, ['ResilientRemoteImage', 'categoryImage(item.product.category)']);
     expectAll(resilientImage, ['onError', 'fallbackUri']);
   });
 
@@ -126,26 +124,27 @@ describe('MyPet customer journey contracts', () => {
     expect(matrix).toContain('| Online / Appointment Payment | POST | `/api/v1/payments/appointments` (Legacy client route) | N/A (Sprint 1 uses `PAY_ON_FULFILMENT` / `STORE_PICKUP`) | **DEFERRED** | Post-Sprint 1 |');
   });
 
-  it('shows a complete product checkout breakdown before COD or online payment', () => {
+  it('keeps product checkout on the server-authoritative Sprint 1 pickup contract', () => {
     const checkout = source('src/app/checkout/index.tsx');
+    const orderClient = source('src/services/customer-checkout.ts');
 
     expectAll(checkout, [
       'Order items',
-      'Item subtotal',
-      'Product savings',
-      'Coupon discount',
-      'Loyalty discount',
-      'Delivery fee',
-      'Tax',
-      'Payable total',
-      'Cash on delivery',
-      'UPI',
-      'Card',
+      'Server-authoritative total',
+      'Store pickup',
+      'Pay on fulfilment',
       'fetchCheckoutQuote',
-      'createCustomerOrder',
-      'initiateOrderPayment',
-      'openCashfreeOrder',
-      'waitForPaymentOutcome',
+      'createPickupOrder',
+    ]);
+    expect(checkout).not.toContain('initiateOrderPayment');
+    expect(checkout).not.toContain('openCashfreeOrder');
+    expect(checkout).not.toContain('waitForPaymentOutcome');
+    expectAll(orderClient, [
+      "'/api/v1/customer/orders'",
+      'quoteId: input.quoteId, cartSignature: input.cartSignature',
+      "'Idempotency-Key': `checkout:${input.quoteId}`",
+      "order.fulfilmentMode !== 'STORE_PICKUP'",
+      "order.paymentMethod !== 'PAY_ON_FULFILMENT'",
     ]);
   });
 
@@ -154,12 +153,12 @@ describe('MyPet customer journey contracts', () => {
 
     expectAll(checkout, [
       'const demoCheckout = appConfig.allowDemoMode',
-      'demoCheckoutQuote',
-      'DEMO_ADDRESS',
-      'No backend order was created and no money was charged.',
+      'Demo pickup simulated',
+      'No backend order was created',
+      'fetchCheckoutQuote',
+      'createPickupOrder',
     ]);
-    expect(checkout.indexOf('if (demoCheckout)')).toBeLessThan(checkout.indexOf('const order = await createOrder()'));
-    expect(checkout).toContain('fetchCheckoutQuote');
+    expect(checkout.indexOf('if (demoCheckout)')).toBeLessThan(checkout.indexOf('const order = await createPickupOrder'));
   });
 
   it('preserves authenticated customer identity across profile and payment requests', () => {

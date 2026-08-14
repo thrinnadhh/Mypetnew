@@ -54,6 +54,13 @@ interface DeviceRegistrationPersistence {
     ): DeviceRegistration
 
     fun activeFor(userId: UUID): List<DeviceRegistration>
+
+    fun revoke(
+        userId: UUID,
+        appKind: AppKind,
+        installationId: UUID,
+        environment: String,
+    ): Boolean
 }
 
 class DeviceRegistrationService(private val persistence: DeviceRegistrationPersistence? = null) {
@@ -185,6 +192,38 @@ class DeviceRegistrationService(private val persistence: DeviceRegistrationPersi
     fun activeFor(userId: UUID): List<DeviceRegistration> = persistence?.activeFor(userId)
         ?: registrations.values.map(StoredRegistration::public)
             .filter { it.userId == userId && it.status == RegistrationStatus.ACTIVE }
+
+    @Synchronized
+    fun revoke(
+        userId: UUID,
+        appKind: AppKind,
+        installationId: UUID,
+        environment: String,
+    ): Boolean {
+        if (environment !in setOf("development", "staging", "production")) {
+            throw DomainException("DEVICE_REGISTRATION_INVALID", "The device registration is invalid")
+        }
+        persistence?.let {
+            return it.revoke(userId, appKind, installationId, environment)
+        }
+        requireInstallationOwner(userId, appKind, installationId, environment)
+        var revokedAny = false
+        registrations.replaceAll { _, stored ->
+            if (
+                stored.public.userId == userId &&
+                stored.public.installationId == installationId &&
+                stored.public.appKind == appKind &&
+                stored.public.environment == environment &&
+                stored.public.status != RegistrationStatus.REVOKED
+            ) {
+                revokedAny = true
+                stored.copy(public = stored.public.copy(status = RegistrationStatus.REVOKED))
+            } else {
+                stored
+            }
+        }
+        return revokedAny
+    }
 
     private fun requireInstallationOwner(
         userId: UUID,

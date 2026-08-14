@@ -10,10 +10,13 @@ import `in`.mypetnew.engagement.domain.Notification
 import `in`.mypetnew.engagement.domain.NotificationService
 import `in`.mypetnew.engagement.domain.Platform
 import org.springframework.security.core.Authentication
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import java.util.UUID
 
@@ -66,6 +69,35 @@ class NotificationApiController(
             request.environment,
             principal.role,
             principal.sessionId,
+        )
+    }
+
+    @DeleteMapping("/devices/registrations/{installationId}")
+    fun revoke(
+        authentication: Authentication,
+        @PathVariable installationId: UUID,
+        @RequestParam(required = false) appKind: AppKind?,
+        @RequestParam(required = false) environment: String?,
+    ) {
+        val principal = authentication.domainPrincipal()
+        val targetAppKind = appKind ?: when (principal.role) {
+            Role.CUSTOMER -> AppKind.CUSTOMER
+            Role.MERCHANT -> AppKind.MERCHANT
+            Role.CAPTAIN -> AppKind.CAPTAIN
+            else -> AppKind.CUSTOMER
+        }
+        val requiredRole = when (targetAppKind) {
+            AppKind.CUSTOMER -> Role.CUSTOMER
+            AppKind.MERCHANT -> Role.MERCHANT
+            AppKind.CAPTAIN -> Role.CAPTAIN
+        }
+        Authorizer.requireRole(principal, requiredRole)
+        val targetEnvironment = environment ?: "development"
+        devices.revoke(
+            principal.actorId,
+            targetAppKind,
+            installationId,
+            targetEnvironment,
         )
     }
 

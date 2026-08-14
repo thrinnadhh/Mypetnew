@@ -177,6 +177,30 @@ class JdbcDeviceRegistrationPersistence(
         """.trimIndent(),
     ).param("user_id", userId).query(::mapRegistration).list()
 
+    override fun revoke(
+        userId: UUID,
+        appKind: AppKind,
+        installationId: UUID,
+        environment: String,
+    ): Boolean = transaction.execute {
+        lockBinding(environment, appKind, installationId)
+        requireOwner(userId, environment, appKind, installationId)
+        val now = clock.instant()
+        val updated = jdbc.sql(
+            """
+            UPDATE mypet.device_registration
+            SET status = 'REVOKED', updated_at = :now
+            WHERE user_id = :user_id AND environment = :environment
+              AND app_kind = :app_kind AND installation_id = :installation_id
+              AND status <> 'REVOKED'
+            """.trimIndent(),
+        ).param("user_id", userId)
+            .params(bindingParameters(environment, appKind, installationId))
+            .param("now", now)
+            .update()
+        updated > 0
+    }
+
     private fun findExact(
         userId: UUID,
         environment: String,

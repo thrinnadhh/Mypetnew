@@ -58,7 +58,7 @@ class JdbcNotificationDeliveryRepository(
                 :id, :source_event_id, :recipient_id, :event_type, :template_version,
                 :safe_route, :resource_id, :title, :body, :created_at
             )
-            ON CONFLICT (source_event_id, recipient_id, template_version) DO NOTHING
+            ON CONFLICT DO NOTHING
             """.trimIndent(),
         ).param("id", notification.id)
             .param("source_event_id", notification.sourceEventId)
@@ -114,7 +114,7 @@ class JdbcNotificationDeliveryRepository(
                 INSERT INTO mypet.notification_attempt(
                     id, notification_id, registration_id, channel, status, attempt_count, next_attempt_at
                 ) VALUES (:id, :notification_id, :registration_id, 'PUSH', 'PENDING', 0, :next_attempt_at)
-                ON CONFLICT (notification_id, registration_id, channel) DO NOTHING
+                ON CONFLICT DO NOTHING
                 """.trimIndent(),
             ).param("id", UUID.randomUUID())
                 .param("notification_id", notification.id)

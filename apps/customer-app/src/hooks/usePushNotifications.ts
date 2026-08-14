@@ -8,6 +8,7 @@ import type { NotificationResponse } from 'expo-notifications';
 import type { AuthIntent } from '@/auth/auth-intent';
 import { useAuthIntent } from '@/context/AuthIntentContext';
 import { appConfig } from '@/utils/app-config';
+import { getOrCreateInstallationId } from '@/utils/installation-id';
 
 const isExpoGo = Constants.appOwnership === 'expo';
 
@@ -47,8 +48,29 @@ async function responseError(response: Response): Promise<Error> {
   return new Error(body?.message || body?.error || `Push registration failed (${response.status})`);
 }
 
-async function registerPushToken(accessToken: string): Promise<string | null> {
+export async function revokeDeviceRegistration(
+  installationId: string,
+  accessToken: string,
+): Promise<void> {
+  if (Platform.OS === 'web' || isExpoGo) return;
+
+  const url = `${appConfig.apiBaseUrl}/api/v1/devices/registrations/${installationId}?appKind=CUSTOMER&environment=${encodeURIComponent(appConfig.environment)}`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  if (!response.ok && response.status !== 404) throw await responseError(response);
+}
+
+async function registerDeviceRegistration(
+  accessToken: string,
+  overrideNativeToken?: string,
+): Promise<string | null> {
   if (Platform.OS === 'web' || isExpoGo) return null;
+  if (Platform.OS !== 'android') return null;
 
   const Notifications = await getNotificationsModule();
   if (!Notifications) return null;
@@ -56,26 +78,47 @@ async function registerPushToken(accessToken: string): Promise<string | null> {
   const Device = await import('expo-device');
   if (!Device.isDevice) return null;
 
+  const installationId = await getOrCreateInstallationId();
   const permission = await Notifications.requestPermissionsAsync();
-  if (!permission.granted) return null;
 
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('customer-reminders', {
-      name: 'Pet care reminders',
-      importance: Notifications.AndroidImportance.HIGH,
-      sound: 'default',
+  if (!permission.granted) {
+    const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/devices/registrations`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        appKind: 'CUSTOMER',
+        environment: appConfig.environment,
+        installationId,
+        platform: 'ANDROID',
+        nativeToken: '',
+        permissionState: 'DENIED',
+      }),
     });
+    if (!response.ok) throw await responseError(response);
+    return null;
   }
 
-  const projectId =
-    Constants.easConfig?.projectId ??
-    (Constants.expoConfig?.extra?.eas as { projectId?: string } | undefined)?.projectId;
-  const tokenResponse = projectId
-    ? await Notifications.getExpoPushTokenAsync({ projectId })
-    : await Notifications.getExpoPushTokenAsync();
-  const token = tokenResponse.data;
+  await Notifications.setNotificationChannelAsync('customer-reminders', {
+    name: 'Pet care reminders',
+    importance: Notifications.AndroidImportance.HIGH,
+    sound: 'default',
+  });
 
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/notifications/push-tokens`, {
+  let token = overrideNativeToken;
+  if (!token) {
+    const tokenResponse = await Notifications.getDevicePushTokenAsync();
+    token = typeof tokenResponse.data === 'string' ? tokenResponse.data.trim() : '';
+  }
+
+  if (!token || token.length > 4096) {
+    return null;
+  }
+
+  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/devices/registrations`, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -83,31 +126,17 @@ async function registerPushToken(accessToken: string): Promise<string | null> {
       Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify({
-      expoPushToken: token,
-      platform: Platform.OS,
-      appRole: 'CUSTOMER',
-      soundProfile: 'default',
+      appKind: 'CUSTOMER',
+      environment: appConfig.environment,
+      installationId,
+      platform: 'ANDROID',
+      nativeToken: token,
+      permissionState: 'GRANTED',
     }),
   });
+
   if (!response.ok) throw await responseError(response);
   return token;
-}
-
-async function unregisterPushToken(
-  token: string,
-  accessToken: string,
-): Promise<void> {
-  const response = await fetch(
-    `${appConfig.apiBaseUrl}/api/v1/notifications/push-tokens?token=${encodeURIComponent(token)}`,
-    {
-      method: 'DELETE',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-      },
-    },
-  );
-  if (!response.ok && response.status !== 404) throw await responseError(response);
 }
 
 function notificationIntent(data: Record<string, unknown>): AuthIntent | null {
@@ -229,12 +258,13 @@ export function usePushNotifications(
   useEffect(() => {
     const previous = previousAuthentication.current;
     if (previous && !userId && registeredToken.current) {
-      const token = registeredToken.current;
       registeredToken.current = null;
       registeredForUser.current = null;
-      void unregisterPushToken(token, previous.accessToken).catch((error) => {
-        console.warn('Unable to unregister push token', error);
-      });
+      void getOrCreateInstallationId()
+        .then((installationId) => revokeDeviceRegistration(installationId, previous.accessToken))
+        .catch((error) => {
+          console.warn('Unable to revoke push registration on session end', error);
+        });
     }
 
     previousAuthentication.current =
@@ -253,7 +283,7 @@ export function usePushNotifications(
     }
     if (registeredForUser.current === userId && registeredToken.current) return;
 
-    void registerPushToken(accessToken)
+    void registerDeviceRegistration(accessToken)
       .then((token) => {
         if (token) {
           registeredForUser.current = userId;
@@ -263,7 +293,48 @@ export function usePushNotifications(
       .catch((error) => {
         registeredForUser.current = null;
         registeredToken.current = null;
-        console.warn('Unable to register push token', error);
+        console.warn('Unable to register device registration', error);
       });
+  }, [accessToken, userId]);
+
+  useEffect(() => {
+    if (
+      Platform.OS !== 'android' ||
+      isExpoGo ||
+      !userId ||
+      !accessToken ||
+      appConfig.allowDemoMode
+    ) {
+      return;
+    }
+
+    let disposed = false;
+    let tokenSubscription: { remove: () => void } | undefined;
+
+    void getNotificationsModule().then((Notifications) => {
+      if (!Notifications || disposed) return;
+      if (typeof Notifications.addPushTokenListener === 'function') {
+        tokenSubscription = Notifications.addPushTokenListener((tokenObj) => {
+          const newToken = typeof tokenObj?.data === 'string' ? tokenObj.data.trim() : '';
+          if (newToken && newToken !== registeredToken.current && !disposed) {
+            void registerDeviceRegistration(accessToken, newToken)
+              .then((token) => {
+                if (token) {
+                  registeredForUser.current = userId;
+                  registeredToken.current = token;
+                }
+              })
+              .catch((error) => {
+                console.warn('Unable to re-register rotated push token', error);
+              });
+          }
+        });
+      }
+    });
+
+    return () => {
+      disposed = true;
+      tokenSubscription?.remove();
+    };
   }, [accessToken, userId]);
 }

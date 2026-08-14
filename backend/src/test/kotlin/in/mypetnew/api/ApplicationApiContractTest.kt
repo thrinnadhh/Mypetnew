@@ -11,6 +11,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.http.MediaType
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.delete
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
 import tools.jackson.databind.ObjectMapper
@@ -136,6 +137,45 @@ class ApplicationApiContractTest {
             status { isBadRequest() }
             jsonPath("$.code") { value("MALFORMED_REQUEST") }
             jsonPath("$.traceId") { isNotEmpty() }
+        }
+    }
+
+    @Test
+    fun `device registration and revoke endpoint flow works for authenticated customer`() {
+        val requested = mockMvc.post("/api/v1/auth/otp/request") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"mobile":"+919876543299","purpose":"LOGIN","deviceId":"test-device"}"""
+        }.andExpect { status { isOk() } }.andReturn()
+        val challengeId = objectMapper.readTree(requested.response.contentAsString).path("challengeId").asString()
+        val code = (otpProvider as InMemoryOtpProvider).codeFor(java.util.UUID.fromString(challengeId))
+        val verified = mockMvc.post("/api/v1/auth/otp/verify") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"challengeId":"$challengeId","mobile":"+919876543299","purpose":"LOGIN","code":"$code"}"""
+        }.andExpect { status { isOk() } }.andReturn()
+        val accessToken = objectMapper.readTree(verified.response.contentAsString).path("accessToken").asString()
+
+        val installationId = java.util.UUID.randomUUID().toString()
+
+        mockMvc.post("/api/v1/devices/registrations") {
+            contentType = MediaType.APPLICATION_JSON
+            header("Authorization", "Bearer $accessToken")
+            content = """{
+                "appKind": "CUSTOMER",
+                "environment": "development",
+                "installationId": "$installationId",
+                "platform": "ANDROID",
+                "nativeToken": "sample-token",
+                "permissionState": "GRANTED"
+            }"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.status") { value("ACTIVE") }
+        }
+
+        mockMvc.delete("/api/v1/devices/registrations/$installationId?appKind=CUSTOMER&environment=development") {
+            header("Authorization", "Bearer $accessToken")
+        }.andExpect {
+            status { isOk() }
         }
     }
 }

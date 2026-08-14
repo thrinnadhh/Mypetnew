@@ -10,12 +10,18 @@ const defaultGatewayUrl = Platform.select({
 
 const allowDemoMode = __DEV__ && isTruthy(process.env.EXPO_PUBLIC_ALLOW_DEMO_MODE);
 const configuredApiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, '');
+const configuredEnvironment = process.env.EXPO_PUBLIC_APP_ENV?.trim().toLowerCase();
+const environment: 'development' | 'staging' | 'production' =
+  configuredEnvironment === 'staging' || configuredEnvironment === 'production'
+    ? configuredEnvironment
+    : 'development';
 
 export const appConfig = {
   apiBaseUrl: configuredApiBaseUrl || (__DEV__ ? defaultGatewayUrl : ''),
   supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
   supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
   allowDemoMode,
+  environment,
 };
 
 export function requireMobileConfig() {

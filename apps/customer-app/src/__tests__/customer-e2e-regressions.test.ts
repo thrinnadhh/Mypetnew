@@ -144,5 +144,9 @@ describe('customer end-to-end regression contracts', () => {
 
     expect(favourites).toMatch(/if \(!response\.ok\) throw await serverError/);
     expect(notifications).toMatch(/if \(!response\.ok\) throw await responseError/);
+    expect(notifications).not.toContain('/api/v1/notifications/push-tokens');
+    expect(notifications).not.toContain('getExpoPushTokenAsync');
+    expect(notifications).toContain('/api/v1/devices/registrations');
+    expect(notifications).toContain('getDevicePushTokenAsync');
   });
 });

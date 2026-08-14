@@ -5,6 +5,7 @@ import { validateServerRole, type OtpSessionResponse } from '@/auth/otp-auth';
 import { clearPersistedSession, loadPersistedSession, savePersistedSession } from '@/auth/session-storage';
 import type { CustomerAuthSession, CustomerAuthUser } from '@/auth/types';
 import { apiClient } from '@/services/api-client';
+import { revokeDeviceRegistration } from '@/hooks/usePushNotifications';
 import { getOrCreateInstallationId } from '@/utils/installation-id';
 
 interface AuthContextType {
@@ -204,10 +205,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const currentToken = activeSessionRef.current?.accessToken;
     lastOtpVerifiedAtRef.current = null;
     setLastOtpVerifiedAt(null);
-    applySessionState(null);
-    await runStorageMutation(clearPersistedSession);
 
     if (currentToken) {
+      try {
+        const installationId = await getOrCreateInstallationId().catch(() => null);
+        if (installationId) {
+          await revokeDeviceRegistration(installationId, currentToken);
+        }
+      } catch (error) {
+        console.warn('Device registration revoke failed during sign out:', error);
+      }
+
       try {
         await apiClient.delete('/api/v1/auth/sessions/current', {
           Authorization: `Bearer ${currentToken}`,
@@ -216,6 +224,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.warn('Backend logout call failed, session cleared locally:', error);
       }
     }
+
+    applySessionState(null);
+    await runStorageMutation(clearPersistedSession);
   }, [applySessionState, runStorageMutation]);
 
   const user = useMemo<CustomerAuthUser | null>(() => {

@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.sql.ResultSet
+import java.sql.Timestamp
 import java.time.Clock
 import java.time.Instant
 import java.util.Base64
@@ -94,7 +95,7 @@ class JdbcDeviceRegistrationPersistence(
             WHERE environment = :environment AND app_kind = :app_kind
               AND installation_id = :installation_id AND status = 'ACTIVE'
             """.trimIndent(),
-        ).params(bindingParameters(environment, appKind, installationId)).param("now", now).update()
+        ).params(bindingParameters(environment, appKind, installationId)).param("now", now.jdbcTimestamp()).update()
         val existing = findExact(userId, environment, appKind, installationId, fingerprint)
         if (existing != null) {
             jdbc.sql(
@@ -109,7 +110,7 @@ class JdbcDeviceRegistrationPersistence(
                 .param("role", role.name)
                 .param("session_id", sessionId)
                 .param("protected_token", tokens.encrypt(token))
-                .param("now", now)
+                .param("now", now.jdbcTimestamp())
                 .param("id", existing.id)
                 .update()
             return@execute existing.copy(platform = platform, status = RegistrationStatus.ACTIVE, lastSeenAt = now)
@@ -146,12 +147,12 @@ class JdbcDeviceRegistrationPersistence(
             UPDATE mypet.device_registration SET status = 'DISABLED', permission_state = 'DENIED', updated_at = :now
             WHERE environment = :environment AND app_kind = :app_kind AND installation_id = :installation_id
             """.trimIndent(),
-        ).params(bindingParameters(environment, appKind, installationId)).param("now", now).update()
+        ).params(bindingParameters(environment, appKind, installationId)).param("now", now.jdbcTimestamp()).update()
         val existing = findExact(userId, environment, appKind, installationId, "permission-denied")
         if (existing != null) {
             jdbc.sql(
                 "UPDATE mypet.device_registration SET last_seen_at = :now, updated_at = :now WHERE id = :id",
-            ).param("now", now).param("id", existing.id).update()
+            ).param("now", now.jdbcTimestamp()).param("id", existing.id).update()
             return@execute existing.copy(status = RegistrationStatus.DISABLED, lastSeenAt = now)
         }
         val registration = DeviceRegistration(
@@ -196,7 +197,7 @@ class JdbcDeviceRegistrationPersistence(
             """.trimIndent(),
         ).param("user_id", userId)
             .params(bindingParameters(environment, appKind, installationId))
-            .param("now", now)
+            .param("now", now.jdbcTimestamp())
             .update()
         updated > 0
     }
@@ -251,7 +252,7 @@ class JdbcDeviceRegistrationPersistence(
             .param("token_fingerprint", registration.tokenFingerprint)
             .param("permission_state", permissionState)
             .param("status", registration.status.name)
-            .param("last_seen_at", registration.lastSeenAt)
+            .param("last_seen_at", registration.lastSeenAt.jdbcTimestamp())
             .update()
     }
 
@@ -312,6 +313,8 @@ class JdbcDeviceRegistrationPersistence(
         "The device registration is invalid",
     )
 }
+
+private fun Instant.jdbcTimestamp(): Timestamp = Timestamp.from(this)
 
 @Configuration
 @Profile("!test & !development")

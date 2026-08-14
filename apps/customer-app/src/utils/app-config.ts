@@ -10,11 +10,28 @@ const defaultGatewayUrl = Platform.select({
 
 const allowDemoMode = __DEV__ && isTruthy(process.env.EXPO_PUBLIC_ALLOW_DEMO_MODE);
 const configuredApiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, '');
-const configuredEnvironment = process.env.EXPO_PUBLIC_APP_ENV?.trim().toLowerCase();
-const environment: 'development' | 'staging' | 'production' =
-  configuredEnvironment === 'staging' || configuredEnvironment === 'production'
-    ? configuredEnvironment
-    : 'development';
+const rawEnv = process.env.EXPO_PUBLIC_APP_ENV?.trim().toLowerCase();
+const validEnvs = new Set(['development', 'staging', 'production']);
+
+export function resolveEnvironment(raw?: string, isDev = __DEV__): 'development' | 'staging' | 'production' {
+  const normalized = (raw ?? '').trim().toLowerCase();
+  if (normalized === 'staging' || normalized === 'production') {
+    return normalized;
+  }
+  if (normalized === 'development') {
+    return 'development';
+  }
+  if (normalized) {
+    throw new Error(`Invalid EXPO_PUBLIC_APP_ENV: '${raw}'. Must be one of: development, staging, production.`);
+  }
+  if (!isDev) {
+    // When environment is unconfigured in release, default to development so requireMobileConfig can fail-closed when invoked
+    return 'development';
+  }
+  return 'development';
+}
+
+const environment = resolveEnvironment(rawEnv);
 
 export const appConfig = {
   apiBaseUrl: configuredApiBaseUrl || (__DEV__ ? defaultGatewayUrl : ''),
@@ -25,6 +42,14 @@ export const appConfig = {
 };
 
 export function requireMobileConfig() {
+  const envConfigured = process.env.EXPO_PUBLIC_APP_ENV?.trim().toLowerCase();
+  if (envConfigured && !validEnvs.has(envConfigured)) {
+    throw new Error(`Invalid EXPO_PUBLIC_APP_ENV: '${envConfigured}'. Must be one of: development, staging, production.`);
+  }
+  if (!__DEV__ && envConfigured === 'development') {
+    throw new Error("EXPO_PUBLIC_APP_ENV cannot be 'development' in release builds.");
+  }
+
   const missing = [
     appConfig.apiBaseUrl ? null : 'EXPO_PUBLIC_API_BASE_URL',
     appConfig.supabaseUrl ? null : 'EXPO_PUBLIC_SUPABASE_URL',

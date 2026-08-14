@@ -1,8 +1,10 @@
+import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 
+import * as Notifications from 'expo-notifications';
 import type { NotificationResponse } from 'expo-notifications';
 
 import type { AuthIntent } from '@/auth/auth-intent';
@@ -12,35 +14,29 @@ import { getOrCreateInstallationId } from '@/utils/installation-id';
 
 const isExpoGo = Constants.appOwnership === 'expo';
 
-let notificationsModulePromise:
-  | Promise<typeof import('expo-notifications') | null>
-  | null = null;
+let handlerConfigured = false;
 
-async function getNotificationsModule() {
+function getNotificationsModule() {
   if (Platform.OS === 'web' || isExpoGo) return null;
 
-  if (!notificationsModulePromise) {
-    notificationsModulePromise = import('expo-notifications')
-      .then((Notifications) => {
-        Notifications.setNotificationHandler({
-          handleNotification: async () => ({
-            shouldShowAlert: true,
-            shouldPlaySound: true,
-            shouldSetBadge: true,
-            shouldShowBanner: true,
-            shouldShowList: true,
-          }),
-        });
-        return Notifications;
-      })
-      .catch((error) => {
-        notificationsModulePromise = null;
-        console.warn('Unable to initialize push notifications', error);
-        return null;
+  if (!handlerConfigured && typeof Notifications.setNotificationHandler === 'function') {
+    handlerConfigured = true;
+    try {
+      Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowAlert: true,
+          shouldPlaySound: true,
+          shouldSetBadge: true,
+          shouldShowBanner: true,
+          shouldShowList: true,
+        }),
       });
+    } catch (error) {
+      console.warn('Unable to initialize notification handler', error);
+    }
   }
 
-  return notificationsModulePromise;
+  return Notifications;
 }
 
 async function responseError(response: Response): Promise<Error> {
@@ -72,14 +68,21 @@ async function registerDeviceRegistration(
   if (Platform.OS === 'web' || isExpoGo) return null;
   if (Platform.OS !== 'android') return null;
 
-  const Notifications = await getNotificationsModule();
-  if (!Notifications) return null;
+  const NotificationsMod = getNotificationsModule();
+  if (!NotificationsMod) return null;
 
-  const Device = await import('expo-device');
   if (!Device.isDevice) return null;
 
   const installationId = await getOrCreateInstallationId();
-  const permission = await Notifications.requestPermissionsAsync();
+
+  // Android 13+: Channel MUST be configured BEFORE requesting notification permission
+  await NotificationsMod.setNotificationChannelAsync('customer-reminders', {
+    name: 'Pet care reminders',
+    importance: NotificationsMod.AndroidImportance.HIGH,
+    sound: 'default',
+  });
+
+  const permission = await NotificationsMod.requestPermissionsAsync();
 
   if (!permission.granted) {
     const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/devices/registrations`, {
@@ -102,15 +105,9 @@ async function registerDeviceRegistration(
     return null;
   }
 
-  await Notifications.setNotificationChannelAsync('customer-reminders', {
-    name: 'Pet care reminders',
-    importance: Notifications.AndroidImportance.HIGH,
-    sound: 'default',
-  });
-
   let token = overrideNativeToken;
   if (!token) {
-    const tokenResponse = await Notifications.getDevicePushTokenAsync();
+    const tokenResponse = await NotificationsMod.getDevicePushTokenAsync();
     token = typeof tokenResponse.data === 'string' ? tokenResponse.data.trim() : '';
   }
 
@@ -139,16 +136,66 @@ async function registerDeviceRegistration(
   return token;
 }
 
-function notificationIntent(data: Record<string, unknown>): AuthIntent | null {
-  const templateCode =
-    typeof data.templateCode === 'string' ? data.templateCode.toUpperCase() : '';
-  const referenceId =
-    typeof data.referenceId === 'string' ? data.referenceId : undefined;
+function isValidUuid(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim())
+  );
+}
 
-  if (
-    templateCode.startsWith('APPOINTMENT_') ||
-    templateCode.startsWith('VACCINATION_')
-  ) {
+export function notificationIntent(data: Record<string, unknown>): AuthIntent | null {
+  const route = typeof data.route === 'string' ? data.route.trim().toLowerCase() : '';
+  const resourceId = isValidUuid(data.resourceId) ? (data.resourceId as string).trim() : undefined;
+
+  if (route) {
+    if (
+      route.startsWith('merchant/') ||
+      route.startsWith('captain/') ||
+      route.startsWith('admin/') ||
+      route.includes('://') ||
+      route.includes('..') ||
+      route.startsWith('/')
+    ) {
+      return null;
+    }
+
+    if (route === 'customer/loyalty' || route === 'loyalty') {
+      return {
+        action: 'ORDER_HISTORY',
+        returnTo: '/(tabs)/profile',
+      };
+    }
+
+    if (route === 'inbox') {
+      return {
+        action: 'ORDER_HISTORY',
+        returnTo: '/(tabs)/home',
+      };
+    }
+
+    if (route === 'customer/orders/detail' || route === 'customer/orders') {
+      return {
+        action: 'ORDER_HISTORY',
+        returnTo: resourceId ? `/orders/${resourceId}` : '/(tabs)/orders',
+      };
+    }
+
+    if (route === 'customer/appointments/detail' || route === 'customer/appointments') {
+      return {
+        action: 'ORDER_HISTORY',
+        returnTo: '/appointments',
+        params: resourceId ? { appointmentId: resourceId } : undefined,
+      };
+    }
+
+    return null;
+  }
+
+  // Legacy fallback if data.route is absent
+  const templateCode = typeof data.templateCode === 'string' ? data.templateCode.toUpperCase() : '';
+  const referenceId = typeof data.referenceId === 'string' ? data.referenceId : undefined;
+
+  if (templateCode.startsWith('APPOINTMENT_') || templateCode.startsWith('VACCINATION_')) {
     return {
       action: 'ORDER_HISTORY',
       returnTo: '/appointments',
@@ -194,6 +241,7 @@ export function usePushNotifications(
   const expoGoNoticeShown = useRef(false);
   const registeredForUser = useRef<string | null>(null);
   const registeredToken = useRef<string | null>(null);
+  const registeredAccessToken = useRef<string | null>(null);
   const previousAuthentication = useRef<{
     userId: string;
     accessToken: string;
@@ -234,20 +282,19 @@ export function usePushNotifications(
     let disposed = false;
     let subscription: { remove: () => void } | undefined;
 
-    void getNotificationsModule()
-      .then(async (Notifications) => {
-        if (!Notifications || disposed) return;
-        subscription = Notifications.addNotificationResponseReceivedListener(
-          (response) => {
-            void handleNotificationResponse(response);
-          },
-        );
-        const response = await Notifications.getLastNotificationResponseAsync();
-        if (response && !disposed) await handleNotificationResponse(response);
-      })
-      .catch((error) =>
-        console.warn('Unable to initialize notification response handling', error),
-      );
+    const NotificationsMod = getNotificationsModule();
+    if (!NotificationsMod) return;
+
+    try {
+      subscription = NotificationsMod.addNotificationResponseReceivedListener((response) => {
+        void handleNotificationResponse(response);
+      });
+      void NotificationsMod.getLastNotificationResponseAsync().then((response) => {
+        if (response && !disposed) void handleNotificationResponse(response);
+      });
+    } catch (error) {
+      console.warn('Unable to initialize notification response handling', error);
+    }
 
     return () => {
       disposed = true;
@@ -257,14 +304,10 @@ export function usePushNotifications(
 
   useEffect(() => {
     const previous = previousAuthentication.current;
-    if (previous && !userId && registeredToken.current) {
+    if (previous && !userId) {
       registeredToken.current = null;
       registeredForUser.current = null;
-      void getOrCreateInstallationId()
-        .then((installationId) => revokeDeviceRegistration(installationId, previous.accessToken))
-        .catch((error) => {
-          console.warn('Unable to revoke push registration on session end', error);
-        });
+      registeredAccessToken.current = null;
     }
 
     previousAuthentication.current =
@@ -281,18 +324,24 @@ export function usePushNotifications(
     ) {
       return;
     }
-    if (registeredForUser.current === userId && registeredToken.current) return;
+    if (
+      registeredForUser.current === userId &&
+      registeredToken.current &&
+      registeredAccessToken.current === accessToken
+    ) {
+      return;
+    }
 
     void registerDeviceRegistration(accessToken)
       .then((token) => {
-        if (token) {
-          registeredForUser.current = userId;
-          registeredToken.current = token;
-        }
+        registeredForUser.current = userId;
+        registeredToken.current = token ?? 'permission-denied';
+        registeredAccessToken.current = accessToken;
       })
       .catch((error) => {
         registeredForUser.current = null;
         registeredToken.current = null;
+        registeredAccessToken.current = null;
         console.warn('Unable to register device registration', error);
       });
   }, [accessToken, userId]);
@@ -311,26 +360,25 @@ export function usePushNotifications(
     let disposed = false;
     let tokenSubscription: { remove: () => void } | undefined;
 
-    void getNotificationsModule().then((Notifications) => {
-      if (!Notifications || disposed) return;
-      if (typeof Notifications.addPushTokenListener === 'function') {
-        tokenSubscription = Notifications.addPushTokenListener((tokenObj) => {
-          const newToken = typeof tokenObj?.data === 'string' ? tokenObj.data.trim() : '';
-          if (newToken && newToken !== registeredToken.current && !disposed) {
-            void registerDeviceRegistration(accessToken, newToken)
-              .then((token) => {
-                if (token) {
-                  registeredForUser.current = userId;
-                  registeredToken.current = token;
-                }
-              })
-              .catch((error) => {
-                console.warn('Unable to re-register rotated push token', error);
-              });
-          }
-        });
-      }
-    });
+    const NotificationsMod = getNotificationsModule();
+    if (NotificationsMod && typeof NotificationsMod.addPushTokenListener === 'function') {
+      tokenSubscription = NotificationsMod.addPushTokenListener((tokenObj) => {
+        const newToken = typeof tokenObj?.data === 'string' ? tokenObj.data.trim() : '';
+        if (newToken && newToken !== registeredToken.current && !disposed) {
+          void registerDeviceRegistration(accessToken, newToken)
+            .then((token) => {
+              if (token) {
+                registeredForUser.current = userId;
+                registeredToken.current = token;
+                registeredAccessToken.current = accessToken;
+              }
+            })
+            .catch((error) => {
+              console.warn('Unable to re-register rotated push token', error);
+            });
+        }
+      });
+    }
 
     return () => {
       disposed = true;

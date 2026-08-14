@@ -1,6 +1,5 @@
 package `in`.mypetnew.engagement
 
-import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.engagement.domain.AppKind
 import `in`.mypetnew.engagement.domain.DeviceRegistrationService
@@ -11,7 +10,6 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.time.Instant
 import java.util.UUID
 
 class DeviceRegistrationContractTest {

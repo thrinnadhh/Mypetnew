@@ -11,8 +11,10 @@ import org.springframework.transaction.support.TransactionTemplate
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.sql.Timestamp
 import java.time.Clock
 import java.time.Duration
+import java.time.Instant
 import java.util.Base64
 import java.util.UUID
 
@@ -64,7 +66,7 @@ class AuthorizedMerchantSessionIssuer(
             .param("account_id", authorizedAccount)
             .param("token_hash", hash(rawToken))
             .param("device_id", deviceId)
-            .param("expires_at", expiresAt)
+            .param("expires_at", expiresAt.jdbcTimestamp())
             .update()
         RefreshSession(sessionId, authorizedAccount, Role.MERCHANT, rawToken, expiresAt)
     }
@@ -79,3 +81,5 @@ class AuthorizedMerchantSessionIssuer(
         .digest(value.toByteArray(StandardCharsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
 }
+
+private fun Instant.jdbcTimestamp(): Timestamp = Timestamp.from(this)

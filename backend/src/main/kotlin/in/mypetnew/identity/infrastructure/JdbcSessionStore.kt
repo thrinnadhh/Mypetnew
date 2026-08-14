@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.sql.ResultSet
+import java.sql.Timestamp
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -69,7 +70,7 @@ class JdbcSessionStore(
         ).param("token_hash", hash(refreshToken)).query(::mapSession).optional().orElse(null) ?: invalidRefresh()
         if (stored.revokedAt != null || !now.isBefore(stored.expiresAt)) invalidRefresh()
         jdbc.sql("UPDATE mypet.user_session SET revoked_at = :now WHERE id = :id")
-            .param("now", now).param("id", stored.sessionId).update()
+            .param("now", now.jdbcTimestamp()).param("id", stored.sessionId).update()
         val rotated = insertSession(stored.accountId, stored.role, stored.deviceId, stored.sessionId)
         jdbc.sql(
             """
@@ -79,7 +80,7 @@ class JdbcSessionStore(
             """.trimIndent(),
         ).param("new_session_id", rotated.sessionId)
             .param("old_session_id", stored.sessionId)
-            .param("now", now)
+            .param("now", now.jdbcTimestamp())
             .update()
         rotated
     }
@@ -93,7 +94,7 @@ class JdbcSessionStore(
                 SET revoked_at = COALESCE(revoked_at, :now)
                 WHERE id = :session_id AND account_id = :account_id
                 """.trimIndent(),
-            ).param("now", now).param("session_id", sessionId).param("account_id", accountId).update()
+            ).param("now", now.jdbcTimestamp()).param("session_id", sessionId).param("account_id", accountId).update()
             jdbc.sql(
                 """
                 UPDATE mypet.device_registration
@@ -102,7 +103,7 @@ class JdbcSessionStore(
                     SELECT id FROM mypet.user_session WHERE id = :session_id AND account_id = :account_id
                 ) AND status = 'ACTIVE'
                 """.trimIndent(),
-            ).param("now", now).param("session_id", sessionId).param("account_id", accountId).update()
+            ).param("now", now.jdbcTimestamp()).param("session_id", sessionId).param("account_id", accountId).update()
         }
     }
 
@@ -111,7 +112,10 @@ class JdbcSessionStore(
         SELECT COUNT(*) FROM mypet.user_session
         WHERE id = :session_id AND revoked_at IS NULL AND expires_at > :now
         """.trimIndent(),
-    ).param("session_id", sessionId).param("now", clock.instant()).query(Int::class.java).single() == 1
+    ).param("session_id", sessionId)
+        .param("now", clock.instant().jdbcTimestamp())
+        .query(Int::class.java)
+        .single() == 1
 
     private fun insertSession(
         accountId: UUID,
@@ -134,7 +138,7 @@ class JdbcSessionStore(
             .param("account_id", accountId)
             .param("token_hash", hash(rawToken))
             .param("device_id", deviceId)
-            .param("expires_at", expiresAt)
+            .param("expires_at", expiresAt.jdbcTimestamp())
             .param("rotated_from", rotatedFrom)
             .update()
         return RefreshSession(id, accountId, role, rawToken, expiresAt)
@@ -172,3 +176,5 @@ class JdbcSessionStore(
         "The refresh token is invalid or expired",
     )
 }
+
+private fun Instant.jdbcTimestamp(): Timestamp = Timestamp.from(this)

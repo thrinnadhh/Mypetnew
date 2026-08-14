@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "MyPet Customer",
-    "slug": "customer-app",
+    "slug": "mypetstore",
     "version": "0.9.0-beta.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -58,9 +58,9 @@
       "releaseChannel": "internal-beta",
       "releaseVersion": "v0.9.0-beta.1",
       "eas": {
-        "projectId": "9167a87d-ad84-4ccf-9597-9ab435e039d8"
+        "projectId": "be8dd022-9cd8-4c69-aa97-b2c6d3854e50"
       }
     },
-    "owner": "trinadh33"
+    "owner": "trinadh-software-solutions"
   }
 }

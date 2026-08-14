@@ -247,6 +247,7 @@ describe('mobile configuration gates', () => {
       dev: false,
       platform: 'ios',
       env: {
+        EXPO_PUBLIC_APP_ENV: 'production',
         EXPO_PUBLIC_API_BASE_URL: ' https://api.mypet.test/// ',
         EXPO_PUBLIC_SUPABASE_URL: 'https://project.supabase.co',
         EXPO_PUBLIC_SUPABASE_ANON_KEY: 'anon-key',
@@ -254,7 +255,7 @@ describe('mobile configuration gates', () => {
       },
     });
     expect(loaded.appConfig).toMatchObject({
-      apiBaseUrl: 'https://api.mypet.test', allowDemoMode: false,
+      apiBaseUrl: 'https://api.mypet.test', allowDemoMode: false, environment: 'production',
     });
     expect(loaded.requireMobileConfig()).toBeUndefined();
   });
@@ -264,6 +265,7 @@ describe('mobile configuration gates', () => {
       dev: false,
       platform: 'ios',
       env: {
+        EXPO_PUBLIC_APP_ENV: 'production',
         EXPO_PUBLIC_API_BASE_URL: undefined,
         EXPO_PUBLIC_SUPABASE_URL: undefined,
         EXPO_PUBLIC_SUPABASE_ANON_KEY: undefined,
@@ -277,11 +279,23 @@ describe('mobile configuration gates', () => {
       dev: false,
       platform: 'ios',
       env: {
+        EXPO_PUBLIC_APP_ENV: 'production',
         EXPO_PUBLIC_API_BASE_URL: 'http://api.mypet.test',
         EXPO_PUBLIC_SUPABASE_URL: 'https://project.supabase.co',
         EXPO_PUBLIC_SUPABASE_ANON_KEY: 'anon-key',
       },
     });
     expect(() => insecure.requireMobileConfig()).toThrow('must use HTTPS');
+
+    const missingEnv = loadConfig({
+      dev: false,
+      platform: 'ios',
+      env: {
+        EXPO_PUBLIC_API_BASE_URL: 'https://api.mypet.test',
+        EXPO_PUBLIC_SUPABASE_URL: 'https://project.supabase.co',
+        EXPO_PUBLIC_SUPABASE_ANON_KEY: 'anon-key',
+      },
+    });
+    expect(() => missingEnv.requireMobileConfig()).toThrow('EXPO_PUBLIC_APP_ENV is required');
   });
 });

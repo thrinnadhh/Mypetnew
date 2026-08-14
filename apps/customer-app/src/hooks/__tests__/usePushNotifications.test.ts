@@ -8,7 +8,6 @@ import {
   revokeDeviceRegistration,
   notificationIntent,
 } from '@/hooks/usePushNotifications';
-import { getOrCreateInstallationId } from '@/utils/installation-id';
 
 jest.mock('expo-constants', () => ({
   appOwnership: 'standalone',
@@ -277,7 +276,7 @@ describe('usePushNotifications behavioral test suite', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it('G & H. web & Expo Go remain safe / no-op', async () => {
+  it('G. web platform remains safe / no-op', async () => {
     Platform.OS = 'web';
     const React = require('react');
     const TestRenderer = require('react-test-renderer');
@@ -294,6 +293,33 @@ describe('usePushNotifications behavioral test suite', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it('H. Expo Go: no device token request, no registration fetch, and no revoke fetch', async () => {
+    const Constants = require('expo-constants');
+    const originalOwnership = Constants.appOwnership;
+    Constants.appOwnership = 'expo';
+
+    try {
+      const React = require('react');
+      const TestRenderer = require('react-test-renderer');
+
+      function TestComponent({ userId, accessToken }: { userId: string; accessToken: string }) {
+        usePushNotifications(userId, accessToken);
+        return null;
+      }
+
+      await TestRenderer.act(async () => {
+        TestRenderer.create(React.createElement(TestComponent, { userId: 'user-1', accessToken: 'access-token-1' }));
+      });
+
+      await revokeDeviceRegistration('123e4567-e89b-42d3-a456-426614174000', 'access-token-1');
+
+      expect(Notifications.getDevicePushTokenAsync).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    } finally {
+      Constants.appOwnership = originalOwnership;
+    }
+  });
+
   it('I. logout: revokeDeviceRegistration calls DELETE with authenticated token', async () => {
     await revokeDeviceRegistration('123e4567-e89b-42d3-a456-426614174000', 'access-token-1');
 
@@ -306,33 +332,37 @@ describe('usePushNotifications behavioral test suite', () => {
     );
   });
 
-  it('J. tap routing: maps canonical backend safe routes and rejects merchant/captain/arbitrary injection', () => {
-    const validId = '123e4567-e89b-42d3-a456-426614174000';
-
+  it('J. tap routing: maps strict canonical backend routes and rejects merchant/unknown/malformed/legacy payloads', () => {
+    // 1. customer/loyalty allowed
     expect(notificationIntent({ route: 'customer/loyalty' })).toEqual({
       action: 'ORDER_HISTORY',
       returnTo: '/(tabs)/profile',
     });
 
+    // 2. inbox allowed
     expect(notificationIntent({ route: 'inbox' })).toEqual({
       action: 'ORDER_HISTORY',
       returnTo: '/(tabs)/home',
     });
 
-    expect(notificationIntent({ route: 'customer/orders/detail', resourceId: validId })).toEqual({
-      action: 'ORDER_HISTORY',
-      returnTo: `/orders/${validId}`,
-    });
+    // 3. merchant route rejected
+    expect(notificationIntent({ route: 'merchant/orders/detail' })).toBeNull();
 
-    expect(notificationIntent({ route: 'merchant/orders/detail', resourceId: validId })).toBeNull();
-    expect(notificationIntent({ route: 'captain/dispatch', resourceId: validId })).toBeNull();
+    // 4. unknown route rejected
     expect(notificationIntent({ route: 'unknown/route' })).toBeNull();
+    expect(notificationIntent({ route: 'customer/orders/detail' })).toBeNull();
+    expect(notificationIntent({ route: 'customer/appointments/detail' })).toBeNull();
+
+    // 5. absolute URL rejected
     expect(notificationIntent({ route: 'https://evil.com' })).toBeNull();
+
+    // 6. relative path ../ rejected
     expect(notificationIntent({ route: '../admin' })).toBeNull();
-    expect(notificationIntent({ route: 'customer/orders/detail', resourceId: 'invalid-id' })).toEqual({
-      action: 'ORDER_HISTORY',
-      returnTo: '/(tabs)/orders',
-    });
+    expect(notificationIntent({ route: '/(tabs)/orders' })).toBeNull();
+
+    // 7. legacy arbitrary referenceId / templateCode payload rejected
+    expect(notificationIntent({ templateCode: 'ORDER_PLACED', referenceId: '../../../evil' })).toBeNull();
+    expect(notificationIntent({ referenceId: 'arbitrary-id' })).toBeNull();
   });
 
   it('source architecture regression check forbids legacy endpoints and getExpoPushTokenAsync', () => {

@@ -12,12 +12,14 @@ import { useAuthIntent } from '@/context/AuthIntentContext';
 import { appConfig } from '@/utils/app-config';
 import { getOrCreateInstallationId } from '@/utils/installation-id';
 
-const isExpoGo = Constants.appOwnership === 'expo';
+function isExpoGo(): boolean {
+  return Constants.appOwnership === 'expo';
+}
 
 let handlerConfigured = false;
 
 function getNotificationsModule() {
-  if (Platform.OS === 'web' || isExpoGo) return null;
+  if (Platform.OS === 'web' || isExpoGo()) return null;
 
   if (!handlerConfigured && typeof Notifications.setNotificationHandler === 'function') {
     handlerConfigured = true;
@@ -48,7 +50,7 @@ export async function revokeDeviceRegistration(
   installationId: string,
   accessToken: string,
 ): Promise<void> {
-  if (Platform.OS === 'web' || isExpoGo) return;
+  if (Platform.OS === 'web' || isExpoGo()) return;
 
   const url = `${appConfig.apiBaseUrl}/api/v1/devices/registrations/${installationId}?appKind=CUSTOMER&environment=${encodeURIComponent(appConfig.environment)}`;
   const response = await fetch(url, {
@@ -65,7 +67,7 @@ async function registerDeviceRegistration(
   accessToken: string,
   overrideNativeToken?: string,
 ): Promise<string | null> {
-  if (Platform.OS === 'web' || isExpoGo) return null;
+  if (Platform.OS === 'web' || isExpoGo()) return null;
   if (Platform.OS !== 'android') return null;
 
   const NotificationsMod = getNotificationsModule();
@@ -136,95 +138,35 @@ async function registerDeviceRegistration(
   return token;
 }
 
-function isValidUuid(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim())
-  );
-}
-
 export function notificationIntent(data: Record<string, unknown>): AuthIntent | null {
   const route = typeof data.route === 'string' ? data.route.trim().toLowerCase() : '';
-  const resourceId = isValidUuid(data.resourceId) ? (data.resourceId as string).trim() : undefined;
 
-  if (route) {
-    if (
-      route.startsWith('merchant/') ||
-      route.startsWith('captain/') ||
-      route.startsWith('admin/') ||
-      route.includes('://') ||
-      route.includes('..') ||
-      route.startsWith('/')
-    ) {
-      return null;
-    }
-
-    if (route === 'customer/loyalty' || route === 'loyalty') {
-      return {
-        action: 'ORDER_HISTORY',
-        returnTo: '/(tabs)/profile',
-      };
-    }
-
-    if (route === 'inbox') {
-      return {
-        action: 'ORDER_HISTORY',
-        returnTo: '/(tabs)/home',
-      };
-    }
-
-    if (route === 'customer/orders/detail' || route === 'customer/orders') {
-      return {
-        action: 'ORDER_HISTORY',
-        returnTo: resourceId ? `/orders/${resourceId}` : '/(tabs)/orders',
-      };
-    }
-
-    if (route === 'customer/appointments/detail' || route === 'customer/appointments') {
-      return {
-        action: 'ORDER_HISTORY',
-        returnTo: '/appointments',
-        params: resourceId ? { appointmentId: resourceId } : undefined,
-      };
-    }
-
+  if (!route) {
     return null;
   }
 
-  // Legacy fallback if data.route is absent
-  const templateCode = typeof data.templateCode === 'string' ? data.templateCode.toUpperCase() : '';
-  const referenceId = typeof data.referenceId === 'string' ? data.referenceId : undefined;
-
-  if (templateCode.startsWith('APPOINTMENT_') || templateCode.startsWith('VACCINATION_')) {
-    return {
-      action: 'ORDER_HISTORY',
-      returnTo: '/appointments',
-      params: referenceId ? { appointmentId: referenceId } : undefined,
-    };
-  }
-
-  if (templateCode.includes('RECURRING') || templateCode.includes('SUBSCRIPTION')) {
-    return { action: 'ORDER_HISTORY', returnTo: '/subscriptions' };
-  }
-
-  if (templateCode.includes('MEDICAL_DOCUMENT')) {
-    return {
-      action: 'MEDICAL_WRITE',
-      returnTo: '/health/reports',
-      params: referenceId ? { appointmentId: referenceId } : undefined,
-    };
-  }
-
   if (
-    templateCode.includes('ORDER') ||
-    templateCode.includes('DELIVERY') ||
-    templateCode.includes('PAYMENT') ||
-    templateCode.includes('CASE') ||
-    templateCode.includes('REFUND')
+    route.startsWith('merchant/') ||
+    route.startsWith('captain/') ||
+    route.startsWith('admin/') ||
+    route.includes('://') ||
+    route.includes('..') ||
+    route.startsWith('/')
   ) {
+    return null;
+  }
+
+  if (route === 'customer/loyalty') {
     return {
       action: 'ORDER_HISTORY',
-      returnTo: referenceId ? `/orders/${referenceId}` : '/(tabs)/orders',
+      returnTo: '/(tabs)/profile',
+    };
+  }
+
+  if (route === 'inbox') {
+    return {
+      action: 'ORDER_HISTORY',
+      returnTo: '/(tabs)/home',
     };
   }
 
@@ -269,7 +211,7 @@ export function usePushNotifications(
   useEffect(() => {
     if (Platform.OS === 'web') return;
 
-    if (isExpoGo) {
+    if (isExpoGo()) {
       if (!expoGoNoticeShown.current) {
         expoGoNoticeShown.current = true;
         console.info(
@@ -317,7 +259,7 @@ export function usePushNotifications(
   useEffect(() => {
     if (
       Platform.OS === 'web' ||
-      isExpoGo ||
+      isExpoGo() ||
       !userId ||
       !accessToken ||
       appConfig.allowDemoMode
@@ -349,7 +291,7 @@ export function usePushNotifications(
   useEffect(() => {
     if (
       Platform.OS !== 'android' ||
-      isExpoGo ||
+      isExpoGo() ||
       !userId ||
       !accessToken ||
       appConfig.allowDemoMode

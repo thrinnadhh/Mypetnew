@@ -15,40 +15,41 @@ const validEnvs = new Set(['development', 'staging', 'production']);
 
 export function resolveEnvironment(raw?: string, isDev = __DEV__): 'development' | 'staging' | 'production' {
   const normalized = (raw ?? '').trim().toLowerCase();
+
+  if (isDev) {
+    if (!normalized || normalized === 'development') {
+      return 'development';
+    }
+    if (normalized === 'staging' || normalized === 'production') {
+      return normalized;
+    }
+    throw new Error(`Invalid EXPO_PUBLIC_APP_ENV: '${raw}'. Must be one of: development, staging, production.`);
+  }
+
+  if (!normalized) {
+    throw new Error("EXPO_PUBLIC_APP_ENV is required and cannot be missing in release builds.");
+  }
+  if (normalized === 'development') {
+    throw new Error("EXPO_PUBLIC_APP_ENV cannot be 'development' in release builds.");
+  }
   if (normalized === 'staging' || normalized === 'production') {
     return normalized;
   }
-  if (normalized === 'development') {
-    return 'development';
-  }
-  if (normalized) {
-    throw new Error(`Invalid EXPO_PUBLIC_APP_ENV: '${raw}'. Must be one of: development, staging, production.`);
-  }
-  if (!isDev) {
-    // When environment is unconfigured in release, default to development so requireMobileConfig can fail-closed when invoked
-    return 'development';
-  }
-  return 'development';
+  throw new Error(`Invalid EXPO_PUBLIC_APP_ENV: '${raw}'. Must be one of: development, staging, production.`);
 }
-
-const environment = resolveEnvironment(rawEnv);
 
 export const appConfig = {
   apiBaseUrl: configuredApiBaseUrl || (__DEV__ ? defaultGatewayUrl : ''),
   supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
   supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
   allowDemoMode,
-  environment,
+  get environment(): 'development' | 'staging' | 'production' {
+    return resolveEnvironment(process.env.EXPO_PUBLIC_APP_ENV, __DEV__);
+  },
 };
 
 export function requireMobileConfig() {
-  const envConfigured = process.env.EXPO_PUBLIC_APP_ENV?.trim().toLowerCase();
-  if (envConfigured && !validEnvs.has(envConfigured)) {
-    throw new Error(`Invalid EXPO_PUBLIC_APP_ENV: '${envConfigured}'. Must be one of: development, staging, production.`);
-  }
-  if (!__DEV__ && envConfigured === 'development') {
-    throw new Error("EXPO_PUBLIC_APP_ENV cannot be 'development' in release builds.");
-  }
+  resolveEnvironment(process.env.EXPO_PUBLIC_APP_ENV, __DEV__);
 
   const missing = [
     appConfig.apiBaseUrl ? null : 'EXPO_PUBLIC_API_BASE_URL',

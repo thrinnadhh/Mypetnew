@@ -54,7 +54,7 @@ interface PageResponse<T> {
   hasNext: boolean;
 }
 
-const CACHE_PREFIX = '@mypet_appointments_cache_v2_';
+const CACHE_PREFIX = '@mypet_appointments_cache_v1_';
 
 function authHeaders(accessToken: string | null | undefined): Record<string, string> {
   const headers: Record<string, string> = { Accept: 'application/json' };

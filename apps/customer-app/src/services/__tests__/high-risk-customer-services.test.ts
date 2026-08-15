@@ -262,51 +262,84 @@ describe('high-risk customer service contracts', () => {
   });
 
   describe('appointment history and preferences', () => {
-    it('enriches appointment details and sends encoded mutations', async () => {
-      mockedFetch
-        .mockResolvedValueOnce(jsonResponse({
-          appointmentId: 'appointment-1',
-          customerId: 'customer-1',
-          providerId: 'provider-1',
-          offeringId: 'offering-1',
-          slotId: 'slot-1',
-          petId: 'pet-1',
-          status: 'CONFIRMED',
-          priceAmount: '650.00',
-        }))
-        .mockResolvedValueOnce(jsonResponse({
-          providerId: 'provider-1',
-          name: 'Happy Paws Clinic',
-          address: 'Tirupati',
-          phone: '9876543210',
-        }))
-        .mockResolvedValueOnce(jsonResponse([{ offeringId: 'offering-1', name: 'Vet Consultation' }]))
-        .mockResolvedValueOnce(jsonResponse({ slotStart: '2026-08-10T10:00:00Z' }))
-        .mockResolvedValueOnce(jsonResponse({ status: 'CANCELLED' }))
-        .mockResolvedValueOnce(jsonResponse({ status: 'CONFIRMED' }))
-        .mockResolvedValueOnce(jsonResponse({ error: 'duplicate' }, 409));
+    it('uses canonical customer-owned appointment detail and cancellation while hiding unsupported actions', async () => {
+  mockedFetch
+    .mockResolvedValueOnce(jsonResponse({
+      appointmentId: 'appointment-1',
+      outletId: 'provider-1',
+      providerId: 'provider-1',
+      serviceId: 'offering-1',
+      offeringId: 'offering-1',
+      slotId: 'slot-1',
+      petId: 'pet-1',
+      providerName: 'Happy Paws Clinic',
+      serviceName: 'Vet Consultation',
+      petName: 'Milo',
+      startsAt: '2026-08-20T10:00:00Z',
+      endsAt: '2026-08-20T10:30:00Z',
+      status: 'BOOKED',
+      paymentMethod: 'PAY_AT_PROVIDER',
+      paymentStatus: 'NOT_REQUIRED',
+      pricePaise: 65000,
+      currency: 'INR',
+      holdExpiresAt: null,
+      createdAt: '2026-08-16T00:00:00Z',
+      updatedAt: '2026-08-16T00:00:00Z',
+    }))
+    .mockResolvedValueOnce(jsonResponse({
+      appointmentId: 'appointment-1',
+      outletId: 'provider-1',
+      serviceId: 'offering-1',
+      slotId: 'slot-1',
+      petId: 'pet-1',
+      providerName: 'Happy Paws Clinic',
+      serviceName: 'Vet Consultation',
+      petName: 'Milo',
+      startsAt: '2026-08-20T10:00:00Z',
+      endsAt: '2026-08-20T10:30:00Z',
+      status: 'CANCELLED',
+      paymentMethod: 'PAY_AT_PROVIDER',
+      paymentStatus: 'NOT_REQUIRED',
+      pricePaise: 65000,
+      currency: 'INR',
+      holdExpiresAt: null,
+      createdAt: '2026-08-16T00:00:00Z',
+      updatedAt: '2026-08-16T00:01:00Z',
+    }));
 
-      const details = await fetchAppointmentDetails('appointment-1', 'token');
-      expect(details).toMatchObject({
-        providerName: 'Happy Paws Clinic',
-        serviceName: 'Vet Consultation',
-        priceAmount: 650,
-        slotStartsAt: '2026-08-10T10:00:00Z',
-      });
-      await cancelAppointment('appointment-1', 'Pet is unwell & resting', 'token');
-      await rescheduleAppointment('appointment-1', 'slot/2', 'token');
-      await expect(submitAppointmentReview({
-        customerId: 'customer-1',
-        providerId: 'provider-1',
-        targetId: 'appointment-1',
-        rating: 5,
-        comment: ' Excellent ',
-        accessToken: 'token',
-      })).resolves.toBe('duplicate');
+  const details = await fetchAppointmentDetails('appointment-1', 'token');
+  expect(details).toMatchObject({
+    providerName: 'Happy Paws Clinic',
+    serviceName: 'Vet Consultation',
+    petName: 'Milo',
+    priceAmount: 650,
+    slotStartsAt: '2026-08-20T10:00:00Z',
+    canReview: false,
+  });
+  await cancelAppointment('appointment-1', 'Pet is unwell & resting', 'token');
+  await expect(rescheduleAppointment('appointment-1', 'slot/2', 'token'))
+    .rejects.toThrow('rescheduling is not available');
+  await expect(submitAppointmentReview({
+    customerId: 'customer-1',
+    providerId: 'provider-1',
+    targetId: 'appointment-1',
+    rating: 5,
+    comment: ' Excellent ',
+    accessToken: 'token',
+  })).rejects.toThrow('reviews are not available');
 
-      expect(mockedFetch.mock.calls[4][0]).toContain('note=Pet%20is%20unwell%20%26%20resting');
-      expect(mockedFetch.mock.calls[5][0]).toContain('newSlotId=slot/2');
-    });
+  expect(mockedFetch.mock.calls[0][0]).toBe(
+    'https://api.mypet.test/api/v1/customer/appointments/appointment-1',
+  );
+  expect(mockedFetch.mock.calls[1][0]).toBe(
+    'https://api.mypet.test/api/v1/customer/appointments/appointment-1/cancel',
+  );
+  expect(mockedFetch.mock.calls[1][1]?.method).toBe('POST');
+  expect(JSON.parse(mockedFetch.mock.calls[1][1]?.body as string)).toEqual({
+    reason: 'Pet is unwell & resting',
+  });
+  expect(mockedFetch).toHaveBeenCalledTimes(2);
+});
 
     it('loads and updates locale and vaccination reminder settings', async () => {
       mockedFetch

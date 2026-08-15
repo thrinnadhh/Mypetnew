@@ -327,76 +327,64 @@ describe('order production paths', () => {
 });
 
 describe('appointment history production paths', () => {
-  it('enriches, sorts, marks reviewed appointments and caches results', async () => {
-    mockedFetch
-      .mockResolvedValueOnce(response([
+  it('maps canonical snapshots, sorts appointments and preserves offline cache compatibility', async () => {
+    mockedFetch.mockResolvedValueOnce(response({
+      items: [
         {
-          appointmentId: 'appointment-1', customerId: 'customer-1', providerId: 'provider-1',
-          offeringId: 'offering-1', slotId: 'slot-1', petId: 'pet-1', status: 'COMPLETED',
-          bookedAt: '2026-08-01T09:00:00Z', priceAmount: '650',
+          appointmentId: 'appointment-1', outletId: 'provider-1', serviceId: 'offering-1',
+          slotId: 'slot-1', petId: 'pet-1', providerName: 'Clinic One',
+          serviceName: 'Consultation', petName: 'Milo',
+          startsAt: '2026-08-20T10:00:00Z', endsAt: '2026-08-20T10:30:00Z',
+          status: 'COMPLETED', paymentMethod: 'PAY_AT_PROVIDER', paymentStatus: 'NOT_REQUIRED',
+          pricePaise: 65000, currency: 'INR', holdExpiresAt: null,
+          createdAt: '2026-08-01T09:00:00Z', updatedAt: '2026-08-20T11:00:00Z',
         },
         {
-          id: 'appointment-2', customerId: 'customer-1', providerId: 'provider-2',
-          offeringId: 'offering-2', slotId: 'slot-2', petId: 'pet-2', status: 'CONFIRMED',
-          bookedAt: '2026-08-03T09:00:00Z', priceAmount: 'invalid',
+          appointmentId: 'appointment-2', outletId: 'provider-2', serviceId: 'offering-2',
+          slotId: 'slot-2', petId: 'pet-2', providerName: 'Groomer Two',
+          serviceName: 'Full Spa', petName: 'Luna',
+          startsAt: '2026-08-21T10:00:00Z', endsAt: '2026-08-21T11:00:00Z',
+          status: 'BOOKED', paymentMethod: 'PAY_AT_PROVIDER', paymentStatus: 'NOT_REQUIRED',
+          pricePaise: '90000', currency: 'INR', holdExpiresAt: null,
+          createdAt: '2026-08-03T09:00:00Z', updatedAt: '2026-08-03T09:00:00Z',
         },
-      ]))
-      .mockResolvedValueOnce(response([
-        { id: 'review-1', targetType: 'APPOINTMENT', targetId: 'appointment-1' },
-        { id: 'review-2', targetType: 'PROVIDER', targetId: 'provider-1' },
-      ]))
-      .mockResolvedValueOnce(response({ providerId: 'provider-1', name: 'Clinic One', address: 'Road', phone: '1' }))
-      .mockResolvedValueOnce(response([{ offeringId: 'offering-1', name: 'Consultation' }]))
-      .mockResolvedValueOnce(response({ slotStart: '2026-08-10T10:00:00Z' }))
-      .mockResolvedValueOnce(response({}, 500))
-      .mockResolvedValueOnce(response({}, 500))
-      .mockResolvedValueOnce(response({ startTime: '2026-08-11T10:00:00Z' }));
+      ],
+      page: 0, pageSize: 100, hasNext: false,
+    }));
 
     const appointments = await fetchCustomerAppointments('customer-1', token);
     expect(appointments.map((item) => item.id)).toEqual(['appointment-2', 'appointment-1']);
     expect(appointments[1]).toMatchObject({
-      providerName: 'Clinic One', serviceName: 'Consultation', hasReview: true, priceAmount: 650,
+      providerName: 'Clinic One', serviceName: 'Consultation', petName: 'Milo',
+      hasReview: false, canReview: false, priceAmount: 650,
     });
     expect(appointments[0]).toMatchObject({
-      providerName: 'Provider provider', serviceName: 'Service offering', hasReview: false,
+      providerName: 'Groomer Two', serviceName: 'Full Spa', priceAmount: 900,
+      status: 'CONFIRMED',
     });
     expect(await AsyncStorage.getItem('@mypet_appointments_cache_v1_customer-1')).not.toBeNull();
+    expect(mockedFetch.mock.calls[0][0]).toBe(
+      'https://api.mypet.test/api/v1/customer/appointments?page=0&pageSize=100',
+    );
   });
 
-  it('uses cached history when online enrichment fails and rejects without cache', async () => {
+  it('uses cached history only for network failures and never hides authorization errors', async () => {
     const cached = [{ id: 'cached-appointment' }];
     await AsyncStorage.setItem('@mypet_appointments_cache_v1_customer-1', JSON.stringify(cached));
     mockedFetch.mockRejectedValueOnce(new TypeError('offline'));
-    mockedFetch.mockRejectedValueOnce(new TypeError('offline'));
     await expect(fetchCustomerAppointments('customer-1', token)).resolves.toEqual(cached);
 
+    await AsyncStorage.setItem('@mypet_appointments_cache_v1_customer-2', JSON.stringify([{ id: 'stale' }]));
     mockedFetch.mockResolvedValueOnce(response({ error: 'History denied' }, 403));
-    mockedFetch.mockResolvedValueOnce(response([]));
     await expect(fetchCustomerAppointments('customer-2', token)).rejects.toThrow('History denied');
   });
 
-  it('rejects appointment rows without an ID and creates trimmed or null reviews', async () => {
-    mockedFetch
-      .mockResolvedValueOnce(response([{
-        customerId: 'customer-1', providerId: 'provider-1', offeringId: 'offering-1',
-        slotId: 'slot-1', petId: 'pet-1', status: 'CONFIRMED',
-      }]))
-      .mockResolvedValueOnce(response([]));
-    await expect(fetchCustomerAppointments('customer-3', token)).rejects.toThrow('did not include an appointment ID');
-
-    mockedFetch
-      .mockResolvedValueOnce(response({}, 201))
-      .mockResolvedValueOnce(response({}, 201));
+  it('does not issue legacy appointment review requests', async () => {
     await expect(submitAppointmentReview({
       customerId: 'customer-1', providerId: 'provider-1', targetId: 'appointment-1',
-      rating: 5, comment: ' Excellent ', accessToken: token,
-    })).resolves.toBe('created');
-    await expect(submitAppointmentReview({
-      customerId: 'customer-1', providerId: 'provider-1', targetId: 'appointment-2',
-      rating: 4, comment: '   ', accessToken: token,
-    })).resolves.toBe('created');
-    expect(JSON.parse(mockedFetch.mock.calls[2][1]?.body as string).comment).toBe('Excellent');
-    expect(JSON.parse(mockedFetch.mock.calls[3][1]?.body as string).comment).toBeNull();
+      rating: 5, comment: 'Excellent', accessToken: token,
+    })).rejects.toThrow('reviews are not available');
+    expect(mockedFetch).not.toHaveBeenCalled();
   });
 });
 
@@ -406,46 +394,52 @@ describe('appointment booking production paths', () => {
     serviceName: 'Consultation', startTime: 'start', endTime: 'end', price: 650,
   };
 
-  it('filters services and slots, handles missing times and normalizes prices', async () => {
+  const servicesPage = {
+    items: [
+      {
+        serviceId: 'offering-1', outletId: 'provider-1', capability: 'VETERINARY',
+        name: 'Consultation', description: 'General consultation', durationMinutes: 30,
+        pricePaise: 65050, currency: 'INR',
+      },
+      {
+        serviceId: 'offering-2', outletId: 'provider-1', capability: 'VETERINARY',
+        name: 'Follow-up', description: null, durationMinutes: 15,
+        pricePaise: '0', currency: 'INR',
+      },
+    ],
+    page: 0, pageSize: 100, hasNext: false,
+  };
+
+  it('loads canonical services and slots, handles missing times and normalizes paise prices', async () => {
     mockedFetch
-      .mockResolvedValueOnce(response([
-        {
-          offeringId: 'offering-1', providerId: 'provider-1', name: 'Consultation',
-          price: '650.50', status: 'ACTIVE', durationMinutes: 30,
-        },
-        {
-          offeringId: 'offering-2', providerId: 'provider-1', name: 'Follow-up',
-          price: 'bad', stockQuantity: null,
-        },
-        {
-          offeringId: 'inactive', providerId: 'provider-1', name: 'Inactive',
-          price: 10, status: 'INACTIVE', durationMinutes: 15,
-        },
-        {
-          offeringId: 'product', providerId: 'provider-1', name: 'Product',
-          price: 10, stockQuantity: 5,
-        },
-      ]))
-      .mockResolvedValueOnce(response([
-        { slotId: 'slot-1', offeringId: 'offering-1', slotStart: '2026-08-10T10:00:00Z', slotEnd: '2026-08-10T10:30:00Z', status: 'AVAILABLE' },
-        { slotId: 'busy', offeringId: 'offering-1', status: 'BOOKED' },
-      ]))
-      .mockResolvedValueOnce(response([
-        { slotId: 'slot-2', offeringId: 'offering-2', status: 'AVAILABLE' },
-      ]));
+      .mockResolvedValueOnce(response(servicesPage))
+      .mockResolvedValueOnce(response({
+        items: [{
+          slotId: 'slot-1', serviceId: 'offering-1',
+          startsAt: '2026-08-20T10:00:00Z', endsAt: '2026-08-20T10:30:00Z',
+        }], page: 0, pageSize: 100, hasNext: false,
+      }))
+      .mockResolvedValueOnce(response({
+        items: [{ slotId: 'slot-2', serviceId: 'offering-2', startsAt: '', endsAt: '' }],
+        page: 0, pageSize: 100, hasNext: false,
+      }));
 
     const slots = await fetchAvailableAppointmentSlots('provider/1');
     expect(slots).toHaveLength(2);
     expect(slots[0]).toMatchObject({ id: 'slot-1', price: 650.5 });
     expect(slots[1]).toMatchObject({ id: 'slot-2', price: 0, startTime: 'Slot time unavailable' });
-    expect(mockedFetch.mock.calls[0][0]).toContain('providerId=provider%2F1');
+    expect(mockedFetch.mock.calls[0][0]).toContain('/api/v1/public/services?');
+    expect(mockedFetch.mock.calls[0][0]).toContain('outletId=provider%2F1');
+    expect(mockedFetch.mock.calls[1][0]).toContain('/api/v1/public/services/offering-1/availability?');
   });
 
-  it('handles booking validation, API failures, missing IDs and success', async () => {
+  it('enforces booking validation, idempotent secure payloads, API failures and confirmation', async () => {
     await expect(holdAppointmentSlot({ slot, userId: null, petId: 'pet-1', accessToken: token }))
       .rejects.toThrow('sign in');
     await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: '', accessToken: token }))
       .rejects.toThrow('Select a pet');
+    await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', accessToken: null }))
+      .rejects.toThrow('sign in');
 
     mockedFetch
       .mockResolvedValueOnce(response({ error: 'Slot occupied' }, 409))
@@ -460,17 +454,25 @@ describe('appointment booking production paths', () => {
       .rejects.toThrow('no appointment ID');
     await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', accessToken: token }))
       .resolves.toBe('appointment-1');
+
+    const holdRequest = mockedFetch.mock.calls[2][1];
+    expect(holdRequest?.headers).toMatchObject({
+      Authorization: 'Bearer access-token',
+      'Idempotency-Key': 'appointment-slot-1-pet-1',
+    });
+    expect(JSON.parse(holdRequest?.body as string)).toEqual({
+      outletId: 'provider-1', serviceId: 'offering-1', slotId: 'slot-1', petId: 'pet-1',
+      paymentMethod: 'PAY_AT_PROVIDER',
+    });
+
     await expect(confirmAppointmentHold('appointment/1', token)).resolves.toBeUndefined();
     await expect(confirmAppointmentHold('appointment/1', token)).rejects.toThrow('Expired hold');
     expect(mockedFetch.mock.calls[3][0]).toContain('appointment%2F1/confirm');
   });
 
-  it('returns empty slots when a slot endpoint fails and surfaces offering errors', async () => {
+  it('returns empty slots when availability fails and surfaces service catalogue errors', async () => {
     mockedFetch
-      .mockResolvedValueOnce(response([{
-        offeringId: 'offering-1', providerId: 'provider-1', name: 'Consultation',
-        price: 500, durationMinutes: 30,
-      }]))
+      .mockResolvedValueOnce(response(servicesPage))
       .mockResolvedValueOnce(response({}, 500))
       .mockResolvedValueOnce(response({ message: 'Catalog offline' }, 503));
 

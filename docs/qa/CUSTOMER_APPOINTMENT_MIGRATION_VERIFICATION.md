@@ -13,21 +13,20 @@ This document records the repository-level verification scope for the MyPet-styl
 - Grooming and veterinary discovery use canonical public service and availability APIs rather than static production catalogues.
 - Appointment confirmation is `PAY_AT_PROVIDER`; appointment flows do not create a Cashfree session.
 - Product-order Cashfree support remains separate and retains its existing sandbox/live-certification boundaries.
+- Customer dependency validation must reject Critical and unexpected High advisories while allowing only the same two documented, currently unpatched Expo/Metro `image-size` build-tool advisories already permitted by the Merchant dependency guard.
 
 ## Required merge gates
 
 The candidate must not merge until all of the following are true on the exact final PR head SHA:
 
-1. Customer typecheck succeeds.
-2. Customer lint succeeds.
-3. Customer Jest suite succeeds.
-4. Backend verification succeeds, including Kotlin warning-as-error compilation and appointment API/domain tests.
-5. Merchant regression validation succeeds.
-6. A semantic review verifies ownership, authorization, idempotency, slot concurrency, server-authoritative price, DTO mapping, loading/error/offline behavior, and absence of legacy appointment endpoints.
-7. A second independent semantic review is completed on the unchanged final SHA.
+1. Customer dependency guard, typecheck, lint, and Jest suite succeed.
+2. Backend verification succeeds, including Kotlin warning-as-error compilation and appointment API/domain tests.
+3. Merchant regression validation succeeds.
+4. A semantic review verifies ownership, authorization, idempotency, slot concurrency, server-authoritative price, DTO mapping, serviceability, loading/error/offline behavior, and absence of legacy appointment endpoints.
+5. A second independent semantic review is completed on the unchanged final SHA.
 
 ## Exact-head rerun note
 
-The final validation must execute from a normal repository-authored commit after any bot-authored fixture migration so GitHub Actions actually runs the Customer, Merchant, and backend jobs on the final candidate rather than leaving them in an action-required state.
+The final validation must execute from a normal repository-authored commit after any bot-authored fixture or lockfile migration so GitHub Actions actually runs the Customer, Merchant, and backend jobs on the final candidate rather than leaving them in an action-required state.
 
 Physical Android behavior, real Cashfree transactions, external push delivery, and production-provider credentials are separate external evidence gates and must not be claimed from repository CI alone.

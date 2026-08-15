@@ -21,9 +21,9 @@ function money(value: number): string {
 
 /**
  * Appointment online payment remains fail-closed until the server has a
- * provider-reconciled payment contract. Live appointments can still be safely
- * confirmed as PAY_AT_CLINIC; no Cashfree session or client-authored payment
- * success is used by this screen.
+ * provider-reconciled payment contract. Plan 5 online payment is limited to product orders.
+ * Live appointments can still be safely confirmed as PAY_AT_CLINIC; no Cashfree
+ * session or client-authored payment success is used by this screen.
  */
 export default function AppointmentPaymentScreen() {
   const params = useLocalSearchParams<Record<string, string | string[]>>();
@@ -48,11 +48,11 @@ export default function AppointmentPaymentScreen() {
     if (!session) return;
     setPaying(true);
     try {
-      await confirmAppointmentHold(
-        appointmentId,
-        session.accessToken,
-        demoPayment ? 'demo-payment' : undefined,
-      );
+      if (demoPayment) {
+        await confirmAppointmentHold(appointmentId, session.accessToken, 'demo-payment');
+      } else {
+        await confirmAppointmentHold(appointmentId, session.accessToken);
+      }
       if (demoPayment) {
         Alert.alert(
           'Demo appointment confirmed',

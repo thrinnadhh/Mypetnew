@@ -7,6 +7,7 @@
     "@expo/ui": "~56.0.25",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@supabase/supabase-js": "^2.108.2",
+    "cashfree-pg-api-contract": "2.1.1",
     "expo": "~56.0.19",
     "expo-build-properties": "~56.0.25",
     "expo-constants": "~56.0.23",
@@ -34,6 +35,7 @@
     "react-dom": "19.2.3",
     "react-i18next": "^16.6.6",
     "react-native": "0.85.3",
+    "react-native-cashfree-pg-sdk": "2.4.0",
     "react-native-gesture-handler": "~2.31.1",
     "react-native-reanimated": "4.3.1",
     "react-native-safe-area-context": "~5.7.0",
@@ -62,7 +64,7 @@
     "lint": "expo lint --quiet",
     "test": "jest",
     "test:coverage": "jest --runInBand --coverage",
-    "test:s10": "jest --runInBand src/auth/__tests__ src/navigation/__tests__ src/i18n/__tests__/s10-i18n.test.ts",
+    "test:s10": "jest --runInBand src/auth/__tests__ src/navigation/__tests__/s10-i18n.test.ts",
     "lint:all": "expo lint"
   },
   "overrides": {

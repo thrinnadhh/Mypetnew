@@ -1,7 +1,9 @@
 package `in`.mypetnew.application.web
 
+import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.payment.domain.PaymentService
 import `in`.mypetnew.payment.infrastructure.CashfreeWebhookVerifier
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -10,7 +12,7 @@ import org.springframework.web.bind.annotation.RestController
 
 @RestController
 class PaymentWebhookController(
-    private val verifier: CashfreeWebhookVerifier,
+    private val verifiers: ObjectProvider<CashfreeWebhookVerifier>,
     private val payments: PaymentService,
 ) {
     @PostMapping("/api/v1/webhooks/cashfree/payments")
@@ -21,6 +23,8 @@ class PaymentWebhookController(
         @RequestHeader("x-webhook-version", required = false) webhookVersion: String?,
         @RequestHeader("x-idempotency-key", required = false) deliveryIdentity: String?,
     ): ResponseEntity<Map<String, Boolean>> {
+        val verifier = verifiers.getIfAvailable()
+            ?: throw DomainException("PAYMENT_PROVIDER_UNAVAILABLE", "Online payment webhook processing is unavailable")
         val event = verifier.verifyAndNormalize(rawBody, signature, timestamp, webhookVersion, deliveryIdentity)
         payments.ingestWebhook(event)
         // Duplicate verified deliveries are intentionally acknowledged. A first

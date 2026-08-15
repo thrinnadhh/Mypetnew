@@ -33,7 +33,13 @@ class GlobalExceptionHandler {
             "RESOURCE_NOT_FOUND", "ORDER_NOT_FOUND", "CART_NOT_FOUND", "QUOTE_NOT_FOUND" -> HttpStatus.NOT_FOUND
             "FORBIDDEN", "ADMIN_PERMISSION_REQUIRED", "CONSENT_REQUIRED" -> HttpStatus.FORBIDDEN
             "OTP_RATE_LIMITED" -> HttpStatus.TOO_MANY_REQUESTS
-            "IDEMPOTENCY_FINGERPRINT_MISMATCH", "ORDER_TRANSITION_INVALID", "INSUFFICIENT_STOCK" -> HttpStatus.CONFLICT
+            "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+            "ORDER_TRANSITION_INVALID",
+            "INSUFFICIENT_STOCK",
+            "APPOINTMENT_SLOT_UNAVAILABLE",
+            "SERVICE_SLOT_CONFLICT",
+            "APPOINTMENT_HOLD_EXPIRED",
+            "APPOINTMENT_STATE_INVALID" -> HttpStatus.CONFLICT
             else -> HttpStatus.BAD_REQUEST
         }
         return ResponseEntity.status(status).body(envelope(error.code, error.message, request))

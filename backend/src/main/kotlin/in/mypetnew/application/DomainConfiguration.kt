@@ -1,5 +1,8 @@
 package `in`.mypetnew.application
 
+import `in`.mypetnew.appointment.domain.AppointmentPersistence
+import `in`.mypetnew.appointment.domain.AppointmentService
+import `in`.mypetnew.appointment.domain.InMemoryAppointmentPersistence
 import `in`.mypetnew.catalog.domain.CatalogService
 import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.commerce.domain.CartService
@@ -16,29 +19,29 @@ import `in`.mypetnew.delivery.domain.DeliveryPricingPolicy
 import `in`.mypetnew.delivery.domain.DispatchService
 import `in`.mypetnew.delivery.domain.InMemoryCaptainGeoIndex
 import `in`.mypetnew.delivery.domain.InMemoryDispatchPersistence
-import `in`.mypetnew.engagement.domain.DeviceRegistrationService
 import `in`.mypetnew.engagement.domain.DeviceRegistrationPersistence
-import `in`.mypetnew.engagement.domain.NotificationService
-import `in`.mypetnew.engagement.domain.NotificationRepository
+import `in`.mypetnew.engagement.domain.DeviceRegistrationService
 import `in`.mypetnew.engagement.domain.InMemoryNotificationRepository
-import `in`.mypetnew.loyalty.domain.LoyaltyService
+import `in`.mypetnew.engagement.domain.NotificationRepository
+import `in`.mypetnew.engagement.domain.NotificationService
 import `in`.mypetnew.identity.domain.InMemoryOtpProvider
+import `in`.mypetnew.identity.domain.InMemorySessionStore
 import `in`.mypetnew.identity.domain.OtpProvider
 import `in`.mypetnew.identity.domain.OtpService
-import `in`.mypetnew.identity.domain.InMemorySessionStore
 import `in`.mypetnew.identity.domain.SessionStore
 import `in`.mypetnew.identity.infrastructure.ConsoleOtpProvider
-import `in`.mypetnew.pos.domain.CustomerAssociationChallengeService
-import `in`.mypetnew.pos.domain.PosService
-import `in`.mypetnew.provider.domain.ProviderService
-import `in`.mypetnew.provider.domain.DocumentStore
-import `in`.mypetnew.provider.domain.InMemoryPrivateDocumentStore
-import `in`.mypetnew.privacy.domain.InMemoryPrivacyRepository
-import `in`.mypetnew.privacy.domain.PrivacyRepository
-import `in`.mypetnew.privacy.domain.PrivacyService
+import `in`.mypetnew.loyalty.domain.LoyaltyService
 import `in`.mypetnew.payment.domain.FakePaymentGateway
 import `in`.mypetnew.payment.domain.InMemoryPaymentPersistence
 import `in`.mypetnew.payment.domain.PaymentService
+import `in`.mypetnew.pos.domain.CustomerAssociationChallengeService
+import `in`.mypetnew.pos.domain.PosService
+import `in`.mypetnew.privacy.domain.InMemoryPrivacyRepository
+import `in`.mypetnew.privacy.domain.PrivacyRepository
+import `in`.mypetnew.privacy.domain.PrivacyService
+import `in`.mypetnew.provider.domain.DocumentStore
+import `in`.mypetnew.provider.domain.InMemoryPrivateDocumentStore
+import `in`.mypetnew.provider.domain.ProviderService
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
@@ -72,38 +75,66 @@ class DomainConfiguration {
     @Bean
     @Profile("test", "development")
     fun notificationRepository(): NotificationRepository = InMemoryNotificationRepository()
+
     @Bean @Profile("test", "development") fun providerService() = ProviderService()
     @Bean @Profile("test", "development") fun catalogService() = CatalogService()
     @Bean @Profile("test", "development") fun inventoryService() = InventoryService()
     @Bean @Profile("test", "development") fun cartService() = CartService()
     @Bean @Profile("test", "development") fun quoteService() = QuoteService()
     @Bean @Profile("test", "development") fun inMemoryOrderPersistence() = InMemoryQueryableOrderPersistence()
-    @Bean @Profile("test", "development")
+
+    @Bean
+    @Profile("test", "development")
     fun orderService(inventory: InventoryService, persistence: InMemoryQueryableOrderPersistence) =
         OrderService(inventory, persistence)
-    @Bean @Profile("test", "development")
+
+    @Bean
+    @Profile("test", "development")
     fun inMemoryPaymentPersistence(orders: OrderService) = InMemoryPaymentPersistence(orders)
+
     @Bean @Profile("test", "development") fun fakePaymentGateway() = FakePaymentGateway()
-    @Bean @Profile("test", "development")
+
+    @Bean
+    @Profile("test", "development")
     fun paymentService(persistence: InMemoryPaymentPersistence, gateway: FakePaymentGateway) =
         PaymentService(persistence, gateway)
+
     @Bean @Profile("test", "development") fun loyaltyService() = LoyaltyService()
-    @Bean @Profile("test", "development")
+
+    @Bean
+    @Profile("test", "development")
     fun posService(inventory: InventoryService, loyalty: LoyaltyService) = PosService(inventory, loyalty)
 
-    @Bean @Profile("test", "development")
+    @Bean
+    @Profile("test", "development")
     fun customerAssociationChallengeService() = CustomerAssociationChallengeService()
 
-    @Bean @Profile("test", "development")
+    @Bean
+    @Profile("test", "development")
     fun customerDataPersistence(): CustomerDataPersistence = InMemoryCustomerDataPersistence()
 
-    @Bean @Profile("test", "development")
+    @Bean
+    @Profile("test", "development")
     fun customerDataService(persistence: CustomerDataPersistence) = CustomerDataService(persistence)
 
-    @Bean @Profile("test", "development")
+    @Bean
+    @Profile("test", "development")
+    fun appointmentPersistence(): AppointmentPersistence = InMemoryAppointmentPersistence()
+
+    @Bean
+    @Profile("test", "development")
+    fun appointmentService(
+        persistence: AppointmentPersistence,
+        providers: ProviderService,
+        customerData: CustomerDataService,
+    ) = AppointmentService(persistence, providers, customerData)
+
+    @Bean
+    @Profile("test", "development")
     fun customerFavouritePersistence(): CustomerFavouritePersistence = InMemoryCustomerFavouritePersistence()
 
-    @Bean @Profile("test", "development")
+    @Bean
+    @Profile("test", "development")
     fun customerFavouriteService(
         persistence: CustomerFavouritePersistence,
         catalog: CatalogService,
@@ -116,13 +147,16 @@ class DomainConfiguration {
         @Value("\${mypet.delivery.eta-minutes:45}") etaMinutes: Int,
     ) = DeliveryPricingPolicy(baseFeePaise, etaMinutes)
 
-    @Bean @Profile("test", "development")
+    @Bean
+    @Profile("test", "development")
     fun inMemoryDispatchPersistence() = InMemoryDispatchPersistence()
 
-    @Bean @Profile("test", "development")
+    @Bean
+    @Profile("test", "development")
     fun inMemoryCaptainGeoIndex() = InMemoryCaptainGeoIndex()
 
-    @Bean @Profile("test", "development")
+    @Bean
+    @Profile("test", "development")
     fun dispatchService(
         persistence: InMemoryDispatchPersistence,
         geoIndex: InMemoryCaptainGeoIndex,
@@ -132,6 +166,7 @@ class DomainConfiguration {
     @Bean
     fun deviceRegistrationService(persistence: ObjectProvider<DeviceRegistrationPersistence>) =
         DeviceRegistrationService(persistence.getIfAvailable())
+
     @Bean
     fun notificationService(repository: NotificationRepository) = NotificationService(repository)
 

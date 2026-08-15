@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, StyleSheet, TextInput, View } from 'react-native';
 
@@ -8,12 +8,14 @@ import { ScreenHeader } from '@/components/ui/screen-header';
 import { INITIAL_MARKET } from '@/config/markets';
 import { useAuth } from '@/context/AuthContext';
 import { useAuthIntent } from '@/context/AuthIntentContext';
+import { useLocation } from '@/context/LocationContext';
 import { radii, spacing, touchTarget } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
 import {
   fetchAvailableAppointmentSlots,
   holdAppointmentSlot,
+  type AppointmentServiceCapability,
   type AppointmentSlotOption,
 } from '@/services/appointment-booking';
 import { isOfflineError } from '@/services/customer-profile';
@@ -36,12 +38,24 @@ interface Props {
 
 type LoadState = 'loading' | 'ready' | 'offline' | 'error';
 
+function single(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 export default function AppointmentDiscoveryScreen({ providerType, route, titleKey }: Props) {
   const router = useRouter();
+  const params = useLocalSearchParams<{ providerId?: string | string[]; serviceId?: string | string[] }>();
+  const preferredProviderId = single(params.providerId);
+  const preferredServiceId = single(params.serviceId);
   const theme = useTheme();
   const { t } = useTranslation();
   const { user, session } = useAuth();
   const { requireAuth } = useAuthIntent();
+  const { activeCity } = useLocation();
+  const serviceCapability: AppointmentServiceCapability = providerType === 'GROOMER' ? 'GROOMING' : 'VETERINARY';
+  const careEnabled = providerType === 'GROOMER'
+    ? activeCity.featureFlags.allowGrooming
+    : activeCity.featureFlags.allowVet;
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [state, setState] = useState<LoadState>('loading');
   const [provider, setProvider] = useState<ProviderSummary | null>(null);
@@ -57,13 +71,20 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
 
   const loadProviders = useCallback(async () => {
     setState('loading');
+    setProvider(null);
+    setSlots([]);
+    if (!careEnabled) {
+      setProviders([]);
+      setState('ready');
+      return;
+    }
     try {
-      setProviders(await fetchProviders(providerType, INITIAL_MARKET));
+      setProviders(await fetchProviders(providerType, INITIAL_MARKET, activeCity.pincodes));
       setState('ready');
     } catch (error) {
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, [providerType]);
+  }, [activeCity.pincodes, careEnabled, providerType]);
 
   useEffect(() => {
     void loadProviders();
@@ -95,17 +116,23 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
     void loadPets();
   }, [loadPets]);
 
-  const chooseProvider = useCallback(async (next: ProviderSummary) => {
+  const chooseProvider = useCallback(async (next: ProviderSummary, serviceId?: string) => {
     setProvider(next);
     setSlots([]);
     setSlotState('loading');
     try {
-      setSlots(await fetchAvailableAppointmentSlots(next.id));
+      setSlots(await fetchAvailableAppointmentSlots(next.id, serviceId, serviceCapability));
       setSlotState('ready');
     } catch (error) {
       setSlotState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, []);
+  }, [serviceCapability]);
+
+  useEffect(() => {
+    if (state !== 'ready' || provider || !preferredProviderId) return;
+    const preferred = providers.find((item) => item.id === preferredProviderId);
+    if (preferred) void chooseProvider(preferred, preferredServiceId);
+  }, [chooseProvider, preferredProviderId, preferredServiceId, provider, providers, state]);
 
   const createPet = useCallback(async () => {
     if (!session || petName.trim().length < 2) return;
@@ -158,11 +185,13 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
       setSlots([]);
     } catch (error) {
       Alert.alert('Booking failed', error instanceof Error ? error.message : 'Could not reserve this appointment.');
-      if (provider) await chooseProvider(provider);
+      if (provider) {
+        await chooseProvider(provider, provider.id === preferredProviderId ? preferredServiceId : undefined);
+      }
     } finally {
       setBookingSlotId(null);
     }
-  }, [chooseProvider, pets, provider, requireAuth, route, router, selectedPetId, session, user]);
+  }, [chooseProvider, pets, preferredProviderId, preferredServiceId, provider, requireAuth, route, router, selectedPetId, session, user]);
 
   const close = () => {
     if (bookingSlotId) return;
@@ -185,21 +214,28 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
           onAction={() => void loadProviders()}
         />
       ) : null}
-      {state === 'ready' && providers.length === 0 ? (
-        <StateView kind="empty" title={t('states.empty')} message={t('states.emptyMessage')} />
+      {state === 'ready' && !careEnabled ? (
+        <StateView
+          kind="empty"
+          title={`${providerType === 'GROOMER' ? 'Grooming' : 'Veterinary care'} is not enabled in ${activeCity.displayName}`}
+          message="Choose another service city to see providers that can accept bookings."
+        />
       ) : null}
-      {state === 'ready' ? (
+      {state === 'ready' && careEnabled && providers.length === 0 ? (
+        <StateView
+          kind="empty"
+          title={t('states.empty')}
+          message={`No serviceable ${providerType === 'GROOMER' ? 'groomers' : 'veterinary providers'} are available for the selected ${activeCity.displayName} PIN codes.`}
+        />
+      ) : null}
+      {state === 'ready' && careEnabled ? (
         <View style={styles.list}>
           {providers.map((item) => (
             <EntityCard
               key={item.id}
               title={item.name}
               subtitle={item.description || t('appointmentFoundation.providerFallback')}
-              meta={t('appointmentFoundation.providerMeta', {
-                distance: item.distanceKm.toFixed(1),
-                rating: item.rating.toFixed(1),
-                count: item.ratingCount,
-              })}
+              meta={`${activeCity.displayName} · Serviceable provider`}
               icon={providerType === 'GROOMER' ? 'groom' : 'medical'}
               onPress={() => void chooseProvider(item)}
             />
@@ -254,7 +290,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
             title={t(slotState === 'offline' ? 'states.offline' : 'states.error')}
             message={t(slotState === 'offline' ? 'states.offlineMessage' : 'appointmentFoundation.holdFailed')}
             actionLabel={provider ? t('states.retry') : undefined}
-            onAction={provider ? () => void chooseProvider(provider) : undefined}
+            onAction={provider ? () => void chooseProvider(provider, provider.id === preferredProviderId ? preferredServiceId : undefined) : undefined}
           />
         ) : null}
         {slotState === 'ready' && slots.length === 0 ? (
@@ -267,7 +303,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
                 key={slot.id}
                 title={slot.serviceName}
                 subtitle={`${slot.startTime} – ${slot.endTime}`}
-                meta={bookingSlotId === slot.id ? 'Reserving slot…' : `₹${slot.price} · Tap to review & pay`}
+                meta={bookingSlotId === slot.id ? 'Reserving slot…' : `₹${slot.price} · Tap to review & book`}
                 icon="calendar"
                 onPress={() => {
                   if (!bookingSlotId) void requestBooking(slot);

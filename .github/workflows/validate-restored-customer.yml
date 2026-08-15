@@ -31,10 +31,47 @@ jobs:
           cache: npm
           cache-dependency-path: apps/customer-app/package-lock.json
       - name: Install Customer dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
+      - name: Guard Customer production dependency advisories
+        run: |
+          npm audit --omit=dev --json > audit.json || true
+          node <<'NODE'
+          const fs = require('fs');
+          const report = JSON.parse(fs.readFileSync('audit.json', 'utf8'));
+          const allowed = new Set([
+            'https://github.com/advisories/GHSA-w3rx-r6r6-pgpr',
+            'https://github.com/advisories/GHSA-5p2g-fcmc-qvqq',
+          ]);
+          const urls = new Set();
+          for (const vulnerability of Object.values(report.vulnerabilities || {})) {
+            for (const via of vulnerability.via || []) {
+              if (via && typeof via === 'object' && typeof via.url === 'string') urls.add(via.url);
+            }
+          }
+          const meta = report.metadata?.vulnerabilities || {};
+          const critical = Number(meta.critical || 0);
+          const high = Number(meta.high || 0);
+          const unexpected = [...urls].filter((url) => !allowed.has(url));
+          const exceptionExpiresAt = Date.parse('2026-09-11T00:00:00Z');
+          if (Date.now() >= exceptionExpiresAt && high > 0) {
+            console.error('The temporary Metro/image-size security exception expired on 2026-09-11 and must be re-evaluated.');
+            process.exit(1);
+          }
+          if (critical > 0 || unexpected.length > 0 || (high > 0 && urls.size === 0)) {
+            console.error(JSON.stringify({ critical, high, advisoryUrls: [...urls], unexpected }, null, 2));
+            process.exit(1);
+          }
+          if (high > 0) {
+            console.warn(`${high} transitive High findings trace only to the two documented, currently unpatched image-size Metro build-tool advisories.`);
+          }
+          console.log('Customer production dependency advisory gate passed.');
+          NODE
+          rm -f audit.json
       - name: Typecheck Customer app
         run: npm run typecheck
       - name: Lint Customer app
         run: npm run lint
       - name: Test Customer app
         run: npm test -- --runInBand
+      - name: Export Android Customer bundle
+        run: npx expo export -p android --output-dir /tmp/customer-android-export

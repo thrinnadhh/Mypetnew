@@ -141,63 +141,83 @@ describe('connected customer services', () => {
     expect(shop.categories).toEqual(['toys']);
   });
 
-  it('discovers service slots and holds with online payment required', async () => {
-    mockedFetch
-      .mockResolvedValueOnce(
-        jsonResponse([
-          {
-            offeringId: '33333333-3333-4333-8333-333333333333',
-            providerId: '44444444-4444-4444-8444-444444444444',
-            name: 'Vet Consultation',
-            price: '600.00',
-            status: 'ACTIVE',
-            durationMinutes: 30,
-            stockQuantity: null,
-          },
-        ]),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse([
-          {
-            slotId: '55555555-5555-4555-8555-555555555555',
-            offeringId: '33333333-3333-4333-8333-333333333333',
-            slotStart: '2026-08-10T10:00:00Z',
-            slotEnd: '2026-08-10T10:30:00Z',
-            status: 'AVAILABLE',
-          },
-        ]),
-      );
-
-    const slots = await fetchAvailableAppointmentSlots(
-      '44444444-4444-4444-8444-444444444444',
+  it('discovers canonical service slots and creates an idempotent Pay at Provider hold', async () => {
+  mockedFetch
+    .mockResolvedValueOnce(
+      jsonResponse({
+        items: [{
+          serviceId: '33333333-3333-4333-8333-333333333333',
+          outletId: '44444444-4444-4444-8444-444444444444',
+          capability: 'VETERINARY',
+          name: 'Vet Consultation',
+          description: 'General consultation',
+          durationMinutes: 30,
+          pricePaise: 60000,
+          currency: 'INR',
+        }],
+        page: 0,
+        pageSize: 100,
+        hasNext: false,
+      }),
+    )
+    .mockResolvedValueOnce(
+      jsonResponse({
+        items: [{
+          slotId: '55555555-5555-4555-8555-555555555555',
+          serviceId: '33333333-3333-4333-8333-333333333333',
+          startsAt: '2026-08-20T10:00:00Z',
+          endsAt: '2026-08-20T10:30:00Z',
+        }],
+        page: 0,
+        pageSize: 100,
+        hasNext: false,
+      }),
     );
-    expect(slots).toHaveLength(1);
-    expect(slots[0].price).toBe(600);
 
-    mockedFetch
-      .mockResolvedValueOnce(
-        jsonResponse({ appointmentId: '66666666-6666-4666-8666-666666666666' }, 201),
-      )
-      .mockResolvedValueOnce(jsonResponse({ status: 'CONFIRMED' }));
-
-    const appointmentId = await holdAppointmentSlot({
-      slot: slots[0],
-      userId: '77777777-7777-4777-8777-777777777777',
-      petId: '88888888-8888-4888-8888-888888888888',
-      accessToken: 'token',
-    });
-    await confirmAppointmentHold(appointmentId, 'token', '99999999-9999-4999-8999-999999999999');
-
-    expect(appointmentId).toBe('66666666-6666-4666-8666-666666666666');
-    expect(JSON.parse(mockedFetch.mock.calls[2][1]?.body as string)).toMatchObject({
-      petId: '88888888-8888-4888-8888-888888888888',
-      customerId: '77777777-7777-4777-8777-777777777777',
-      payAtClinic: false,
-    });
-    expect(mockedFetch.mock.calls[3][0]).toContain(
-      'paymentId=99999999-9999-4999-8999-999999999999',
-    );
+  const slots = await fetchAvailableAppointmentSlots(
+    '44444444-4444-4444-8444-444444444444',
+  );
+  expect(slots).toHaveLength(1);
+  expect(slots[0]).toMatchObject({
+    id: '55555555-5555-4555-8555-555555555555',
+    offeringId: '33333333-3333-4333-8333-333333333333',
+    price: 600,
   });
+  expect(mockedFetch.mock.calls[0][0]).toContain('/api/v1/public/services?');
+  expect(mockedFetch.mock.calls[0][0]).toContain('outletId=44444444-4444-4444-8444-444444444444');
+  expect(mockedFetch.mock.calls[1][0]).toContain('/availability?');
+
+  mockedFetch
+    .mockResolvedValueOnce(
+      jsonResponse({ appointmentId: '66666666-6666-4666-8666-666666666666' }, 201),
+    )
+    .mockResolvedValueOnce(jsonResponse({ status: 'BOOKED' }));
+
+  const appointmentId = await holdAppointmentSlot({
+    slot: slots[0],
+    userId: '77777777-7777-4777-8777-777777777777',
+    petId: '88888888-8888-4888-8888-888888888888',
+    accessToken: 'token',
+  });
+  await confirmAppointmentHold(appointmentId, 'token');
+
+  expect(appointmentId).toBe('66666666-6666-4666-8666-666666666666');
+  expect(mockedFetch.mock.calls[2][0]).toContain('/api/v1/customer/appointments');
+  expect(mockedFetch.mock.calls[2][1]?.headers).toMatchObject({
+    Authorization: 'Bearer token',
+    'Idempotency-Key': 'appointment-55555555-5555-4555-8555-555555555555-88888888-8888-4888-8888-888888888888',
+  });
+  expect(JSON.parse(mockedFetch.mock.calls[2][1]?.body as string)).toEqual({
+    outletId: '44444444-4444-4444-8444-444444444444',
+    serviceId: '33333333-3333-4333-8333-333333333333',
+    slotId: '55555555-5555-4555-8555-555555555555',
+    petId: '88888888-8888-4888-8888-888888888888',
+    paymentMethod: 'PAY_AT_PROVIDER',
+  });
+  expect(mockedFetch.mock.calls[3][0]).toContain(
+    '/api/v1/customer/appointments/66666666-6666-4666-8666-666666666666/confirm',
+  );
+});
 
   it('reconstructs a validated cart with current live products', async () => {
     const product: customerCatalog.CommerceProduct = {

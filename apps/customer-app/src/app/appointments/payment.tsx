@@ -19,17 +19,12 @@ function money(value: number): string {
   return `₹${value.toFixed(2)}`;
 }
 
-/**
- * Plan 5 online payments are intentionally limited to canonical PRODUCT_ORDER
- * references. Appointment online payment belongs to Plan 8 and therefore fails
- * closed here instead of reviving the legacy client-authored amount/payment API.
- */
 export default function AppointmentPaymentScreen() {
   const params = useLocalSearchParams<Record<string, string | string[]>>();
   const router = useRouter();
   const theme = useTheme();
   const { user, session } = useAuth();
-  const [paying, setPaying] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   const appointmentId = single(params.appointmentId);
   const serviceName = single(params.serviceName) || 'Pet care appointment';
@@ -39,69 +34,55 @@ export default function AppointmentPaymentScreen() {
   const slotEnd = single(params.slotEnd);
   const amount = useMemo(() => {
     const parsed = Number(single(params.amount));
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
   }, [params.amount]);
-  const demoPayment = appConfig.allowDemoMode && appointmentId.startsWith('demo-appointment-');
+  const demoAppointment = appConfig.allowDemoMode && appointmentId.startsWith('demo-appointment-');
 
-  const finishDemoAppointment = async () => {
-    if (!session) return;
-    await confirmAppointmentHold(appointmentId, session.accessToken, 'demo-payment');
-    Alert.alert(
-      'Demo appointment confirmed',
-      `${serviceName} for ${petName} is confirmed at ${providerName}. No real payment was created.`,
-      [{ text: 'View appointments', onPress: () => router.replace(`/appointments?appointmentId=${appointmentId}` as never) }],
-    );
-  };
-
-  const handleDemoPayment = async () => {
-    if (!demoPayment || !session) return;
-    setPaying(true);
+  const handleConfirm = async () => {
+    if (!appointmentId || !session) return;
+    setConfirming(true);
     try {
-      await finishDemoAppointment();
+      await confirmAppointmentHold(appointmentId, session.accessToken);
+      Alert.alert(
+        demoAppointment ? 'Demo appointment confirmed' : 'Appointment booked',
+        `${serviceName} for ${petName} is booked at ${providerName}. Payment is due at the provider; no online charge was attempted.`,
+        [{ text: 'View appointments', onPress: () => router.replace(`/appointments?appointmentId=${appointmentId}` as never) }],
+      );
     } catch (error) {
-      Alert.alert('Demo confirmation failed', error instanceof Error ? error.message : 'Could not confirm the demo appointment.');
+      Alert.alert(
+        'Confirmation failed',
+        error instanceof Error ? error.message : 'Could not confirm this appointment. Please retry.',
+      );
     } finally {
-      setPaying(false);
+      setConfirming(false);
     }
   };
 
   if (!user || !session) {
     return (
-      <ScreenShell scroll={false} header={<AppBar title="Appointment payment" />}>
+      <ScreenShell scroll={false} header={<AppBar title="Confirm appointment" />}>
         <StateView kind="unauthenticated" title="Sign in required" message="Sign in again to review this appointment." />
       </ScreenShell>
     );
   }
 
-  if (!appointmentId || amount <= 0) {
+  if (!appointmentId) {
     return (
-      <ScreenShell scroll={false} header={<AppBar title="Appointment payment" />}>
-        <StateView kind="error" title="Invalid appointment" message="The appointment reference or quoted display amount is missing. Choose the slot again." />
-      </ScreenShell>
-    );
-  }
-
-  if (!demoPayment) {
-    return (
-      <ScreenShell scroll={false} header={<AppBar title="Appointment payment" />}>
-        <StateView
-          kind="error"
-          title="Online appointment payment is not available yet"
-          message="Plan 5 online payment is limited to product orders. Appointment payment remains disabled until the Plan 8 server contract is available. No charge has been attempted."
-          actionLabel="Back to appointments"
-          onAction={() => router.back()}
-        />
+      <ScreenShell scroll={false} header={<AppBar title="Confirm appointment" />}>
+        <StateView kind="error" title="Invalid appointment" message="The appointment hold is missing. Choose the slot again." />
       </ScreenShell>
     );
   }
 
   return (
-    <ScreenShell header={<AppBar title="Demo appointment" subtitle="Development simulation only" />}>
+    <ScreenShell header={<AppBar title="Confirm appointment" subtitle="Review before booking" />}>
       <View style={styles.container}>
-        <View style={[styles.demoNotice, { backgroundColor: theme.primarySoft }]}>
-          <StatusBadge label="DEMO PAYMENT" tone="warning" />
+        <View style={[styles.notice, { backgroundColor: theme.primarySoft }]}>
+          <StatusBadge label={demoAppointment ? 'DEMO · PAY AT PROVIDER' : 'PAY AT PROVIDER'} tone="success" />
           <ThemedText type="small" themeColor="textSecondary">
-            Development fixture only. No real money will be charged and no Cashfree session is created.
+            {demoAppointment
+              ? 'Development fixture only. No real payment is created.'
+              : 'No online payment is created for this booking. Pay the provider according to the confirmed service fee.'}
           </ThemedText>
         </View>
 
@@ -118,17 +99,20 @@ export default function AppointmentPaymentScreen() {
         </View>
 
         <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-          <ThemedText style={styles.cardTitle}>Demo amount</ThemedText>
+          <ThemedText style={styles.cardTitle}>Service fee</ThemedText>
           <View style={styles.row}>
-            <ThemedText themeColor="textSecondary">Displayed total</ThemedText>
+            <ThemedText themeColor="textSecondary">Pay at provider</ThemedText>
             <ThemedText style={[styles.totalValue, { color: theme.primary }]}>{money(amount)}</ThemedText>
           </View>
+          <ThemedText type="small" themeColor="textSecondary">
+            The backend stores the authoritative price snapshot when the slot is held. This screen is a display summary only.
+          </ThemedText>
         </View>
 
         <PrimaryAction
-          label={`Complete demo · ${money(amount)}`}
-          loading={paying}
-          onPress={() => void handleDemoPayment()}
+          label="Confirm booking · Pay at provider"
+          loading={confirming}
+          onPress={() => void handleConfirm()}
         />
       </View>
     </ScreenShell>
@@ -142,5 +126,5 @@ const styles = StyleSheet.create({
   serviceName: { ...typography.headline, fontSize: 18, lineHeight: 24, fontWeight: '800' },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.x3 },
   totalValue: { fontWeight: '900', fontSize: 20 },
-  demoNotice: { borderRadius: radii.compact, padding: spacing.x3, gap: spacing.x2 },
+  notice: { borderRadius: radii.compact, padding: spacing.x3, gap: spacing.x2 },
 });

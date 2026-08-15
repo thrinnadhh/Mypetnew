@@ -11,32 +11,88 @@ export interface ProviderSummary {
   rating: number;
   ratingCount: number;
 }
-interface ProviderDto {
-  providerId: string;
+
+interface PublicOutletDto {
+  id: string;
+  organizationId: string;
   name: string;
-  description?: string | null;
-  distanceKm?: number | string;
-  ratingAvg?: number | string;
-  ratingCount?: number;
+  capabilities: string[];
+  pickupEnabled: boolean;
 }
 
-export async function fetchProviders(type: DiscoverableProviderType, market: LaunchMarket): Promise<ProviderSummary[]> {
+interface PageResponse<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  hasNext: boolean;
+}
+
+const capabilitiesByType: Record<DiscoverableProviderType, string[]> = {
+  GROOMER: ['GROOMING'],
+  PET_STORE: ['PRODUCT_STORE'],
+  VET_HOSPITAL: ['VETERINARY_CLINIC', 'VETERINARY_HOSPITAL'],
+};
+
+function descriptionFor(outlet: PublicOutletDto): string {
+  const labels = outlet.capabilities.map((capability) => {
+    switch (capability) {
+      case 'GROOMING': return 'Pet grooming';
+      case 'VETERINARY_CLINIC': return 'Veterinary clinic';
+      case 'VETERINARY_HOSPITAL': return 'Veterinary hospital';
+      case 'PRODUCT_STORE': return 'Pet store';
+      case 'MEDICINE_CATALOG_VIEW_ONLY': return 'Medicine catalogue';
+      default: return capability.replaceAll('_', ' ').toLowerCase();
+    }
+  });
+  return labels.join(' · ');
+}
+
+function toSummary(outlet: PublicOutletDto): ProviderSummary {
+  return {
+    id: outlet.id,
+    name: outlet.name,
+    description: descriptionFor(outlet),
+    // The authoritative public-outlet DTO does not expose verified distance or
+    // rating aggregates yet. Keep these neutral instead of fabricating values.
+    distanceKm: 0,
+    rating: 0,
+    ratingCount: 0,
+  };
+}
+
+async function fetchCapability(capability: string, pincode?: string): Promise<PublicOutletDto[]> {
+  const query = new URLSearchParams({ capability, page: '0', pageSize: '100' });
+  if (pincode) query.set('pincode', pincode);
+  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/public/outlets?${query.toString()}`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) throw new Error(`PROVIDER_DISCOVERY_${response.status}`);
+  const payload = (await response.json()) as PageResponse<PublicOutletDto>;
+  return payload.items;
+}
+
+export async function fetchProviders(
+  type: DiscoverableProviderType,
+  market: LaunchMarket,
+  servicePinCodes: readonly string[] = [],
+): Promise<ProviderSummary[]> {
   if (appConfig.allowDemoMode) {
     return DEMO_PROVIDER_FIXTURES[type].map((provider) => ({ ...provider }));
   }
 
-  const query = new URLSearchParams({
-    longitude: String(market.longitude), latitude: String(market.latitude), radius: String(market.discoveryRadiusKm), type,
-  });
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/discovery/providers?${query.toString()}`, { headers: { Accept: 'application/json' } });
-  if (!response.ok) throw new Error(`PROVIDER_DISCOVERY_${response.status}`);
-  const values = await response.json() as ProviderDto[];
-  return values.map((value) => ({
-    id: value.providerId,
-    name: value.name,
-    description: value.description?.trim() || '',
-    distanceKm: Number(value.distanceKm ?? 0),
-    rating: Number(value.ratingAvg ?? 0),
-    ratingCount: Number(value.ratingCount ?? 0),
-  }));
+  // The canonical public-outlet contract owns capability and PIN-code
+  // serviceability. Distance/ranking remains server work; do not fabricate it.
+  void market;
+  const pincodes = [...new Set(servicePinCodes.filter((value) => /^[1-9][0-9]{5}$/.test(value)))];
+  const requests = capabilitiesByType[type].flatMap((capability) =>
+    pincodes.length > 0
+      ? pincodes.map((pincode) => fetchCapability(capability, pincode))
+      : [fetchCapability(capability)],
+  );
+  const groups = await Promise.all(requests);
+  const unique = new Map<string, PublicOutletDto>();
+  for (const outlet of groups.flat()) unique.set(outlet.id, outlet);
+  return [...unique.values()]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map(toSummary);
 }

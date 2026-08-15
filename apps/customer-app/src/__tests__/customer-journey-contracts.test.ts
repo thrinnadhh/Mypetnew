@@ -65,7 +65,7 @@ describe('MyPet customer journey contracts', () => {
     ]);
   });
 
-  it('keeps appointment payment fail-closed until the Plan 8 server contract exists', () => {
+  it('uses canonical customer-owned appointment holds and Pay at Provider confirmation', () => {
     const discovery = source('src/screens/appointment-discovery-screen.tsx');
     const payment = source('src/app/appointments/payment.tsx');
     const booking = source('src/services/appointment-booking.ts');
@@ -75,16 +75,29 @@ describe('MyPet customer journey contracts', () => {
       'fetchCustomerPets',
       'holdAppointmentSlot',
       "pathname: '/appointments/payment'",
+      'serviceId?: string',
     ]);
     expect(discovery).not.toContain('confirmAppointmentHold(');
-    expectAll(booking, ['payAtClinic: false', 'petId: input.petId']);
+
+    expectAll(booking, [
+      '/api/v1/public/services',
+      '/api/v1/customer/appointments',
+      "'Idempotency-Key'",
+      "paymentMethod: 'PAY_AT_PROVIDER'",
+      'petId: input.petId',
+      '/confirm',
+    ]);
+    expect(booking).not.toContain('/api/v1/catalog/offerings');
+    expect(booking).not.toContain('/api/v1/appointments/hold');
+    expect(booking).not.toContain('customerId: resolveBookingUserId');
+    expect(booking).not.toContain('priceAmount: input.slot.price');
+    expect(booking).not.toContain('payAtClinic');
 
     expectAll(payment, [
-      'Online appointment payment is not available yet',
-      'Plan 5 online payment is limited to product orders',
-      'No charge has been attempted.',
-      'demoPayment',
-      'demo-payment',
+      'PAY AT PROVIDER',
+      'No online payment is created for this booking.',
+      'confirmAppointmentHold(appointmentId, session.accessToken)',
+      'Confirm booking · Pay at provider',
     ]);
     expect(payment).not.toContain('initiateAppointmentPayment');
     expect(payment).not.toContain('openCashfreeOrder');
@@ -96,12 +109,13 @@ describe('MyPet customer journey contracts', () => {
 
     expectAll(payment, [
       "appointmentId.startsWith('demo-appointment-')",
-      "confirmAppointmentHold(appointmentId, session.accessToken, 'demo-payment')",
-      'No real money will be charged and no Cashfree session is created.',
+      'confirmAppointmentHold(appointmentId, session.accessToken)',
+      'Development fixture only. No real payment is created.',
     ]);
+    expect(payment).not.toContain('openCashfreeOrder');
   });
 
-  it('uses the canonical Plan 5 Cashfree product-payment contract and leaves appointments fail-closed', () => {
+  it('uses the canonical Plan 5 Cashfree product-payment contract without coupling it to appointments', () => {
     const client = source('src/services/customer-payments.ts');
     const contract = source('../../docs/architecture/P5_PAYMENT_CONTRACT.md');
 
@@ -112,7 +126,6 @@ describe('MyPet customer journey contracts', () => {
       "'Idempotency-Key': idempotencyKey",
       'fetchPaymentStatus',
       'waitForPaymentOutcome',
-      'Appointment online payment is not available until Plan 8.',
     ]);
     expect(client).not.toContain('/api/v1/payments/appointments');
     expect(client).not.toContain('APPOINTMENT_PAYMENT');

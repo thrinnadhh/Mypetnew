@@ -14,7 +14,6 @@ import `in`.mypetnew.privacy.domain.PrivacyService
 import `in`.mypetnew.privacy.domain.RightsRequest
 import `in`.mypetnew.privacy.domain.RightsRequestType
 import org.springframework.security.core.Authentication
-import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PatchMapping
@@ -137,7 +136,6 @@ class PrivacyController(
     }
 
     @DeleteMapping("/account")
-    @Transactional
     fun deleteAccount(
         authentication: Authentication,
         @RequestBody request: DeleteAccountRequest,
@@ -145,6 +143,9 @@ class PrivacyController(
         if (request.confirmation != "DELETE") {
             throw DomainException("ACCOUNT_DELETE_CONFIRMATION_INVALID", "Account deletion was not confirmed")
         }
+        // Erase Customer-owned profile extensions first. Each production JDBC deletion is transactional and idempotent;
+        // the existing privacy deletion then revokes identity/session/device material. A retry is therefore safe if the
+        // second stage fails after the first stage has completed.
         customerData.eraseCustomerOwnedData(customerId)
         privacy.deleteAccount(customerId, request.confirmation)
     }

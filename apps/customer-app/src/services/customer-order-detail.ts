@@ -12,7 +12,7 @@ export interface CustomerOrderDetail {
   platformFeePaise: number;
   paymentMethod: 'PAY_ON_FULFILMENT';
   paymentStatus: string;
-  fulfilmentMode: 'STORE_PICKUP';
+  fulfilmentMode: 'STORE_PICKUP' | 'MYPET_CAPTAIN_DELIVERY';
   status: OrderStatus;
   placedAt?: string | null;
   statusHistory: Array<{
@@ -23,9 +23,12 @@ export interface CustomerOrderDetail {
   }>;
 }
 
-function validateSprintOneOrder(order: CustomerOrderDetail): CustomerOrderDetail {
-  if (order.fulfilmentMode !== 'STORE_PICKUP' || order.paymentMethod !== 'PAY_ON_FULFILMENT') {
-    throw new Error('Order service returned an unsupported Sprint-1 order contract.');
+function validateCanonicalOrder(order: CustomerOrderDetail): CustomerOrderDetail {
+  if (
+    !['STORE_PICKUP', 'MYPET_CAPTAIN_DELIVERY'].includes(order.fulfilmentMode) ||
+    order.paymentMethod !== 'PAY_ON_FULFILMENT'
+  ) {
+    throw new Error('Order service returned an unsupported canonical order contract.');
   }
   if (!Number.isFinite(order.grandTotalPaise) || order.grandTotalPaise < 0) {
     throw new Error('Order service returned invalid server pricing.');
@@ -42,7 +45,7 @@ export async function fetchCustomerOrderDetail(
     `/api/v1/customer/orders/${encodeURIComponent(orderId)}`,
     { Authorization: `Bearer ${accessToken}` },
   );
-  return validateSprintOneOrder(order);
+  return validateCanonicalOrder(order);
 }
 
 export async function cancelCustomerOrder(
@@ -61,5 +64,5 @@ export async function cancelCustomerOrder(
       'Idempotency-Key': `customer-cancel:${orderId}`,
     },
   );
-  return validateSprintOneOrder(order);
+  return validateCanonicalOrder(order);
 }

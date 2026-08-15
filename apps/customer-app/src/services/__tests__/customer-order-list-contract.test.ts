@@ -32,7 +32,7 @@ const summary = {
   lastUpdatedAt: '2026-08-15T00:00:01Z',
 };
 
-describe('P1 canonical customer order list contract', () => {
+describe('canonical Customer order list contract', () => {
   beforeEach(() => {
     mockedFetch.mockReset();
     global.fetch = mockedFetch as unknown as typeof fetch;
@@ -54,11 +54,24 @@ describe('P1 canonical customer order list contract', () => {
       rawTotal: 135,
       total: '₹135',
       status: 'PLACED',
+      fulfilmentMode: 'STORE_PICKUP',
     });
     const [url, init] = mockedFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toContain('/api/v1/customer/orders?page=0&pageSize=20');
     expect(url).not.toContain('/api/v1/orders/customer/');
     expect(init.headers).toMatchObject({ Authorization: 'Bearer token' });
+  });
+
+  it('renders Captain-delivery orders instead of rejecting the P4 fulfilment mode', async () => {
+    mockedFetch.mockResolvedValueOnce(response(200, {
+      items: [{ ...summary, fulfilmentMode: 'MYPET_CAPTAIN_DELIVERY' }],
+      page: 0,
+      pageSize: 20,
+      hasNext: false,
+    }));
+
+    const result = await fetchCustomerOrderPage('token');
+    expect(result.items[0].fulfilmentMode).toBe('MYPET_CAPTAIN_DELIVERY');
   });
 
   it('supports a server-side status filter without sending a customer id', async () => {
@@ -70,7 +83,7 @@ describe('P1 canonical customer order list contract', () => {
     expect(url).not.toContain('customerId');
   });
 
-  it('fails closed on invalid server pagination pricing and later-plan modes', async () => {
+  it('fails closed on invalid pagination pricing and unknown fulfilment modes', async () => {
     mockedFetch.mockResolvedValueOnce(response(200, { items: [], page: -1, pageSize: 20, hasNext: false }));
     await expect(fetchCustomerOrderPage('token')).rejects.toThrow('invalid page');
 
@@ -83,12 +96,12 @@ describe('P1 canonical customer order list contract', () => {
     await expect(fetchCustomerOrderPage('token')).rejects.toThrow('invalid server pricing');
 
     mockedFetch.mockResolvedValueOnce(response(200, {
-      items: [{ ...summary, fulfilmentMode: 'MYPET_CAPTAIN_DELIVERY' }],
+      items: [{ ...summary, fulfilmentMode: 'COURIER' }],
       page: 0,
       pageSize: 20,
       hasNext: false,
     }));
-    await expect(fetchCustomerOrderPage('token')).rejects.toThrow('unsupported P1 order contract');
+    await expect(fetchCustomerOrderPage('token')).rejects.toThrow('unsupported canonical order contract');
   });
 
   it('keeps the active Orders hook off every legacy order service path', () => {

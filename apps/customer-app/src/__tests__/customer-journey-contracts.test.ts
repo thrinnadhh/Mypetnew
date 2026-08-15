@@ -105,7 +105,7 @@ describe('MyPet customer journey contracts', () => {
     );
   });
 
-  it('documents Cashfree online payment integration as a deferred contract while Sprint 1 uses PAY_ON_FULFILMENT', () => {
+  it('documents Cashfree online payment integration as a deferred contract while product checkout uses PAY_ON_FULFILMENT', () => {
     const client = source('src/services/customer-payments.ts');
     const decisions = source('../../docs/product/DECISIONS.md');
     const matrix = source('../../docs/architecture/CUSTOMER_API_COMPATIBILITY_MATRIX.md');
@@ -124,28 +124,39 @@ describe('MyPet customer journey contracts', () => {
     expect(matrix).toContain('| Online / Appointment Payment | POST | `/api/v1/payments/appointments` (Legacy client route) | N/A (Sprint 1 uses `PAY_ON_FULFILMENT` / `STORE_PICKUP`) | **DEFERRED** | Post-Sprint 1 |');
   });
 
-  it('keeps product checkout on the server-authoritative Sprint 1 pickup contract', () => {
+  it('keeps product checkout on one server-authoritative order contract for pickup and Captain delivery', () => {
     const checkout = source('src/app/checkout/index.tsx');
     const orderClient = source('src/services/customer-checkout.ts');
+    const deliveryClient = source('src/services/customer-delivery.ts');
 
     expectAll(checkout, [
       'Order items',
       'Server-authoritative total',
       'Store pickup',
+      'Captain delivery',
       'Pay on fulfilment',
       'fetchCheckoutQuote',
-      'createPickupOrder',
+      'fetchDeliveryQuote',
+      'createProductOrder',
+      "setFulfilmentMode('MYPET_CAPTAIN_DELIVERY')",
     ]);
     expect(checkout).not.toContain('initiateOrderPayment');
     expect(checkout).not.toContain('openCashfreeOrder');
     expect(checkout).not.toContain('waitForPaymentOutcome');
     expectAll(orderClient, [
+      "export type ProductFulfilmentMode = 'STORE_PICKUP' | 'MYPET_CAPTAIN_DELIVERY'",
       "'/api/v1/customer/orders'",
       'quoteId: input.quoteId, cartSignature: input.cartSignature',
       "'Idempotency-Key': `checkout:${input.quoteId}`",
-      "order.fulfilmentMode !== 'STORE_PICKUP'",
+      'order.fulfilmentMode !== expectedFulfilmentMode',
       "order.paymentMethod !== 'PAY_ON_FULFILMENT'",
     ]);
+    expectAll(deliveryClient, [
+      "'/api/v1/customer/quotes/delivery'",
+      'input: DeliveryQuoteInput',
+      "{ Authorization: `Bearer ${accessToken}` }",
+    ]);
+    expect(deliveryClient).not.toContain('customerId: input');
   });
 
   it('keeps demo checkout non-chargeable while production remains server-authoritative', () => {
@@ -156,9 +167,9 @@ describe('MyPet customer journey contracts', () => {
       'Demo pickup simulated',
       'No backend order was created',
       'fetchCheckoutQuote',
-      'createPickupOrder',
+      'createProductOrder',
     ]);
-    expect(checkout.indexOf('if (demoCheckout)')).toBeLessThan(checkout.indexOf('const order = await createPickupOrder'));
+    expect(checkout.indexOf('if (demoCheckout)')).toBeLessThan(checkout.indexOf('const order = await createProductOrder'));
   });
 
   it('preserves authenticated customer identity across profile and payment requests', () => {

@@ -2,6 +2,7 @@ import type { OrderStatus } from '@/contracts/order-contract.generated';
 import { apiClient } from '@/services/api-client';
 
 export type OrderTabCategory = 'active' | 'past';
+export type CustomerProductFulfilmentMode = 'STORE_PICKUP' | 'MYPET_CAPTAIN_DELIVERY';
 
 export interface CustomerOrderSummaryRecord {
   id: string;
@@ -13,7 +14,7 @@ export interface CustomerOrderSummaryRecord {
   status: OrderStatus;
   orderedAt: string;
   lastUpdatedAt: string;
-  fulfilmentMode: 'STORE_PICKUP';
+  fulfilmentMode: CustomerProductFulfilmentMode;
   paymentMethod: 'PAY_ON_FULFILMENT';
   paymentStatus: string;
 }
@@ -67,8 +68,12 @@ function toRecord(order: CustomerOrderSummaryDto): CustomerOrderSummaryRecord {
   if (!Number.isSafeInteger(order.grandTotalPaise) || order.grandTotalPaise < 0) {
     throw new Error('Order service returned invalid server pricing.');
   }
-  if (order.fulfilmentMode !== 'STORE_PICKUP' || order.paymentMethod !== 'PAY_ON_FULFILMENT') {
-    throw new Error('Order service returned an unsupported P1 order contract.');
+  const fulfilmentMode = order.fulfilmentMode as CustomerProductFulfilmentMode;
+  if (
+    !['STORE_PICKUP', 'MYPET_CAPTAIN_DELIVERY'].includes(fulfilmentMode) ||
+    order.paymentMethod !== 'PAY_ON_FULFILMENT'
+  ) {
+    throw new Error('Order service returned an unsupported canonical order contract.');
   }
 
   const rawTotal = order.grandTotalPaise / 100;
@@ -82,8 +87,8 @@ function toRecord(order: CustomerOrderSummaryDto): CustomerOrderSummaryRecord {
     status: order.status,
     orderedAt: order.placedAt,
     lastUpdatedAt: order.lastUpdatedAt,
-    fulfilmentMode: order.fulfilmentMode,
-    paymentMethod: order.paymentMethod,
+    fulfilmentMode,
+    paymentMethod: 'PAY_ON_FULFILMENT',
     paymentStatus: order.paymentStatus,
   };
 }

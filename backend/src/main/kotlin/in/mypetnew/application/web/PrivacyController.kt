@@ -5,6 +5,7 @@ import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.customer.domain.CustomerDataService
 import `in`.mypetnew.customer.domain.CustomerFavouriteService
+import `in`.mypetnew.delivery.domain.DeliveryDataEraser
 import `in`.mypetnew.privacy.domain.AccountDeletionReceipt
 import `in`.mypetnew.privacy.domain.ConsentPurpose
 import `in`.mypetnew.privacy.domain.ConsentRecord
@@ -53,6 +54,7 @@ class PrivacyController(
     private val privacy: PrivacyService,
     private val customerData: CustomerDataService,
     private val favourites: CustomerFavouriteService,
+    private val deliveryData: DeliveryDataEraser,
 ) {
     @GetMapping("/me")
     fun summary(authentication: Authentication): PersonalDataSummary = withCustomer(authentication) { customerId ->
@@ -145,8 +147,9 @@ class PrivacyController(
         if (request.confirmation != "DELETE") {
             throw DomainException("ACCOUNT_DELETE_CONFIRMATION_INVALID", "Account deletion was not confirmed")
         }
-        // Erase Customer-owned product data first. Each operation is idempotent so a retry remains safe if a later
-        // privacy stage fails after an earlier data-erasure step completed.
+        // Delivery data is checked first so an active fulfilment blocks deletion before any Customer-owned data is erased.
+        // Once delivery is terminal, every erasure below is idempotent and safe to retry after a partial infrastructure failure.
+        deliveryData.eraseCustomerDeliveryIdentifiers(customerId)
         customerData.eraseCustomerOwnedData(customerId)
         favourites.eraseAll(customerId)
         privacy.deleteAccount(customerId, request.confirmation)

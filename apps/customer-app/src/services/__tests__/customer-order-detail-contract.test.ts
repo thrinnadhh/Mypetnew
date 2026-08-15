@@ -29,19 +29,25 @@ const order = {
   statusHistory: [{ fromStatus: null, toStatus: 'PLACED', changedAt: '2026-08-13T00:00:00Z', reason: null }],
 };
 
-describe('T2E canonical customer order detail contract', () => {
+describe('canonical Customer order detail contract', () => {
   beforeEach(() => {
     mockedFetch.mockReset();
     global.fetch = mockedFetch as unknown as typeof fetch;
   });
 
-  it('reads customer-owned detail from the canonical route', async () => {
+  it('reads customer-owned pickup detail from the canonical route', async () => {
     mockedFetch.mockResolvedValueOnce(response(200, order));
     const result = await fetchCustomerOrderDetail(order.orderId, 'token');
     expect(result.statusHistory).toHaveLength(1);
     const [url, init] = mockedFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toContain(`/api/v1/customer/orders/${order.orderId}`);
     expect(init.headers).toMatchObject({ Authorization: 'Bearer token' });
+  });
+
+  it('accepts the canonical Captain delivery fulfilment mode', async () => {
+    mockedFetch.mockResolvedValueOnce(response(200, { ...order, fulfilmentMode: 'MYPET_CAPTAIN_DELIVERY' }));
+    const result = await fetchCustomerOrderDetail(order.orderId, 'token');
+    expect(result.fulfilmentMode).toBe('MYPET_CAPTAIN_DELIVERY');
   });
 
   it('cancels through the customer-owned endpoint with an idempotency key', async () => {
@@ -57,8 +63,8 @@ describe('T2E canonical customer order detail contract', () => {
     });
   });
 
-  it('fails closed if the server returns a later-sprint fulfilment mode', async () => {
+  it('still fails closed if the server returns an unknown fulfilment mode', async () => {
     mockedFetch.mockResolvedValueOnce(response(200, { ...order, fulfilmentMode: 'DELIVERY' }));
-    await expect(fetchCustomerOrderDetail(order.orderId, 'token')).rejects.toThrow('unsupported Sprint-1 order contract');
+    await expect(fetchCustomerOrderDetail(order.orderId, 'token')).rejects.toThrow('unsupported canonical order contract');
   });
 });

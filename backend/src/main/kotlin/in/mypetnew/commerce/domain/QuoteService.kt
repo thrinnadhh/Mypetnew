@@ -22,6 +22,17 @@ data class PricingSnapshot(
     val ruleVersion: String = "s1-v1",
 )
 
+data class DeliveryAddressSnapshot(
+    val addressId: UUID,
+    val recipientName: String,
+    val phoneNumber: String,
+    val line1: String,
+    val line2: String?,
+    val city: String,
+    val state: String,
+    val pincode: String,
+)
+
 data class Quote(
     val id: UUID,
     val customerId: UUID,
@@ -32,6 +43,8 @@ data class Quote(
     val paymentMethod: String = "PAY_ON_FULFILMENT",
     val pricing: PricingSnapshot,
     val expiresAt: Instant,
+    val deliveryAddress: DeliveryAddressSnapshot? = null,
+    val etaMinutes: Int? = null,
 )
 
 interface QuotePersistence {
@@ -48,30 +61,41 @@ class QuoteService(
         customerId: UUID,
         outletId: UUID,
         lines: Map<UUID, Pair<Int, Long>>,
+    ): Quote = createQuote(
+        customerId = customerId,
+        outletId = outletId,
+        lines = lines,
+        fulfilmentMode = "STORE_PICKUP",
+        deliveryFeePaise = 0,
+        deliveryAddress = null,
+        etaMinutes = null,
+        ruleVersion = "s1-v1",
+    )
+
+    fun createDeliveryQuote(
+        customerId: UUID,
+        outletId: UUID,
+        lines: Map<UUID, Pair<Int, Long>>,
+        deliveryAddress: DeliveryAddressSnapshot,
+        deliveryFeePaise: Long,
+        etaMinutes: Int,
     ): Quote {
-        if (lines.isEmpty()) throw DomainException("CART_EMPTY", "The cart is empty")
-        var subtotal = 0L
-        lines.forEach { (_, line) ->
-            val (quantity, unitPricePaise) = line
-            if (quantity <= 0 || unitPricePaise < 0) {
-                throw DomainException("QUOTE_LINE_INVALID", "A quote line is invalid")
-            }
-            subtotal = Math.addExact(subtotal, Math.multiplyExact(quantity.toLong(), unitPricePaise))
+        if (deliveryFeePaise < 0) {
+            throw DomainException("DELIVERY_FEE_INVALID", "The server delivery fee is invalid")
         }
-        val signature = signature(customerId, outletId, lines)
-        val quote = Quote(
-            id = UUID.randomUUID(),
+        if (etaMinutes !in 1..240) {
+            throw DomainException("DELIVERY_ETA_INVALID", "The server delivery ETA is invalid")
+        }
+        return createQuote(
             customerId = customerId,
             outletId = outletId,
-            lines = lines.toSortedMap(compareBy(UUID::toString)),
-            cartSignature = signature,
-            pricing = PricingSnapshot(
-                itemSubtotalPaise = subtotal,
-                grandTotalPaise = Math.addExact(subtotal, 1_000),
-            ),
-            expiresAt = clock.instant().plus(lifetime),
+            lines = lines,
+            fulfilmentMode = "MYPET_CAPTAIN_DELIVERY",
+            deliveryFeePaise = deliveryFeePaise,
+            deliveryAddress = deliveryAddress,
+            etaMinutes = etaMinutes,
+            ruleVersion = "p4-v1",
         )
-        return persistence.save(quote)
     }
 
     fun requireValid(id: UUID, cartSignature: String, at: Instant = clock.instant()): Quote {
@@ -88,9 +112,61 @@ class QuoteService(
     fun get(id: UUID): Quote = persistence.get(id)
         ?: throw DomainException("QUOTE_NOT_FOUND", "The quote is unavailable")
 
-    private fun signature(customerId: UUID, outletId: UUID, lines: Map<UUID, Pair<Int, Long>>): String {
+    private fun createQuote(
+        customerId: UUID,
+        outletId: UUID,
+        lines: Map<UUID, Pair<Int, Long>>,
+        fulfilmentMode: String,
+        deliveryFeePaise: Long,
+        deliveryAddress: DeliveryAddressSnapshot?,
+        etaMinutes: Int?,
+        ruleVersion: String,
+    ): Quote {
+        if (lines.isEmpty()) throw DomainException("CART_EMPTY", "The cart is empty")
+        var subtotal = 0L
+        lines.forEach { (_, line) ->
+            val (quantity, unitPricePaise) = line
+            if (quantity <= 0 || unitPricePaise < 0) {
+                throw DomainException("QUOTE_LINE_INVALID", "A quote line is invalid")
+            }
+            subtotal = Math.addExact(subtotal, Math.multiplyExact(quantity.toLong(), unitPricePaise))
+        }
+        val signature = signature(customerId, outletId, lines, fulfilmentMode, deliveryAddress)
+        val grandTotal = Math.addExact(Math.addExact(subtotal, 1_000), deliveryFeePaise)
+        val quote = Quote(
+            id = UUID.randomUUID(),
+            customerId = customerId,
+            outletId = outletId,
+            lines = lines.toSortedMap(compareBy(UUID::toString)),
+            cartSignature = signature,
+            fulfilmentMode = fulfilmentMode,
+            pricing = PricingSnapshot(
+                itemSubtotalPaise = subtotal,
+                deliveryFeePaise = deliveryFeePaise,
+                grandTotalPaise = grandTotal,
+                ruleVersion = ruleVersion,
+            ),
+            expiresAt = clock.instant().plus(lifetime),
+            deliveryAddress = deliveryAddress,
+            etaMinutes = etaMinutes,
+        )
+        return persistence.save(quote)
+    }
+
+    private fun signature(
+        customerId: UUID,
+        outletId: UUID,
+        lines: Map<UUID, Pair<Int, Long>>,
+        fulfilmentMode: String,
+        deliveryAddress: DeliveryAddressSnapshot?,
+    ): String {
         val canonical = buildString {
-            append(customerId).append(':').append(outletId)
+            append(customerId).append(':').append(outletId).append(':').append(fulfilmentMode)
+            deliveryAddress?.let { address ->
+                append(':').append(address.addressId)
+                append(':').append(address.pincode)
+                append(':').append(address.phoneNumber)
+            }
             lines.toSortedMap(compareBy(UUID::toString)).forEach { (listingId, line) ->
                 append(':').append(listingId).append(':').append(line.first).append(':').append(line.second)
             }

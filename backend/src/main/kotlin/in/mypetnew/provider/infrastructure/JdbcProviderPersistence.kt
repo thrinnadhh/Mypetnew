@@ -21,6 +21,8 @@ class JdbcProviderPersistence(
         name: String,
         capabilities: Set<ProviderCapability>,
         servicePinCodes: Set<String>,
+        latitude: Double?,
+        longitude: Double?,
         idempotencyKey: String,
         requestFingerprint: String,
     ): ProviderOutlet {
@@ -33,14 +35,17 @@ class JdbcProviderPersistence(
                     """
                     INSERT INTO mypet.provider_outlet (
                         id, organization_id, name, status, pickup_enabled, version,
+                        dispatch_latitude, dispatch_longitude,
                         submitted_by_actor_id, submission_idempotency_key,
                         submission_request_fingerprint
-                    ) VALUES (?, ?, ?, 'UNDER_REVIEW', ?, 0, ?, ?, ?)
+                    ) VALUES (?, ?, ?, 'UNDER_REVIEW', ?, 0, ?, ?, ?, ?, ?)
                     """.trimIndent(),
                     outletId,
                     organizationId,
                     name,
                     ProviderCapability.PRODUCT_STORE in capabilities,
+                    latitude,
+                    longitude,
                     merchant.actorId,
                     idempotencyKey,
                     requestFingerprint,
@@ -127,9 +132,27 @@ class JdbcProviderPersistence(
         get(outletId) ?: notFound()
     }
 
+    override fun updateDispatchOrigin(outletId: UUID, latitude: Double, longitude: Double): ProviderOutlet =
+        transactions.execute {
+            val updated = jdbc.update(
+                """
+                UPDATE mypet.provider_outlet
+                SET dispatch_latitude = ?, dispatch_longitude = ?,
+                    version = version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """.trimIndent(),
+                latitude,
+                longitude,
+                outletId,
+            )
+            if (updated != 1) notFound()
+            get(outletId) ?: notFound()
+        }
+
     override fun all(): List<ProviderOutlet> = jdbc.query(
         """
-        SELECT o.id, o.organization_id, m.owner_actor_id, o.name, o.status, o.pickup_enabled
+        SELECT o.id, o.organization_id, m.owner_actor_id, o.name, o.status, o.pickup_enabled,
+               o.dispatch_latitude, o.dispatch_longitude
         FROM mypet.provider_outlet o
         JOIN mypet.merchant_organization m ON m.id = o.organization_id
         ORDER BY o.created_at, o.id
@@ -140,7 +163,8 @@ class JdbcProviderPersistence(
     override fun get(outletId: UUID): ProviderOutlet? {
         val header = jdbc.query(
             """
-            SELECT o.id, o.organization_id, m.owner_actor_id, o.name, o.status, o.pickup_enabled
+            SELECT o.id, o.organization_id, m.owner_actor_id, o.name, o.status, o.pickup_enabled,
+                   o.dispatch_latitude, o.dispatch_longitude
             FROM mypet.provider_outlet o
             JOIN mypet.merchant_organization m ON m.id = o.organization_id
             WHERE o.id = ?
@@ -249,6 +273,8 @@ class JdbcProviderPersistence(
             servicePinCodes = pinCodes,
             status = header.status,
             pickupEnabled = header.pickupEnabled,
+            latitude = header.latitude,
+            longitude = header.longitude,
         )
     }
 
@@ -262,6 +288,8 @@ class JdbcProviderPersistence(
             name = result.getString("name"),
             status = ProviderStatus.valueOf(result.getString("status")),
             pickupEnabled = result.getBoolean("pickup_enabled"),
+            latitude = result.getObject("dispatch_latitude", Double::class.javaObjectType),
+            longitude = result.getObject("dispatch_longitude", Double::class.javaObjectType),
         )
     }
 
@@ -288,5 +316,7 @@ class JdbcProviderPersistence(
         val name: String,
         val status: ProviderStatus,
         val pickupEnabled: Boolean,
+        val latitude: Double?,
+        val longitude: Double?,
     )
 }

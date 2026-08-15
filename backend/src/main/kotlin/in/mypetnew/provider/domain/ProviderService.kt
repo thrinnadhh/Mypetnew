@@ -19,6 +19,8 @@ data class ProviderOutlet(
     val servicePinCodes: Set<String>,
     val status: ProviderStatus,
     val pickupEnabled: Boolean = ProviderCapability.PRODUCT_STORE in capabilities,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
 )
 
 interface ProviderPersistence {
@@ -27,6 +29,8 @@ interface ProviderPersistence {
         name: String,
         capabilities: Set<ProviderCapability>,
         servicePinCodes: Set<String>,
+        latitude: Double?,
+        longitude: Double?,
         idempotencyKey: String,
         requestFingerprint: String,
     ): ProviderOutlet
@@ -38,6 +42,7 @@ interface ProviderPersistence {
         requestFingerprint: String,
     ): ProviderOutlet
 
+    fun updateDispatchOrigin(outletId: UUID, latitude: Double, longitude: Double): ProviderOutlet
     fun all(): List<ProviderOutlet>
     fun get(outletId: UUID): ProviderOutlet?
 }
@@ -51,9 +56,11 @@ class ProviderService(
         capabilities: Set<ProviderCapability>,
         servicePinCodes: Set<String>,
         idempotencyKey: String,
+        latitude: Double? = null,
+        longitude: Double? = null,
     ): ProviderOutlet {
         Authorizer.requireRole(merchant, Role.MERCHANT)
-        validateSubmission(name, capabilities, servicePinCodes)
+        validateSubmission(name, capabilities, servicePinCodes, latitude, longitude)
         validateIdempotencyKey(idempotencyKey)
         val normalizedName = name.trim()
         val fingerprint = fingerprint(
@@ -63,6 +70,8 @@ class ProviderService(
                 normalizedName,
                 capabilities.sorted(),
                 servicePinCodes.sorted(),
+                latitude,
+                longitude,
             ).joinToString(":"),
         )
         return persistence.submit(
@@ -70,6 +79,8 @@ class ProviderService(
             normalizedName,
             capabilities.toSet(),
             servicePinCodes.toSet(),
+            latitude,
+            longitude,
             idempotencyKey,
             fingerprint,
         )
@@ -86,6 +97,17 @@ class ProviderService(
         )
     }
 
+    fun configureDispatchOrigin(
+        merchant: Principal,
+        outletId: UUID,
+        latitude: Double,
+        longitude: Double,
+    ): ProviderOutlet {
+        Authorizer.requireOutlet(merchant, outletId)
+        validateCoordinates(latitude, longitude)
+        return persistence.updateDispatchOrigin(outletId, latitude, longitude)
+    }
+
     fun allOutlets(): List<ProviderOutlet> = persistence.all()
 
     fun getOutlet(outletId: UUID): ProviderOutlet = persistence.get(outletId)
@@ -95,6 +117,8 @@ class ProviderService(
         name: String,
         capabilities: Set<ProviderCapability>,
         servicePinCodes: Set<String>,
+        latitude: Double?,
+        longitude: Double?,
     ) {
         if (name.isBlank() || name.length > 160 || capabilities.isEmpty()) {
             throw DomainException("PROVIDER_SUBMISSION_INVALID", "Provider details are invalid")
@@ -102,6 +126,12 @@ class ProviderService(
         if (servicePinCodes.any { !it.matches(Regex("[1-9][0-9]{5}")) }) {
             throw DomainException("PIN_CODE_INVALID", "Service PIN codes must contain exactly six digits")
         }
+        if ((latitude == null) != (longitude == null)) invalidCoordinates()
+        if (latitude != null) validateCoordinates(latitude, requireNotNull(longitude))
+    }
+
+    private fun validateCoordinates(latitude: Double, longitude: Double) {
+        if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) invalidCoordinates()
     }
 
     private fun validateIdempotencyKey(key: String) {
@@ -109,6 +139,11 @@ class ProviderService(
             throw DomainException("IDEMPOTENCY_KEY_INVALID", "The idempotency key is invalid")
         }
     }
+
+    private fun invalidCoordinates(): Nothing = throw DomainException(
+        "OUTLET_COORDINATES_INVALID",
+        "Outlet coordinates must be a valid latitude/longitude pair",
+    )
 
     private fun fingerprint(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(StandardCharsets.UTF_8))
@@ -127,6 +162,8 @@ private class InMemoryProviderPersistence : ProviderPersistence {
         name: String,
         capabilities: Set<ProviderCapability>,
         servicePinCodes: Set<String>,
+        latitude: Double?,
+        longitude: Double?,
         idempotencyKey: String,
         requestFingerprint: String,
     ): ProviderOutlet = submissionKeys.execute(
@@ -145,6 +182,8 @@ private class InMemoryProviderPersistence : ProviderPersistence {
             servicePinCodes = servicePinCodes,
             status = ProviderStatus.UNDER_REVIEW,
             pickupEnabled = ProviderCapability.PRODUCT_STORE in capabilities,
+            latitude = latitude,
+            longitude = longitude,
         ).also { outlets[it.id] = it }
     }
 
@@ -161,6 +200,13 @@ private class InMemoryProviderPersistence : ProviderPersistence {
             throw DomainException("PROVIDER_STATE_INVALID", "The provider cannot be approved from its current state")
         }
         outlet.copy(status = ProviderStatus.ACTIVE).also { outlets[outletId] = it }
+    }
+
+    @Synchronized
+    override fun updateDispatchOrigin(outletId: UUID, latitude: Double, longitude: Double): ProviderOutlet {
+        val outlet = outlets[outletId]
+            ?: throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+        return outlet.copy(latitude = latitude, longitude = longitude).also { outlets[outletId] = it }
     }
 
     @Synchronized

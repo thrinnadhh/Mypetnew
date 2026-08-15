@@ -20,6 +20,11 @@ import `in`.mypetnew.customer.domain.CustomerFavouritePersistence
 import `in`.mypetnew.customer.domain.CustomerFavouriteService
 import `in`.mypetnew.customer.infrastructure.JdbcCustomerDataPersistence
 import `in`.mypetnew.customer.infrastructure.JdbcCustomerFavouritePersistence
+import `in`.mypetnew.delivery.domain.CaptainGeoIndex
+import `in`.mypetnew.delivery.domain.DispatchPersistence
+import `in`.mypetnew.delivery.domain.DispatchService
+import `in`.mypetnew.delivery.infrastructure.JdbcDispatchPersistence
+import `in`.mypetnew.delivery.infrastructure.RedisCaptainGeoIndex
 import `in`.mypetnew.loyalty.domain.LoyaltyPersistence
 import `in`.mypetnew.loyalty.domain.LoyaltyService
 import `in`.mypetnew.loyalty.infrastructure.JdbcLoyaltyPersistence
@@ -35,6 +40,7 @@ import `in`.mypetnew.provider.infrastructure.JdbcProviderPersistence
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Profile
+import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.support.TransactionTemplate
@@ -80,6 +86,20 @@ class PersistenceConfiguration {
     @Bean
     fun productionOrderService(inventory: InventoryService, persistence: OrderPersistence): OrderService =
         OrderService(inventory, persistence)
+
+    @Bean
+    fun dispatchPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): DispatchPersistence =
+        JdbcDispatchPersistence(jdbc, transactions)
+
+    @Bean
+    fun captainGeoIndex(redis: StringRedisTemplate): CaptainGeoIndex = RedisCaptainGeoIndex(redis)
+
+    @Bean
+    fun productionDispatchService(
+        persistence: DispatchPersistence,
+        geoIndex: CaptainGeoIndex,
+        orders: OrderService,
+    ): DispatchService = DispatchService(persistence, geoIndex, orders)
 
     @Bean
     fun customerDataPersistence(jdbc: JdbcClient, transactions: TransactionTemplate): CustomerDataPersistence =

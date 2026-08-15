@@ -1,5 +1,6 @@
 package `in`.mypetnew.commerce.infrastructure
 
+import `in`.mypetnew.commerce.domain.DeliveryAddressSnapshot
 import `in`.mypetnew.commerce.domain.PricingSnapshot
 import `in`.mypetnew.commerce.domain.Quote
 import `in`.mypetnew.commerce.domain.QuotePersistence
@@ -18,8 +19,11 @@ class JdbcQuotePersistence(
             INSERT INTO mypet.commerce_quote (
                 id, customer_id, outlet_id, cart_signature, fulfilment_mode, payment_method,
                 item_subtotal_paise, platform_fee_paise, merchant_commission_paise,
-                delivery_fee_paise, grand_total_paise, currency, rule_version, expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                delivery_fee_paise, grand_total_paise, currency, rule_version, expires_at,
+                delivery_address_id, delivery_recipient_name, delivery_phone_number,
+                delivery_line1, delivery_line2, delivery_city, delivery_state, delivery_pincode,
+                delivery_eta_minutes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
             quote.id,
             quote.customerId,
@@ -35,6 +39,15 @@ class JdbcQuotePersistence(
             quote.pricing.currency,
             quote.pricing.ruleVersion,
             quote.expiresAt,
+            quote.deliveryAddress?.addressId,
+            quote.deliveryAddress?.recipientName,
+            quote.deliveryAddress?.phoneNumber,
+            quote.deliveryAddress?.line1,
+            quote.deliveryAddress?.line2,
+            quote.deliveryAddress?.city,
+            quote.deliveryAddress?.state,
+            quote.deliveryAddress?.pincode,
+            quote.etaMinutes,
         )
         quote.lines.forEach { (listingId, line) ->
             jdbc.update(
@@ -56,7 +69,10 @@ class JdbcQuotePersistence(
             """
             SELECT id, customer_id, outlet_id, cart_signature, fulfilment_mode, payment_method,
                    item_subtotal_paise, platform_fee_paise, merchant_commission_paise,
-                   delivery_fee_paise, grand_total_paise, currency, rule_version, expires_at
+                   delivery_fee_paise, grand_total_paise, currency, rule_version, expires_at,
+                   delivery_address_id, delivery_recipient_name, delivery_phone_number,
+                   delivery_line1, delivery_line2, delivery_city, delivery_state, delivery_pincode,
+                   delivery_eta_minutes
             FROM mypet.commerce_quote
             WHERE id = ?
             """.trimIndent(),
@@ -94,6 +110,19 @@ class JdbcQuotePersistence(
                 ruleVersion = header.ruleVersion,
             ),
             expiresAt = header.expiresAt,
+            deliveryAddress = header.deliveryAddressId?.let { addressId ->
+                DeliveryAddressSnapshot(
+                    addressId = addressId,
+                    recipientName = requireNotNull(header.deliveryRecipientName),
+                    phoneNumber = requireNotNull(header.deliveryPhoneNumber),
+                    line1 = requireNotNull(header.deliveryLine1),
+                    line2 = header.deliveryLine2,
+                    city = requireNotNull(header.deliveryCity),
+                    state = requireNotNull(header.deliveryState),
+                    pincode = requireNotNull(header.deliveryPincode),
+                )
+            },
+            etaMinutes = header.deliveryEtaMinutes,
         )
     }
 
@@ -112,6 +141,15 @@ class JdbcQuotePersistence(
         currency = result.getString("currency"),
         ruleVersion = result.getString("rule_version"),
         expiresAt = result.getTimestamp("expires_at").toInstant(),
+        deliveryAddressId = result.getObject("delivery_address_id", UUID::class.java),
+        deliveryRecipientName = result.getString("delivery_recipient_name"),
+        deliveryPhoneNumber = result.getString("delivery_phone_number"),
+        deliveryLine1 = result.getString("delivery_line1"),
+        deliveryLine2 = result.getString("delivery_line2"),
+        deliveryCity = result.getString("delivery_city"),
+        deliveryState = result.getString("delivery_state"),
+        deliveryPincode = result.getString("delivery_pincode"),
+        deliveryEtaMinutes = result.getObject("delivery_eta_minutes", Int::class.javaObjectType),
     )
 
     private data class Header(
@@ -129,5 +167,14 @@ class JdbcQuotePersistence(
         val currency: String,
         val ruleVersion: String,
         val expiresAt: java.time.Instant,
+        val deliveryAddressId: UUID?,
+        val deliveryRecipientName: String?,
+        val deliveryPhoneNumber: String?,
+        val deliveryLine1: String?,
+        val deliveryLine2: String?,
+        val deliveryCity: String?,
+        val deliveryState: String?,
+        val deliveryPincode: String?,
+        val deliveryEtaMinutes: Int?,
     )
 }

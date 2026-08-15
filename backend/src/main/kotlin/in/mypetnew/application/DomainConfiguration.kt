@@ -12,6 +12,10 @@ import `in`.mypetnew.customer.domain.CustomerFavouritePersistence
 import `in`.mypetnew.customer.domain.CustomerFavouriteService
 import `in`.mypetnew.customer.domain.InMemoryCustomerDataPersistence
 import `in`.mypetnew.customer.domain.InMemoryCustomerFavouritePersistence
+import `in`.mypetnew.delivery.domain.DeliveryPricingPolicy
+import `in`.mypetnew.delivery.domain.DispatchService
+import `in`.mypetnew.delivery.domain.InMemoryCaptainGeoIndex
+import `in`.mypetnew.delivery.domain.InMemoryDispatchPersistence
 import `in`.mypetnew.engagement.domain.DeviceRegistrationService
 import `in`.mypetnew.engagement.domain.DeviceRegistrationPersistence
 import `in`.mypetnew.engagement.domain.NotificationService
@@ -32,10 +36,11 @@ import `in`.mypetnew.provider.domain.InMemoryPrivateDocumentStore
 import `in`.mypetnew.privacy.domain.InMemoryPrivacyRepository
 import `in`.mypetnew.privacy.domain.PrivacyRepository
 import `in`.mypetnew.privacy.domain.PrivacyService
+import org.springframework.beans.factory.ObjectProvider
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Profile
-import org.springframework.beans.factory.ObjectProvider
 
 @Configuration
 class DomainConfiguration {
@@ -95,6 +100,25 @@ class DomainConfiguration {
         catalog: CatalogService,
         providers: ProviderService,
     ) = CustomerFavouriteService(persistence, catalog, providers)
+
+    @Bean
+    fun deliveryPricingPolicy(
+        @Value("\${mypet.delivery.base-fee-paise:0}") baseFeePaise: Long,
+        @Value("\${mypet.delivery.eta-minutes:45}") etaMinutes: Int,
+    ) = DeliveryPricingPolicy(baseFeePaise, etaMinutes)
+
+    @Bean @Profile("test", "development")
+    fun inMemoryDispatchPersistence() = InMemoryDispatchPersistence()
+
+    @Bean @Profile("test", "development")
+    fun inMemoryCaptainGeoIndex() = InMemoryCaptainGeoIndex()
+
+    @Bean @Profile("test", "development")
+    fun dispatchService(
+        persistence: InMemoryDispatchPersistence,
+        geoIndex: InMemoryCaptainGeoIndex,
+        orders: OrderService,
+    ) = DispatchService(persistence, geoIndex, orders)
 
     @Bean
     fun deviceRegistrationService(persistence: ObjectProvider<DeviceRegistrationPersistence>) =

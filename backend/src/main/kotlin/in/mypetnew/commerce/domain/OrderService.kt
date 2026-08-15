@@ -97,8 +97,13 @@ class OrderService(
     ): ProductOrder {
         validateIdempotencyKey(idempotencyKey)
         validateTraceId(traceId)
-        if (quote.fulfilmentMode != "STORE_PICKUP" || quote.paymentMethod != "PAY_ON_FULFILMENT") {
-            throw DomainException("CHECKOUT_MODE_INVALID", "Sprint 1 supports store pickup with pay on fulfilment")
+        val supportedMode = quote.fulfilmentMode == "STORE_PICKUP" ||
+            quote.fulfilmentMode == "MYPET_CAPTAIN_DELIVERY"
+        if (!supportedMode || quote.paymentMethod != "PAY_ON_FULFILMENT") {
+            throw DomainException("CHECKOUT_MODE_INVALID", "The quoted fulfilment or payment mode is unsupported")
+        }
+        if (quote.fulfilmentMode == "MYPET_CAPTAIN_DELIVERY" && quote.deliveryAddress == null) {
+            throw DomainException("DELIVERY_ADDRESS_REQUIRED", "Captain delivery requires a server-owned address snapshot")
         }
         if (quote.lines.isEmpty() || quote.lines.values.any { it.first <= 0 }) {
             throw DomainException("CART_INVALID", "The cart cannot be checked out")
@@ -246,7 +251,7 @@ class OrderService(
             }
 
             val order = persistence.lock(orderId)
-            if (target !in allowedTargets(order.status, actorRole)) {
+            if (target !in allowedTargets(order, actorRole)) {
                 throw DomainException("ORDER_TRANSITION_INVALID", "The order cannot move to the requested state")
             }
 
@@ -309,20 +314,37 @@ class OrderService(
         return existing.order
     }
 
-    private fun allowedTargets(status: OrderStatus, actorRole: Role): Set<OrderStatus> = when (actorRole) {
-        Role.CUSTOMER -> when (status) {
+    private fun allowedTargets(order: ProductOrder, actorRole: Role): Set<OrderStatus> = when (actorRole) {
+        Role.CUSTOMER -> when (order.status) {
             OrderStatus.PLACED -> setOf(OrderStatus.CANCELLED)
             else -> emptySet()
         }
-        Role.MERCHANT -> when (status) {
+        Role.MERCHANT -> when (order.status) {
             OrderStatus.PLACED -> setOf(OrderStatus.ACCEPTED, OrderStatus.REJECTED)
             OrderStatus.ACCEPTED -> setOf(OrderStatus.PREPARING, OrderStatus.CANCELLED)
             OrderStatus.PREPARING -> setOf(OrderStatus.READY_FOR_PICKUP, OrderStatus.CANCELLED)
-            OrderStatus.READY_FOR_PICKUP -> setOf(OrderStatus.PICKED_UP, OrderStatus.CANCELLED)
-            OrderStatus.PICKED_UP -> setOf(OrderStatus.DELIVERED)
+            OrderStatus.READY_FOR_PICKUP -> if (order.fulfilmentMode == "STORE_PICKUP") {
+                setOf(OrderStatus.PICKED_UP, OrderStatus.CANCELLED)
+            } else {
+                emptySet()
+            }
+            OrderStatus.PICKED_UP -> if (order.fulfilmentMode == "STORE_PICKUP") {
+                setOf(OrderStatus.DELIVERED)
+            } else {
+                emptySet()
+            }
             OrderStatus.DELIVERED, OrderStatus.REJECTED, OrderStatus.CANCELLED -> emptySet()
         }
-        Role.CAPTAIN, Role.ADMIN -> emptySet()
+        Role.CAPTAIN -> if (order.fulfilmentMode == "MYPET_CAPTAIN_DELIVERY") {
+            when (order.status) {
+                OrderStatus.READY_FOR_PICKUP -> setOf(OrderStatus.PICKED_UP)
+                OrderStatus.PICKED_UP -> setOf(OrderStatus.DELIVERED)
+                else -> emptySet()
+            }
+        } else {
+            emptySet()
+        }
+        Role.ADMIN -> emptySet()
     }
 
     private fun checkoutFingerprint(quote: Quote, organizationId: UUID): String {

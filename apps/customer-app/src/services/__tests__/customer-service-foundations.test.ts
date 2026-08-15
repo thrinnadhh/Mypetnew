@@ -148,16 +148,21 @@ describe('customer service foundations', () => {
       expect(mockedFetch.mock.calls[2][1]).toMatchObject({ method: 'POST' });
     });
 
-    it('maps discovery and provider profile numeric fields and encodes profile identifiers', async () => {
+    it('uses canonical outlet capabilities without fabricating rating or distance data', async () => {
       mockedFetch
-        .mockResolvedValueOnce(response({ body: [{
-          providerId: 'provider-1',
-          name: 'Happy Paws',
-          description: '  Tirupati care  ',
-          distanceKm: '2.4',
-          ratingAvg: '4.7',
-          ratingCount: 31,
-        }] }))
+        .mockResolvedValueOnce(response({ body: {
+          items: [{
+            id: 'provider-1',
+            organizationId: 'org-1',
+            name: 'Happy Paws',
+            capabilities: ['VETERINARY_CLINIC'],
+            pickupEnabled: false,
+          }],
+          page: 0,
+          pageSize: 100,
+          hasNext: false,
+        } }))
+        .mockResolvedValueOnce(response({ body: { items: [], page: 0, pageSize: 100, hasNext: false } }))
         .mockResolvedValueOnce(response({ body: {
           providerId: 'provider/1',
           providerType: 'VET_HOSPITAL',
@@ -181,19 +186,20 @@ describe('customer service foundations', () => {
       expect(providers[0]).toEqual({
         id: 'provider-1',
         name: 'Happy Paws',
-        description: 'Tirupati care',
-        distanceKm: 2.4,
-        rating: 4.7,
-        ratingCount: 31,
+        description: 'Veterinary clinic',
+        distanceKm: 0,
+        rating: 0,
+        ratingCount: 0,
       });
-      expect(mockedFetch.mock.calls[0][0]).toContain('longitude=79.4192');
-      expect(mockedFetch.mock.calls[0][0]).toContain('type=VET_HOSPITAL');
+      expect(mockedFetch.mock.calls[0][0]).toContain('/api/v1/public/outlets?');
+      expect(mockedFetch.mock.calls[0][0]).toContain('capability=VETERINARY_CLINIC');
+      expect(mockedFetch.mock.calls[1][0]).toContain('capability=VETERINARY_HOSPITAL');
 
       await expect(fetchProviderProfile('provider/1')).resolves.toMatchObject({
         ratingAvg: 4.8,
         ratingCount: 42,
       });
-      expect(mockedFetch.mock.calls[1][0]).toBe(
+      expect(mockedFetch.mock.calls[2][0]).toBe(
         'https://api.mypet.test//api/v1/providers/provider%2F1',
       );
     });

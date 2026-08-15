@@ -151,7 +151,7 @@ class JdbcAppointmentPersistence(
                 insertAppointment(appointment, idempotencyKey, requestFingerprint)
                 appendHistory(appointment.id, AppointmentStatus.HOLD, appointment.customerId, now, "CUSTOMER_HOLD")
                 appointment
-            } ?: error("Appointment transaction unexpectedly returned null")
+            }
         } catch (_: DuplicateKeyException) {
             findByIdempotency(appointment.customerId, idempotencyKey)?.let { existing ->
                 if (existing.second != requestFingerprint) idempotencyMismatch()

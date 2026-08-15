@@ -9,15 +9,19 @@ import `in`.mypetnew.commerce.domain.PersistedCheckout
 import `in`.mypetnew.commerce.domain.ProductOrder
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
+import `in`.mypetnew.payment.domain.TerminalOrderPaymentProjection
 import org.springframework.dao.DuplicateKeyException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionTemplate
 import java.sql.ResultSet
+import java.sql.Timestamp
+import java.time.Instant
 import java.util.UUID
 
 class JdbcOrderPersistence(
     private val jdbc: JdbcTemplate,
     private val transactions: TransactionTemplate,
+    private val terminalPayments: TerminalOrderPaymentProjection? = null,
 ) : OrderPersistence {
     override val rollsBackOnFailure: Boolean = true
 
@@ -51,9 +55,9 @@ class JdbcOrderPersistence(
                 INSERT INTO mypet.product_order (
                     id, order_number, customer_id, organization_id, outlet_id, quote_id, status,
                     fulfilment_mode, payment_method, payment_status, grand_total_paise,
-                    platform_fee_paise, merchant_commission_paise, currency, version,
+                    platform_fee_paise, merchant_commission_paise, currency, payment_hold_expires_at, version,
                     checkout_idempotency_key, checkout_request_fingerprint
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INR', 0, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INR', ?, 0, ?, ?)
                 """.trimIndent(),
                 order.id,
                 order.orderNumber,
@@ -68,6 +72,7 @@ class JdbcOrderPersistence(
                 order.grandTotalPaise,
                 order.platformFeePaise,
                 order.merchantCommissionPaise,
+                order.paymentHoldExpiresAt?.jdbcTimestamp(),
                 idempotencyKey,
                 requestFingerprint,
             )
@@ -86,7 +91,7 @@ class JdbcOrderPersistence(
                 )
             }
             insertHistory(order.id, initialHistory)
-        } catch (duplicate: DuplicateKeyException) {
+        } catch (_: DuplicateKeyException) {
             throw CheckoutIdempotencyRace()
         }
     }
@@ -133,7 +138,7 @@ class JdbcOrderPersistence(
             """
             SELECT id, order_number, customer_id, organization_id, outlet_id, quote_id, status,
                    fulfilment_mode, payment_method, payment_status, grand_total_paise,
-                   platform_fee_paise, merchant_commission_paise
+                   platform_fee_paise, merchant_commission_paise, payment_hold_expires_at
             FROM mypet.product_order
             WHERE id = ?
             FOR UPDATE
@@ -158,6 +163,20 @@ class JdbcOrderPersistence(
         if (updated != 1) {
             throw DomainException("ORDER_CONFLICT", "The order changed concurrently; refresh and retry")
         }
+
+        if (order.status == OrderStatus.CANCELLED || order.status == OrderStatus.REJECTED) {
+            terminalPayments?.projectTerminalOrder(order.id, entry.reason, entry.occurredAt)?.let { projection ->
+                jdbc.update(
+                    """
+                    UPDATE mypet.product_order
+                    SET payment_status = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """.trimIndent(),
+                    projection,
+                    order.id,
+                )
+            }
+        }
         insertHistory(order.id, entry)
     }
 
@@ -173,7 +192,7 @@ class JdbcOrderPersistence(
             """
             SELECT id, order_number, customer_id, organization_id, outlet_id, quote_id, status,
                    fulfilment_mode, payment_method, payment_status, grand_total_paise,
-                   platform_fee_paise, merchant_commission_paise
+                   platform_fee_paise, merchant_commission_paise, payment_hold_expires_at
             FROM mypet.product_order
             WHERE id = ?
             """.trimIndent(),
@@ -215,6 +234,7 @@ class JdbcOrderPersistence(
             fulfilmentMode = header.fulfilmentMode,
             status = header.status,
             history = history,
+            paymentHoldExpiresAt = header.paymentHoldExpiresAt,
         )
     }
 
@@ -235,7 +255,7 @@ class JdbcOrderPersistence(
             entry.reason,
             entry.commandKey,
             entry.traceId,
-            entry.occurredAt,
+            entry.occurredAt.jdbcTimestamp(),
         )
     }
 
@@ -253,6 +273,7 @@ class JdbcOrderPersistence(
         grandTotalPaise = result.getLong("grand_total_paise"),
         platformFeePaise = result.getLong("platform_fee_paise"),
         merchantCommissionPaise = result.getLong("merchant_commission_paise"),
+        paymentHoldExpiresAt = result.getTimestamp("payment_hold_expires_at")?.toInstant(),
     )
 
     private fun history(result: ResultSet): OrderHistoryEntry = OrderHistoryEntry(
@@ -282,5 +303,8 @@ class JdbcOrderPersistence(
         val grandTotalPaise: Long,
         val platformFeePaise: Long,
         val merchantCommissionPaise: Long,
+        val paymentHoldExpiresAt: Instant?,
     )
 }
+
+private fun Instant.jdbcTimestamp(): Timestamp = Timestamp.from(this)

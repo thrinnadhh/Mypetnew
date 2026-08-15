@@ -27,16 +27,17 @@ describe('customer end-to-end regression contracts', () => {
     );
   });
 
-  it('propagates and clears the authenticated payment token', () => {
+  it('propagates and clears authenticated server session while payment uses canonical apiClient', () => {
     const auth = source('src/context/AuthContext.tsx');
     const payments = source('src/services/customer-payments.ts');
 
     expect(auth).toMatch(/apiClient\.setSessionToken\(nextSession\?\.accessToken \?\? null\)/);
     expect(auth).toMatch(/applySessionState\(null\)/);
     expect(payments).toMatch(/apiClient\.post/);
+    expect(payments).not.toMatch(/customerPhone|normalizedPhone|userId:/);
   });
 
-  it('books appointments with an owned pet through hold, payment and confirmation', () => {
+  it('keeps appointment online payment fail-closed until Plan 8 while preserving owned-pet slot holds', () => {
     const discovery = source('src/screens/appointment-discovery-screen.tsx');
     const payment = source('src/app/appointments/payment.tsx');
     const service = source('src/services/appointment-booking.ts');
@@ -47,11 +48,11 @@ describe('customer end-to-end regression contracts', () => {
     expect(discovery).toMatch(/holdAppointmentSlot/);
     expect(discovery).toMatch(/\/appointments\/payment/);
     expect(discovery).not.toMatch(/confirmAppointmentHold\(appointmentId/);
-    expect(payment).toMatch(/initiateAppointmentPayment/);
-    expect(payment).toMatch(/waitForReferencePaymentOutcome/);
-    expect(payment).toMatch(/payment\.status === 'SUCCESS'/);
-    expect(payment).toMatch(/confirmAppointmentHold/);
-    expect(payments).toMatch(/APPOINTMENT_PAYMENT/);
+    expect(payment).toMatch(/Online appointment payment is not available yet/);
+    expect(payment).toMatch(/Plan 5 online payment is limited to product orders/);
+    expect(payment).not.toMatch(/initiateAppointmentPayment|openCashfreeOrder|waitForReferencePaymentOutcome/);
+    expect(payments).toMatch(/Appointment online payment is not available until Plan 8/);
+    expect(payments).not.toMatch(/APPOINTMENT_PAYMENT/);
     expect(service).toMatch(/petId: input\.petId/);
     expect(service).toMatch(/payAtClinic: false/);
     expect(service).not.toMatch(/petId: bookingUserId/);

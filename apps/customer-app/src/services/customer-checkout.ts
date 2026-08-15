@@ -1,6 +1,7 @@
 import { apiClient } from '@/services/api-client';
 
 export type ProductFulfilmentMode = 'STORE_PICKUP' | 'MYPET_CAPTAIN_DELIVERY';
+export type ProductPaymentMethod = 'PAY_ON_FULFILMENT' | 'ONLINE_PAYMENT';
 
 export interface CreatePickupOrderInput {
   quoteId: string;
@@ -16,8 +17,9 @@ export interface CreatedProductOrder {
   quoteId: string;
   grandTotalPaise: number;
   platformFeePaise: number;
-  paymentMethod: 'PAY_ON_FULFILMENT';
-  paymentStatus: 'PENDING_EXTERNAL_COLLECTION' | string;
+  paymentMethod: ProductPaymentMethod;
+  paymentStatus: 'PENDING_EXTERNAL_COLLECTION' | 'PENDING_ONLINE_PAYMENT' | 'PAID' | 'REFUND_PENDING' | 'REFUNDED' | string;
+  paymentHoldExpiresAt?: string | null;
   fulfilmentMode: ProductFulfilmentMode;
   status: 'PLACED' | string;
 }
@@ -33,6 +35,7 @@ interface ProductOrderDto {
   platformFeePaise: number;
   paymentMethod: string;
   paymentStatus: string;
+  paymentHoldExpiresAt?: string | null;
   fulfilmentMode: string;
   status: string;
 }
@@ -40,9 +43,8 @@ interface ProductOrderDto {
 export async function createProductOrder(
   input: CreateProductOrderInput,
   expectedFulfilmentMode: ProductFulfilmentMode,
-  accessToken?: string | null,
+  expectedPaymentMethod: ProductPaymentMethod,
 ): Promise<CreatedProductOrder> {
-  if (!accessToken) throw new Error('Sign in before placing an order.');
   if (!input.quoteId || !input.cartSignature) {
     throw new Error('Request a fresh checkout quote before placing the order.');
   }
@@ -50,35 +52,38 @@ export async function createProductOrder(
   const order = await apiClient.post<ProductOrderDto>(
     '/api/v1/customer/orders',
     { quoteId: input.quoteId, cartSignature: input.cartSignature },
-    {
-      Authorization: `Bearer ${accessToken}`,
-      'Idempotency-Key': `checkout:${input.quoteId}`,
-    },
+    { 'Idempotency-Key': `checkout:${input.quoteId}` },
   );
 
   if (
     order.quoteId !== input.quoteId ||
     order.fulfilmentMode !== expectedFulfilmentMode ||
-    order.paymentMethod !== 'PAY_ON_FULFILMENT' ||
+    order.paymentMethod !== expectedPaymentMethod ||
     order.status !== 'PLACED'
   ) {
     throw new Error('Order service returned an unsupported canonical checkout contract.');
   }
-  if (!Number.isFinite(order.grandTotalPaise) || order.grandTotalPaise < 0) {
+  if (!Number.isSafeInteger(order.grandTotalPaise) || order.grandTotalPaise < 0) {
     throw new Error('Order service returned invalid server pricing.');
+  }
+  if (expectedPaymentMethod === 'ONLINE_PAYMENT' && order.paymentStatus !== 'PENDING_ONLINE_PAYMENT') {
+    throw new Error('Order service did not create the required online-payment hold.');
+  }
+  if (expectedPaymentMethod === 'PAY_ON_FULFILMENT' && order.paymentStatus !== 'PENDING_EXTERNAL_COLLECTION') {
+    throw new Error('Order service returned an unexpected pay-on-fulfilment projection.');
   }
 
   return {
     ...order,
-    paymentMethod: 'PAY_ON_FULFILMENT',
+    paymentMethod: expectedPaymentMethod,
     fulfilmentMode: expectedFulfilmentMode,
   };
 }
 
 export async function createPickupOrder(
   input: CreatePickupOrderInput,
-  accessToken?: string | null,
+  paymentMethod: ProductPaymentMethod = 'PAY_ON_FULFILMENT',
 ): Promise<CreatedPickupOrder> {
-  const order = await createProductOrder(input, 'STORE_PICKUP', accessToken);
+  const order = await createProductOrder(input, 'STORE_PICKUP', paymentMethod);
   return { ...order, fulfilmentMode: 'STORE_PICKUP' };
 }

@@ -1,36 +1,37 @@
 import type { PaymentStatus } from './order-contract.generated';
 
-export type CustomerPaymentMethod = 'COD' | 'CARD' | 'UPI';
+export type CustomerPaymentMethod = 'PAY_ON_FULFILMENT' | 'ONLINE_PAYMENT';
+export type CustomerPaymentProvider = 'CASHFREE';
+export type CustomerRefundStatus = 'PENDING' | 'SUCCESS' | 'FAILED';
 
-// Transaction/gateway UI state. This is deliberately separate from the canonical
-// order payment status generated from contracts/order-lifecycle.json.
+// Canonical server-owned Payment state. A native/browser callback never creates
+// one of these states locally; the app only receives them from the backend.
 export type CustomerPaymentStatus =
-  | 'NOT_STARTED'
   | 'PENDING'
-  | 'SUCCESS'
+  | 'AUTHORIZED'
+  | 'CAPTURED'
   | 'FAILED'
-  | 'EXPIRED'
-  | 'REFUNDED'
-  | 'PARTIALLY_REFUNDED';
+  | 'EXPIRED';
 
 export type CustomerOrderPaymentStatus = PaymentStatus;
 
 export interface CustomerPaymentState {
   orderId: string;
-  transactionId?: string;
+  paymentId?: string;
   status: CustomerPaymentStatus;
+  refundStatus?: CustomerRefundStatus | null;
 }
 
 export function shouldPollPayment(status: CustomerPaymentStatus): boolean {
-  return status === 'PENDING';
+  return status === 'PENDING' || status === 'AUTHORIZED';
 }
 
 export function paymentAllowsCartClear(status: CustomerPaymentStatus): boolean {
-  return status === 'SUCCESS';
+  return status === 'CAPTURED';
 }
 
 export function paymentNeedsRetry(status: CustomerPaymentStatus): boolean {
-  return status === 'FAILED' || status === 'EXPIRED' || status === 'NOT_STARTED';
+  return status === 'FAILED' || status === 'EXPIRED';
 }
 
 export function isTerminalOrderStatus(status: string): boolean {

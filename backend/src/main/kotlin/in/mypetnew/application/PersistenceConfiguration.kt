@@ -28,6 +28,11 @@ import `in`.mypetnew.delivery.infrastructure.RedisCaptainGeoIndex
 import `in`.mypetnew.loyalty.domain.LoyaltyPersistence
 import `in`.mypetnew.loyalty.domain.LoyaltyService
 import `in`.mypetnew.loyalty.infrastructure.JdbcLoyaltyPersistence
+import `in`.mypetnew.payment.domain.PaymentGateway
+import `in`.mypetnew.payment.domain.PaymentPersistence
+import `in`.mypetnew.payment.domain.PaymentService
+import `in`.mypetnew.payment.domain.TerminalOrderPaymentProjection
+import `in`.mypetnew.payment.infrastructure.JdbcPaymentPersistence
 import `in`.mypetnew.pos.domain.CustomerAssociationChallengeService
 import `in`.mypetnew.pos.domain.CustomerAssociationPersistence
 import `in`.mypetnew.pos.domain.PosPersistence
@@ -74,11 +79,26 @@ class PersistenceConfiguration {
         JdbcQuotePersistence(jdbc, transactions)
 
     @Bean
-    fun productionQuoteService(persistence: QuotePersistence): QuoteService = QuoteService(persistence = persistence)
+    fun productionQuoteService(persistence: QuotePersistence, gateway: PaymentGateway): QuoteService =
+        QuoteService(persistence = persistence, onlinePaymentAvailable = { gateway.available })
 
     @Bean
-    fun orderPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): OrderPersistence =
-        JdbcOrderPersistence(jdbc, transactions)
+    fun paymentPersistence(
+        jdbc: JdbcTemplate,
+        transactions: TransactionTemplate,
+        inventory: InventoryService,
+    ): JdbcPaymentPersistence = JdbcPaymentPersistence(jdbc, transactions, inventory)
+
+    @Bean
+    fun terminalOrderPaymentProjection(persistence: JdbcPaymentPersistence): TerminalOrderPaymentProjection =
+        TerminalOrderPaymentProjection(persistence::projectTerminalOrder)
+
+    @Bean
+    fun orderPersistence(
+        jdbc: JdbcTemplate,
+        transactions: TransactionTemplate,
+        terminalPayments: TerminalOrderPaymentProjection,
+    ): OrderPersistence = JdbcOrderPersistence(jdbc, transactions, terminalPayments)
 
     @Bean
     fun customerOrderQuery(jdbc: JdbcTemplate): CustomerOrderQuery = JdbcCustomerOrderQuery(jdbc)
@@ -86,6 +106,10 @@ class PersistenceConfiguration {
     @Bean
     fun productionOrderService(inventory: InventoryService, persistence: OrderPersistence): OrderService =
         OrderService(inventory, persistence)
+
+    @Bean
+    fun productionPaymentService(persistence: PaymentPersistence, gateway: PaymentGateway): PaymentService =
+        PaymentService(persistence, gateway)
 
     @Bean
     fun dispatchPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): DispatchPersistence =

@@ -1,11 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as WebBrowser from 'expo-web-browser';
 
 import { apiClient } from '../api-client';
 import {
-  createHostedCheckoutSession,
-  fetchOrderPaymentStatus,
+  clearPendingPayment,
+  fetchPaymentStatus,
   initiateOrderPayment,
+  loadPendingPayment,
   openCashfreeOrder,
   waitForPaymentOutcome,
 } from '../customer-payments';
@@ -45,6 +45,7 @@ jest.mock('@/utils/app-config', () => ({
   appConfig: {
     apiBaseUrl: 'https://api.mypet.test',
     allowDemoMode: false,
+    environment: 'development',
   },
 }));
 
@@ -58,12 +59,13 @@ jest.mock('../api-client', () => ({
   },
 }));
 
-jest.mock('expo-web-browser', () => ({
-  openAuthSessionAsync: jest.fn(),
+const mockOpenCashfreeNativeCheckout = jest.fn();
+
+jest.mock('../cashfree-native', () => ({
+  openCashfreeNativeCheckout: mockOpenCashfreeNativeCheckout,
 }));
 
 const mockedApiClient = apiClient as jest.Mocked<typeof apiClient>;
-const mockedBrowser = WebBrowser as jest.Mocked<typeof WebBrowser>;
 const mockedFetch = jest.fn();
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -75,14 +77,17 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 const payment = {
-  transactionId: 'txn-1',
-  referenceId: 'order/1',
-  transactionType: 'ORDER_PAYMENT',
-  amount: 499,
-  currency: 'INR',
-  status: 'SUCCESS' as const,
-  createdAt: '2026-08-06T00:00:00Z',
-  updatedAt: '2026-08-06T00:01:00Z',
+  paymentId: 'payment-1',
+  referenceType: 'PRODUCT_ORDER' as const,
+  referenceId: 'order-1',
+  provider: 'CASHFREE' as const,
+  providerOrderId: 'mp_12345678901234567890123456789012',
+  status: 'PENDING' as const,
+  paymentSessionId: 'session-1',
+  expiresAt: '2026-08-15T12:15:00Z',
+  amountPaise: 49_900,
+  currency: 'INR' as const,
+  refundStatus: null,
 };
 
 describe('high-risk customer service contracts', () => {
@@ -94,98 +99,68 @@ describe('high-risk customer service contracts', () => {
   });
 
   describe('payments', () => {
-    it('normalizes customer details and creates Cashfree order payments', async () => {
-      mockedApiClient.post.mockResolvedValueOnce({
-        orderId: 'cf-order-1',
-        paymentSessionId: 'session-1',
-        amount: 499,
-        currency: 'INR',
-        transactionId: 'txn-1',
-        environment: 'SANDBOX',
-      });
+    it('initiates only the canonical server-authoritative product payment request', async () => {
+      mockedApiClient.post.mockResolvedValueOnce(payment);
 
-      await initiateOrderPayment('user-1', 'order-1', 499, {
-        phone: '+91 98765 43210',
-        email: ' customer@example.com ',
-        name: ' Customer ',
-      });
+      await expect(initiateOrderPayment('order-1', 'idem-1')).resolves.toEqual(payment);
 
-      expect(mockedApiClient.post).toHaveBeenCalledWith('/api/v1/payments/orders', {
-        userId: 'user-1',
-        referenceId: 'order-1',
-        amount: 499,
-        transactionType: 'ORDER_PAYMENT',
-        customerPhone: '9876543210',
-        customerEmail: 'customer@example.com',
-        customerName: 'Customer',
-      });
-
-      await expect(
-        initiateOrderPayment('user-1', 'order-1', 499, { phone: '1234' }),
-      ).rejects.toThrow('valid Indian mobile number');
+      expect(mockedApiClient.post).toHaveBeenCalledWith(
+        '/api/v1/customer/payments',
+        {
+          referenceType: 'PRODUCT_ORDER',
+          referenceId: 'order-1',
+          provider: 'CASHFREE',
+        },
+        { 'Idempotency-Key': 'idem-1' },
+      );
+      expect(JSON.stringify(mockedApiClient.post.mock.calls[0])).not.toContain('userId');
+      expect(JSON.stringify(mockedApiClient.post.mock.calls[0])).not.toContain('amountPaise');
+      expect(await loadPendingPayment()).toEqual({ paymentId: 'payment-1', orderId: 'order-1' });
     });
 
-    it('opens only a valid hosted checkout session with the app return scheme', async () => {
-      mockedApiClient.post.mockResolvedValueOnce({
-        checkoutPath: '/api/v1/payments/checkout/txn-1?token=signed',
-        expiresAt: '2026-08-06T00:15:00Z',
+    it('treats native Cashfree callbacks only as a signal to verify backend truth', async () => {
+      mockOpenCashfreeNativeCheckout.mockResolvedValueOnce('VERIFY');
+
+      await expect(openCashfreeOrder(payment)).resolves.toBe('VERIFY');
+
+      expect(mockOpenCashfreeNativeCheckout).toHaveBeenCalledWith({
+        paymentSessionId: payment.paymentSessionId,
+        providerOrderId: payment.providerOrderId,
       });
-      mockedBrowser.openAuthSessionAsync.mockResolvedValue({ type: 'success', url: 'customerapp://payments/result' });
-
-      await openCashfreeOrder({
-        orderId: 'cf-order-1',
-        paymentSessionId: 'session-1',
-        amount: 499,
-        currency: 'INR',
-        transactionId: 'txn-1',
-        environment: 'SANDBOX',
-      });
-
-      expect(mockedApiClient.post).toHaveBeenCalledWith('/api/v1/payments/checkout-sessions', {
-        transactionId: 'txn-1',
-      });
-      expect(mockedBrowser.openAuthSessionAsync).toHaveBeenCalledWith(
-        'https://api.mypet.test/api/v1/payments/checkout/txn-1?token=signed',
-        'customerapp://payments/result',
-        expect.objectContaining({ preferEphemeralSession: true }),
-      );
-
-      await expect(
-        openCashfreeOrder({
-          orderId: '',
-          paymentSessionId: '',
-          amount: 499,
-          currency: 'INR',
-          transactionId: 'txn-1',
-          environment: 'SANDBOX',
-        }),
-      ).rejects.toThrow('invalid checkout session');
-    });
-
-    it('observes authoritative payment status without client reconciliation or order confirmation', async () => {
-      mockedApiClient.get.mockResolvedValueOnce(payment);
-
-      await expect(fetchOrderPaymentStatus('order/1')).resolves.toEqual(payment);
-      expect(mockedApiClient.get).toHaveBeenCalledWith(
-        '/api/v1/payments/transactions/reference/order%2F1',
-      );
       expect(mockedApiClient.post).not.toHaveBeenCalled();
     });
 
-    it('polls pending outcomes with GET only and stops after a terminal status', async () => {
+    it('polls only canonical payment status and clears recovery after capture', async () => {
       mockedApiClient.get
-        .mockResolvedValueOnce({ ...payment, status: 'PENDING' })
-        .mockResolvedValueOnce({ ...payment, status: 'FAILED' });
-
-      const result = await waitForPaymentOutcome('order-1', 3, 0);
-
-      expect(result.status).toBe('FAILED');
-      expect(mockedApiClient.get).toHaveBeenCalledTimes(2);
-      expect(mockedApiClient.get).toHaveBeenNthCalledWith(
-        1,
-        '/api/v1/payments/transactions/reference/order-1',
+        .mockResolvedValueOnce(payment)
+        .mockResolvedValueOnce({ ...payment, status: 'CAPTURED' });
+      await AsyncStorage.setItem(
+        'mypet.customer.pending-payment.v1',
+        JSON.stringify({ paymentId: payment.paymentId, orderId: payment.referenceId }),
       );
+
+      const result = await waitForPaymentOutcome(payment.paymentId, 3, 0);
+
+      expect(result.status).toBe('CAPTURED');
+      expect(mockedApiClient.get).toHaveBeenCalledTimes(2);
+      expect(mockedApiClient.get).toHaveBeenNthCalledWith(1, '/api/v1/customer/payments/payment-1');
       expect(mockedApiClient.post).not.toHaveBeenCalled();
+      expect(await loadPendingPayment()).toBeNull();
+    });
+
+    it('reads owned server payment status and recovery storage contains safe ids only', async () => {
+      mockedApiClient.get.mockResolvedValueOnce({ ...payment, status: 'AUTHORIZED' });
+
+      await expect(fetchPaymentStatus('payment/1')).resolves.toMatchObject({ status: 'AUTHORIZED' });
+      expect(mockedApiClient.get).toHaveBeenCalledWith('/api/v1/customer/payments/payment%2F1');
+
+      await AsyncStorage.setItem(
+        'mypet.customer.pending-payment.v1',
+        JSON.stringify({ paymentId: 'payment-2', orderId: 'order-2' }),
+      );
+      expect(await loadPendingPayment()).toEqual({ paymentId: 'payment-2', orderId: 'order-2' });
+      await clearPendingPayment('payment-2');
+      expect(await loadPendingPayment()).toBeNull();
     });
   });
 
@@ -396,16 +371,6 @@ describe('high-risk customer service contracts', () => {
         Accept: 'application/json',
       });
       expect(mockedFetch.mock.calls[3][0]).toContain('document%2F1/signed-link?disposition=attachment');
-    });
-  });
-
-  it('exposes the standalone hosted-session helper for callers that prefetch checkout', async () => {
-    mockedApiClient.post.mockResolvedValueOnce({
-      checkoutPath: 'https://checkout.mypet.test/session',
-      expiresAt: '2026-08-06T00:15:00Z',
-    });
-    await expect(createHostedCheckoutSession('txn-1')).resolves.toMatchObject({
-      checkoutPath: 'https://checkout.mypet.test/session',
     });
   });
 });

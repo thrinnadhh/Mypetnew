@@ -6,6 +6,8 @@ import `in`.mypetnew.common.error.DomainException
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Instant
+import java.time.Clock
+import java.time.Duration
 import java.util.UUID
 
 enum class OrderStatus {
@@ -46,6 +48,7 @@ data class ProductOrder(
     val quoteId: UUID = UUID(0L, 0L),
     val fulfilmentMode: String = "STORE_PICKUP",
     val paymentStatus: String = "PENDING_EXTERNAL_COLLECTION",
+    val paymentHoldExpiresAt: Instant? = null,
 )
 
 data class OrderLineSnapshot(
@@ -86,6 +89,8 @@ class CheckoutIdempotencyRace : RuntimeException()
 class OrderService(
     private val inventory: InventoryService,
     private val persistence: OrderPersistence = InMemoryOrderPersistence(),
+    private val clock: Clock = Clock.systemUTC(),
+    private val onlinePaymentHold: Duration = Duration.ofMinutes(15),
 ) {
     fun checkout(
         quote: Quote,
@@ -99,7 +104,7 @@ class OrderService(
         validateTraceId(traceId)
         val supportedMode = quote.fulfilmentMode == "STORE_PICKUP" ||
             quote.fulfilmentMode == "MYPET_CAPTAIN_DELIVERY"
-        if (!supportedMode || quote.paymentMethod != "PAY_ON_FULFILMENT") {
+        if (!supportedMode || quote.paymentMethod !in setOf(PaymentMethods.PAY_ON_FULFILMENT, PaymentMethods.ONLINE_PAYMENT)) {
             throw DomainException("CHECKOUT_MODE_INVALID", "The quoted fulfilment or payment mode is unsupported")
         }
         if (quote.fulfilmentMode == "MYPET_CAPTAIN_DELIVERY" && quote.deliveryAddress == null) {
@@ -140,7 +145,16 @@ class OrderService(
                     merchantCommissionPaise = quote.pricing.merchantCommissionPaise,
                     paymentMethod = quote.paymentMethod,
                     fulfilmentMode = quote.fulfilmentMode,
-                    paymentStatus = "PENDING_EXTERNAL_COLLECTION",
+                    paymentStatus = if (quote.paymentMethod == PaymentMethods.ONLINE_PAYMENT) {
+                        "PENDING_ONLINE_PAYMENT"
+                    } else {
+                        "PENDING_EXTERNAL_COLLECTION"
+                    },
+                    paymentHoldExpiresAt = if (quote.paymentMethod == PaymentMethods.ONLINE_PAYMENT) {
+                        clock.instant().plus(onlinePaymentHold)
+                    } else {
+                        null
+                    },
                     status = OrderStatus.PLACED,
                     history = emptyList(),
                 )
@@ -251,6 +265,13 @@ class OrderService(
             }
 
             val order = persistence.lock(orderId)
+            if (
+                target == OrderStatus.ACCEPTED &&
+                order.paymentMethod == PaymentMethods.ONLINE_PAYMENT &&
+                order.paymentStatus != "PAID"
+            ) {
+                throw DomainException("ORDER_PAYMENT_REQUIRED", "Online payment must be verified before acceptance")
+            }
             if (target !in allowedTargets(order, actorRole)) {
                 throw DomainException("ORDER_TRANSITION_INVALID", "The order cannot move to the requested state")
             }

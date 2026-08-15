@@ -148,7 +148,11 @@ class CatalogInventoryApiController(
 }
 
 data class OrderLineRequest(val listingId: UUID, val quantity: Int)
-data class PickupQuoteRequest(val outletId: UUID, val lines: List<OrderLineRequest>)
+data class PickupQuoteRequest(
+    val outletId: UUID,
+    val lines: List<OrderLineRequest>,
+    val paymentMethod: String? = null,
+)
 data class CheckoutRequest(val quoteId: UUID, val cartSignature: String)
 
 @RestController
@@ -191,7 +195,7 @@ class CustomerCommerceApiController(
             listing.id to Pair(line.quantity, listing.sellingPricePaise)
         }
         if (lines.size != request.lines.size) throw DomainException("CART_INVALID", "The cart contains duplicate lines")
-        return quotes.createPickupQuote(customer.actorId, outlet.id, lines)
+        return quotes.createPickupQuote(customer.actorId, outlet.id, lines, request.paymentMethod)
     }
 
     @PostMapping("/orders")

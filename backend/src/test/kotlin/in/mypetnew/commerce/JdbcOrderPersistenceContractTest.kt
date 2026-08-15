@@ -330,6 +330,7 @@ class JdbcOrderPersistenceContractTest {
                 platform_fee_paise BIGINT NOT NULL,
                 merchant_commission_paise BIGINT NOT NULL,
                 currency VARCHAR(3) NOT NULL DEFAULT 'INR',
+                payment_hold_expires_at TIMESTAMP WITH TIME ZONE,
                 version BIGINT NOT NULL DEFAULT 0,
                 checkout_idempotency_key VARCHAR(128),
                 checkout_request_fingerprint VARCHAR(64),

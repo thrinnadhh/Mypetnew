@@ -47,6 +47,17 @@ data class Quote(
     val etaMinutes: Int? = null,
 )
 
+object PaymentMethods {
+    const val PAY_ON_FULFILMENT = "PAY_ON_FULFILMENT"
+    const val ONLINE_PAYMENT = "ONLINE_PAYMENT"
+
+    fun normalize(value: String?): String = when (value?.trim()?.uppercase()) {
+        null, "", PAY_ON_FULFILMENT -> PAY_ON_FULFILMENT
+        ONLINE_PAYMENT -> ONLINE_PAYMENT
+        else -> throw DomainException("PAYMENT_METHOD_INVALID", "The payment method is unsupported")
+    }
+}
+
 interface QuotePersistence {
     fun save(quote: Quote): Quote
     fun get(id: UUID): Quote?
@@ -56,11 +67,13 @@ class QuoteService(
     private val clock: Clock = Clock.systemUTC(),
     private val lifetime: Duration = Duration.ofMinutes(5),
     private val persistence: QuotePersistence = InMemoryQuotePersistence(),
+    private val onlinePaymentAvailable: () -> Boolean = { true },
 ) {
     fun createPickupQuote(
         customerId: UUID,
         outletId: UUID,
         lines: Map<UUID, Pair<Int, Long>>,
+        paymentMethod: String? = null,
     ): Quote = createQuote(
         customerId = customerId,
         outletId = outletId,
@@ -70,6 +83,7 @@ class QuoteService(
         deliveryAddress = null,
         etaMinutes = null,
         ruleVersion = "s1-v1",
+        paymentMethod = paymentMethod,
     )
 
     fun createDeliveryQuote(
@@ -79,6 +93,7 @@ class QuoteService(
         deliveryAddress: DeliveryAddressSnapshot,
         deliveryFeePaise: Long,
         etaMinutes: Int,
+        paymentMethod: String? = null,
     ): Quote {
         if (deliveryFeePaise < 0) {
             throw DomainException("DELIVERY_FEE_INVALID", "The server delivery fee is invalid")
@@ -95,6 +110,7 @@ class QuoteService(
             deliveryAddress = deliveryAddress,
             etaMinutes = etaMinutes,
             ruleVersion = "p4-v1",
+            paymentMethod = paymentMethod,
         )
     }
 
@@ -105,6 +121,9 @@ class QuoteService(
         }
         if (!at.isBefore(quote.expiresAt)) {
             throw DomainException("QUOTE_EXPIRED", "The quote expired")
+        }
+        if (quote.paymentMethod == PaymentMethods.ONLINE_PAYMENT && !onlinePaymentAvailable()) {
+            throw DomainException("PAYMENT_PROVIDER_UNAVAILABLE", "Online payment is temporarily unavailable")
         }
         return quote
     }
@@ -121,6 +140,7 @@ class QuoteService(
         deliveryAddress: DeliveryAddressSnapshot?,
         etaMinutes: Int?,
         ruleVersion: String,
+        paymentMethod: String?,
     ): Quote {
         if (lines.isEmpty()) throw DomainException("CART_EMPTY", "The cart is empty")
         var subtotal = 0L
@@ -131,7 +151,11 @@ class QuoteService(
             }
             subtotal = Math.addExact(subtotal, Math.multiplyExact(quantity.toLong(), unitPricePaise))
         }
-        val signature = signature(customerId, outletId, lines, fulfilmentMode, deliveryAddress)
+        val normalizedPaymentMethod = PaymentMethods.normalize(paymentMethod)
+        if (normalizedPaymentMethod == PaymentMethods.ONLINE_PAYMENT && !onlinePaymentAvailable()) {
+            throw DomainException("PAYMENT_PROVIDER_UNAVAILABLE", "Online payment is temporarily unavailable")
+        }
+        val signature = signature(customerId, outletId, lines, fulfilmentMode, normalizedPaymentMethod, deliveryAddress)
         val grandTotal = Math.addExact(Math.addExact(subtotal, 1_000), deliveryFeePaise)
         val quote = Quote(
             id = UUID.randomUUID(),
@@ -140,6 +164,7 @@ class QuoteService(
             lines = lines.toSortedMap(compareBy(UUID::toString)),
             cartSignature = signature,
             fulfilmentMode = fulfilmentMode,
+            paymentMethod = normalizedPaymentMethod,
             pricing = PricingSnapshot(
                 itemSubtotalPaise = subtotal,
                 deliveryFeePaise = deliveryFeePaise,
@@ -158,10 +183,12 @@ class QuoteService(
         outletId: UUID,
         lines: Map<UUID, Pair<Int, Long>>,
         fulfilmentMode: String,
+        paymentMethod: String,
         deliveryAddress: DeliveryAddressSnapshot?,
     ): String {
         val canonical = buildString {
             append(customerId).append(':').append(outletId).append(':').append(fulfilmentMode)
+            append(':').append(paymentMethod)
             deliveryAddress?.let { address ->
                 append(':').append(address.addressId)
                 append(':').append(address.pincode)

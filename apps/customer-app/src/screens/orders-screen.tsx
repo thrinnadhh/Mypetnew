@@ -11,7 +11,7 @@ import { radii, shadows, spacing, touchTarget, typography } from '@/design/token
 import { useOrders } from '@/hooks/use-orders';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
-import type { CustomerOrderRecord } from '@/services/customer-orders';
+import type { CustomerOrderSummaryRecord } from '@/services/customer-order-list';
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -52,12 +52,15 @@ export default function OrdersScreen() {
     searchQuery,
     setSearchQuery,
     actionLoading,
+    loadingMore,
+    hasNext,
     reload,
+    loadMore,
     cancel,
     reorder,
   } = useOrders();
 
-  const [selectedOrderForCancel, setSelectedOrderForCancel] = useState<CustomerOrderRecord | null>(null);
+  const [selectedOrderForCancel, setSelectedOrderForCancel] = useState<CustomerOrderSummaryRecord | null>(null);
   const [cancelReason, setCancelReason] = useState('');
 
   if (!user || !session) {
@@ -111,14 +114,13 @@ export default function OrdersScreen() {
 
   return (
     <ScreenShell
-      header={<AppBar title={t('ordersFoundation.title')} subtitle="Track deliveries, subscriptions, and past purchases" />}
+      header={<AppBar title={t('ordersFoundation.title')} subtitle="Track current and past purchases" />}
       testID="orders-screen"
     >
       <View style={styles.controls}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
           <FilterChip label="Active" selected={activeTab === 'active'} onPress={() => setActiveTab('active')} />
           <FilterChip label="Past orders" selected={activeTab === 'past'} onPress={() => setActiveTab('past')} />
-          <FilterChip label="Subscriptions" selected={activeTab === 'subscription'} onPress={() => setActiveTab('subscription')} />
         </ScrollView>
 
         <View style={[styles.searchBox, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
@@ -126,7 +128,7 @@ export default function OrdersScreen() {
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholder="Search item or store…"
+            placeholder="Search store or order ID…"
             placeholderTextColor={theme.textSecondary}
             style={[styles.searchInput, { color: theme.text }]}
             accessibilityLabel="Search orders"
@@ -171,7 +173,7 @@ export default function OrdersScreen() {
         <StateView
           kind="empty"
           title={searchQuery ? 'No matching orders' : t('ordersFoundation.emptyTitle')}
-          message={searchQuery ? 'Try another item or store name.' : t('ordersFoundation.emptyMessage')}
+          message={searchQuery ? 'Try another store name or order ID.' : t('ordersFoundation.emptyMessage')}
           actionLabel={searchQuery ? 'Clear search' : undefined}
           onAction={searchQuery ? () => setSearchQuery('') : undefined}
         />
@@ -209,7 +211,7 @@ export default function OrdersScreen() {
               >
                 <View style={styles.cardHeader}>
                   <View style={[styles.storeIcon, { backgroundColor: theme.primarySoft }]}>
-                    <AppIcon name={order.isSubscription ? 'history' : 'store'} size={23} color={theme.primary} />
+                    <AppIcon name="store" size={23} color={theme.primary} />
                   </View>
                   <View style={styles.flex}>
                     <ThemedText style={styles.storeName}>{order.providerName}</ThemedText>
@@ -221,18 +223,18 @@ export default function OrdersScreen() {
                 </View>
 
                 <View style={[styles.itemsPanel, { backgroundColor: theme.muted }]}>
-                  <ThemedText type="smallBold">{order.items.length} item{order.items.length === 1 ? '' : 's'}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={3}>
-                    {order.items.join(' · ')}
+                  <ThemedText type="smallBold">{order.itemCount} item{order.itemCount === 1 ? '' : 's'}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {order.fulfilmentMode.replaceAll('_', ' ')} · {order.paymentMethod.replaceAll('_', ' ')}
                   </ThemedText>
                 </View>
 
                 <View style={styles.amountRow}>
                   <View>
-                    <ThemedText type="small" themeColor="textSecondary">Total paid</ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">Order total</ThemedText>
                     <ThemedText style={[styles.amountText, { color: theme.primary }]}>{order.total}</ThemedText>
                   </View>
-                  {order.isSubscription ? <StatusBadge label="SUBSCRIPTION" tone="success" /> : null}
+                  <StatusBadge label={order.paymentStatus.replaceAll('_', ' ')} tone="neutral" />
                 </View>
 
                 <View style={styles.actionRow}>
@@ -282,6 +284,10 @@ export default function OrdersScreen() {
               </View>
             );
           })}
+
+          {hasNext ? (
+            <PrimaryAction label="Load more orders" onPress={() => void loadMore()} loading={loadingMore} />
+          ) : null}
         </View>
       ) : null}
 

@@ -32,6 +32,8 @@ jobs:
           cache-dependency-path: apps/customer-app/package-lock.json
       - name: Install Customer dependencies
         run: npm ci
+      - name: Audit Customer runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
       - name: Typecheck Customer app
         run: npm run typecheck
       - name: Lint Customer app

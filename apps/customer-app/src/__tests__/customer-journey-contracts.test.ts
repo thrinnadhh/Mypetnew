@@ -163,7 +163,17 @@ describe('MyPet customer journey contracts', () => {
       "'/api/v1/customer/quotes/delivery'",
       'paymentMethod',
     ]);
-    expect(quoteClient).not.toContain('customerId:');
+    const pickupQuoteRequest = quoteClient.slice(
+      quoteClient.indexOf("await apiClient.post<CanonicalProductQuote>('/api/v1/customer/quotes/pickup'"),
+      quoteClient.indexOf("'STORE_PICKUP'", quoteClient.indexOf("await apiClient.post<CanonicalProductQuote>('/api/v1/customer/quotes/pickup'")),
+    );
+    const deliveryQuoteRequest = quoteClient.slice(
+      quoteClient.indexOf("await apiClient.post<CanonicalProductQuote>('/api/v1/customer/quotes/delivery'"),
+      quoteClient.indexOf("'MYPET_CAPTAIN_DELIVERY'", quoteClient.indexOf("await apiClient.post<CanonicalProductQuote>('/api/v1/customer/quotes/delivery'")),
+    );
+    expect(pickupQuoteRequest).not.toContain('customerId');
+    expect(deliveryQuoteRequest).not.toContain('customerId');
+    expect(quoteClient).toContain('customerId: string;');
   });
 
   it('keeps demo checkout non-chargeable while production remains server-authoritative', () => {

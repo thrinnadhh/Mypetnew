@@ -65,7 +65,7 @@ describe('MyPet customer journey contracts', () => {
     ]);
   });
 
-  it('keeps appointment payment fail-closed until the Plan 8 server contract exists', () => {
+  it('keeps appointment online payment fail-closed while allowing server-authoritative pay-at-clinic booking', () => {
     const discovery = source('src/screens/appointment-discovery-screen.tsx');
     const payment = source('src/app/appointments/payment.tsx');
     const booking = source('src/services/appointment-booking.ts');
@@ -82,7 +82,9 @@ describe('MyPet customer journey contracts', () => {
     expectAll(payment, [
       'Online appointment payment is not available yet',
       'Plan 5 online payment is limited to product orders',
-      'No charge has been attempted.',
+      'No online charge will be attempted.',
+      'PAY AT CLINIC',
+      'confirmAppointmentHold(appointmentId, session.accessToken);',
       'demoPayment',
       'demo-payment',
     ]);

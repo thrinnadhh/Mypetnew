@@ -77,6 +77,16 @@ class JdbcAppointmentPersistence(
         return slot
     }
 
+    override fun getSlot(slotId: UUID): ServiceSlot? = jdbc.query(
+        """
+        SELECT id, offering_id, slot_start, slot_end, created_at
+        FROM mypet.service_slot
+        WHERE id = ?
+        """.trimIndent(),
+        ::mapSlot,
+        slotId,
+    ).firstOrNull()
+
     override fun listSlots(offeringId: UUID, now: Instant): List<ServiceSlot> = transactions.execute {
         expireHolds(now)
         jdbc.query(
@@ -86,8 +96,7 @@ class JdbcAppointmentPersistence(
             WHERE s.offering_id = ?
               AND s.slot_start > ?
               AND NOT EXISTS (
-                SELECT 1
-                FROM mypet.appointment a
+                SELECT 1 FROM mypet.appointment a
                 WHERE a.slot_id = s.id
                   AND a.status IN ('HOLD', 'BOOKED', 'CONFIRMED', 'CHECKED_IN', 'IN_SERVICE')
               )
@@ -103,9 +112,7 @@ class JdbcAppointmentPersistence(
         val offering = jdbc.query(
             """
             SELECT id, outlet_id, name, description, price_paise, duration_minutes, status, created_at, updated_at
-            FROM mypet.service_offering
-            WHERE id = ?
-            FOR UPDATE
+            FROM mypet.service_offering WHERE id = ? FOR UPDATE
             """.trimIndent(),
             ::mapOffering,
             appointment.offeringId,
@@ -113,14 +120,11 @@ class JdbcAppointmentPersistence(
         val slot = jdbc.query(
             """
             SELECT id, offering_id, slot_start, slot_end, created_at
-            FROM mypet.service_slot
-            WHERE id = ?
-            FOR UPDATE
+            FROM mypet.service_slot WHERE id = ? FOR UPDATE
             """.trimIndent(),
             ::mapSlot,
             appointment.slotId,
         ).firstOrNull() ?: unavailable()
-
         if (
             offering.status != ServiceOfferingStatus.ACTIVE ||
             offering.outletId != appointment.providerId ||
@@ -131,8 +135,7 @@ class JdbcAppointmentPersistence(
         expireHolds(now)
         val occupied = jdbc.queryForObject(
             """
-            SELECT COUNT(*)
-            FROM mypet.appointment
+            SELECT COUNT(*) FROM mypet.appointment
             WHERE slot_id = ?
               AND status IN ('HOLD', 'BOOKED', 'CONFIRMED', 'CHECKED_IN', 'IN_SERVICE')
             """.trimIndent(),
@@ -173,52 +176,64 @@ class JdbcAppointmentPersistence(
         appointmentId,
     ).firstOrNull()
 
-    override fun confirm(
-        appointmentId: UUID,
-        customerId: UUID,
-        paymentId: UUID?,
-        now: Instant,
-    ): Appointment = transactions.execute {
-        expireHolds(now)
-        val current = jdbc.query(
-            appointmentSelect + " WHERE id = ? FOR UPDATE",
-            ::mapAppointment,
-            appointmentId,
-        ).firstOrNull()?.takeIf { it.customerId == customerId } ?: unavailable()
+    override fun confirm(appointmentId: UUID, customerId: UUID, paymentId: UUID?, now: Instant): Appointment =
+        transactions.execute {
+            expireHolds(now)
+            val current = jdbc.query(
+                appointmentSelect + " WHERE id = ? FOR UPDATE",
+                ::mapAppointment,
+                appointmentId,
+            ).firstOrNull()?.takeIf { it.customerId == customerId } ?: unavailable()
+            if (current.status == AppointmentStatus.HOLD_EXPIRED) {
+                throw DomainException("SLOT_HOLD_EXPIRED", "The slot hold expired; choose a fresh slot")
+            }
+            if (current.status == AppointmentStatus.BOOKED) return@execute current
+            if (current.status != AppointmentStatus.HOLD) {
+                throw DomainException("APPOINTMENT_STATE_INVALID", "The appointment cannot be confirmed from its current state")
+            }
+            if (!current.payAtClinic) {
+                throw DomainException("APPOINTMENT_ONLINE_PAYMENT_UNAVAILABLE", "Online appointment payment is not enabled yet")
+            }
+            if (paymentId != null) {
+                throw DomainException("APPOINTMENT_PAYMENT_NOT_ACCEPTED", "A client-supplied payment reference cannot confirm this appointment")
+            }
+            jdbc.update(
+                """
+                UPDATE mypet.appointment
+                SET status = 'BOOKED', payment_id = NULL, booked_at = ?, hold_expires_at = NULL, updated_at = ?
+                WHERE id = ? AND status = 'HOLD'
+                """.trimIndent(),
+                java.sql.Timestamp.from(now),
+                java.sql.Timestamp.from(now),
+                appointmentId,
+            )
+            appendHistory(appointmentId, AppointmentStatus.HOLD, AppointmentStatus.BOOKED, customerId, "Customer confirmed pay-at-clinic booking", now)
+            current.copy(status = AppointmentStatus.BOOKED, paymentId = null, bookedAt = now, holdExpiresAt = null, updatedAt = now)
+        } ?: throw IllegalStateException("Appointment confirmation transaction returned no result")
 
-        if (current.status == AppointmentStatus.HOLD_EXPIRED) {
-            throw DomainException("SLOT_HOLD_EXPIRED", "The slot hold expired; choose a fresh slot")
-        }
-        if (current.status == AppointmentStatus.BOOKED) return@execute current
-        if (current.status != AppointmentStatus.HOLD) {
-            throw DomainException("APPOINTMENT_STATE_INVALID", "The appointment cannot be confirmed from its current state")
-        }
-        if (!current.payAtClinic) {
-            throw DomainException("APPOINTMENT_ONLINE_PAYMENT_UNAVAILABLE", "Online appointment payment is not enabled yet")
-        }
-        if (paymentId != null) {
-            throw DomainException("APPOINTMENT_PAYMENT_NOT_ACCEPTED", "A client-supplied payment reference cannot confirm this appointment")
-        }
-
-        jdbc.update(
-            """
-            UPDATE mypet.appointment
-            SET status = 'BOOKED', payment_id = NULL, booked_at = ?, hold_expires_at = NULL, updated_at = ?
-            WHERE id = ? AND status = 'HOLD'
-            """.trimIndent(),
-            java.sql.Timestamp.from(now),
-            java.sql.Timestamp.from(now),
-            appointmentId,
-        )
-        appendHistory(appointmentId, AppointmentStatus.HOLD, AppointmentStatus.BOOKED, customerId, "Customer confirmed pay-at-clinic booking", now)
-        current.copy(
-            status = AppointmentStatus.BOOKED,
-            paymentId = null,
-            bookedAt = now,
-            holdExpiresAt = null,
-            updatedAt = now,
-        )
-    } ?: throw IllegalStateException("Appointment confirmation transaction returned no result")
+    override fun cancel(appointmentId: UUID, customerId: UUID, reason: String?, now: Instant): Appointment =
+        transactions.execute {
+            expireHolds(now)
+            val current = jdbc.query(
+                appointmentSelect + " WHERE id = ? FOR UPDATE",
+                ::mapAppointment,
+                appointmentId,
+            ).firstOrNull()?.takeIf { it.customerId == customerId } ?: unavailable()
+            if (current.status !in setOf(AppointmentStatus.HOLD, AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)) {
+                throw DomainException("APPOINTMENT_STATE_INVALID", "The appointment cannot be cancelled from its current state")
+            }
+            jdbc.update(
+                """
+                UPDATE mypet.appointment
+                SET status = 'CANCELLED', hold_expires_at = NULL, updated_at = ?
+                WHERE id = ?
+                """.trimIndent(),
+                java.sql.Timestamp.from(now),
+                appointmentId,
+            )
+            appendHistory(appointmentId, current.status, AppointmentStatus.CANCELLED, customerId, reason ?: "Customer cancelled", now)
+            current.copy(status = AppointmentStatus.CANCELLED, holdExpiresAt = null, updatedAt = now)
+        } ?: throw IllegalStateException("Appointment cancellation transaction returned no result")
 
     override fun listCustomerAppointments(customerId: UUID): List<Appointment> = jdbc.query(
         appointmentSelect + " WHERE customer_id = ? ORDER BY created_at DESC, id DESC",
@@ -257,7 +272,7 @@ class JdbcAppointmentPersistence(
             from?.name,
             to.name,
             actorId,
-            reason,
+            reason.take(240),
             java.sql.Timestamp.from(now),
         )
     }

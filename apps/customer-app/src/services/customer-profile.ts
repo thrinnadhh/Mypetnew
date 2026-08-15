@@ -23,6 +23,11 @@ export interface CustomerAddress {
   updatedAt: string;
 }
 
+export interface DeliveryContact {
+  addressId: string;
+  phoneNumber: string;
+}
+
 export interface AddressInput {
   label: string;
   recipientName: string;
@@ -109,6 +114,37 @@ export async function deleteCustomerAddress(accessToken: string, addressId: stri
     `/api/v1/customer/addresses/${encodeURIComponent(addressId)}`,
     authHeaders(accessToken),
   );
+}
+
+export async function fetchDeliveryContact(
+  accessToken: string,
+  addressId: string,
+): Promise<DeliveryContact | null> {
+  const addresses = await fetchCustomerAddresses(accessToken);
+  const address = addresses.find((item) => item.addressId === addressId);
+  return address ? { addressId: address.addressId, phoneNumber: address.phoneNumber } : null;
+}
+
+export async function saveDeliveryContact(
+  accessToken: string,
+  addressId: string,
+  rawPhoneNumber: string,
+): Promise<DeliveryContact> {
+  const addresses = await fetchCustomerAddresses(accessToken);
+  const address = addresses.find((item) => item.addressId === addressId);
+  if (!address) throw new Error('Address not found.');
+  const updated = await updateCustomerAddress(accessToken, addressId, {
+    label: address.label,
+    recipientName: address.recipientName,
+    phoneNumber: normalizeDeliveryPhone(rawPhoneNumber),
+    line1: address.line1,
+    line2: address.line2,
+    city: address.city,
+    state: address.state,
+    pincode: address.pincode,
+    isDefault: address.isDefault,
+  });
+  return { addressId: updated.addressId, phoneNumber: updated.phoneNumber };
 }
 
 function normalizeLegacyAddress(value: LegacyDefaultAddress): LegacyDefaultAddress {

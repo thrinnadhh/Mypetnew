@@ -16,7 +16,10 @@ import `in`.mypetnew.commerce.infrastructure.JdbcOrderPersistence
 import `in`.mypetnew.commerce.infrastructure.JdbcQuotePersistence
 import `in`.mypetnew.customer.domain.CustomerDataPersistence
 import `in`.mypetnew.customer.domain.CustomerDataService
+import `in`.mypetnew.customer.domain.CustomerFavouritePersistence
+import `in`.mypetnew.customer.domain.CustomerFavouriteService
 import `in`.mypetnew.customer.infrastructure.JdbcCustomerDataPersistence
+import `in`.mypetnew.customer.infrastructure.JdbcCustomerFavouritePersistence
 import `in`.mypetnew.loyalty.domain.LoyaltyPersistence
 import `in`.mypetnew.loyalty.domain.LoyaltyService
 import `in`.mypetnew.loyalty.infrastructure.JdbcLoyaltyPersistence
@@ -85,6 +88,17 @@ class PersistenceConfiguration {
     @Bean
     fun productionCustomerDataService(persistence: CustomerDataPersistence): CustomerDataService =
         CustomerDataService(persistence)
+
+    @Bean
+    fun customerFavouritePersistence(jdbc: JdbcClient): CustomerFavouritePersistence =
+        JdbcCustomerFavouritePersistence(jdbc)
+
+    @Bean
+    fun productionCustomerFavouriteService(
+        persistence: CustomerFavouritePersistence,
+        catalog: CatalogService,
+        providers: ProviderService,
+    ): CustomerFavouriteService = CustomerFavouriteService(persistence, catalog, providers)
 
     @Bean
     fun loyaltyPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): LoyaltyPersistence =

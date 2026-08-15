@@ -293,7 +293,7 @@ class PrivacyService(
         private val PROCESSING_CATEGORIES = listOf(
             "identity and authentication",
             "customer pet profiles and saved delivery addresses",
-            "commerce and order history",
+            "commerce, favourites and order history",
             "merchant-scoped loyalty",
             "notification and device registration",
             "security and audit records",

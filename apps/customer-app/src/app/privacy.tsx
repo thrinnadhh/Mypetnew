@@ -6,6 +6,7 @@ import { AppBar, PrimaryAction, SectionHeader, StateView } from '@/components/fo
 import { ScreenShell } from '@/components/foundation/screen-shell';
 import { ThemedText } from '@/components/themed-text';
 import { useAuth } from '@/context/AuthContext';
+import { clearLocalFavourites } from '@/context/FavouritesContext';
 import { radii, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import {
@@ -142,7 +143,7 @@ export default function PrivacyCentreScreen() {
 
       <SectionHeader title="Delete account" />
       <ThemedText themeColor="textSecondary">
-        Deletion signs you out everywhere, revokes notification delivery, erases profile and cart data, and pseudonymises legally retained records.
+        Deletion signs you out everywhere, revokes notification delivery, erases profile, favourites and cart data, and pseudonymises legally retained records.
       </ThemedText>
       <TextInput accessibilityLabel="Type DELETE to confirm" autoCapitalize="characters" onChangeText={setDeleteConfirmation} placeholder="Type DELETE" placeholderTextColor={theme.textSecondary} style={inputStyle} value={deleteConfirmation} />
       <PrimaryAction
@@ -150,6 +151,9 @@ export default function PrivacyCentreScreen() {
         disabled={busy || deleteConfirmation !== 'DELETE'}
         onPress={() => void run(async () => {
           await deleteCustomerAccount();
+          await clearLocalFavourites().catch((error) => {
+            console.warn('Local favourite cleanup failed after account deletion:', error);
+          });
           await signOut();
           router.replace('/' as never);
         }, 'Account deleted and local session cleared.', false)}

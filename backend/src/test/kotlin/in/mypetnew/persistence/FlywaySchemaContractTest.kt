@@ -21,7 +21,7 @@ class FlywaySchemaContractTest {
             .load()
 
         val result = flyway.migrate()
-        assertEquals(12, result.migrationsExecuted)
+        assertEquals(13, result.migrationsExecuted)
 
         DriverManager.getConnection(url, "sa", "").use { connection ->
             val tables = connection.prepareStatement(
@@ -44,6 +44,8 @@ class FlywaySchemaContractTest {
                 "device_registration",
                 "audit_event",
                 "customer_profile",
+                "customer_pet",
+                "customer_address",
                 "privacy_consent",
                 "privacy_rights_request",
                 "account_deletion_request",

@@ -28,7 +28,7 @@ interface MerchantSessionIssuer {
 class InMemoryRoleSessionStore(
     environment: Environment,
     private val clock: Clock = Clock.systemUTC(),
-) : SessionStore, MerchantSessionIssuer {
+) : SessionStore, MerchantSessionIssuer, CaptainSessionIssuer {
     private data class Stored(
         val sessionId: UUID,
         val accountId: UUID,
@@ -56,6 +56,14 @@ class InMemoryRoleSessionStore(
 
     override fun createMerchant(mobile: String, deviceId: String): RefreshSession =
         create(UUID.nameUUIDFromBytes(mobile.toByteArray(StandardCharsets.UTF_8)), mobile, Role.MERCHANT, deviceId)
+
+    override fun createCaptain(mobile: String, deviceId: String): RefreshSession =
+        create(
+            UUID.nameUUIDFromBytes("captain:$mobile".toByteArray(StandardCharsets.UTF_8)),
+            mobile,
+            Role.CAPTAIN,
+            deviceId,
+        )
 
     @Synchronized
     override fun rotate(refreshToken: String): RefreshSession {
@@ -120,7 +128,7 @@ class InMemoryRoleSessionStore(
     private fun validate(mobile: String, role: Role, deviceId: String) {
         if (
             !mobile.matches(Regex("\\+91[6-9][0-9]{9}")) ||
-            role !in setOf(Role.CUSTOMER, Role.MERCHANT) ||
+            role !in setOf(Role.CUSTOMER, Role.MERCHANT, Role.CAPTAIN) ||
             deviceId.isBlank() ||
             deviceId.length > 128
         ) throw DomainException("SESSION_INVALID", "The session cannot be created")

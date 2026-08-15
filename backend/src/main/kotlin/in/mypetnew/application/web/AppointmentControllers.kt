@@ -1,0 +1,248 @@
+package `in`.mypetnew.application.web
+
+import `in`.mypetnew.appointment.domain.AppointmentPaymentMethod
+import `in`.mypetnew.appointment.domain.AppointmentPaymentStatus
+import `in`.mypetnew.appointment.domain.AppointmentService
+import `in`.mypetnew.appointment.domain.AppointmentStatus
+import `in`.mypetnew.appointment.domain.CustomerAppointment
+import `in`.mypetnew.appointment.domain.ServiceCapability
+import `in`.mypetnew.appointment.domain.ServiceOffering
+import `in`.mypetnew.appointment.domain.ServiceSlot
+import `in`.mypetnew.common.auth.Authorizer
+import `in`.mypetnew.common.auth.Principal
+import `in`.mypetnew.common.auth.Role
+import org.springframework.http.HttpStatus
+import org.springframework.security.core.Authentication
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestHeader
+import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.ResponseStatus
+import org.springframework.web.bind.annotation.RestController
+import java.time.Instant
+import java.util.UUID
+
+data class PublicServiceResponse(
+    val serviceId: UUID,
+    val outletId: UUID,
+    val capability: ServiceCapability,
+    val name: String,
+    val description: String?,
+    val durationMinutes: Int,
+    val pricePaise: Long,
+    val currency: String = "INR",
+)
+
+data class PublicServiceSlotResponse(
+    val slotId: UUID,
+    val serviceId: UUID,
+    val startsAt: Instant,
+    val endsAt: Instant,
+)
+
+data class MerchantServiceRequest(
+    val outletId: UUID,
+    val capability: ServiceCapability,
+    val name: String,
+    val description: String? = null,
+    val durationMinutes: Int,
+    val pricePaise: Long,
+)
+
+data class MerchantServiceSlotRequest(val startsAt: Instant)
+
+data class CustomerAppointmentCreateRequest(
+    val outletId: UUID,
+    val serviceId: UUID,
+    val petId: UUID,
+    val slotId: UUID,
+    val paymentMethod: AppointmentPaymentMethod = AppointmentPaymentMethod.PAY_AT_PROVIDER,
+    val notes: String? = null,
+)
+
+data class CustomerAppointmentCancelRequest(val reason: String? = null)
+
+data class CustomerAppointmentResponse(
+    val appointmentId: UUID,
+    val outletId: UUID,
+    val providerId: UUID,
+    val serviceId: UUID,
+    val offeringId: UUID,
+    val slotId: UUID,
+    val petId: UUID,
+    val providerName: String,
+    val serviceName: String,
+    val petName: String,
+    val startsAt: Instant,
+    val endsAt: Instant,
+    val status: AppointmentStatus,
+    val paymentMethod: AppointmentPaymentMethod,
+    val paymentStatus: AppointmentPaymentStatus,
+    val pricePaise: Long,
+    val currency: String = "INR",
+    val notes: String?,
+    val holdExpiresAt: Instant?,
+    val createdAt: Instant,
+    val updatedAt: Instant,
+)
+
+@RestController
+@RequestMapping("/api/v1/public/services")
+class PublicServiceApiController(private val appointments: AppointmentService) {
+    @GetMapping
+    fun list(
+        @RequestParam(defaultValue = "0") page: Int,
+        @RequestParam(defaultValue = "20") pageSize: Int,
+        @RequestParam(required = false) capability: ServiceCapability?,
+        @RequestParam(required = false) outletId: UUID?,
+    ): PageResponse<PublicServiceResponse> = PaginationHelper.paginate(
+        appointments.listServices(capability, outletId).map(::publicService),
+        page,
+        pageSize,
+    )
+
+    @GetMapping("/{serviceId}/availability")
+    fun availability(
+        @PathVariable serviceId: UUID,
+        @RequestParam from: Instant,
+        @RequestParam to: Instant,
+        @RequestParam(defaultValue = "0") page: Int,
+        @RequestParam(defaultValue = "50") pageSize: Int,
+    ): PageResponse<PublicServiceSlotResponse> = PaginationHelper.paginate(
+        appointments.availability(serviceId, from, to).map(::publicSlot),
+        page,
+        pageSize,
+    )
+}
+
+@RestController
+@RequestMapping("/api/v1/merchant/services")
+class MerchantServiceApiController(private val appointments: AppointmentService) {
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    fun create(authentication: Authentication, @RequestBody request: MerchantServiceRequest): PublicServiceResponse {
+        val principal = merchant(authentication)
+        return publicService(
+            appointments.createOffering(
+                principal,
+                request.outletId,
+                request.capability,
+                request.name,
+                request.description,
+                request.durationMinutes,
+                request.pricePaise,
+            ),
+        )
+    }
+
+    @PostMapping("/{serviceId}/slots")
+    @ResponseStatus(HttpStatus.CREATED)
+    fun createSlot(
+        authentication: Authentication,
+        @PathVariable serviceId: UUID,
+        @RequestBody request: MerchantServiceSlotRequest,
+    ): PublicServiceSlotResponse = publicSlot(
+        appointments.createSlot(merchant(authentication), serviceId, request.startsAt),
+    )
+}
+
+@RestController
+@RequestMapping("/api/v1/customer/appointments")
+class CustomerAppointmentApiController(private val appointments: AppointmentService) {
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    fun hold(
+        authentication: Authentication,
+        @RequestHeader("Idempotency-Key") idempotencyKey: String,
+        @RequestBody request: CustomerAppointmentCreateRequest,
+    ): CustomerAppointmentResponse = appointmentResponse(
+        appointments.hold(
+            customer(authentication),
+            request.outletId,
+            request.serviceId,
+            request.petId,
+            request.slotId,
+            request.paymentMethod,
+            request.notes,
+            idempotencyKey,
+        ),
+    )
+
+    @PostMapping("/{appointmentId}/confirm")
+    fun confirm(authentication: Authentication, @PathVariable appointmentId: UUID): CustomerAppointmentResponse =
+        appointmentResponse(appointments.confirm(customer(authentication), appointmentId))
+
+    @PostMapping("/{appointmentId}/cancel")
+    fun cancel(
+        authentication: Authentication,
+        @PathVariable appointmentId: UUID,
+        @RequestBody(required = false) request: CustomerAppointmentCancelRequest?,
+    ): CustomerAppointmentResponse = appointmentResponse(
+        appointments.cancel(customer(authentication), appointmentId, request?.reason),
+    )
+
+    @GetMapping("/{appointmentId}")
+    fun get(authentication: Authentication, @PathVariable appointmentId: UUID): CustomerAppointmentResponse =
+        appointmentResponse(appointments.get(customer(authentication), appointmentId))
+
+    @GetMapping
+    fun list(
+        authentication: Authentication,
+        @RequestParam(defaultValue = "0") page: Int,
+        @RequestParam(defaultValue = "20") pageSize: Int,
+    ): PageResponse<CustomerAppointmentResponse> {
+        val result = appointments.list(customer(authentication), page, pageSize)
+        return PageResponse(result.items.map(::appointmentResponse), page, pageSize, result.hasNext)
+    }
+}
+
+private fun publicService(offering: ServiceOffering) = PublicServiceResponse(
+    serviceId = offering.id,
+    outletId = offering.outletId,
+    capability = offering.capability,
+    name = offering.name,
+    description = offering.description,
+    durationMinutes = offering.durationMinutes,
+    pricePaise = offering.pricePaise,
+)
+
+private fun publicSlot(slot: ServiceSlot) = PublicServiceSlotResponse(
+    slotId = slot.id,
+    serviceId = slot.serviceId,
+    startsAt = slot.startsAt,
+    endsAt = slot.endsAt,
+)
+
+private fun appointmentResponse(appointment: CustomerAppointment) = CustomerAppointmentResponse(
+    appointmentId = appointment.id,
+    outletId = appointment.outletId,
+    providerId = appointment.outletId,
+    serviceId = appointment.serviceId,
+    offeringId = appointment.serviceId,
+    slotId = appointment.slotId,
+    petId = appointment.petId,
+    providerName = appointment.outletName,
+    serviceName = appointment.serviceName,
+    petName = appointment.petName,
+    startsAt = appointment.startsAt,
+    endsAt = appointment.endsAt,
+    status = appointment.status,
+    paymentMethod = appointment.paymentMethod,
+    paymentStatus = appointment.paymentStatus,
+    pricePaise = appointment.pricePaise,
+    notes = appointment.notes,
+    holdExpiresAt = appointment.holdExpiresAt,
+    createdAt = appointment.createdAt,
+    updatedAt = appointment.updatedAt,
+)
+
+private fun customer(authentication: Authentication): Principal = authentication.domainPrincipal().also {
+    Authorizer.requireRole(it, Role.CUSTOMER)
+}
+
+private fun merchant(authentication: Authentication): Principal = authentication.domainPrincipal().also {
+    Authorizer.requireRole(it, Role.MERCHANT)
+}

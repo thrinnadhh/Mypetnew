@@ -3,6 +3,7 @@ import { appConfig } from '@/utils/app-config';
 
 const DEMO_USER_ID = 'd3b07384-d113-4e4e-9c8e-3d8e3d8e3d8e';
 const AVAILABILITY_WINDOW_DAYS = 14;
+const TERMINAL_REPLAY_STATUSES = new Set(['CANCELLED', 'HOLD_EXPIRED', 'REJECTED']);
 
 export type AppointmentServiceCapability = 'GROOMING' | 'VETERINARY';
 
@@ -56,6 +57,7 @@ interface PageResponse<T> {
 interface AppointmentResponse {
   appointmentId?: string;
   id?: string;
+  status?: string;
 }
 
 interface HoldAppointmentInput {
@@ -98,8 +100,9 @@ function formatSlotTime(
 
 function appointmentAttemptKey(slotId: string, petId: string): string {
   // A network retry for the same customer/pet/slot must replay the same server-side
-  // idempotency record instead of creating a second hold. The backend additionally
-  // scopes the key to the authenticated customer and validates a request fingerprint.
+  // idempotency record instead of creating a second hold. If that record is already
+  // terminal, holdAppointmentSlot creates one fresh attempt key so the customer can
+  // legitimately rebook a still-future slot after cancellation/expiry/rejection.
   return `appointment-${slotId}-${petId}`;
 }
 
@@ -210,20 +213,15 @@ export async function fetchAvailableAppointmentSlots(
   return slotGroups.flat().sort((left, right) => (left.startsAt ?? '').localeCompare(right.startsAt ?? ''));
 }
 
-export async function holdAppointmentSlot(input: HoldAppointmentInput): Promise<string> {
-  resolveBookingUserId(input.userId);
-  if (!input.petId) throw new Error('Select a pet before booking.');
-  if (!input.accessToken && !appConfig.allowDemoMode) throw new Error('Please sign in before booking an appointment.');
-
-  if (appConfig.allowDemoMode && input.slot.id.startsWith('demo-slot-')) {
-    return `demo-appointment-${input.slot.id}`;
-  }
-
+async function createAppointmentHold(
+  input: HoldAppointmentInput,
+  idempotencyKey: string,
+): Promise<AppointmentResponse> {
   const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/customer/appointments`, {
     method: 'POST',
     headers: {
       ...jsonHeaders(input.accessToken),
-      'Idempotency-Key': appointmentAttemptKey(input.slot.id, input.petId),
+      'Idempotency-Key': idempotencyKey,
     },
     body: JSON.stringify({
       outletId: input.slot.providerId,
@@ -237,8 +235,24 @@ export async function holdAppointmentSlot(input: HoldAppointmentInput): Promise<
   if (!response.ok) {
     throw await apiError(response, 'This slot was just taken. Please choose another.');
   }
+  return (await response.json()) as AppointmentResponse;
+}
 
-  const data = (await response.json()) as AppointmentResponse;
+export async function holdAppointmentSlot(input: HoldAppointmentInput): Promise<string> {
+  resolveBookingUserId(input.userId);
+  if (!input.petId) throw new Error('Select a pet before booking.');
+  if (!input.accessToken && !appConfig.allowDemoMode) throw new Error('Please sign in before booking an appointment.');
+
+  if (appConfig.allowDemoMode && input.slot.id.startsWith('demo-slot-')) {
+    return `demo-appointment-${input.slot.id}`;
+  }
+
+  const baseKey = appointmentAttemptKey(input.slot.id, input.petId);
+  let data = await createAppointmentHold(input, baseKey);
+  if (data.status && TERMINAL_REPLAY_STATUSES.has(data.status)) {
+    data = await createAppointmentHold(input, `${baseKey}-retry-${Date.now().toString(36)}`);
+  }
+
   const appointmentId = data.appointmentId ?? data.id;
   if (!appointmentId) {
     throw new Error('Appointment hold succeeded but no appointment ID was returned.');

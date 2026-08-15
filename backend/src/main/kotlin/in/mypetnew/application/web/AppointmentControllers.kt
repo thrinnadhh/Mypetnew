@@ -175,7 +175,11 @@ class AppointmentApiController(
             offeringId = request.offeringId,
             slotId = request.slotId,
             petId = request.petId,
-            payAtClinic = request.payAtClinic,
+            // The legacy client field is intentionally ignored. Until a
+            // provider-reconciled appointment payment contract exists, the
+            // server is authoritative and every live service booking is
+            // PAY_AT_CLINIC.
+            payAtClinic = true,
         ).toResponse()
     }
 

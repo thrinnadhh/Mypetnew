@@ -2,7 +2,7 @@
 
 Status: **Checkpoint A — implementation contract for architect review**
 
-Version: **3.0**
+Version: **3.1**
 
 Date: **2026-08-15**
 
@@ -85,10 +85,13 @@ Provider/session creation is not a payment attempt.
 
 ## 4. Quote and checkout contract
 
-The existing pickup and Captain-delivery quote requests gain required
-`paymentMethod: PAY_ON_FULFILMENT | ONLINE_PAYMENT`. The Customer may request a
-supported method; the server validates it and stores it in the canonical Quote.
-The quote signature/fingerprint must include the method so it cannot be swapped.
+The existing pickup and Captain-delivery quote requests gain an optional
+`paymentMethod: PAY_ON_FULFILMENT | ONLINE_PAYMENT`. For backward compatibility
+with already-deployed clients, an absent field normalizes server-side to
+`PAY_ON_FULFILMENT`. New clients explicitly send `PAY_ON_FULFILMENT` or
+`ONLINE_PAYMENT`. The server validates and stores the normalized method in the
+canonical Quote. The quote signature/fingerprint must include that normalized
+method so it cannot be swapped.
 
 Supported combinations are:
 
@@ -268,6 +271,14 @@ provider secrets cross into domain objects.
 Use the established Spring HTTP client convention. Test/CI injects a fake
 gateway and never calls live Cashfree.
 
+The adapter pins its Cashfree Payments API version through server configuration,
+with `CASHFREE_API_VERSION=2026-01-01` as the Plan 5 value. The same selected
+version governs Create Order, payment/status reconciliation, Create/Get Refund,
+and accepted webhook DTOs. Production startup rejects a missing or unsupported
+version. Contract fixtures and adapter tests cover the `2026-01-01` shapes; a
+future version change requires an explicit configuration, DTO, and contract-test
+change rather than silently following a provider default.
+
 ### Payment initiation
 
 TX1:
@@ -301,10 +312,28 @@ transient/provider failures remain retryable using the same command identity.
 `RefundStatus.FAILED` records the latest provider truth/error but is not an
 unrecoverable workflow dead end; retry metadata/next-attempt state is separate.
 
+Cashfree refund status normalizes as follows:
+
+| Cashfree `refund_status` | Internal status | Required action |
+|---|---|---|
+| `SUCCESS` | `SUCCESS` | Confirm the full refund and project `REFUNDED` |
+| `PENDING`, `ONHOLD` | `PENDING` | Keep `REFUND_PENDING` and reconcile |
+| `FAILED`, `CANCELLED` | `FAILED` | Record terminal provider result; retain audit/retry policy |
+
+A provider terminal `FAILED`/`CANCELLED` response is distinct from an HTTP or
+network outcome of `UNKNOWN`. Timeout, connection loss, and 5xx never fabricate a
+provider refund status. Before issuing another POST, reconciliation queries by
+the same deterministic Cashfree refund identity and persists any already-created
+refund. Only when that lookup establishes that no provider refund exists may the
+workflow retry Create Refund with the same deterministic identity/idempotency
+key.
+
 ## 11. Current Cashfree webhook contract
 
-Cashfree Payments API documentation checked on 2026-08-15 shows these 2025
-payment webhook headers:
+Cashfree Payments API documentation checked on 2026-08-15 defaults Create Order
+and Create Refund to `2026-01-01`, and Payment Webhooks support a
+`2026-01-01` shape. Plan 5 pins and tests that version. Its payment webhook
+headers are:
 
 - `x-webhook-signature`
 - `x-webhook-timestamp`
@@ -316,12 +345,23 @@ The implementation must not invent or accept `x-webhook-idempotency-key`.
 Signature input is the exact timestamp string concatenated with the exact raw
 request bytes/body. Compute HMAC-SHA256 with the Cashfree client secret, Base64
 encode the digest, and compare decoded/validated values in constant time. Verify
-required headers, supported version, signature, and the five-minute timestamp
-replay window before JSON parsing or normalization.
+required headers, configured/supported version, and signature before JSON parsing
+or normalization.
+
+`x-webhook-timestamp` is mandatory and always participates in signature
+verification, but Plan 5 does not impose a hard five-minute age rejection on
+Cashfree Payment webhooks. Cashfree retry/resend can deliver a valid event later;
+replay safety comes from HMAC verification, `x-idempotency-key` inbox uniqueness,
+`cf_payment_id` attempt uniqueness, and monotonic transitions. An additional
+age/skew rule may be enabled only when the selected provider version documents
+retry/resend timestamp semantics that make the rule safe; it must be explicit,
+configurable, and covered by delayed-delivery tests.
 
 Official references:
 
 - <https://www.cashfree.com/docs/api-reference/payments/latest/payments/webhooks>
+- <https://www.cashfree.com/docs/api-reference/payments/latest/orders/create-order>
+- <https://www.cashfree.com/docs/api-reference/payments/latest/refunds/create-refund>
 - <https://www.cashfree.com/docs/payments/online/webhooks/signature-verification>
 
 ## 12. Durable webhook inbox
@@ -329,23 +369,38 @@ Official references:
 The public webhook controller performs only bounded ingest work:
 
 1. capture exact raw body and required headers;
-2. verify signature/freshness before parsing;
-3. parse only the minimal routing identifiers after verification;
+2. verify configured version and HMAC against the exact raw body before parsing;
+3. parse and validate the verified `2026-01-01` event into a complete normalized,
+   non-sensitive processing snapshot;
 4. normalize delivery identity from the exact current `x-idempotency-key` and
    validated provider identifiers;
-5. insert/replay a durable `RECEIVED` inbox record; and
-6. acknowledge quickly.
+5. insert/replay that complete snapshot as a durable `RECEIVED` inbox record;
+6. commit the inbox transaction; and
+7. only then acknowledge with HTTP 200.
 
-Persist metadata, not the full sensitive payload:
+The durable normalized snapshot must be sufficient for every asynchronous
+business transition without retaining or reparsing the provider payload. Persist:
 
-- provider and provider delivery identity;
-- event type and webhook version;
-- provider order reference and `cf_payment_id` when present;
-- SHA-256 of exact payload;
+- `provider` and `deliveryIdentity`;
+- `webhookVersion` and `eventType`;
+- `providerOrderReference`;
+- `providerPaymentId` (`cf_payment_id`) when present;
+- normalized `attemptStatus`;
+- exact `amountPaise` and `currency`;
+- `providerPaymentTime` and `providerEventTime`;
+- `payloadSha256` over the exact signed bytes;
+- bounded, non-sensitive provider error code/reason when applicable;
 - status `RECEIVED | PROCESSING | PROCESSED | FAILED`;
 - retry count, last bounded/redacted error;
 - `receivedAt`, `claimStartedAt`, `leaseExpiresAt`, `processedAt`, and update
   timestamps.
+
+Do not persist the raw payload, payment instrument/method details, Customer
+details, bank data, offer metadata, surcharge metadata, gateway detail objects,
+or other provider response data not required by the normalized transition.
+Failure to persist/commit the normalized snapshot returns non-2xx so Cashfree
+retries. A duplicate delivery whose existing inbox row is durably committed may
+be acknowledged without duplicating business effects.
 
 `processedAt` starts `NULL`. Unique `(provider, delivery_identity)` makes replay
 safe. A worker atomically claims `RECEIVED`, retryable `FAILED`, and stale
@@ -396,10 +451,17 @@ BigDecimal(value)
 ```
 
 `Double` and `Float` are forbidden for money. Before capture/refund projection,
-the adapter/domain boundary verifies exact amount and exact `INR` currency
-against canonical Payment. Scale errors, overflow, mismatch, or unknown currency
-fail closed and raise reconciliation/operations evidence without mutating the
-order to paid.
+the adapter/domain boundary verifies the deterministic provider order ID,
+`data.order.order_amount`, `data.order.order_currency`, and
+`data.payment.payment_currency` against canonical Payment. Cashfree-side offers,
+discounts, cashback, fees, or surcharges never redefine MyPet's quoted/order
+pricing and never rewrite canonical `amountPaise`.
+
+The provider `payment_amount` is also parsed exactly and checked. Any unexpected
+difference from the canonical amount enters fail-closed reconciliation/operations
+handling; it must not rewrite MyPet totals or blindly mark the order paid. Scale
+errors, overflow, identifier mismatch, amount mismatch, or unknown/non-`INR`
+currency leave the order unpaid and produce bounded audit/alert evidence.
 
 ## 16. Migration contract
 
@@ -490,14 +552,19 @@ Backend tests must cover:
 - session timeout/retry and crash/restart recovery with the same identities;
 - attempt `FAILED -> SUCCESS`, `USER_DROPPED -> SUCCESS`, duplicate
   `cf_payment_id`, and no fake attempt on session creation;
-- duplicate/bad/missing/stale webhook headers, exact raw-body signature, duplicate
-  delivery, out-of-order events, and `CAPTURED` non-regression;
-- crash after `RECEIVED`, retryable `FAILED`, and stale `PROCESSING` reclaim;
+- duplicate/bad/missing webhook headers, exact raw-body signature, delayed valid
+  delivery, configured webhook version, 2026 shape, out-of-order events, and
+  `CAPTURED` non-regression;
+- complete normalized snapshot committed before HTTP 200; non-2xx on inbox write
+  failure; no raw/instrument/Customer payload retention; crash after `RECEIVED`;
+  retryable `FAILED`; and stale `PROCESSING` reclaim;
 - merchant unpaid-online rejection and pay-on-fulfilment regression;
 - expiry releasing stock once; capture-versus-expiry concurrency; late capture
   producing one refund without resurrection;
-- refund timeout/retry, duplicate trigger, full-amount invariant, and capture
-  amount/currency mismatch;
+- refund `SUCCESS`/`PENDING`/`ONHOLD`/`FAILED`/`CANCELLED` normalization; timeout
+  or 5xx reconciliation before repeat POST; duplicate trigger; full-amount
+  invariant; provider order ID and order/payment amount/currency mismatch; and
+  offers/surcharges unable to rewrite MyPet pricing;
 - pickup and Captain-delivery combinations; Flyway V1-current; H2 where CI
   requires it; and PostgreSQL/JDBC contracts where supported.
 

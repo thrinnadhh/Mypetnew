@@ -147,11 +147,11 @@ class PrivacyController(
         if (request.confirmation != "DELETE") {
             throw DomainException("ACCOUNT_DELETE_CONFIRMATION_INVALID", "Account deletion was not confirmed")
         }
-        // Erase Customer-owned product data and delivery-only direct identifiers first. Each operation is idempotent
-        // so retrying the privacy request remains safe if a later stage fails after an earlier erasure completed.
+        // Delivery data is checked first so an active fulfilment blocks deletion before any Customer-owned data is erased.
+        // Once delivery is terminal, every erasure below is idempotent and safe to retry after a partial infrastructure failure.
+        deliveryData.eraseCustomerDeliveryIdentifiers(customerId)
         customerData.eraseCustomerOwnedData(customerId)
         favourites.eraseAll(customerId)
-        deliveryData.eraseCustomerDeliveryIdentifiers(customerId)
         privacy.deleteAccount(customerId, request.confirmation)
     }
 

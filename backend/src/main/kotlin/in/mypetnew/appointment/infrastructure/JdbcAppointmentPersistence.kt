@@ -242,6 +242,17 @@ class JdbcAppointmentPersistence(
     )
 
     private fun expireHolds(now: Instant) {
+        val expiredIds = jdbc.query(
+            """
+            SELECT id FROM mypet.appointment
+            WHERE status = 'HOLD' AND hold_expires_at IS NOT NULL AND hold_expires_at <= ?
+            FOR UPDATE
+            """.trimIndent(),
+            { rs, _ -> rs.getObject("id", UUID::class.java) },
+            java.sql.Timestamp.from(now),
+        )
+        if (expiredIds.isEmpty()) return
+
         jdbc.update(
             """
             UPDATE mypet.appointment
@@ -251,28 +262,46 @@ class JdbcAppointmentPersistence(
             java.sql.Timestamp.from(now),
             java.sql.Timestamp.from(now),
         )
+        expiredIds.forEach { appointmentId ->
+            appendHistory(
+                appointmentId = appointmentId,
+                from = AppointmentStatus.HOLD,
+                to = AppointmentStatus.HOLD_EXPIRED,
+                actorId = null,
+                reason = "Appointment hold expired",
+                now = now,
+            )
+        }
     }
 
     private fun appendHistory(
         appointmentId: UUID,
         from: AppointmentStatus?,
         to: AppointmentStatus,
-        actorId: UUID,
+        actorId: UUID?,
         reason: String,
         now: Instant,
     ) {
+        val actorRole = if (actorId == null) "SYSTEM" else "CUSTOMER"
+        val source = if (actorId == null) "SYSTEM_HOLD_EXPIRY" else "CUSTOMER_API"
+        val idempotencyKey = "$appointmentId:${to.name}"
         jdbc.update(
             """
             INSERT INTO mypet.appointment_history
-                (id, appointment_id, from_status, to_status, actor_id, reason, occurred_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, appointment_id, from_status, to_status, actor_id, actor_role, source,
+                 reason, idempotency_key, trace_id, occurred_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
             UUID.randomUUID(),
             appointmentId,
             from?.name,
             to.name,
             actorId,
+            actorRole,
+            source,
             reason.take(240),
+            idempotencyKey,
+            UUID.randomUUID(),
             java.sql.Timestamp.from(now),
         )
     }

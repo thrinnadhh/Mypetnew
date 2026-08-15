@@ -64,7 +64,8 @@ data class CustomerAddressRequest(
     val city: String,
     val state: String,
     val pincode: String,
-    val isDefault: Boolean = false,
+    @get:JsonProperty("isDefault")
+    val isDefault: Boolean? = null,
 )
 
 data class CustomerAddressResponse(
@@ -230,7 +231,7 @@ private fun CustomerAddressRequest.toInput() = CustomerAddressInput(
     city = city,
     state = state,
     pincode = pincode,
-    isDefault = isDefault,
+    isDefault = isDefault ?: false,
 )
 
 private fun addressResponse(address: CustomerAddress) = CustomerAddressResponse(

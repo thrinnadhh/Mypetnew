@@ -43,9 +43,6 @@ CREATE TABLE mypet.payment (
     CONSTRAINT ck_payment_reconciliation_attempts CHECK (reconciliation_attempts >= 0)
 );
 
--- A Payment is unique by order/provider, but many accepted client command keys may
--- legitimately converge on that one Payment. Persist each key independently so
--- every accepted retry remains replayable after expiry, cancellation or restart.
 CREATE TABLE mypet.payment_initiation_command (
     customer_id UUID NOT NULL REFERENCES mypet.identity_account(id),
     idempotency_key VARCHAR(128) NOT NULL,
@@ -182,13 +179,10 @@ CREATE TABLE mypet.payment_refund_history (
 );
 
 CREATE INDEX idx_product_order_payment_expiry
-    ON mypet.product_order (payment_hold_expires_at, status, payment_status)
-    WHERE payment_method = 'ONLINE_PAYMENT';
+    ON mypet.product_order (payment_method, payment_hold_expires_at, status, payment_status);
 CREATE INDEX idx_payment_reconciliation
-    ON mypet.payment (next_reconciliation_at, updated_at)
-    WHERE reconciliation_required = TRUE;
+    ON mypet.payment (reconciliation_required, next_reconciliation_at, updated_at);
 CREATE INDEX idx_payment_webhook_claim
     ON mypet.payment_webhook_inbox (processing_status, lease_expires_at, received_at);
 CREATE INDEX idx_payment_refund_retry
-    ON mypet.payment_refund (next_reconciliation_at, lease_expires_at, updated_at)
-    WHERE status <> 'SUCCESS';
+    ON mypet.payment_refund (status, next_reconciliation_at, lease_expires_at, updated_at);

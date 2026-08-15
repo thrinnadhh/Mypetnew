@@ -65,7 +65,7 @@ describe('MyPet customer journey contracts', () => {
     ]);
   });
 
-  it('routes vet and grooming bookings through hold -> payment -> confirmation', () => {
+  it('keeps appointment payment fail-closed until the Plan 8 server contract exists', () => {
     const discovery = source('src/screens/appointment-discovery-screen.tsx');
     const payment = source('src/app/appointments/payment.tsx');
     const booking = source('src/services/appointment-booking.ts');
@@ -75,88 +75,90 @@ describe('MyPet customer journey contracts', () => {
       'fetchCustomerPets',
       'holdAppointmentSlot',
       "pathname: '/appointments/payment'",
-      'Tap to review & pay',
     ]);
     expect(discovery).not.toContain('confirmAppointmentHold(');
     expectAll(booking, ['payAtClinic: false', 'petId: input.petId']);
 
     expectAll(payment, [
-      'initiateAppointmentPayment',
-      'openCashfreeOrder',
-      'waitForReferencePaymentOutcome',
-      'confirmAppointmentHold',
-      "payment.status === 'SUCCESS'",
-      'Payment breakdown',
-      'Total payable',
-      'The appointment is confirmed only after server-side payment verification.',
+      'Online appointment payment is not available yet',
+      'Plan 5 online payment is limited to product orders',
+      'No charge has been attempted.',
+      'demoPayment',
+      'demo-payment',
     ]);
+    expect(payment).not.toContain('initiateAppointmentPayment');
+    expect(payment).not.toContain('openCashfreeOrder');
+    expect(payment).not.toContain('waitForReferencePaymentOutcome');
   });
 
-  it('supports safe demo appointment payment without changing live payment truth', () => {
+  it('supports safe demo appointment confirmation without creating a real payment', () => {
     const payment = source('src/app/appointments/payment.tsx');
 
     expectAll(payment, [
       "appointmentId.startsWith('demo-appointment-')",
-      "await finishAppointment('demo-payment')",
-      'No real money will be charged.',
+      "confirmAppointmentHold(appointmentId, session.accessToken, 'demo-payment')",
+      'No real money will be charged and no Cashfree session is created.',
     ]);
-    expect(payment.indexOf('if (demoPayment)')).toBeLessThan(
-      payment.indexOf('const initialization = await initiateAppointmentPayment'),
-    );
   });
 
-  it('documents Cashfree online payment integration as a deferred contract while product checkout uses PAY_ON_FULFILMENT', () => {
+  it('uses the canonical Plan 5 Cashfree product-payment contract and leaves appointments fail-closed', () => {
     const client = source('src/services/customer-payments.ts');
-    const decisions = source('../../docs/product/DECISIONS.md');
-    const matrix = source('../../docs/architecture/CUSTOMER_API_COMPATIBILITY_MATRIX.md');
+    const contract = source('../../docs/architecture/P5_PAYMENT_CONTRACT.md');
 
     expectAll(client, [
-      "'/api/v1/payments/appointments'",
-      "'APPOINTMENT_PAYMENT'",
-      'waitForReferencePaymentOutcome',
+      "'/api/v1/customer/payments'",
+      "referenceType: 'PRODUCT_ORDER'",
+      "provider: 'CASHFREE'",
+      "'Idempotency-Key': idempotencyKey",
+      'fetchPaymentStatus',
+      'waitForPaymentOutcome',
+      'Appointment online payment is not available until Plan 8.',
     ]);
-    expectAll(decisions, [
-      'Cashfree is the first payment adapter',
-      'Store pickup',
-      'PAY_ON_FULFILMENT',
+    expect(client).not.toContain('/api/v1/payments/appointments');
+    expect(client).not.toContain('APPOINTMENT_PAYMENT');
+    expect(client).not.toContain('normalizedPhone');
+    expectAll(contract, [
+      'CASHFREE_API_VERSION',
+      'CASHFREE_WEBHOOK_VERSION',
+      'PRODUCT_ORDER',
+      'ONLINE_PAYMENT',
     ]);
-    expect(matrix).toContain('- **2.6.1 Online & Appointment Payments (`DEFERRED`)**:');
-    expect(matrix).toContain('| Online / Appointment Payment | POST | `/api/v1/payments/appointments` (Legacy client route) | N/A (Sprint 1 uses `PAY_ON_FULFILMENT` / `STORE_PICKUP`) | **DEFERRED** | Post-Sprint 1 |');
   });
 
   it('keeps product checkout on one server-authoritative order contract for pickup and Captain delivery', () => {
     const checkout = source('src/app/checkout/index.tsx');
     const orderClient = source('src/services/customer-checkout.ts');
-    const deliveryClient = source('src/services/customer-delivery.ts');
+    const quoteClient = source('src/services/customer-quotes.ts');
 
     expectAll(checkout, [
-      'Order items',
-      'Server-authoritative total',
       'Store pickup',
       'Captain delivery',
       'Pay on fulfilment',
-      'fetchCheckoutQuote',
-      'fetchDeliveryQuote',
+      'Online payment',
+      'fetchPickupQuote',
+      'fetchCaptainDeliveryQuote',
       'createProductOrder',
+      'initiateOrderPayment',
+      'openCashfreeOrder',
+      'waitForPaymentOutcome',
+      'Verifying payment…',
       "setFulfilmentMode('MYPET_CAPTAIN_DELIVERY')",
     ]);
-    expect(checkout).not.toContain('initiateOrderPayment');
-    expect(checkout).not.toContain('openCashfreeOrder');
-    expect(checkout).not.toContain('waitForPaymentOutcome');
     expectAll(orderClient, [
       "export type ProductFulfilmentMode = 'STORE_PICKUP' | 'MYPET_CAPTAIN_DELIVERY'",
+      "export type ProductPaymentMethod = 'PAY_ON_FULFILMENT' | 'ONLINE_PAYMENT'",
       "'/api/v1/customer/orders'",
       'quoteId: input.quoteId, cartSignature: input.cartSignature',
       "'Idempotency-Key': `checkout:${input.quoteId}`",
-      'order.fulfilmentMode !== expectedFulfilmentMode',
-      "order.paymentMethod !== 'PAY_ON_FULFILMENT'",
+      'order.paymentMethod !== expectedPaymentMethod',
     ]);
-    expectAll(deliveryClient, [
+    expect(orderClient).not.toContain('paymentMethod: expectedPaymentMethod');
+    expectAll(quoteClient, [
+      "'/api/v1/customer/quotes/pickup'",
       "'/api/v1/customer/quotes/delivery'",
-      'input: DeliveryQuoteInput',
-      "{ Authorization: `Bearer ${accessToken}` }",
+      'paymentMethod',
     ]);
-    expect(deliveryClient).not.toContain('customerId: input');
+    expect(quoteClient).not.toContain('customerId:');
   });
 
   it('keeps demo checkout non-chargeable while production remains server-authoritative', () => {
@@ -166,13 +168,13 @@ describe('MyPet customer journey contracts', () => {
       'const demoCheckout = appConfig.allowDemoMode',
       'Demo pickup simulated',
       'No backend order was created',
-      'fetchCheckoutQuote',
+      'fetchPickupQuote',
       'createProductOrder',
     ]);
     expect(checkout.indexOf('if (demoCheckout)')).toBeLessThan(checkout.indexOf('const order = await createProductOrder'));
   });
 
-  it('preserves authenticated customer identity across profile and payment requests', () => {
+  it('keeps customer identity and payment amount server-authoritative', () => {
     const auth = source('src/context/AuthContext.tsx');
     const profile = source('src/services/customer-profile.ts');
     const payments = source('src/services/customer-payments.ts');
@@ -188,7 +190,15 @@ describe('MyPet customer journey contracts', () => {
     ]);
     expect(profile).not.toContain('/api/v1/addresses/default');
     expect(profile).not.toContain('customerId=');
-    expect(payments).toContain('normalizedPhone');
+    expectAll(payments, [
+      "referenceType: 'PRODUCT_ORDER'",
+      'referenceId: orderId',
+      "provider: 'CASHFREE'",
+    ]);
+    expect(payments).not.toContain('normalizedPhone');
+    expect(payments).not.toContain('customerPhone');
+    expect(payments).not.toContain('userId:');
+    expect(payments).not.toContain('amountPaise:');
   });
 
   it('verifies recurring-order cadences (7/15/25/30/35) and confirmation safety per Decision D-019 while backend runtime is deferred', () => {
@@ -208,7 +218,6 @@ describe('MyPet customer journey contracts', () => {
       'No automatic COD placement or payment mandate charge occurs',
     ]);
     expect(matrix).toContain('- **2.6.2 Recurring Orders & Subscriptions (`DEFERRED`)**:');
-    expect(matrix).toContain('| Recurring Subscriptions | POST | `/api/v1/orders/subscriptions` (Legacy client route) | N/A (Sprint 1 uses single-order pickup) | **DEFERRED** | Post-Sprint 1 |');
   });
 
   it('keeps the core customer journeys free of mock appointment confirmation timers', () => {

@@ -14,6 +14,9 @@ import `in`.mypetnew.commerce.domain.QuoteService
 import `in`.mypetnew.commerce.infrastructure.JdbcCustomerOrderQuery
 import `in`.mypetnew.commerce.infrastructure.JdbcOrderPersistence
 import `in`.mypetnew.commerce.infrastructure.JdbcQuotePersistence
+import `in`.mypetnew.customer.domain.CustomerDataPersistence
+import `in`.mypetnew.customer.domain.CustomerDataService
+import `in`.mypetnew.customer.infrastructure.JdbcCustomerDataPersistence
 import `in`.mypetnew.loyalty.domain.LoyaltyPersistence
 import `in`.mypetnew.loyalty.domain.LoyaltyService
 import `in`.mypetnew.loyalty.infrastructure.JdbcLoyaltyPersistence
@@ -30,6 +33,7 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Profile
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.support.TransactionTemplate
 
 @Configuration
@@ -73,6 +77,14 @@ class PersistenceConfiguration {
     @Bean
     fun productionOrderService(inventory: InventoryService, persistence: OrderPersistence): OrderService =
         OrderService(inventory, persistence)
+
+    @Bean
+    fun customerDataPersistence(jdbc: JdbcClient, transactions: TransactionTemplate): CustomerDataPersistence =
+        JdbcCustomerDataPersistence(jdbc, transactions)
+
+    @Bean
+    fun productionCustomerDataService(persistence: CustomerDataPersistence): CustomerDataService =
+        CustomerDataService(persistence)
 
     @Bean
     fun loyaltyPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): LoyaltyPersistence =

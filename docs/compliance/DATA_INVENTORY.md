@@ -2,7 +2,7 @@
 
 Status: source-derived inventory at commit worktree, 2026-08-15. Deployment inspection is still required. `UNKNOWN` is deliberate and blocks production evidence.
 
-Classification: `PUBLIC`, `INTERNAL`, `CONFIDENTIAL`, `RESTRICTED`. Authentication secrets, mobile numbers, FCM tokens, precise location, payment references and Customer-linked veterinary data are `RESTRICTED`.
+Classification: `PUBLIC`, `INTERNAL`, `CONFIDENTIAL`, `RESTRICTED`. Authentication secrets, mobile numbers, FCM tokens, precise location, payment references, saved delivery contact/address data and Customer-linked veterinary data are `RESTRICTED`.
 
 ## PostgreSQL/Supabase application schema
 
@@ -26,13 +26,15 @@ All listed tables are in the private `mypet` schema. Role apps have no Supabase 
 | `audit_event`: all actor/role/action/target/reason/source/idempotency/trace/time fields | privileged action accountability and incident investigation | security/legal obligation | AUDIT permission; ordinary roles cannot modify | Supabase/log platform UNKNOWN | 365 days minimum internal target; longer legal hold case-by-case | CONFIDENTIAL/RESTRICTED when Customer-linked; reason must not duplicate content |
 | `outbox_event`, `inbox_event`, `dead_letter`: all aggregate/source/event/payload/status/attempt/claim/delivery/trace/time/error fields | reliable async processing | service operation/security | workers/operations | Supabase and downstream processor | delivered event 30 days; dead letter 90 days after resolution; 365 if security incident | payload is RESTRICTED unless schema-proven safe; current architecture still needs payload allowlisting |
 | `private_document`: all organization/outlet/purpose/object-key/type/size/checksum/time fields | merchant verification/evidence metadata | provider onboarding/legal evidence | authorized Admin + owning provider by purpose | Supabase private Storage / UNKNOWN | purpose schedule; deletion after verification/legal period | object key/checksum CONFIDENTIAL; referenced documents may be RESTRICTED; signed access only |
-| `customer_profile`: every account/display-name/email/adult-attestation/time field | identity/profile and adult eligibility | voluntary data; adult-only product rule | owning Customer; purpose-scoped support | Supabase | active account; name/email/attestation erased immediately on delete | email/name RESTRICTED; no DOB collected |
+| `customer_profile`: every account/display-name/email/adult-attestation/time field | identity/profile and adult eligibility | voluntary data; adult-only product rule | owning Customer; purpose-scoped support | Supabase | active account; name/email/attestation erased immediately on delete | email/name RESTRICTED; no Customer date of birth collected |
+| `customer_pet`: `id`, `customer_id`, `name`, `species`, optional `breed`, optional `date_of_birth`, timestamps | Customer-owned pet identity for profile and future appointment selection | Customer-requested profile data; Customer/Product owner | authenticated owning Customer only in P2; backend derives owner from principal | Supabase / UNKNOWN | until Customer deletes pet or account; account deletion erases rows | Customer-linked pet data CONFIDENTIAL; no diagnosis/prescription/medical result/photo in P2 |
+| `customer_address`: `id`, `customer_id`, label, recipient name, E.164 phone, address lines, city, state, PIN, default flag, timestamps | saved delivery/contact foundation for future delivery and bookings | Customer-requested saved address; Customer/Privacy owner | authenticated owning Customer only in P2; Merchant/Captain do not receive this profile record | Supabase / UNKNOWN | until Customer deletes address or account; account deletion erases rows | recipient/phone/address RESTRICTED; **no latitude/longitude stored in P2**; never log full values |
 | `privacy_consent`: every id/customer/purpose/notice/source/proof/grant/withdraw field | consent proof and withdrawal | legal/security accountability | owning Customer; privacy operations | Supabase | active history plus 3 years after withdrawal pending legal review; metadata only | CONFIDENTIAL; proof deliberately excludes IP/device fingerprint |
 | `privacy_rights_request`: every id/customer/type/status/details/rejection/timestamps field | rights/grievance workflow | legal readiness/current SPDI grievance | requester and privacy-authorized staff | Supabase | 3 years after closure pending limitation review; minimise free text | details RESTRICTED; no secrets requested; owner-scoped queries |
 | `account_deletion_request`, `deleted_identity_tombstone`: every request/customer/status/time/review/suppression/reason field | erasure audit and prevention of backup resurrection/re-login | legal/security accountability | privacy operations only | Supabase/backups | tombstone 365 days then review; legal hold only with recorded basis | CONFIDENTIAL; no original phone/email stored |
 | `security_incident`: every id/title/severity/status and detection/awareness/CERT-In/Board/user notification/report time field | dual regulatory clock | CERT-In; final DPDP readiness | incident team only | Supabase/security system / India location required for applicable logs | 365 days minimum; legal hold if investigation | CONFIDENTIAL; victim details must live in separate restricted case store, not title |
 
-Business tables `merchant_organization`, `provider_outlet`, `outlet_capability`, `outlet_service_pincode`, `catalog_listing`, `inventory_balance`, `inventory_reservation`, `idempotency_record` and public catalog fields do not intentionally contain Customer personal data. Free-form fields (`name`, `reason`, `payload`, `response_body`, `source_reference`) remain contamination risks and require schema/CI review.
+Business tables `merchant_organization`, `provider_outlet`, `outlet_capability`, `outlet_service_pincode`, `catalog_listing`, `inventory_balance`, `inventory_reservation`, `idempotency_record` and public catalog fields do not intentionally contain Customer personal data. The P2 public serviceability query accepts only outlet ID, six-digit PIN and fulfilment mode and does not persist a Customer address. Free-form fields (`name`, `reason`, `payload`, `response_body`, `source_reference`) remain contamination risks and require schema/CI review.
 
 ## Device/client stores
 
@@ -41,14 +43,14 @@ Business tables `merchant_organization`, `provider_outlet`, `outlet_capability`,
 | Customer native SecureStore: access token, refresh token | authenticated API session | OS-protected app sandbox | cleared on logout; account deletion invalidates server sessions | RESTRICTED; `src/auth/session-storage.ts`; no AsyncStorage for credentials |
 | Customer/Merchant native SecureStore: installation UUID | idempotent device binding | app sandbox | may persist across logout; not sufficient for authentication; revoke server binding | RESTRICTED identifier; Customer `src/utils/installation-id.ts`, Merchant `src/auth/session.ts` |
 | FCM/APNs native token | push routing | OS, app, Firebase, backend | rotate/unregister/invalid-token cleanup; erase on deletion | RESTRICTED; encrypted at backend |
-| Customer in-memory form state: mobile, OTP, profile, grievance, deletion confirmation | complete user action | current UI process | clear on screen/process end; OTP code cleared after verification | RESTRICTED while resident; never logged |
+| Customer in-memory form state: mobile, OTP, profile, pet/address edits, grievance, deletion confirmation | complete user action | current UI process | clear on screen/process end; OTP code cleared after verification | RESTRICTED while resident for contact/address fields; never logged |
 
 ## Non-production and transient stores
 
 | Store | Data | Rule |
 |---|---|---|
 | `InMemoryOtpProvider` (`test`/`development` profile only) | raw sandbox OTP by challenge ID | impossible in production because no bean for non-test/development; never log; process lifetime only |
-| In-memory Sprint 1 domain repositories (`test`/`development`) | synthetic Customer/order/loyalty/notification data | no production fallback; test fixtures only |
+| In-memory Sprint/customer domain repositories (`test`/`development`) | synthetic Customer/order/loyalty/notification/pet/address data | no production fallback; test fixtures only |
 | CI artifacts | test/coverage/build results | synthetic data only; no production dumps, tokens, screenshots or logs; repository secret/privacy scans run before upload |
 | Developer machines | local test H2/build data | production dumps prohibited; `.env*`, build, coverage and evidence-generated paths ignored |
 
@@ -61,11 +63,12 @@ Business tables `merchant_organization`, `provider_outlet`, `outlet_capability`,
 | Cashfree / payment | architecture decision only; no adapter, webhook or payment credential model exists |
 | Redis | architecture target only; no source adapter/config found |
 | OTP/SMS | provider interface plus development provider; production provider absent |
-| maps/location | no provider, coordinates, permission request or tracking persistence found |
+| maps/location | P2 deliberately stores no coordinates and requests no location permission; Captain/location provider, precision, TTL and tracking remain absent until delivery plan |
 | analytics/advertising | no analytics SDK/event sink implementation found |
 | email/support chat | no provider implementation found; privacy grievance free text is stored in rights workflow |
 | veterinary | no booking, prescription, medical-note or result table/API exists |
-| addresses/favorites/recurring orders | not implemented in this Sprint 1 source |
+| addresses | Customer-owned saved postal addresses are implemented in P2; they are not yet attached to Captain delivery or booking transactions |
+| favorites/recurring orders | not implemented in current source |
 | backups/log platform/monitoring | actuator/metrics configuration exists; actual platform, region, access and retention unknown |
 
-Any introduction of an absent category requires inventory, purpose owner, retention and processor review before merge.
+P2 detail and explicit minimisation decisions are also recorded in `P2_CUSTOMER_DATA_INVENTORY_ADDENDUM.md`. Any introduction of an absent category requires inventory, purpose owner, retention and processor review before merge.

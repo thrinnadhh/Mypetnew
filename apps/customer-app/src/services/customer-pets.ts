@@ -1,19 +1,30 @@
-import { apiErrorFromResponse } from '@/contracts/api-error';
+import { apiClient } from '@/services/api-client';
 import { appConfig } from '@/utils/app-config';
+
+export type PetSpecies = 'DOG' | 'CAT' | 'OTHER';
 
 export interface CustomerPet {
   petId: string;
   name: string;
-  species: string;
+  species: PetSpecies;
   breed?: string | null;
   dateOfBirth?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CreateCustomerPetInput {
   name: string;
-  species: string;
+  species: PetSpecies;
   breed?: string | null;
   dateOfBirth?: string | null;
+}
+
+export interface CustomerPetPage {
+  items: CustomerPet[];
+  page: number;
+  pageSize: number;
+  hasNext: boolean;
 }
 
 const demoPets: CustomerPet[] = [
@@ -33,31 +44,34 @@ const demoPets: CustomerPet[] = [
   },
 ];
 
-async function request<T>(
-  path: string,
+const authHeaders = (accessToken: string) => ({ Authorization: `Bearer ${accessToken}` });
+
+export async function fetchCustomerPetPage(
   accessToken: string,
-  init: RequestInit = {},
-): Promise<T> {
-  const response = await fetch(`${appConfig.apiBaseUrl}${path}`, {
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      ...((init.headers as Record<string, string> | undefined) ?? {}),
-    },
-  });
-  if (!response.ok) throw await apiErrorFromResponse(response);
-  if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+  page = 0,
+  pageSize = 20,
+): Promise<CustomerPetPage> {
+  if (appConfig.allowDemoMode) {
+    const start = page * pageSize;
+    const items = demoPets.slice(start, start + pageSize).map((pet) => ({ ...pet }));
+    return { items, page, pageSize, hasNext: start + pageSize < demoPets.length };
+  }
+  return apiClient.get<CustomerPetPage>(
+    `/api/v1/customer/pets?page=${page}&pageSize=${pageSize}`,
+    authHeaders(accessToken),
+  );
 }
 
-export function fetchCustomerPets(accessToken: string): Promise<CustomerPet[]> {
-  if (appConfig.allowDemoMode) return Promise.resolve(demoPets.map((pet) => ({ ...pet })));
-  return request('/api/v1/pets', accessToken);
+export async function fetchCustomerPets(accessToken: string): Promise<CustomerPet[]> {
+  if (appConfig.allowDemoMode) return (await fetchCustomerPetPage(accessToken, 0, 100)).items;
+  const response = await apiClient.get<CustomerPetPage | CustomerPet[]>(
+    '/api/v1/customer/pets?page=0&pageSize=100',
+    authHeaders(accessToken),
+  );
+  return Array.isArray(response) ? response : response.items;
 }
 
-export function createCustomerPet(
+export async function createCustomerPet(
   input: CreateCustomerPetInput,
   accessToken: string,
 ): Promise<CustomerPet> {
@@ -70,10 +84,34 @@ export function createCustomerPet(
       dateOfBirth: input.dateOfBirth ?? null,
     };
     demoPets.push(created);
-    return Promise.resolve({ ...created });
+    return { ...created };
   }
-  return request('/api/v1/pets', accessToken, {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+  return apiClient.post<CustomerPet>('/api/v1/customer/pets', input, authHeaders(accessToken));
+}
+
+export async function updateCustomerPet(
+  petId: string,
+  input: CreateCustomerPetInput,
+  accessToken: string,
+): Promise<CustomerPet> {
+  if (appConfig.allowDemoMode) {
+    const index = demoPets.findIndex((pet) => pet.petId === petId);
+    if (index < 0) throw new Error('Pet not found.');
+    demoPets[index] = { ...demoPets[index], ...input };
+    return { ...demoPets[index] };
+  }
+  return apiClient.patch<CustomerPet>(
+    `/api/v1/customer/pets/${encodeURIComponent(petId)}`,
+    input,
+    authHeaders(accessToken),
+  );
+}
+
+export async function deleteCustomerPet(petId: string, accessToken: string): Promise<void> {
+  if (appConfig.allowDemoMode) {
+    const index = demoPets.findIndex((pet) => pet.petId === petId);
+    if (index >= 0) demoPets.splice(index, 1);
+    return;
+  }
+  await apiClient.delete<void>(`/api/v1/customer/pets/${encodeURIComponent(petId)}`, authHeaders(accessToken));
 }

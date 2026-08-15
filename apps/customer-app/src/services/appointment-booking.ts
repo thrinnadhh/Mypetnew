@@ -97,7 +97,10 @@ function formatSlotTime(
 }
 
 function appointmentAttemptKey(slotId: string, petId: string): string {
-  return `appointment-${slotId}-${petId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  // A network retry for the same customer/pet/slot must replay the same server-side
+  // idempotency record instead of creating a second hold. The backend additionally
+  // scopes the key to the authenticated customer and validates a request fingerprint.
+  return `appointment-${slotId}-${petId}`;
 }
 
 async function apiError(response: Response, fallback: string): Promise<Error> {

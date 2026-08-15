@@ -1,11 +1,15 @@
 import { apiClient } from '@/services/api-client';
 
+export type ProductFulfilmentMode = 'STORE_PICKUP' | 'MYPET_CAPTAIN_DELIVERY';
+
 export interface CreatePickupOrderInput {
   quoteId: string;
   cartSignature: string;
 }
 
-export interface CreatedPickupOrder {
+export type CreateProductOrderInput = CreatePickupOrderInput;
+
+export interface CreatedProductOrder {
   id: string;
   customerId: string;
   outletId: string;
@@ -14,9 +18,11 @@ export interface CreatedPickupOrder {
   platformFeePaise: number;
   paymentMethod: 'PAY_ON_FULFILMENT';
   paymentStatus: 'PENDING_EXTERNAL_COLLECTION' | string;
-  fulfilmentMode: 'STORE_PICKUP';
+  fulfilmentMode: ProductFulfilmentMode;
   status: 'PLACED' | string;
 }
+
+export type CreatedPickupOrder = CreatedProductOrder & { fulfilmentMode: 'STORE_PICKUP' };
 
 interface ProductOrderDto {
   id: string;
@@ -31,10 +37,11 @@ interface ProductOrderDto {
   status: string;
 }
 
-export async function createPickupOrder(
-  input: CreatePickupOrderInput,
+export async function createProductOrder(
+  input: CreateProductOrderInput,
+  expectedFulfilmentMode: ProductFulfilmentMode,
   accessToken?: string | null,
-): Promise<CreatedPickupOrder> {
+): Promise<CreatedProductOrder> {
   if (!accessToken) throw new Error('Sign in before placing an order.');
   if (!input.quoteId || !input.cartSignature) {
     throw new Error('Request a fresh checkout quote before placing the order.');
@@ -51,11 +58,11 @@ export async function createPickupOrder(
 
   if (
     order.quoteId !== input.quoteId ||
-    order.fulfilmentMode !== 'STORE_PICKUP' ||
+    order.fulfilmentMode !== expectedFulfilmentMode ||
     order.paymentMethod !== 'PAY_ON_FULFILMENT' ||
     order.status !== 'PLACED'
   ) {
-    throw new Error('Order service returned an unsupported Sprint-1 checkout contract.');
+    throw new Error('Order service returned an unsupported canonical checkout contract.');
   }
   if (!Number.isFinite(order.grandTotalPaise) || order.grandTotalPaise < 0) {
     throw new Error('Order service returned invalid server pricing.');
@@ -64,6 +71,14 @@ export async function createPickupOrder(
   return {
     ...order,
     paymentMethod: 'PAY_ON_FULFILMENT',
-    fulfilmentMode: 'STORE_PICKUP',
+    fulfilmentMode: expectedFulfilmentMode,
   };
+}
+
+export async function createPickupOrder(
+  input: CreatePickupOrderInput,
+  accessToken?: string | null,
+): Promise<CreatedPickupOrder> {
+  const order = await createProductOrder(input, 'STORE_PICKUP', accessToken);
+  return { ...order, fulfilmentMode: 'STORE_PICKUP' };
 }

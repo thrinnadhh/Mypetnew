@@ -90,6 +90,10 @@ async function saveLocal(items: FavouriteItem[]): Promise<void> {
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeLocal(items)));
 }
 
+export async function clearLocalFavourites(): Promise<void> {
+  await AsyncStorage.multiRemove([STORAGE_KEY, LEGACY_STORAGE_KEY]);
+}
+
 async function removeLocalProduct(listingId: string): Promise<void> {
   const local = await loadLocal();
   await saveLocal(local.filter((item) => !(item.targetType === 'PRODUCT' && item.targetId === listingId)));

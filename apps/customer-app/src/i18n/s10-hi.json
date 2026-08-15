@@ -49,6 +49,7 @@
     "verifyTitle": "सत्यापन कोड डालें",
     "verifySubtitle": "{{identifier}} पर छह अंकों का कोड भेजा गया।",
     "codePlaceholder": "6 अंकों का कोड",
+    "adultEligibility": "मैं पुष्टि करता/करती हूँ कि मेरी आयु कम से कम 18 वर्ष है।",
     "verify": "सत्यापित करें",
     "resendIn": "{{seconds}} सेकंड में फिर भेजें",
     "resend": "कोड फिर भेजें",

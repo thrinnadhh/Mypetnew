@@ -1,7 +1,9 @@
 # Customer Application Dependency Security Triage
 
-Date: **2026-08-12**  
-Target App: `apps/customer-app` (Expo SDK 56 / React Native 0.85.3)  
+Date: **2026-08-12**
+
+Target App: `apps/customer-app` (Expo SDK 56 / React Native 0.85.3)
+
 Auditor: **Trial Engineering (T4)**
 
 ---

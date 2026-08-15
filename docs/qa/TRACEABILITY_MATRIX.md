@@ -1,7 +1,9 @@
 # Requirements Traceability Matrix
 
-Status: **Sprint 1 active / later implementation deferred**  
-Version: **2.0**  
+Status: **Sprint 1 active / later implementation deferred**
+
+Version: **2.0**
+
 Date: **2026-08-11**
 
 ## 1. Purpose

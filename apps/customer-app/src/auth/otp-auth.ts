@@ -112,11 +112,15 @@ export async function verifyOtpCode(
   challengeId: string,
   mobile: string,
   code: string,
+  adultEligibilityAttested: boolean,
 ): Promise<CustomerAuthSession> {
   const normalizedMobile = normalizePhone(mobile);
   const trimmedCode = code.trim();
   if (!/^\d{6}$/.test(trimmedCode)) {
     throw new OtpAuthError('INVALID_INPUT', 'Enter the six-digit code.');
+  }
+  if (!adultEligibilityAttested) {
+    throw new OtpAuthError('INVALID_INPUT', 'Confirm that you are at least 18 years old.');
   }
 
   try {
@@ -125,6 +129,7 @@ export async function verifyOtpCode(
       mobile: normalizedMobile,
       purpose: 'LOGIN',
       code: trimmedCode,
+      adultEligibilityAttested: true,
     });
     const role = validateServerRole(response.role);
     return {

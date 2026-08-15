@@ -1,9 +1,13 @@
 # T2B Customer Catalog Contract — MyPetNew
 
-Status: **Authoritative for T2B implementation**  
-Version: **1.0**  
-Date: **2026-08-12**  
-Baseline: `main@e8de602939d1bf0290e68e6603e0d68f2148f7fb` (T2A merged)  
+Status: **Authoritative for T2B implementation**
+
+Version: **1.0**
+
+Date: **2026-08-12**
+
+Baseline: `main@e8de602939d1bf0290e68e6603e0d68f2148f7fb` (T2A merged)
+
 Owning scope: Sprint 1 `S1-11` guest catalog/product detail/cart-boundary UI and the backend catalog projection required to make those screens truthful.
 
 ## 1. Purpose

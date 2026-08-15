@@ -1,7 +1,9 @@
 # MyPetNew Sprint Execution Plan
 
-Status: **Frontend-first / Sprint 1 only**  
-Version: **2.0**  
+Status: **Frontend-first / Sprint 1 only**
+
+Version: **2.0**
+
 Date: **2026-08-11**
 
 ## 1. Active execution rule

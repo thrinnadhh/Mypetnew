@@ -49,6 +49,7 @@
     "verifyTitle": "Enter verification code",
     "verifySubtitle": "We sent a six-digit code to {{identifier}}.",
     "codePlaceholder": "6-digit code",
+    "adultEligibility": "I confirm that I am at least 18 years old.",
     "verify": "Verify and continue",
     "resendIn": "Resend in {{seconds}}s",
     "resend": "Resend code",

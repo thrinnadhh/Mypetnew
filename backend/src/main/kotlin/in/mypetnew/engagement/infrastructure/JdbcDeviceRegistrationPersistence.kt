@@ -144,7 +144,8 @@ class JdbcDeviceRegistrationPersistence(
         val now = clock.instant()
         jdbc.sql(
             """
-            UPDATE mypet.device_registration SET status = 'DISABLED', permission_state = 'DENIED', updated_at = :now
+            UPDATE mypet.device_registration
+            SET status = 'DISABLED', permission_state = 'DENIED', protected_token = '', updated_at = :now
             WHERE environment = :environment AND app_kind = :app_kind AND installation_id = :installation_id
             """.trimIndent(),
         ).params(bindingParameters(environment, appKind, installationId)).param("now", now.jdbcTimestamp()).update()
@@ -190,7 +191,7 @@ class JdbcDeviceRegistrationPersistence(
         val updated = jdbc.sql(
             """
             UPDATE mypet.device_registration
-            SET status = 'REVOKED', updated_at = :now
+            SET status = 'REVOKED', protected_token = '', updated_at = :now
             WHERE user_id = :user_id AND environment = :environment
               AND app_kind = :app_kind AND installation_id = :installation_id
               AND status <> 'REVOKED'
@@ -200,6 +201,18 @@ class JdbcDeviceRegistrationPersistence(
             .param("now", now.jdbcTimestamp())
             .update()
         updated > 0
+    }
+
+    override fun revokeAll(userId: UUID) {
+        jdbc.sql(
+            """
+            UPDATE mypet.device_registration
+            SET status = 'REVOKED', protected_token = '', updated_at = :now
+            WHERE user_id = :user_id AND status <> 'REVOKED'
+            """.trimIndent(),
+        ).param("user_id", userId)
+            .param("now", clock.instant().jdbcTimestamp())
+            .update()
     }
 
     private fun findExact(

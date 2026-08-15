@@ -1,8 +1,11 @@
 # MyPetNew Customer Production — 10-Plan Implementation Roadmap
 
-Status: PLANNING ONLY — no application code implemented by this roadmap run.  
-Baseline: `main` @ `924ad77156e8a248c57c0e571cafba00f94daf99` (2026-08-14).  
-Authority: `docs/product/DECISIONS.md`, `docs/product/PRD.md`, current architecture contracts and current code.  
+Status: PLANNING ONLY — no application code implemented by this roadmap run.
+
+Baseline: `main` @ `924ad77156e8a248c57c0e571cafba00f94daf99` (2026-08-14).
+
+Authority: `docs/product/DECISIONS.md`, `docs/product/PRD.md`, current architecture contracts and current code.
+
 External prerequisite: the dedicated India privacy/data-protection/security program must be merged to `main` with required CI green before implementation begins.
 
 ## Executive status
@@ -13,13 +16,13 @@ Locked rules that every plan must preserve: Spring Boot modular monolith is doma
 
 ## Dependency graph
 
-`P1 -> P2 -> P3`  
-`P2 + P3 -> P4`  
-`P1 + P2 -> P5`  
-`P1 + P5 -> P6`  
-`P1 + P3 + P5 -> P7`  
-`P2 + P3 + P5 + P6 -> P8`  
-`P1..P8 -> P9 -> P10`
+- `P1 -> P2 -> P3`
+- `P2 + P3 -> P4`
+- `P1 + P2 -> P5`
+- `P1 + P5 -> P6`
+- `P1 + P3 + P5 -> P7`
+- `P2 + P3 + P5 + P6 -> P8`
+- `P1..P8 -> P9 -> P10`
 
 Implementation order follows risk/dependency, not screen convenience.
 
@@ -352,5 +355,6 @@ Implementation order follows risk/dependency, not screen convenience.
 
 ## Exact first implementation task after the security gate
 
-**Branch:** `feat/customer-p1-order-list-certification`  
+**Branch:** `feat/customer-p1-order-list-certification`
+
 **Scope:** Plan 1 only. Add the canonical paged Customer order-list query/DTO/repository port, migrate `orders-screen.tsx`/Customer list service away from the restored legacy tracking route, retain existing canonical order-detail/cancel contract, add ownership/pagination/contract/E2E tests, rerun full Customer/backend gates, perform two independent semantic reviews, and merge only on exact-head green CI. No delivery, Cashfree, recurring, grooming/vet or other Plan 2+ functionality in this PR.

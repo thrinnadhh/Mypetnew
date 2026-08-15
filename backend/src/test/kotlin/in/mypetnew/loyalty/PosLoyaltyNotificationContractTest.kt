@@ -84,8 +84,8 @@ class PosLoyaltyNotificationContractTest {
             sourceEventId = UUID.randomUUID(),
             recipientId = user,
             templateVersion = "pos-star-v1",
-            title = "You earned a star",
-            body = "Open MyPetNew to view your loyalty activity.",
+            title = "You earned a loyalty star",
+            body = "Open MyPet to view your merchant loyalty activity.",
             route = SafeRoute.CUSTOMER_LOYALTY,
             resourceId = UUID.randomUUID(),
         )
@@ -93,8 +93,8 @@ class PosLoyaltyNotificationContractTest {
             sourceEventId = first.sourceEventId,
             recipientId = user,
             templateVersion = "pos-star-v1",
-            title = "You earned a star",
-            body = "Open MyPetNew to view your loyalty activity.",
+            title = "You earned a loyalty star",
+            body = "Open MyPet to view your merchant loyalty activity.",
             route = SafeRoute.CUSTOMER_LOYALTY,
             resourceId = first.resourceId,
         )
@@ -119,8 +119,14 @@ class PosLoyaltyNotificationContractTest {
         assertThrows(DomainException::class.java) {
             devices.recordPermissionDenied(attacker, AppKind.CUSTOMER, Platform.ANDROID, installation, "development")
         }
+        assertThrows(DomainException::class.java) {
+            devices.revoke(attacker, AppKind.CUSTOMER, installation, "development")
+        }
         assertEquals(1, devices.activeFor(owner).size)
         assertEquals(0, devices.activeFor(attacker).size)
+
+        assertTrue(devices.revoke(owner, AppKind.CUSTOMER, installation, "development"))
+        assertEquals(0, devices.activeFor(owner).size)
     }
 
     @Test
@@ -134,6 +140,17 @@ class PosLoyaltyNotificationContractTest {
                 templateVersion = "Unsafe Event-v1",
                 title = "",
                 body = "Open the app.",
+                route = SafeRoute.INBOX,
+                resourceId = UUID.randomUUID(),
+            )
+        }
+        assertThrows(DomainException::class.java) {
+            notifications.enqueue(
+                sourceEventId = UUID.randomUUID(),
+                recipientId = UUID.randomUUID(),
+                templateVersion = "medical-update-v1",
+                title = "Prescription ready",
+                body = "Open the app for private details.",
                 route = SafeRoute.INBOX,
                 resourceId = UUID.randomUUID(),
             )

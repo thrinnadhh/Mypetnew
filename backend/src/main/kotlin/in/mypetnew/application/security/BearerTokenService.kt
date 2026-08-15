@@ -33,7 +33,7 @@ class BearerTokenService(
     private val encoder = Base64.getUrlEncoder().withoutPadding()
     private val decoder = Base64.getUrlDecoder()
 
-    fun issue(principal: Principal, lifetime: Duration = Duration.ofHours(1)): String {
+    fun issue(principal: Principal, lifetime: Duration = ACCESS_TOKEN_LIFETIME): String {
         val payload = listOf(
             issuer,
             audience,
@@ -48,6 +48,8 @@ class BearerTokenService(
         val encoded = encoder.encodeToString(payload.toByteArray(StandardCharsets.UTF_8))
         return "$encoded.${encoder.encodeToString(sign(encoded))}"
     }
+
+    fun expiresAt(issuedAt: java.time.Instant): java.time.Instant = issuedAt.plus(ACCESS_TOKEN_LIFETIME)
 
     fun verify(token: String): Principal {
         val parts = token.split('.')
@@ -79,6 +81,10 @@ class BearerTokenService(
     private fun String.csv(): List<String> = if (isBlank()) emptyList() else split(',')
 
     private fun invalid(): Nothing = throw DomainException("TOKEN_INVALID", "The access token is invalid or expired")
+
+    companion object {
+        private val ACCESS_TOKEN_LIFETIME: Duration = Duration.ofMinutes(15)
+    }
 }
 
 @Component

@@ -9,6 +9,8 @@ import `in`.mypetnew.engagement.domain.DeviceRegistrationService
 import `in`.mypetnew.engagement.domain.Notification
 import `in`.mypetnew.engagement.domain.NotificationService
 import `in`.mypetnew.engagement.domain.Platform
+import `in`.mypetnew.privacy.domain.ConsentPurpose
+import `in`.mypetnew.privacy.domain.PrivacyService
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
@@ -36,6 +38,7 @@ data class NotificationPage(val items: List<Notification>)
 class NotificationApiController(
     private val devices: DeviceRegistrationService,
     private val notifications: NotificationService,
+    private val privacy: PrivacyService,
 ) {
     @PostMapping("/devices/registrations")
     fun register(authentication: Authentication, @RequestBody request: RegisterDeviceRequest): DeviceRegistration {
@@ -59,6 +62,9 @@ class NotificationApiController(
         }
         if (request.permissionState != "GRANTED" || request.nativeToken.isBlank()) {
             throw DomainException("DEVICE_REGISTRATION_INVALID", "The device registration is invalid")
+        }
+        if (request.appKind == AppKind.CUSTOMER) {
+            privacy.requireActiveConsent(principal.actorId, ConsentPurpose.NOTIFICATIONS)
         }
         return devices.register(
             principal.actorId,
@@ -106,4 +112,5 @@ class NotificationApiController(
         val principal = authentication.domainPrincipal()
         return NotificationPage(notifications.forRecipient(principal.actorId))
     }
+
 }

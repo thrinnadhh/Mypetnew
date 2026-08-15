@@ -2,6 +2,7 @@ package `in`.mypetnew.identity.infrastructure
 
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
+import `in`.mypetnew.identity.domain.AccountIdentity
 import `in`.mypetnew.identity.domain.RefreshSession
 import `in`.mypetnew.identity.domain.SessionStore
 import org.springframework.context.annotation.Primary
@@ -32,6 +33,7 @@ class InMemoryRoleSessionStore(
         val sessionId: UUID,
         val accountId: UUID,
         val role: Role,
+        val mobile: String,
         val deviceId: String,
         val tokenHash: String,
         val expiresAt: Instant,
@@ -41,13 +43,15 @@ class InMemoryRoleSessionStore(
     private val random = SecureRandom()
     private val sessions = mutableMapOf<UUID, Stored>()
     private val byHash = mutableMapOf<String, UUID>()
+    private val disabledAccounts = mutableSetOf<UUID>()
     // Unknown access sessions are a test-fixture compatibility only. Development must fail closed.
     private val acceptUnknownAccessSessions = environment.activeProfiles.contains("test")
 
     @Synchronized
     override fun create(accountId: UUID, mobile: String, role: Role, deviceId: String): RefreshSession {
         validate(mobile, role, deviceId)
-        return insert(accountId, role, deviceId)
+        if (accountId in disabledAccounts) invalidRefresh()
+        return insert(accountId, role, mobile, deviceId)
     }
 
     override fun createMerchant(mobile: String, deviceId: String): RefreshSession =
@@ -56,9 +60,13 @@ class InMemoryRoleSessionStore(
     @Synchronized
     override fun rotate(refreshToken: String): RefreshSession {
         val stored = byHash[hash(refreshToken)]?.let(sessions::get) ?: invalidRefresh()
-        if (stored.revokedAt != null || !clock.instant().isBefore(stored.expiresAt)) invalidRefresh()
+        if (stored.revokedAt != null) {
+            revokeAll(stored.accountId)
+            invalidRefresh()
+        }
+        if (!clock.instant().isBefore(stored.expiresAt) || stored.accountId in disabledAccounts) invalidRefresh()
         stored.revokedAt = clock.instant()
-        return insert(stored.accountId, stored.role, stored.deviceId)
+        return insert(stored.accountId, stored.role, stored.mobile, stored.deviceId)
     }
 
     @Synchronized
@@ -69,17 +77,37 @@ class InMemoryRoleSessionStore(
     }
 
     @Synchronized
-    override fun isActive(sessionId: UUID): Boolean {
-        val stored = sessions[sessionId] ?: return acceptUnknownAccessSessions
-        return stored.revokedAt == null && clock.instant().isBefore(stored.expiresAt)
+    override fun revokeAll(accountId: UUID) {
+        val now = clock.instant()
+        sessions.values.filter { it.accountId == accountId }.forEach { it.revokedAt = now }
     }
 
-    private fun insert(accountId: UUID, role: Role, deviceId: String): RefreshSession {
+    @Synchronized
+    override fun disableAccount(accountId: UUID) {
+        disabledAccounts += accountId
+        revokeAll(accountId)
+    }
+
+    @Synchronized
+    override fun isActive(sessionId: UUID): Boolean {
+        val stored = sessions[sessionId] ?: return acceptUnknownAccessSessions
+        return stored.accountId !in disabledAccounts &&
+            stored.revokedAt == null &&
+            clock.instant().isBefore(stored.expiresAt)
+    }
+
+    @Synchronized
+    override fun identityFor(accountId: UUID): AccountIdentity? = sessions.values
+        .firstOrNull { it.accountId == accountId && accountId !in disabledAccounts }
+        ?.let { AccountIdentity(accountId, it.mobile, "ACTIVE") }
+
+    private fun insert(accountId: UUID, role: Role, mobile: String, deviceId: String): RefreshSession {
         val raw = ByteArray(32).also(random::nextBytes).let(Base64.getUrlEncoder().withoutPadding()::encodeToString)
         val stored = Stored(
             UUID.randomUUID(),
             accountId,
             role,
+            mobile,
             deviceId,
             hash(raw),
             clock.instant().plus(Duration.ofDays(30)),

@@ -11,6 +11,14 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
+import java.util.UUID
+
+data class MerchantOtpVerifyBody(
+    val challengeId: UUID,
+    val mobile: String,
+    val purpose: OtpPurpose,
+    val code: String,
+)
 
 @RestController
 @RequestMapping("/api/v1/auth/merchant")
@@ -21,7 +29,7 @@ class MerchantIdentityController(
     private val principals: MerchantPrincipalResolver,
 ) {
     @PostMapping("/otp/verify")
-    fun verify(@RequestBody body: OtpVerifyBody): OtpSessionResponse {
+    fun verify(@RequestBody body: MerchantOtpVerifyBody): OtpSessionResponse {
         if (body.purpose != OtpPurpose.LOGIN) {
             throw DomainException("OTP_PURPOSE_INVALID", "The OTP purpose is invalid for this endpoint")
         }

@@ -69,7 +69,7 @@ describe('MyPetNew OTP authentication service', () => {
     };
     mockPost.mockResolvedValueOnce(mockServerResponse);
 
-    const session = await verifyOtpCode('challenge-123', '+919876543210', ' 123456 ');
+    const session = await verifyOtpCode('challenge-123', '+919876543210', ' 123456 ', true);
 
     expect(session).toEqual({
       ...mockServerResponse,
@@ -81,6 +81,7 @@ describe('MyPetNew OTP authentication service', () => {
       mobile: '+919876543210',
       purpose: 'LOGIN',
       code: '123456',
+      adultEligibilityAttested: true,
     });
   });
 
@@ -104,11 +105,11 @@ describe('MyPetNew OTP authentication service', () => {
       role: 'MERCHANT',
     });
 
-    await expect(verifyOtpCode('challenge-123', '+919876543210', '123456')).rejects.toThrow();
+    await expect(verifyOtpCode('challenge-123', '+919876543210', '123456', true)).rejects.toThrow();
   });
 
   it('rejects invalid OTP formats before making network calls', async () => {
-    await expect(verifyOtpCode('challenge-123', '+919876543210', '123')).rejects.toMatchObject({
+    await expect(verifyOtpCode('challenge-123', '+919876543210', '123', true)).rejects.toMatchObject({
       code: 'INVALID_INPUT',
     });
     expect(mockPost).not.toHaveBeenCalled();

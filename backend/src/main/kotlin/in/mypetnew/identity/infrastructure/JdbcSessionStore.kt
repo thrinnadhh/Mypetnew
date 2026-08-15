@@ -3,6 +3,7 @@ package `in`.mypetnew.identity.infrastructure
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.identity.domain.RefreshSession
+import `in`.mypetnew.identity.domain.AccountIdentity
 import `in`.mypetnew.identity.domain.SessionStore
 import org.springframework.context.annotation.Profile
 import org.springframework.jdbc.core.simple.JdbcClient
@@ -41,6 +42,12 @@ class JdbcSessionStore(
     override fun create(accountId: UUID, mobile: String, role: Role, deviceId: String): RefreshSession =
         transaction.execute {
             validateIdentity(mobile, role, deviceId)
+            val existingStatus = jdbc.sql("SELECT status FROM mypet.identity_account WHERE id = :id")
+                .param("id", accountId)
+                .query(String::class.java)
+                .optional()
+                .orElse(null)
+            if (existingStatus != null && existingStatus != "ACTIVE") invalidRefresh()
             jdbc.sql(
                 """
                 INSERT INTO mypet.identity_account(id, mobile_e164, role, status)
@@ -57,32 +64,40 @@ class JdbcSessionStore(
             insertSession(accountId, role, deviceId, null)
         }
 
-    override fun rotate(refreshToken: String): RefreshSession = transaction.execute {
-        val now = clock.instant()
-        val stored = jdbc.sql(
-            """
-            SELECT s.id, s.account_id, a.role, s.device_id, s.expires_at, s.revoked_at
-            FROM mypet.user_session s
-            JOIN mypet.identity_account a ON a.id = s.account_id
-            WHERE s.refresh_token_hash = :token_hash
-            FOR UPDATE OF s
-            """.trimIndent(),
-        ).param("token_hash", hash(refreshToken)).query(::mapSession).optional().orElse(null) ?: invalidRefresh()
-        if (stored.revokedAt != null || !now.isBefore(stored.expiresAt)) invalidRefresh()
-        jdbc.sql("UPDATE mypet.user_session SET revoked_at = :now WHERE id = :id")
-            .param("now", now.jdbcTimestamp()).param("id", stored.sessionId).update()
-        val rotated = insertSession(stored.accountId, stored.role, stored.deviceId, stored.sessionId)
-        jdbc.sql(
-            """
-            UPDATE mypet.device_registration
-            SET session_id = :new_session_id, updated_at = :now
-            WHERE session_id = :old_session_id AND status = 'ACTIVE'
-            """.trimIndent(),
-        ).param("new_session_id", rotated.sessionId)
-            .param("old_session_id", stored.sessionId)
-            .param("now", now.jdbcTimestamp())
-            .update()
-        rotated
+    override fun rotate(refreshToken: String): RefreshSession {
+        val rotated = transaction.execute<RefreshSession?> {
+            val now = clock.instant()
+            val stored = jdbc.sql(
+                """
+                SELECT s.id, s.account_id, a.role, s.device_id, s.expires_at, s.revoked_at
+                FROM mypet.user_session s
+                JOIN mypet.identity_account a ON a.id = s.account_id
+                WHERE s.refresh_token_hash = :token_hash AND a.status = 'ACTIVE'
+                FOR UPDATE OF s
+                """.trimIndent(),
+            ).param("token_hash", hash(refreshToken)).query(::mapSession).optional().orElse(null)
+                ?: return@execute null
+            if (stored.revokedAt != null) {
+                revokeCompromisedSessions(stored.accountId, now)
+                return@execute null
+            }
+            if (!now.isBefore(stored.expiresAt)) return@execute null
+            jdbc.sql("UPDATE mypet.user_session SET revoked_at = :now WHERE id = :id")
+                .param("now", now.jdbcTimestamp()).param("id", stored.sessionId).update()
+            val successor = insertSession(stored.accountId, stored.role, stored.deviceId, stored.sessionId)
+            jdbc.sql(
+                """
+                UPDATE mypet.device_registration
+                SET session_id = :new_session_id, updated_at = :now
+                WHERE session_id = :old_session_id AND status = 'ACTIVE'
+                """.trimIndent(),
+            ).param("new_session_id", successor.sessionId)
+                .param("old_session_id", stored.sessionId)
+                .param("now", now.jdbcTimestamp())
+                .update()
+            successor
+        }
+        return rotated ?: invalidRefresh()
     }
 
     override fun revoke(sessionId: UUID, accountId: UUID) {
@@ -98,7 +113,7 @@ class JdbcSessionStore(
             jdbc.sql(
                 """
                 UPDATE mypet.device_registration
-                SET status = 'REVOKED', updated_at = :now
+                SET status = 'REVOKED', protected_token = '', updated_at = :now
                 WHERE session_id IN (
                     SELECT id FROM mypet.user_session WHERE id = :session_id AND account_id = :account_id
                 ) AND status = 'ACTIVE'
@@ -107,15 +122,69 @@ class JdbcSessionStore(
         }
     }
 
+    override fun revokeAll(accountId: UUID) {
+        transaction.executeWithoutResult {
+            val now = clock.instant()
+            jdbc.sql(
+                """
+                UPDATE mypet.user_session
+                SET revoked_at = COALESCE(revoked_at, :now)
+                WHERE account_id = :account_id
+                """.trimIndent(),
+            ).param("now", now.jdbcTimestamp()).param("account_id", accountId).update()
+            jdbc.sql(
+                """
+                UPDATE mypet.device_registration
+                SET status = 'REVOKED', protected_token = '', updated_at = :now
+                WHERE user_id = :account_id AND status IN ('ACTIVE', 'ROTATED', 'DISABLED', 'STALE')
+                """.trimIndent(),
+            ).param("now", now.jdbcTimestamp()).param("account_id", accountId).update()
+        }
+    }
+
+    override fun disableAccount(accountId: UUID) {
+        transaction.executeWithoutResult {
+            val now = clock.instant()
+            jdbc.sql(
+                """
+                UPDATE mypet.identity_account
+                SET status = 'DELETION_PENDING', updated_at = :now
+                WHERE id = :account_id AND role = 'CUSTOMER' AND status = 'ACTIVE'
+                """.trimIndent(),
+            ).param("now", now.jdbcTimestamp()).param("account_id", accountId).update()
+            jdbc.sql(
+                "UPDATE mypet.user_session SET revoked_at = COALESCE(revoked_at, :now) WHERE account_id = :account_id",
+            ).param("now", now.jdbcTimestamp()).param("account_id", accountId).update()
+            jdbc.sql(
+                """
+                UPDATE mypet.device_registration
+                SET status = 'REVOKED', protected_token = '', updated_at = :now
+                WHERE user_id = :account_id AND status <> 'REVOKED'
+                """.trimIndent(),
+            ).param("now", now.jdbcTimestamp()).param("account_id", accountId).update()
+        }
+    }
+
     override fun isActive(sessionId: UUID): Boolean = jdbc.sql(
         """
-        SELECT COUNT(*) FROM mypet.user_session
-        WHERE id = :session_id AND revoked_at IS NULL AND expires_at > :now
+        SELECT COUNT(*) FROM mypet.user_session s
+        JOIN mypet.identity_account a ON a.id = s.account_id
+        WHERE s.id = :session_id AND s.revoked_at IS NULL AND s.expires_at > :now AND a.status = 'ACTIVE'
         """.trimIndent(),
     ).param("session_id", sessionId)
         .param("now", clock.instant().jdbcTimestamp())
         .query(Int::class.java)
         .single() == 1
+
+    override fun identityFor(accountId: UUID): AccountIdentity? = jdbc.sql(
+        "SELECT id, mobile_e164, status FROM mypet.identity_account WHERE id = :id AND status = 'ACTIVE'",
+    ).param("id", accountId).query { rows, _ ->
+        AccountIdentity(
+            accountId = rows.getObject("id", UUID::class.java),
+            mobileE164 = rows.getString("mobile_e164"),
+            status = rows.getString("status"),
+        )
+    }.optional().orElse(null)
 
     private fun insertSession(
         accountId: UUID,
@@ -142,6 +211,19 @@ class JdbcSessionStore(
             .param("rotated_from", rotatedFrom)
             .update()
         return RefreshSession(id, accountId, role, rawToken, expiresAt)
+    }
+
+    private fun revokeCompromisedSessions(accountId: UUID, now: Instant) {
+        jdbc.sql(
+            "UPDATE mypet.user_session SET revoked_at = COALESCE(revoked_at, :now) WHERE account_id = :account_id",
+        ).param("now", now.jdbcTimestamp()).param("account_id", accountId).update()
+        jdbc.sql(
+            """
+            UPDATE mypet.device_registration
+            SET status = 'REVOKED', protected_token = '', updated_at = :now
+            WHERE user_id = :account_id AND status <> 'REVOKED'
+            """.trimIndent(),
+        ).param("now", now.jdbcTimestamp()).param("account_id", accountId).update()
     }
 
     private fun mapSession(rows: ResultSet, rowNumber: Int): StoredSession {

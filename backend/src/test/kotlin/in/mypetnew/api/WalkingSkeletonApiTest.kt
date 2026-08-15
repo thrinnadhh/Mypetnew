@@ -15,6 +15,7 @@ import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
+import org.springframework.test.web.servlet.put
 import tools.jackson.databind.ObjectMapper
 import java.util.UUID
 
@@ -73,6 +74,11 @@ class WalkingSkeletonApiTest {
             "merchant-device",
             """{"appKind":"MERCHANT","environment":"development","installationId":"${UUID.randomUUID()}","platform":"ANDROID","nativeToken":"merchant-native-token","permissionState":"GRANTED"}""",
         )
+        mockMvc.put("/api/v1/privacy/consents/NOTIFICATIONS") {
+            header("Authorization", "Bearer $customerToken")
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"noticeVersion":"privacy-v1","source":"CUSTOMER_APP"}"""
+        }.andExpect { status { isOk() } }
         post(
             "/api/v1/devices/registrations",
             customerToken,

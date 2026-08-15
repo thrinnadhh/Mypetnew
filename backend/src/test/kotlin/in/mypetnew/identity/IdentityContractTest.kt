@@ -63,6 +63,27 @@ class IdentityContractTest {
     }
 
     @Test
+    fun `OTP verification attempts are bounded and resend cooldown is enforced`() {
+        val provider = InMemoryOtpProvider()
+        val service = OtpService(provider, clock)
+        val challenge = service.request("+919876543210", OtpPurpose.LOGIN, "device-a", "127.0.0.1")
+        val code = provider.codeFor(challenge.challengeId)
+
+        repeat(5) {
+            assertThrows(DomainException::class.java) {
+                service.verify(challenge.challengeId, "+919876543210", OtpPurpose.LOGIN, "000000", clock.instant())
+            }
+        }
+        assertThrows(DomainException::class.java) {
+            service.verify(challenge.challengeId, "+919876543210", OtpPurpose.LOGIN, code, clock.instant())
+        }
+        val cooldown = assertThrows(DomainException::class.java) {
+            service.request("+919876543210", OtpPurpose.LOGIN, "device-a", "127.0.0.1")
+        }
+        assertEquals("OTP_RATE_LIMITED", cooldown.code)
+    }
+
+    @Test
     fun `refresh rotation revokes the old secret and session revocation invalidates access`() {
         val store = InMemorySessionStore(clock, Duration.ofDays(30))
         val accountId = UUID.randomUUID()
@@ -75,9 +96,27 @@ class IdentityContractTest {
         assertFalse(store.isActive(first.sessionId))
         assertTrue(store.isActive(rotated.sessionId))
         assertThrows(DomainException::class.java) { store.rotate(first.refreshToken) }
-
-        store.revoke(rotated.sessionId, accountId)
         assertFalse(store.isActive(rotated.sessionId))
+
+        val recovered = store.create(accountId, "+919876543210", Role.CUSTOMER, "device-a")
+        store.revoke(recovered.sessionId, accountId)
+        assertFalse(store.isActive(recovered.sessionId))
         assertFalse(rotated.toString().contains(rotated.refreshToken))
+    }
+
+    @Test
+    fun `account disable revokes every device session and prevents recreation`() {
+        val store = InMemorySessionStore(clock, Duration.ofDays(30))
+        val accountId = UUID.randomUUID()
+        val first = store.create(accountId, "+919876543210", Role.CUSTOMER, "device-a")
+        val second = store.create(accountId, "+919876543210", Role.CUSTOMER, "device-b")
+
+        store.disableAccount(accountId)
+
+        assertFalse(store.isActive(first.sessionId))
+        assertFalse(store.isActive(second.sessionId))
+        assertThrows(DomainException::class.java) {
+            store.create(accountId, "+919876543210", Role.CUSTOMER, "device-c")
+        }
     }
 }

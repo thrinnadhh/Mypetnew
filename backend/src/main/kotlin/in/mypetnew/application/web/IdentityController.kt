@@ -8,6 +8,7 @@ import `in`.mypetnew.identity.domain.OtpPurpose
 import `in`.mypetnew.identity.domain.OtpChallengeResponse
 import `in`.mypetnew.identity.domain.OtpService
 import `in`.mypetnew.identity.domain.SessionStore
+import `in`.mypetnew.privacy.domain.PrivacyService
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.DeleteMapping
 import jakarta.servlet.http.HttpServletRequest
@@ -19,7 +20,13 @@ import java.time.Instant
 import java.util.UUID
 
 data class OtpRequestBody(val mobile: String, val purpose: OtpPurpose, val deviceId: String)
-data class OtpVerifyBody(val challengeId: UUID, val mobile: String, val purpose: OtpPurpose, val code: String)
+data class OtpVerifyBody(
+    val challengeId: UUID,
+    val mobile: String,
+    val purpose: OtpPurpose,
+    val code: String,
+    val adultEligibilityAttested: Boolean,
+)
 data class OtpSessionResponse(
     val accountId: UUID,
     val accessToken: String,
@@ -38,6 +45,7 @@ class IdentityController(
     private val otp: OtpService,
     private val tokens: BearerTokenService,
     private val sessions: SessionStore,
+    private val privacy: PrivacyService,
 ) {
     @PostMapping("/otp/request")
     fun request(@RequestBody body: OtpRequestBody, request: HttpServletRequest): OtpChallengeResponse {
@@ -48,14 +56,23 @@ class IdentityController(
     @PostMapping("/otp/verify")
     fun verify(@RequestBody body: OtpVerifyBody): OtpSessionResponse {
         requireLoginPurpose(body.purpose)
+        if (!body.adultEligibilityAttested) {
+            throw DomainException("ADULT_ELIGIBILITY_REQUIRED", "The account holder must confirm adult eligibility")
+        }
         val verified = otp.verify(body.challengeId, body.mobile, body.purpose, body.code)
         val session = sessions.create(verified.subjectId, verified.mobile, Role.CUSTOMER, verified.deviceId)
+        runCatching {
+            privacy.updateProfile(verified.subjectId, null, null, adultEligibilityAttested = true)
+        }.getOrElse { failure ->
+            runCatching { sessions.revoke(session.sessionId, session.accountId) }
+            throw failure
+        }
         val principal = Principal(verified.subjectId, Role.CUSTOMER, sessionId = session.sessionId)
         return OtpSessionResponse(
             accountId = session.accountId,
             accessToken = tokens.issue(principal),
             refreshToken = session.refreshToken,
-            accessTokenExpiresAt = verified.verifiedAt.plusSeconds(3_600),
+            accessTokenExpiresAt = tokens.expiresAt(verified.verifiedAt),
             refreshTokenExpiresAt = session.expiresAt,
             role = Role.CUSTOMER,
         )
@@ -69,7 +86,7 @@ class IdentityController(
             accountId = session.accountId,
             accessToken = tokens.issue(Principal(session.accountId, session.role, sessionId = session.sessionId)),
             refreshToken = session.refreshToken,
-            accessTokenExpiresAt = now.plusSeconds(3_600),
+            accessTokenExpiresAt = tokens.expiresAt(now),
             refreshTokenExpiresAt = session.expiresAt,
             role = session.role,
         )

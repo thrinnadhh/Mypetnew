@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'expo-router';
 import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { AppIcon } from '@/components/app-icon';
@@ -29,6 +30,7 @@ const emptyAddress: AddressDraft = { label: 'Home', line1: '', line2: '', city: 
 const emptyPet: PetDraft = { name: '', species: 'DOG', breed: '', dateOfBirth: '' };
 
 export default function ProfileScreen() {
+  const router = useRouter();
   const theme = useTheme();
   const { t } = useTranslation();
   const { user, session, signOut } = useAuth();
@@ -296,6 +298,7 @@ export default function ProfileScreen() {
       ) : null}
       <SectionHeader title={t('profileFoundation.language')} />
       <View style={styles.languages}>{LANGUAGES.map((language) => <Pressable key={language.id} onPress={() => void changeLocale(language.id)} accessibilityRole="button" accessibilityState={{ selected: locale === language.id }} style={[styles.language, { backgroundColor: locale === language.id ? theme.primarySoft : theme.backgroundElement, borderColor: locale === language.id ? theme.primary : theme.border }]}><ThemedText style={styles.label}>{language.label}</ThemedText><AppIcon name="check" color={locale === language.id ? theme.primary : theme.border} /></Pressable>)}</View>
+      <PrimaryAction label="Privacy Centre" onPress={() => router.push('/privacy' as never)} />
       <PrimaryAction label={t('common.signOut')} onPress={() => void signOut()} />
       <ThemedText type="small" themeColor="textSecondary">{hasAddress ? t('profileFoundation.complete') : t('profileFoundation.incomplete')}</ThemedText>
     </ScreenShell>

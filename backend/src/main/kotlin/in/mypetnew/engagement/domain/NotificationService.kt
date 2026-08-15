@@ -54,13 +54,14 @@ interface DeviceRegistrationPersistence {
     ): DeviceRegistration
 
     fun activeFor(userId: UUID): List<DeviceRegistration>
-
     fun revoke(
         userId: UUID,
         appKind: AppKind,
         installationId: UUID,
         environment: String,
     ): Boolean
+
+    fun revokeAll(userId: UUID)
 }
 
 class DeviceRegistrationService(private val persistence: DeviceRegistrationPersistence? = null) {
@@ -111,7 +112,7 @@ class DeviceRegistrationService(private val persistence: DeviceRegistrationPersi
         }
         if (existing != null) {
             val activated = existing.public.copy(status = RegistrationStatus.ACTIVE, lastSeenAt = Instant.now())
-            registrations[activated.id] = existing.copy(public = activated)
+            registrations[activated.id] = existing.copy(public = activated, protectedToken = token)
             return activated
         }
         val registration = DeviceRegistration(
@@ -159,7 +160,14 @@ class DeviceRegistrationService(private val persistence: DeviceRegistrationPersi
                 stored.public.installationId == installationId &&
                 stored.public.appKind == appKind &&
                 stored.public.environment == environment
-            ) stored.copy(public = stored.public.copy(status = RegistrationStatus.DISABLED)) else stored
+            ) {
+                stored.copy(
+                    public = stored.public.copy(status = RegistrationStatus.DISABLED),
+                    protectedToken = "",
+                )
+            } else {
+                stored
+            }
         }
         val existing = registrations.values.firstOrNull {
             it.public.userId == userId &&
@@ -217,12 +225,33 @@ class DeviceRegistrationService(private val persistence: DeviceRegistrationPersi
                 stored.public.status != RegistrationStatus.REVOKED
             ) {
                 revokedAny = true
-                stored.copy(public = stored.public.copy(status = RegistrationStatus.REVOKED))
+                stored.copy(
+                    public = stored.public.copy(status = RegistrationStatus.REVOKED),
+                    protectedToken = "",
+                )
             } else {
                 stored
             }
         }
         return revokedAny
+    }
+
+    @Synchronized
+    fun revokeAll(userId: UUID) {
+        persistence?.let {
+            it.revokeAll(userId)
+            return
+        }
+        registrations.replaceAll { _, stored ->
+            if (stored.public.userId == userId) {
+                stored.copy(
+                    public = stored.public.copy(status = RegistrationStatus.REVOKED),
+                    protectedToken = "",
+                )
+            } else {
+                stored
+            }
+        }
     }
 
     private fun requireInstallationOwner(
@@ -313,6 +342,14 @@ class NotificationService(private val repository: NotificationRepository = InMem
         ) {
             throw DomainException("NOTIFICATION_TEMPLATE_INVALID", "The notification content is invalid")
         }
+        if (RESTRICTED_NOTIFICATION_CONTENT.containsMatchIn("$title $body")) {
+            throw DomainException("NOTIFICATION_CONTENT_RESTRICTED", "The notification content is not lock-screen safe")
+        }
+        val approved = APPROVED_LOCK_SCREEN_TEMPLATES[templateVersion]
+            ?: throw DomainException("NOTIFICATION_TEMPLATE_INVALID", "The notification template is not approved")
+        if (approved.title != title || approved.body != body || approved.route != route) {
+            throw DomainException("NOTIFICATION_CONTENT_RESTRICTED", "The notification content is not lock-screen safe")
+        }
         val notificationId = UUID.randomUUID()
         val candidate = Notification(
             id = notificationId,
@@ -334,4 +371,24 @@ class NotificationService(private val repository: NotificationRepository = InMem
     }
 
     fun forRecipient(recipientId: UUID): List<Notification> = repository.forRecipient(recipientId)
+
+    companion object {
+        private data class ApprovedTemplate(val title: String, val body: String, val route: SafeRoute)
+
+        private val APPROVED_LOCK_SCREEN_TEMPLATES = mapOf(
+            "pickup-order-placed-v1" to ApprovedTemplate(
+                "New pickup order",
+                "Open MyPet Merchant to review a new pickup order.",
+                SafeRoute.MERCHANT_ORDER,
+            ),
+            "pos-star-v1" to ApprovedTemplate(
+                "You earned a loyalty star",
+                "Open MyPet to view your merchant loyalty activity.",
+                SafeRoute.CUSTOMER_LOYALTY,
+            ),
+        )
+        private val RESTRICTED_NOTIFICATION_CONTENT = Regex(
+            "(?i)(\\+91[6-9][0-9]{9}|[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}|\\b(otp|cvv|cvc|upi[ _-]?pin|bank[ _-]?password|card[ _-]?number|prescription|diagnosis)\\b|\\b(latitude|longitude)\\s*[:=])",
+        )
+    }
 }

@@ -31,6 +31,7 @@ export default function LoginScreen() {
   const [identifier, setIdentifier] = useState('');
   const [challengeId, setChallengeId] = useState('');
   const [code, setCode] = useState('');
+  const [adultEligibilityAttested, setAdultEligibilityAttested] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [loading, setLoading] = useState(false);
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -84,11 +85,11 @@ export default function LoginScreen() {
   }), [identifierInput, run]);
 
   const verify = useCallback(() => run(async () => {
-    const newSession = await verifyOtpCode(challengeId, identifier, code);
+    const newSession = await verifyOtpCode(challengeId, identifier, code, adultEligibilityAttested);
     await setSession(newSession);
     markOtpVerified();
     await finish();
-  }), [challengeId, code, finish, identifier, markOtpVerified, run, setSession]);
+  }), [adultEligibilityAttested, challengeId, code, finish, identifier, markOtpVerified, run, setSession]);
 
   const resend = useCallback(() => run(async () => {
     if (seconds > 0) return;
@@ -104,6 +105,7 @@ export default function LoginScreen() {
     setIdentifierInput('');
     setChallengeId('');
     setCode('');
+    setAdultEligibilityAttested(false);
     setErrorCode(null);
     setSeconds(0);
   }, []);
@@ -151,7 +153,19 @@ export default function LoginScreen() {
             style={[styles.input, styles.code, { color: theme.text, backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
             accessibilityLabel={t('auth.codePlaceholder')}
           />
-          <PrimaryAction label={t('auth.verify')} onPress={() => void verify()} loading={loading} disabled={code.length !== 6} />
+          <Pressable
+            style={styles.attestation}
+            onPress={() => setAdultEligibilityAttested((current) => !current)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: adultEligibilityAttested }}
+            accessibilityLabel={t('auth.adultEligibility')}
+          >
+            <View style={[styles.checkbox, { borderColor: theme.border, backgroundColor: adultEligibilityAttested ? theme.primary : theme.backgroundElement }]}>
+              {adultEligibilityAttested ? <ThemedText style={styles.checkmark}>✓</ThemedText> : null}
+            </View>
+            <ThemedText style={styles.attestationText}>{t('auth.adultEligibility')}</ThemedText>
+          </Pressable>
+          <PrimaryAction label={t('auth.verify')} onPress={() => void verify()} loading={loading} disabled={code.length !== 6 || !adultEligibilityAttested} />
           <Pressable style={styles.link} disabled={seconds > 0 || loading} onPress={() => void resend()} accessibilityRole="button">
             <ThemedText style={{ color: seconds > 0 ? theme.textSecondary : theme.primary, fontWeight: '700' }}>
               {seconds > 0 ? t('auth.resendIn', { seconds }) : t('auth.resend')}
@@ -185,6 +199,10 @@ const styles = StyleSheet.create({
   heading: { ...typography.title },
   input: { minHeight: touchTarget, borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x4, ...typography.body },
   code: { fontSize: 26, letterSpacing: 8, textAlign: 'center' },
+  attestation: { minHeight: touchTarget, flexDirection: 'row', alignItems: 'center', gap: spacing.x3 },
+  checkbox: { width: 24, height: 24, borderWidth: 1, borderRadius: radii.compact, alignItems: 'center', justifyContent: 'center' },
+  checkmark: { color: '#FFFFFF', fontWeight: '800' },
+  attestationText: { flex: 1 },
   link: { minHeight: 44, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.x2 },
   error: { borderRadius: radii.compact, padding: spacing.x4 },
   cancel: { minHeight: 48, alignItems: 'center', justifyContent: 'center' },

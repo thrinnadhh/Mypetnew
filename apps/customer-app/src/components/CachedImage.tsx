@@ -30,8 +30,7 @@ export default function CachedImage({ source, style, accessibilityLabel }: Cache
           const { uri } = await FileSystem.downloadAsync(source, fileUri);
           if (active) setLocalUri(uri);
         }
-      } catch (err) {
-        console.log("CachedImage fallback: loading direct URL due to cache issue:", err);
+      } catch {
         if (active) setLocalUri(source);
       }
     }
@@ -46,10 +45,10 @@ export default function CachedImage({ source, style, accessibilityLabel }: Cache
   if (!localUri) return null;
 
   return (
-    <Image 
-      source={{ uri: localUri }} 
-      style={style} 
-      accessibilityLabel={accessibilityLabel} 
+    <Image
+      source={{ uri: localUri }}
+      style={style}
+      accessibilityLabel={accessibilityLabel}
     />
   );
 }

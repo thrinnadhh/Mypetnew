@@ -14,6 +14,7 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.delete
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
+import org.springframework.test.web.servlet.put
 import tools.jackson.databind.ObjectMapper
 
 @SpringBootTest(
@@ -78,7 +79,7 @@ class ApplicationApiContractTest {
 
         val verified = mockMvc.post("/api/v1/auth/otp/verify") {
             contentType = MediaType.APPLICATION_JSON
-            content = """{"challengeId":"$challengeId","mobile":"+919876543210","purpose":"LOGIN","code":"$code"}"""
+            content = """{"challengeId":"$challengeId","mobile":"+919876543210","purpose":"LOGIN","code":"$code","adultEligibilityAttested":true}"""
         }.andExpect {
             status { isOk() }
             jsonPath("$.accountId") { isNotEmpty() }
@@ -117,7 +118,7 @@ class ApplicationApiContractTest {
         }.andExpect { status { isUnauthorized() } }
         mockMvc.get("/api/v1/notifications") {
             header("Authorization", "Bearer ${secondSession.path("accessToken").asString()}")
-        }.andExpect { status { isOk() } }
+        }.andExpect { status { isUnauthorized() } }
 
         mockMvc.post("/api/v1/auth/otp/request") {
             contentType = MediaType.APPLICATION_JSON
@@ -150,11 +151,17 @@ class ApplicationApiContractTest {
         val code = (otpProvider as InMemoryOtpProvider).codeFor(java.util.UUID.fromString(challengeId))
         val verified = mockMvc.post("/api/v1/auth/otp/verify") {
             contentType = MediaType.APPLICATION_JSON
-            content = """{"challengeId":"$challengeId","mobile":"+919876543299","purpose":"LOGIN","code":"$code"}"""
+            content = """{"challengeId":"$challengeId","mobile":"+919876543299","purpose":"LOGIN","code":"$code","adultEligibilityAttested":true}"""
         }.andExpect { status { isOk() } }.andReturn()
         val accessToken = objectMapper.readTree(verified.response.contentAsString).path("accessToken").asString()
 
         val installationId = java.util.UUID.randomUUID().toString()
+
+        mockMvc.put("/api/v1/privacy/consents/NOTIFICATIONS") {
+            contentType = MediaType.APPLICATION_JSON
+            header("Authorization", "Bearer $accessToken")
+            content = """{"noticeVersion":"privacy-v1","source":"CUSTOMER_APP"}"""
+        }.andExpect { status { isOk() } }
 
         mockMvc.post("/api/v1/devices/registrations") {
             contentType = MediaType.APPLICATION_JSON
@@ -196,7 +203,7 @@ class ApplicationApiContractTest {
         val code = (otpProvider as InMemoryOtpProvider).codeFor(java.util.UUID.fromString(challengeId))
         val verified = mockMvc.post("/api/v1/auth/otp/verify") {
             contentType = MediaType.APPLICATION_JSON
-            content = """{"challengeId":"$challengeId","mobile":"+919876543288","purpose":"LOGIN","code":"$code"}"""
+            content = """{"challengeId":"$challengeId","mobile":"+919876543288","purpose":"LOGIN","code":"$code","adultEligibilityAttested":true}"""
         }.andExpect { status { isOk() } }.andReturn()
         val customerToken = objectMapper.readTree(verified.response.contentAsString).path("accessToken").asString()
 
@@ -237,11 +244,17 @@ class ApplicationApiContractTest {
         val codeA = (otpProvider as InMemoryOtpProvider).codeFor(java.util.UUID.fromString(chA))
         val verA = mockMvc.post("/api/v1/auth/otp/verify") {
             contentType = MediaType.APPLICATION_JSON
-            content = """{"challengeId":"$chA","mobile":"+919876543277","purpose":"LOGIN","code":"$codeA"}"""
+            content = """{"challengeId":"$chA","mobile":"+919876543277","purpose":"LOGIN","code":"$codeA","adultEligibilityAttested":true}"""
         }.andExpect { status { isOk() } }.andReturn()
         val tokenA = objectMapper.readTree(verA.response.contentAsString).path("accessToken").asString()
 
         val installationIdA = java.util.UUID.randomUUID().toString()
+
+        mockMvc.put("/api/v1/privacy/consents/NOTIFICATIONS") {
+            contentType = MediaType.APPLICATION_JSON
+            header("Authorization", "Bearer $tokenA")
+            content = """{"noticeVersion":"privacy-v1","source":"CUSTOMER_APP"}"""
+        }.andExpect { status { isOk() } }
 
         mockMvc.post("/api/v1/devices/registrations") {
             contentType = MediaType.APPLICATION_JSON
@@ -265,7 +278,7 @@ class ApplicationApiContractTest {
         val codeB = (otpProvider as InMemoryOtpProvider).codeFor(java.util.UUID.fromString(chB))
         val verB = mockMvc.post("/api/v1/auth/otp/verify") {
             contentType = MediaType.APPLICATION_JSON
-            content = """{"challengeId":"$chB","mobile":"+919876543266","purpose":"LOGIN","code":"$codeB"}"""
+            content = """{"challengeId":"$chB","mobile":"+919876543266","purpose":"LOGIN","code":"$codeB","adultEligibilityAttested":true}"""
         }.andExpect { status { isOk() } }.andReturn()
         val tokenB = objectMapper.readTree(verB.response.contentAsString).path("accessToken").asString()
 

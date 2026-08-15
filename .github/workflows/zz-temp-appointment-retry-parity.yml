@@ -1,0 +1,170 @@
+name: temporary-appointment-retry-parity
+
+on:
+  push:
+    branches:
+      - feat/customer-canonical-appointments-20260816
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/customer-canonical-appointments-20260816
+          fetch-depth: 0
+      - name: Patch safe fresh-key retry semantics
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f'marker missing in {path}')
+              p.write_text(text.replace(old, new, 1))
+
+          domain = 'backend/src/main/kotlin/in/mypetnew/appointment/domain/AppointmentService.kt'
+          replace_once(
+              domain,
+              '''        expireHolds(now)
+        if (appointments.values.any { it.slotId == appointment.slotId && it.status in OCCUPYING_STATUSES }) slotUnavailable()
+        appointment.also { appointments[it.id] = it }''',
+              '''        expireHolds(now)
+        val existing = appointments.values.firstOrNull {
+            it.slotId == appointment.slotId && it.status in OCCUPYING_STATUSES
+        }
+        if (existing != null) {
+            val sameRequest =
+                existing.customerId == appointment.customerId &&
+                    existing.petId == appointment.petId &&
+                    existing.outletId == appointment.outletId &&
+                    existing.serviceId == appointment.serviceId &&
+                    existing.paymentMethod == appointment.paymentMethod &&
+                    existing.notes == appointment.notes
+            if (sameRequest) return@execute existing
+            slotUnavailable()
+        }
+        appointment.also { appointments[it.id] = it }''',
+          )
+
+          jdbc = 'backend/src/main/kotlin/in/mypetnew/appointment/infrastructure/JdbcAppointmentPersistence.kt'
+          replace_once(
+              jdbc,
+              '''                if (!slotAvailable) slotUnavailable()
+
+                insertAppointment(appointment, idempotencyKey, requestFingerprint)''',
+              '''                if (!slotAvailable) slotUnavailable()
+
+                val existing = jdbc.sql(
+                    """
+                    SELECT id, customer_id, pet_id, organization_id, outlet_id, service_id, slot_id,
+                           service_name, outlet_name, pet_name, starts_at, ends_at, status, payment_method,
+                           payment_status, price_paise, notes, hold_expires_at, created_at, updated_at
+                    FROM mypet.appointment
+                    WHERE slot_id = :slot_id
+                      AND (
+                          status IN ('BOOKED','CONFIRMED','CHECKED_IN','IN_SERVICE')
+                          OR (status = 'HOLD' AND hold_expires_at > :now)
+                      )
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """.trimIndent(),
+                ).param("slot_id", appointment.slotId)
+                    .param("now", now)
+                    .query(::mapAppointment)
+                    .optional()
+                    .orElse(null)
+                if (existing != null) {
+                    val sameRequest =
+                        existing.customerId == appointment.customerId &&
+                            existing.petId == appointment.petId &&
+                            existing.outletId == appointment.outletId &&
+                            existing.serviceId == appointment.serviceId &&
+                            existing.paymentMethod == appointment.paymentMethod &&
+                            existing.notes == appointment.notes
+                    if (sameRequest) return@execute existing
+                    slotUnavailable()
+                }
+
+                insertAppointment(appointment, idempotencyKey, requestFingerprint)''',
+          )
+
+          test = Path('backend/src/test/kotlin/in/mypetnew/appointment/AppointmentServiceTest.kt')
+          text = test.read_text()
+          old = '''        assertEquals(AppointmentStatus.HOLD, first.status)
+        assertTrue(service.availability(offering.id, now, now.plusSeconds(86_400)).isEmpty())
+
+        val conflict = assertThrows(DomainException::class.java) {'''
+          new = '''        assertEquals(AppointmentStatus.HOLD, first.status)
+        assertTrue(service.availability(offering.id, now, now.plusSeconds(86_400)).isEmpty())
+
+        val freshKeyRetry = service.hold(
+            customerA,
+            outletId,
+            offering.id,
+            petA,
+            slot.id,
+            AppointmentPaymentMethod.PAY_AT_PROVIDER,
+            "Sensitive paws",
+            "hold-fresh-retry-key",
+        )
+        assertEquals(first.id, freshKeyRetry.id, "a fresh transport key must replay the same active booking intent")
+
+        val conflict = assertThrows(DomainException::class.java) {'''
+          if old not in text:
+              raise SystemExit('fresh retry test marker missing')
+          text = text.replace(old, new, 1)
+          old2 = '''        val confirmed = service.confirm(customerA, first.id)
+        assertEquals(AppointmentStatus.BOOKED, confirmed.status)
+        assertEquals(AppointmentStatus.CANCELLED, service.cancel(customerA, first.id, "Plans changed").status)
+        assertEquals(1, service.list(customerA, 0, 20).items.size)'''
+          new2 = '''        val confirmed = service.confirm(customerA, first.id)
+        assertEquals(AppointmentStatus.BOOKED, confirmed.status)
+        assertEquals(AppointmentStatus.CANCELLED, service.cancel(customerA, first.id, "Plans changed").status)
+        val rebooked = service.hold(
+            customerA,
+            outletId,
+            offering.id,
+            petA,
+            slot.id,
+            AppointmentPaymentMethod.PAY_AT_PROVIDER,
+            "Sensitive paws",
+            "hold-after-cancel",
+        )
+        assertTrue(rebooked.id != first.id, "a post-cancel booking must create a new appointment")
+        assertEquals(2, service.list(customerA, 0, 20).items.size)'''
+          if old2 not in text:
+              raise SystemExit('rebook test marker missing')
+          test.write_text(text.replace(old2, new2, 1))
+
+          for path in [
+              'apps/customer-app/src/services/__tests__/customer-connected-services.test.ts',
+              'apps/customer-app/src/services/__tests__/production-service-coverage.test.ts',
+          ]:
+              p = Path(path)
+              text = p.read_text()
+              text = text.replace(
+                  "'Idempotency-Key': 'appointment-55555555-5555-4555-8555-555555555555-88888888-8888-4888-8888-888888888888',",
+                  "'Idempotency-Key': expect.stringMatching(/^appointment-55555555-5555-4555-8555-555555555555-88888888-8888-4888-8888-888888888888-/),",
+              )
+              text = text.replace(
+                  "'Idempotency-Key': 'appointment-slot-1-pet-1',",
+                  "'Idempotency-Key': expect.stringMatching(/^appointment-slot-1-pet-1-/),",
+              )
+              p.write_text(text)
+          PY
+      - name: Commit patch and remove helper
+        shell: bash
+        run: |
+          rm .github/workflows/zz-temp-appointment-retry-parity.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(appointments): preserve retry safety across fresh client keys"
+          git push origin HEAD:feat/customer-canonical-appointments-20260816

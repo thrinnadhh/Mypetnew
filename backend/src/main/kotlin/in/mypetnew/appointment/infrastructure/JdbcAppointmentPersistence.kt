@@ -89,7 +89,8 @@ class JdbcAppointmentPersistence(
         """.trimIndent(),
     ).param("capability", capability?.name)
         .param("outlet_id", outletId)
-        .query(::mapOffering).list()
+        .query(::mapOffering)
+        .list()
 
     override fun availableSlots(serviceId: UUID, from: Instant, to: Instant, now: Instant): List<ServiceSlot> = jdbc.sql(
         """
@@ -114,7 +115,8 @@ class JdbcAppointmentPersistence(
         .param("from_time", from)
         .param("to_time", to)
         .param("now", now)
-        .query(::mapSlot).list()
+        .query(::mapSlot)
+        .list()
 
     override fun hold(
         appointment: CustomerAppointment,
@@ -126,6 +128,7 @@ class JdbcAppointmentPersistence(
             if (existing.second != requestFingerprint) idempotencyMismatch()
             return existing.first
         }
+
         try {
             return transaction.execute {
                 jdbc.sql(
@@ -134,7 +137,9 @@ class JdbcAppointmentPersistence(
                     SET status = 'HOLD_EXPIRED', updated_at = :now
                     WHERE slot_id = :slot_id AND status = 'HOLD' AND hold_expires_at <= :now
                     """.trimIndent(),
-                ).param("now", now).param("slot_id", appointment.slotId).update()
+                ).param("now", now)
+                    .param("slot_id", appointment.slotId)
+                    .update()
 
                 val slotAvailable = jdbc.sql(
                     """
@@ -145,11 +150,19 @@ class JdbcAppointmentPersistence(
                 ).param("slot_id", appointment.slotId)
                     .param("service_id", appointment.serviceId)
                     .param("now", now)
-                    .query(UUID::class.java).optional().isPresent
+                    .query(UUID::class.java)
+                    .optional()
+                    .isPresent
                 if (!slotAvailable) slotUnavailable()
 
                 insertAppointment(appointment, idempotencyKey, requestFingerprint)
-                appendHistory(appointment.id, AppointmentStatus.HOLD, appointment.customerId, now, "CUSTOMER_HOLD")
+                appendHistory(
+                    appointment.id,
+                    AppointmentStatus.HOLD,
+                    appointment.customerId,
+                    now,
+                    "CUSTOMER_HOLD",
+                )
                 appointment
             }
         } catch (_: DuplicateKeyException) {
@@ -163,12 +176,18 @@ class JdbcAppointmentPersistence(
 
     override fun confirm(customerId: UUID, appointmentId: UUID, now: Instant): CustomerAppointment? = transaction.execute {
         val current = lockOwned(customerId, appointmentId) ?: return@execute null
-        if (current.status == AppointmentStatus.BOOKED || current.status == AppointmentStatus.CONFIRMED) return@execute current
+        if (current.status == AppointmentStatus.BOOKED || current.status == AppointmentStatus.CONFIRMED) {
+            return@execute current
+        }
+        if (current.status == AppointmentStatus.HOLD_EXPIRED) holdExpired()
         if (current.status != AppointmentStatus.HOLD) invalidState()
         if (current.holdExpiresAt == null || !current.holdExpiresAt.isAfter(now)) holdExpired()
+
         jdbc.sql(
             "UPDATE mypet.appointment SET status = 'BOOKED', hold_expires_at = NULL, updated_at = :now WHERE id = :id",
-        ).param("now", now).param("id", appointmentId).update()
+        ).param("now", now)
+            .param("id", appointmentId)
+            .update()
         appendHistory(appointmentId, AppointmentStatus.BOOKED, customerId, now, "CUSTOMER_CONFIRM")
         getOwned(customerId, appointmentId)
     }
@@ -176,7 +195,17 @@ class JdbcAppointmentPersistence(
     override fun cancel(customerId: UUID, appointmentId: UUID, reason: String?, now: Instant): CustomerAppointment? = transaction.execute {
         val current = lockOwned(customerId, appointmentId) ?: return@execute null
         if (current.status == AppointmentStatus.CANCELLED) return@execute current
-        if (current.status !in setOf(AppointmentStatus.HOLD, AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)) invalidState()
+        if (current.status == AppointmentStatus.HOLD_EXPIRED) holdExpired()
+        if (
+            current.status == AppointmentStatus.HOLD &&
+            (current.holdExpiresAt == null || !current.holdExpiresAt.isAfter(now))
+        ) {
+            holdExpired()
+        }
+        if (current.status !in setOf(AppointmentStatus.HOLD, AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)) {
+            invalidState()
+        }
+
         jdbc.sql(
             """
             UPDATE mypet.appointment
@@ -185,8 +214,16 @@ class JdbcAppointmentPersistence(
             WHERE id = :id
             """.trimIndent(),
         ).param("reason", reason?.trim()?.takeIf { it.isNotEmpty() })
-            .param("now", now).param("id", appointmentId).update()
-        appendHistory(appointmentId, AppointmentStatus.CANCELLED, customerId, now, reason ?: "CUSTOMER_CANCEL")
+            .param("now", now)
+            .param("id", appointmentId)
+            .update()
+        appendHistory(
+            appointmentId,
+            AppointmentStatus.CANCELLED,
+            customerId,
+            now,
+            reason ?: "CUSTOMER_CANCEL",
+        )
         getOwned(customerId, appointmentId)
     }
 
@@ -203,16 +240,25 @@ class JdbcAppointmentPersistence(
             SELECT id, customer_id, pet_id, organization_id, outlet_id, service_id, slot_id,
                    service_name, outlet_name, pet_name, starts_at, ends_at, status, payment_method,
                    payment_status, price_paise, notes, hold_expires_at, created_at, updated_at
-            FROM mypet.appointment WHERE id = :id AND outlet_id = :outlet_id FOR UPDATE
+            FROM mypet.appointment
+            WHERE id = :id AND outlet_id = :outlet_id
+            FOR UPDATE
             """.trimIndent(),
         ).param("id", appointmentId)
             .param("outlet_id", outletId)
-            .query(::mapAppointment).optional().orElse(null) ?: return@execute null
+            .query(::mapAppointment)
+            .optional()
+            .orElse(null) ?: return@execute null
+
         if (current.status == target) return@execute current
         if (current.status !in allowedFrom) invalidState()
+
         jdbc.sql(
             "UPDATE mypet.appointment SET status = :status, hold_expires_at = NULL, updated_at = :now WHERE id = :id",
-        ).param("status", target.name).param("now", now).param("id", appointmentId).update()
+        ).param("status", target.name)
+            .param("now", now)
+            .param("id", appointmentId)
+            .update()
         appendHistory(appointmentId, target, actorId, now, "MERCHANT_STATUS")
         current.copy(status = target, holdExpiresAt = null, updatedAt = now)
     }
@@ -225,10 +271,14 @@ class JdbcAppointmentPersistence(
     override fun list(customerId: UUID, page: Int, pageSize: Int, now: Instant): AppointmentPage {
         jdbc.sql(
             """
-            UPDATE mypet.appointment SET status = 'HOLD_EXPIRED', updated_at = :now
+            UPDATE mypet.appointment
+            SET status = 'HOLD_EXPIRED', updated_at = :now
             WHERE customer_id = :customer_id AND status = 'HOLD' AND hold_expires_at <= :now
             """.trimIndent(),
-        ).param("now", now).param("customer_id", customerId).update()
+        ).param("now", now)
+            .param("customer_id", customerId)
+            .update()
+
         val rows = jdbc.sql(
             """
             SELECT id, customer_id, pet_id, organization_id, outlet_id, service_id, slot_id,
@@ -242,11 +292,16 @@ class JdbcAppointmentPersistence(
         ).param("customer_id", customerId)
             .param("limit", pageSize + 1)
             .param("offset", page.toLong() * pageSize.toLong())
-            .query(::mapAppointment).list()
+            .query(::mapAppointment)
+            .list()
         return AppointmentPage(rows.take(pageSize), rows.size > pageSize)
     }
 
-    private fun insertAppointment(appointment: CustomerAppointment, idempotencyKey: String, fingerprint: String) {
+    private fun insertAppointment(
+        appointment: CustomerAppointment,
+        idempotencyKey: String,
+        fingerprint: String,
+    ) {
         jdbc.sql(
             """
             INSERT INTO mypet.appointment(
@@ -291,41 +346,69 @@ class JdbcAppointmentPersistence(
         SELECT id, customer_id, pet_id, organization_id, outlet_id, service_id, slot_id,
                service_name, outlet_name, pet_name, starts_at, ends_at, status, payment_method,
                payment_status, price_paise, notes, hold_expires_at, created_at, updated_at, request_fingerprint
-        FROM mypet.appointment WHERE customer_id = :customer_id AND idempotency_key = :key
+        FROM mypet.appointment
+        WHERE customer_id = :customer_id AND idempotency_key = :key
         """.trimIndent(),
-    ).param("customer_id", customerId).param("key", key).query { row, index ->
-        require(index >= 0)
-        mapAppointment(row, index) to row.getString("request_fingerprint")
-    }.optional().orElse(null)
+    ).param("customer_id", customerId)
+        .param("key", key)
+        .query { row, index ->
+            require(index >= 0)
+            mapAppointment(row, index) to row.getString("request_fingerprint")
+        }.optional()
+        .orElse(null)
 
     private fun lockOwned(customerId: UUID, appointmentId: UUID): CustomerAppointment? = jdbc.sql(
         """
         SELECT id, customer_id, pet_id, organization_id, outlet_id, service_id, slot_id,
                service_name, outlet_name, pet_name, starts_at, ends_at, status, payment_method,
                payment_status, price_paise, notes, hold_expires_at, created_at, updated_at
-        FROM mypet.appointment WHERE id = :id AND customer_id = :customer_id FOR UPDATE
+        FROM mypet.appointment
+        WHERE id = :id AND customer_id = :customer_id
+        FOR UPDATE
         """.trimIndent(),
-    ).param("id", appointmentId).param("customer_id", customerId).query(::mapAppointment).optional().orElse(null)
+    ).param("id", appointmentId)
+        .param("customer_id", customerId)
+        .query(::mapAppointment)
+        .optional()
+        .orElse(null)
 
     private fun getOwned(customerId: UUID, appointmentId: UUID): CustomerAppointment? = jdbc.sql(
         """
         SELECT id, customer_id, pet_id, organization_id, outlet_id, service_id, slot_id,
                service_name, outlet_name, pet_name, starts_at, ends_at, status, payment_method,
                payment_status, price_paise, notes, hold_expires_at, created_at, updated_at
-        FROM mypet.appointment WHERE id = :id AND customer_id = :customer_id
+        FROM mypet.appointment
+        WHERE id = :id AND customer_id = :customer_id
         """.trimIndent(),
-    ).param("id", appointmentId).param("customer_id", customerId).query(::mapAppointment).optional().orElse(null)
+    ).param("id", appointmentId)
+        .param("customer_id", customerId)
+        .query(::mapAppointment)
+        .optional()
+        .orElse(null)
 
     private fun expireOwnedHold(customerId: UUID, appointmentId: UUID, now: Instant) {
         jdbc.sql(
             """
-            UPDATE mypet.appointment SET status = 'HOLD_EXPIRED', updated_at = :now
-            WHERE id = :id AND customer_id = :customer_id AND status = 'HOLD' AND hold_expires_at <= :now
+            UPDATE mypet.appointment
+            SET status = 'HOLD_EXPIRED', updated_at = :now
+            WHERE id = :id
+              AND customer_id = :customer_id
+              AND status = 'HOLD'
+              AND hold_expires_at <= :now
             """.trimIndent(),
-        ).param("now", now).param("id", appointmentId).param("customer_id", customerId).update()
+        ).param("now", now)
+            .param("id", appointmentId)
+            .param("customer_id", customerId)
+            .update()
     }
 
-    private fun appendHistory(appointmentId: UUID, status: AppointmentStatus, actorId: UUID, at: Instant, note: String) {
+    private fun appendHistory(
+        appointmentId: UUID,
+        status: AppointmentStatus,
+        actorId: UUID,
+        at: Instant,
+        note: String,
+    ) {
         jdbc.sql(
             """
             INSERT INTO mypet.appointment_history(id, appointment_id, status, actor_id, note, occurred_at)
@@ -343,18 +426,27 @@ class JdbcAppointmentPersistence(
     private fun mapOffering(row: ResultSet, index: Int): ServiceOffering {
         require(index >= 0)
         return ServiceOffering(
-            row.getObject("id", UUID::class.java), row.getObject("organization_id", UUID::class.java),
-            row.getObject("outlet_id", UUID::class.java), ServiceCapability.valueOf(row.getString("capability")),
-            row.getString("name"), row.getString("description"), row.getInt("duration_minutes"),
-            row.getLong("price_paise"), row.getBoolean("active"), row.getTimestamp("created_at").toInstant(),
+            id = row.getObject("id", UUID::class.java),
+            organizationId = row.getObject("organization_id", UUID::class.java),
+            outletId = row.getObject("outlet_id", UUID::class.java),
+            capability = ServiceCapability.valueOf(row.getString("capability")),
+            name = row.getString("name"),
+            description = row.getString("description"),
+            durationMinutes = row.getInt("duration_minutes"),
+            pricePaise = row.getLong("price_paise"),
+            active = row.getBoolean("active"),
+            createdAt = row.getTimestamp("created_at").toInstant(),
         )
     }
 
     private fun mapSlot(row: ResultSet, index: Int): ServiceSlot {
         require(index >= 0)
         return ServiceSlot(
-            row.getObject("id", UUID::class.java), row.getObject("service_id", UUID::class.java),
-            row.getTimestamp("starts_at").toInstant(), row.getTimestamp("ends_at").toInstant(), row.getBoolean("active"),
+            id = row.getObject("id", UUID::class.java),
+            serviceId = row.getObject("service_id", UUID::class.java),
+            startsAt = row.getTimestamp("starts_at").toInstant(),
+            endsAt = row.getTimestamp("ends_at").toInstant(),
+            active = row.getBoolean("active"),
         )
     }
 
@@ -384,8 +476,18 @@ class JdbcAppointmentPersistence(
         )
     }
 
-    private fun slotUnavailable(): Nothing = throw DomainException("APPOINTMENT_SLOT_UNAVAILABLE", "This appointment slot is no longer available")
-    private fun invalidState(): Nothing = throw DomainException("APPOINTMENT_STATE_INVALID", "The appointment cannot be changed from its current state")
-    private fun holdExpired(): Nothing = throw DomainException("APPOINTMENT_HOLD_EXPIRED", "The appointment hold has expired")
-    private fun idempotencyMismatch(): Nothing = throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "The idempotency key was already used for another request")
+    private fun slotUnavailable(): Nothing =
+        throw DomainException("APPOINTMENT_SLOT_UNAVAILABLE", "This appointment slot is no longer available")
+
+    private fun invalidState(): Nothing =
+        throw DomainException("APPOINTMENT_STATE_INVALID", "The appointment cannot be changed from its current state")
+
+    private fun holdExpired(): Nothing =
+        throw DomainException("APPOINTMENT_HOLD_EXPIRED", "The appointment hold has expired")
+
+    private fun idempotencyMismatch(): Nothing =
+        throw DomainException(
+            "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+            "The idempotency key was already used for another request",
+        )
 }

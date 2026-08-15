@@ -106,6 +106,28 @@ export async function waitForPaymentOutcome(
   delayMs = 2_000,
 ): Promise<CustomerPaymentView> {
   let latest = await fetchPaymentStatus(paymentId);
+
+  // A Create Order HTTP timeout can leave MyPet with the durable Payment and
+  // deterministic provider identity but without the provider session response.
+  // Resume through the canonical initiation API: the backend maps a new client
+  // command key to the same Payment/provider order and never creates a second
+  // canonical Payment. If the retry returns the missing session, launch it and
+  // still rely only on the backend afterwards.
+  if (
+    (latest.status === 'PENDING' || latest.status === 'AUTHORIZED') &&
+    !latest.paymentSessionId
+  ) {
+    const resumed = await initiateOrderPayment(latest.referenceId);
+    if (resumed.paymentId !== paymentId) {
+      throw new Error('Payment recovery returned an inconsistent server payment.');
+    }
+    latest = resumed;
+    if (latest.paymentSessionId) {
+      await openCashfreeOrder(latest).catch(() => 'ERROR' as const);
+      latest = await fetchPaymentStatus(paymentId);
+    }
+  }
+
   for (
     let attempt = 1;
     attempt < attempts && (latest.status === 'PENDING' || latest.status === 'AUTHORIZED');

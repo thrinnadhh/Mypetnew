@@ -1,5 +1,6 @@
 package `in`.mypetnew.application.web
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import `in`.mypetnew.common.auth.Authorizer
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.customer.domain.CustomerAddress
@@ -76,6 +77,7 @@ data class CustomerAddressResponse(
     val city: String,
     val state: String,
     val pincode: String,
+    @get:JsonProperty("isDefault")
     val isDefault: Boolean,
     val createdAt: Instant,
     val updatedAt: Instant,

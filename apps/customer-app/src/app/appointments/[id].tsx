@@ -94,7 +94,6 @@ export default function AppointmentDetailRoute() {
         />
       ) : (
         <View style={styles.container}>
-          {/* Main Appointment Card */}
           <View
             style={[
               styles.card,
@@ -112,7 +111,7 @@ export default function AppointmentDetailRoute() {
               <StatusBadge
                 label={appt.status}
                 tone={
-                  appt.status === 'CONFIRMED' || appt.status === 'COMPLETED'
+                  ['BOOKED', 'CONFIRMED', 'COMPLETED'].includes(appt.status)
                     ? 'success'
                     : appt.status === 'CANCELLED'
                     ? 'error'
@@ -123,7 +122,6 @@ export default function AppointmentDetailRoute() {
 
             <View style={[styles.divider, { backgroundColor: theme.border }]} />
 
-            {/* Info Items */}
             <View style={styles.infoRow}>
               <AppIcon name="paw" size={16} color={theme.primary} />
               <ThemedText style={styles.infoText}>Pet: {appt.petName}</ThemedText>
@@ -151,7 +149,6 @@ export default function AppointmentDetailRoute() {
             ) : null}
           </View>
 
-          {/* Quick Actions */}
           <View style={styles.quickActions}>
             {appt.address ? (
               <Pressable style={[styles.actionBtn, { backgroundColor: theme.primarySoft }]} onPress={openDirections}>
@@ -168,7 +165,6 @@ export default function AppointmentDetailRoute() {
             ) : null}
           </View>
 
-          {/* Prescription Document if present */}
           {appt.prescriptionDocUrl ? (
             <View
               style={[
@@ -185,8 +181,7 @@ export default function AppointmentDetailRoute() {
             </View>
           ) : null}
 
-          {/* Cancel Action */}
-          {['SLOT_HELD', 'CONFIRMED'].includes(appt.status) ? (
+          {['SLOT_HELD', 'HOLD', 'BOOKED', 'CONFIRMED'].includes(appt.status) ? (
             <View style={styles.actions}>
               <Pressable style={[styles.cancelBtn, { borderColor: theme.danger }]} onPress={() => void handleCancel()}>
                 <ThemedText style={{ color: theme.danger, fontWeight: '700' }}>Cancel Appointment</ThemedText>

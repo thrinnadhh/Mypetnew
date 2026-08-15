@@ -68,10 +68,8 @@ class ServiceCatalogApiController(
     }
 
     @GetMapping("/api/v1/catalog/slots")
-    fun slots(@RequestParam offeringId: UUID): List<ServiceSlotResponse> {
-        val offering = appointments.listAvailableSlots(offeringId)
-        return offering.map(::slotResponse)
-    }
+    fun slots(@RequestParam offeringId: UUID): List<ServiceSlotResponse> =
+        appointments.listAvailableSlots(offeringId).map(::slotResponse)
 
     @PostMapping("/api/v1/merchant/service-offerings")
     fun createOffering(
@@ -101,7 +99,7 @@ class ServiceCatalogApiController(
     ): ServiceSlotResponse {
         val principal = authentication.domainPrincipal()
         Authorizer.requireRole(principal, Role.MERCHANT)
-        val offering = appointments.listAvailableOfferingForMerchant(offeringId)
+        val offering = appointments.getOffering(offeringId)
         Authorizer.requireOutlet(principal, offering.outletId)
         val outlet = providers.getOutlet(offering.outletId)
         requireBookableOutlet(outlet.status, outlet.capabilities)
@@ -191,7 +189,7 @@ class AppointmentApiController(
     fun list(authentication: Authentication): List<AppointmentResponse> {
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
-        return appointments.list(customer.actorId).map(Appointment::toResponse)
+        return appointments.list(customer.actorId).map { it.toResponse() }
     }
 
     @GetMapping("/{appointmentId}")

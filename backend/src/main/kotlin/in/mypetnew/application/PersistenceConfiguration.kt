@@ -79,7 +79,8 @@ class PersistenceConfiguration {
         JdbcQuotePersistence(jdbc, transactions)
 
     @Bean
-    fun productionQuoteService(persistence: QuotePersistence): QuoteService = QuoteService(persistence = persistence)
+    fun productionQuoteService(persistence: QuotePersistence, gateway: PaymentGateway): QuoteService =
+        QuoteService(persistence = persistence, onlinePaymentAvailable = { gateway.available })
 
     @Bean
     fun paymentPersistence(

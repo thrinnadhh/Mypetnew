@@ -96,6 +96,10 @@ function formatSlotTime(
   return date.toLocaleString('en-IN', options);
 }
 
+function appointmentAttemptKey(slotId: string, petId: string): string {
+  return `appointment-${slotId}-${petId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 async function apiError(response: Response, fallback: string): Promise<Error> {
   const body = (await response.json().catch(() => null)) as { code?: string; error?: string; message?: string } | null;
   const error = new Error(body?.message ?? body?.error ?? fallback);
@@ -213,7 +217,7 @@ export async function holdAppointmentSlot(input: HoldAppointmentInput): Promise<
     method: 'POST',
     headers: {
       ...jsonHeaders(input.accessToken),
-      'Idempotency-Key': `appointment-${input.slot.id}-${input.petId}`,
+      'Idempotency-Key': appointmentAttemptKey(input.slot.id, input.petId),
     },
     body: JSON.stringify({
       outletId: input.slot.providerId,

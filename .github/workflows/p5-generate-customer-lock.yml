@@ -1,0 +1,40 @@
+name: p5-generate-customer-lock
+
+on:
+  push:
+    branches:
+      - recovery/p5-codex-wip-20260815
+
+permissions:
+  contents: write
+
+jobs:
+  lockfile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/customer-app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: recovery/p5-codex-wip-20260815
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/customer-app/package-lock.json
+      - name: Generate deterministic npm lockfile
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Commit lockfile if changed
+        working-directory: .
+        run: |
+          if git diff --quiet -- apps/customer-app/package-lock.json; then
+            echo 'Lockfile already current.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/customer-app/package-lock.json
+          git commit -m 'chore(customer): lock Cashfree payment SDK'
+          git push origin HEAD:recovery/p5-codex-wip-20260815

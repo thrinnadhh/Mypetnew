@@ -1,37 +1,35 @@
-ALTER TABLE mypet.provider_outlet
-    ADD COLUMN dispatch_latitude DOUBLE PRECISION,
-    ADD COLUMN dispatch_longitude DOUBLE PRECISION,
-    ADD CONSTRAINT chk_provider_dispatch_coordinates CHECK (
-        (dispatch_latitude IS NULL AND dispatch_longitude IS NULL)
-        OR (
-            dispatch_latitude BETWEEN -90.0 AND 90.0
-            AND dispatch_longitude BETWEEN -180.0 AND 180.0
-        )
-    );
+ALTER TABLE mypet.provider_outlet ADD COLUMN dispatch_latitude DOUBLE PRECISION;
+ALTER TABLE mypet.provider_outlet ADD COLUMN dispatch_longitude DOUBLE PRECISION;
+ALTER TABLE mypet.provider_outlet ADD CONSTRAINT chk_provider_dispatch_coordinates CHECK (
+    (dispatch_latitude IS NULL AND dispatch_longitude IS NULL)
+    OR (
+        dispatch_latitude BETWEEN -90.0 AND 90.0
+        AND dispatch_longitude BETWEEN -180.0 AND 180.0
+    )
+);
 
-ALTER TABLE mypet.commerce_quote
-    ADD COLUMN delivery_address_id UUID,
-    ADD COLUMN delivery_recipient_name VARCHAR(120),
-    ADD COLUMN delivery_phone_number VARCHAR(16),
-    ADD COLUMN delivery_line1 VARCHAR(240),
-    ADD COLUMN delivery_line2 VARCHAR(240),
-    ADD COLUMN delivery_city VARCHAR(120),
-    ADD COLUMN delivery_state VARCHAR(120),
-    ADD COLUMN delivery_pincode VARCHAR(6),
-    ADD COLUMN delivery_eta_minutes INTEGER,
-    ADD CONSTRAINT chk_quote_delivery_snapshot CHECK (
-        (fulfilment_mode <> 'MYPET_CAPTAIN_DELIVERY')
-        OR (
-            delivery_address_id IS NOT NULL
-            AND delivery_recipient_name IS NOT NULL
-            AND delivery_phone_number IS NOT NULL
-            AND delivery_line1 IS NOT NULL
-            AND delivery_city IS NOT NULL
-            AND delivery_state IS NOT NULL
-            AND delivery_pincode IS NOT NULL
-            AND delivery_eta_minutes BETWEEN 1 AND 240
-        )
-    );
+ALTER TABLE mypet.commerce_quote ADD COLUMN delivery_address_id UUID;
+ALTER TABLE mypet.commerce_quote ADD COLUMN delivery_recipient_name VARCHAR(120);
+ALTER TABLE mypet.commerce_quote ADD COLUMN delivery_phone_number VARCHAR(16);
+ALTER TABLE mypet.commerce_quote ADD COLUMN delivery_line1 VARCHAR(240);
+ALTER TABLE mypet.commerce_quote ADD COLUMN delivery_line2 VARCHAR(240);
+ALTER TABLE mypet.commerce_quote ADD COLUMN delivery_city VARCHAR(120);
+ALTER TABLE mypet.commerce_quote ADD COLUMN delivery_state VARCHAR(120);
+ALTER TABLE mypet.commerce_quote ADD COLUMN delivery_pincode VARCHAR(6);
+ALTER TABLE mypet.commerce_quote ADD COLUMN delivery_eta_minutes INTEGER;
+ALTER TABLE mypet.commerce_quote ADD CONSTRAINT chk_quote_delivery_snapshot CHECK (
+    (fulfilment_mode <> 'MYPET_CAPTAIN_DELIVERY')
+    OR (
+        delivery_address_id IS NOT NULL
+        AND delivery_recipient_name IS NOT NULL
+        AND delivery_phone_number IS NOT NULL
+        AND delivery_line1 IS NOT NULL
+        AND delivery_city IS NOT NULL
+        AND delivery_state IS NOT NULL
+        AND delivery_pincode IS NOT NULL
+        AND delivery_eta_minutes BETWEEN 1 AND 240
+    )
+);
 
 CREATE TABLE mypet.captain_delivery_state (
     captain_id UUID PRIMARY KEY REFERENCES mypet.identity_account(id),

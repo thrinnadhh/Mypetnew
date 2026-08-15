@@ -161,7 +161,7 @@ class AppointmentMerchantLifecycleTest {
             outletId,
             serviceId,
             petId,
-            appointments.createSlot(merchant, serviceId, now.plusSeconds(3_600 + key.hashCode().toLong().mod(30_000))).id,
+            appointments.createSlot(merchant, serviceId, now.plusSeconds(3_600L + key.hashCode().toLong().mod(30_000))).id,
             AppointmentPaymentMethod.PAY_AT_PROVIDER,
             null,
             key,

@@ -16,10 +16,10 @@ import `in`.mypetnew.customer.domain.CustomerDataService
 import `in`.mypetnew.delivery.domain.DeliveryPricingPolicy
 import `in`.mypetnew.delivery.domain.DispatchJob
 import `in`.mypetnew.delivery.domain.DispatchService
+import `in`.mypetnew.delivery.domain.DispatchStatus
 import `in`.mypetnew.provider.domain.ProviderCapability
 import `in`.mypetnew.provider.domain.ProviderService
 import `in`.mypetnew.provider.domain.ProviderStatus
-import org.slf4j.MDC
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -139,7 +139,8 @@ class CustomerDeliveryApiController(
         val quote = quotes.get(order.quoteId)
         val job = dispatch.tracking(order.id)
         val captainId = job?.assignedCaptainId
-        val location = captainId?.let(dispatch::captainLocation)
+        val mayDiscloseLiveLocation = job?.status == DispatchStatus.ASSIGNED || job?.status == DispatchStatus.PICKED_UP
+        val location = if (mayDiscloseLiveLocation) captainId?.let(dispatch::captainLocation) else null
         return CustomerOrderTrackingResponse(
             orderId = order.id,
             status = order.status,
@@ -313,8 +314,6 @@ class CaptainApprovalApiController(private val dispatch: DispatchService) {
             dispatch.approveCaptain(captainId)
         }
 }
-
-private fun currentDeliveryTraceId(): String = MDC.get("traceId") ?: InventoryService.SYSTEM_TRACE_ID
 
 private fun unavailable(): Nothing = throw DomainException(
     "RESOURCE_NOT_FOUND",

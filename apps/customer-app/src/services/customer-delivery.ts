@@ -1,4 +1,5 @@
 import type { OrderFlowStepId } from '@/constants/content';
+import type { CustomerPaymentMethod } from '@/contracts/customer-payment';
 import type { OrderStatus } from '@/contracts/order-contract.generated';
 import { apiClient } from '@/services/api-client';
 
@@ -6,6 +7,7 @@ export interface DeliveryQuoteInput {
   outletId: string;
   addressId: string;
   lines: Array<{ listingId: string; quantity: number }>;
+  paymentMethod?: CustomerPaymentMethod;
 }
 
 export interface DeliveryQuote {
@@ -14,7 +16,7 @@ export interface DeliveryQuote {
   outletId: string;
   cartSignature: string;
   fulfilmentMode: 'MYPET_CAPTAIN_DELIVERY';
-  paymentMethod: 'PAY_ON_FULFILMENT';
+  paymentMethod: CustomerPaymentMethod;
   pricing: {
     itemSubtotalPaise: number;
     itemDiscountPaise: number;
@@ -57,19 +59,20 @@ export async function fetchDeliveryQuote(
 ): Promise<DeliveryQuote> {
   if (!accessToken) throw new Error('Sign in before requesting delivery.');
   if (!input.addressId) throw new Error('Select a saved delivery address.');
+  const expectedPaymentMethod = input.paymentMethod ?? 'PAY_ON_FULFILMENT';
 
   const quote = await apiClient.post<DeliveryQuote>(
     '/api/v1/customer/quotes/delivery',
-    input,
-    { Authorization: `Bearer ${accessToken}` },
+    { ...input, paymentMethod: expectedPaymentMethod },
   );
 
   if (
     quote.fulfilmentMode !== 'MYPET_CAPTAIN_DELIVERY' ||
-    quote.paymentMethod !== 'PAY_ON_FULFILMENT' ||
+    quote.paymentMethod !== expectedPaymentMethod ||
     quote.pricing.currency !== 'INR' ||
-    !Number.isFinite(quote.pricing.grandTotalPaise) ||
-    !Number.isFinite(quote.pricing.deliveryFeePaise) ||
+    !Number.isSafeInteger(quote.pricing.grandTotalPaise) ||
+    quote.pricing.grandTotalPaise < 0 ||
+    !Number.isSafeInteger(quote.pricing.deliveryFeePaise) ||
     !Number.isFinite(quote.etaMinutes)
   ) {
     throw new Error('Delivery quote service returned an unsupported contract.');
@@ -84,6 +87,5 @@ export async function fetchCustomerOrderTracking(
   if (!accessToken) throw new Error('Sign in to track this order.');
   return apiClient.get<CustomerOrderTracking>(
     `/api/v1/customer/orders/${encodeURIComponent(orderId)}/tracking`,
-    { Authorization: `Bearer ${accessToken}` },
   );
 }

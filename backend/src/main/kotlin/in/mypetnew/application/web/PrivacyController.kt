@@ -3,6 +3,7 @@ package `in`.mypetnew.application.web
 import `in`.mypetnew.common.auth.Authorizer
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
+import `in`.mypetnew.customer.domain.CustomerDataService
 import `in`.mypetnew.privacy.domain.AccountDeletionReceipt
 import `in`.mypetnew.privacy.domain.ConsentPurpose
 import `in`.mypetnew.privacy.domain.ConsentRecord
@@ -13,6 +14,7 @@ import `in`.mypetnew.privacy.domain.PrivacyService
 import `in`.mypetnew.privacy.domain.RightsRequest
 import `in`.mypetnew.privacy.domain.RightsRequestType
 import org.springframework.security.core.Authentication
+import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PatchMapping
@@ -47,7 +49,10 @@ data class RightsRequestPage(val items: List<RightsRequest>)
 
 @RestController
 @RequestMapping("/api/v1/privacy")
-class PrivacyController(private val privacy: PrivacyService) {
+class PrivacyController(
+    private val privacy: PrivacyService,
+    private val customerData: CustomerDataService,
+) {
     @GetMapping("/me")
     fun summary(authentication: Authentication): PersonalDataSummary = withCustomer(authentication) { customerId ->
         privacy.summary(customerId)
@@ -132,10 +137,15 @@ class PrivacyController(private val privacy: PrivacyService) {
     }
 
     @DeleteMapping("/account")
+    @Transactional
     fun deleteAccount(
         authentication: Authentication,
         @RequestBody request: DeleteAccountRequest,
     ): AccountDeletionReceipt = withCustomer(authentication) { customerId ->
+        if (request.confirmation != "DELETE") {
+            throw DomainException("ACCOUNT_DELETE_CONFIRMATION_INVALID", "Account deletion was not confirmed")
+        }
+        customerData.eraseCustomerOwnedData(customerId)
         privacy.deleteAccount(customerId, request.confirmation)
     }
 

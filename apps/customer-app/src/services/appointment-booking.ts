@@ -179,7 +179,9 @@ export async function fetchAvailableAppointmentSlots(
         `${appConfig.apiBaseUrl}/api/v1/public/services/${encodeURIComponent(service.id)}/availability?${query.toString()}`,
         { headers: authHeaders(undefined) },
       );
-      if (!response.ok) return [];
+      if (!response.ok) {
+        throw await apiError(response, 'Could not load appointment availability.');
+      }
 
       const payload = (await response.json()) as PageResponse<PublicServiceSlotDto>;
       return payload.items.map((slot): AppointmentSlotOption => ({

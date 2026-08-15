@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { fetchCustomerOrderPage } from '@/services/customer-order-list';
 
 const mockedFetch = jest.fn();
@@ -12,6 +15,23 @@ function response(status = 200, body: unknown = {}) {
   } as unknown as Response;
 }
 
+function source(relativePath: string): string {
+  return readFileSync(join(process.cwd(), relativePath), 'utf8');
+}
+
+const summary = {
+  orderId: '99999999-9999-4999-8999-999999999999',
+  outlet: { id: '11111111-1111-4111-8111-111111111111', name: 'Happy Pets Tirupati' },
+  itemCount: 2,
+  grandTotalPaise: 13500,
+  fulfilmentMode: 'STORE_PICKUP',
+  paymentMethod: 'PAY_ON_FULFILMENT',
+  paymentStatus: 'PENDING_EXTERNAL_COLLECTION',
+  status: 'PLACED',
+  placedAt: '2026-08-15T00:00:00Z',
+  lastUpdatedAt: '2026-08-15T00:00:01Z',
+};
+
 describe('P1 canonical customer order list contract', () => {
   beforeEach(() => {
     mockedFetch.mockReset();
@@ -20,18 +40,7 @@ describe('P1 canonical customer order list contract', () => {
 
   it('uses the authenticated customer-owned paged endpoint and maps server totals', async () => {
     mockedFetch.mockResolvedValueOnce(response(200, {
-      items: [{
-        orderId: '99999999-9999-4999-8999-999999999999',
-        outlet: { id: '11111111-1111-4111-8111-111111111111', name: 'Happy Pets Tirupati' },
-        itemCount: 2,
-        grandTotalPaise: 13500,
-        fulfilmentMode: 'STORE_PICKUP',
-        paymentMethod: 'PAY_ON_FULFILMENT',
-        paymentStatus: 'PENDING_EXTERNAL_COLLECTION',
-        status: 'PLACED',
-        placedAt: '2026-08-15T00:00:00Z',
-        lastUpdatedAt: '2026-08-15T00:00:01Z',
-      }],
+      items: [summary],
       page: 0,
       pageSize: 20,
       hasNext: false,
@@ -61,27 +70,36 @@ describe('P1 canonical customer order list contract', () => {
     expect(url).not.toContain('customerId');
   });
 
-  it('fails closed on invalid server pagination or pricing', async () => {
+  it('fails closed on invalid server pagination pricing and later-plan modes', async () => {
     mockedFetch.mockResolvedValueOnce(response(200, { items: [], page: -1, pageSize: 20, hasNext: false }));
     await expect(fetchCustomerOrderPage('token')).rejects.toThrow('invalid page');
 
     mockedFetch.mockResolvedValueOnce(response(200, {
-      items: [{
-        orderId: '99999999-9999-4999-8999-999999999999',
-        outlet: { id: '11111111-1111-4111-8111-111111111111', name: 'Happy Pets Tirupati' },
-        itemCount: 1,
-        grandTotalPaise: -1,
-        fulfilmentMode: 'STORE_PICKUP',
-        paymentMethod: 'PAY_ON_FULFILMENT',
-        paymentStatus: 'PENDING_EXTERNAL_COLLECTION',
-        status: 'PLACED',
-        placedAt: '2026-08-15T00:00:00Z',
-        lastUpdatedAt: '2026-08-15T00:00:00Z',
-      }],
+      items: [{ ...summary, grandTotalPaise: -1 }],
       page: 0,
       pageSize: 20,
       hasNext: false,
     }));
     await expect(fetchCustomerOrderPage('token')).rejects.toThrow('invalid server pricing');
+
+    mockedFetch.mockResolvedValueOnce(response(200, {
+      items: [{ ...summary, fulfilmentMode: 'MYPET_CAPTAIN_DELIVERY' }],
+      page: 0,
+      pageSize: 20,
+      hasNext: false,
+    }));
+    await expect(fetchCustomerOrderPage('token')).rejects.toThrow('unsupported P1 order contract');
+  });
+
+  it('keeps the active Orders hook off every legacy order service path', () => {
+    const hook = source('src/hooks/use-orders.ts');
+    const screen = source('src/screens/orders-screen.tsx');
+
+    expect(hook).toContain("from '@/services/customer-order-list'");
+    expect(hook).toContain("from '@/services/customer-order-detail'");
+    expect(hook).not.toContain("from '@/services/customer-orders'");
+    expect(hook).not.toContain('/api/v1/orders/');
+    expect(screen).not.toContain('Reorder');
+    expect(screen).not.toContain('Subscriptions');
   });
 });

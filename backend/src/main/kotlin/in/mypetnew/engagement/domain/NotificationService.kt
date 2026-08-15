@@ -381,6 +381,11 @@ class NotificationService(private val repository: NotificationRepository = InMem
                 "Open MyPet Merchant to review a new pickup order.",
                 SafeRoute.MERCHANT_ORDER,
             ),
+            "delivery-order-placed-v1" to ApprovedTemplate(
+                "New delivery order",
+                "Open MyPet Merchant to review a new Captain-delivery order.",
+                SafeRoute.MERCHANT_ORDER,
+            ),
             "pos-star-v1" to ApprovedTemplate(
                 "You earned a loyalty star",
                 "Open MyPet to view your merchant loyalty activity.",

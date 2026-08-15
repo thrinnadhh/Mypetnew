@@ -152,7 +152,12 @@ describe('MyPet customer journey contracts', () => {
       "'Idempotency-Key': `checkout:${input.quoteId}`",
       'order.paymentMethod !== expectedPaymentMethod',
     ]);
-    expect(orderClient).not.toContain('paymentMethod: expectedPaymentMethod');
+    const checkoutPost = orderClient.slice(
+      orderClient.indexOf("const order = await apiClient.post<ProductOrderDto>"),
+      orderClient.indexOf('if (', orderClient.indexOf("const order = await apiClient.post<ProductOrderDto>")),
+    );
+    expect(checkoutPost).toContain('{ quoteId: input.quoteId, cartSignature: input.cartSignature }');
+    expect(checkoutPost).not.toContain('paymentMethod');
     expectAll(quoteClient, [
       "'/api/v1/customer/quotes/pickup'",
       "'/api/v1/customer/quotes/delivery'",
@@ -195,10 +200,17 @@ describe('MyPet customer journey contracts', () => {
       'referenceId: orderId',
       "provider: 'CASHFREE'",
     ]);
-    expect(payments).not.toContain('normalizedPhone');
-    expect(payments).not.toContain('customerPhone');
-    expect(payments).not.toContain('userId:');
-    expect(payments).not.toContain('amountPaise:');
+    const initiation = payments.slice(
+      payments.indexOf('const payment = await apiClient.post<CustomerPaymentView>'),
+      payments.indexOf('await rememberPendingPayment', payments.indexOf('const payment = await apiClient.post<CustomerPaymentView>')),
+    );
+    expect(initiation).not.toContain('normalizedPhone');
+    expect(initiation).not.toContain('customerPhone');
+    expect(initiation).not.toContain('userId');
+    expect(initiation).not.toContain('amountPaise');
+    expect(initiation).not.toContain('currency:');
+    expect(payments).toContain('amountPaise: number;');
+    expect(payments).toContain("currency: 'INR';");
   });
 
   it('verifies recurring-order cadences (7/15/25/30/35) and confirmation safety per Decision D-019 while backend runtime is deferred', () => {

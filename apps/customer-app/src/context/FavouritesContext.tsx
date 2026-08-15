@@ -90,6 +90,11 @@ async function saveLocal(items: FavouriteItem[]): Promise<void> {
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeLocal(items)));
 }
 
+async function removeLocalProduct(listingId: string): Promise<void> {
+  const local = await loadLocal();
+  await saveLocal(local.filter((item) => !(item.targetType === 'PRODUCT' && item.targetId === listingId)));
+}
+
 async function fetchAllServerProducts(accessToken: string): Promise<FavouriteItem[]> {
   const result: FavouriteItem[] = [];
   for (let page = 0; page < 100; page += 1) {
@@ -191,16 +196,26 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
       );
 
       try {
-        if (targetType === 'SHOP' || !session?.accessToken) {
+        if (targetType === 'SHOP') {
+          const local = await loadLocal();
+          const nextLocal = currentlyFavourite
+            ? local.filter((item) => !(item.targetType === 'SHOP' && item.targetId === targetId))
+            : [{ targetType: 'SHOP' as const, targetId, createdAt: new Date().toISOString() }, ...local];
+          await saveLocal(nextLocal);
+          setFavourites((current) =>
+            currentlyFavourite
+              ? current.filter((item) => !(item.targetType === 'SHOP' && item.targetId === targetId))
+              : normalizeLocal([{ targetType: 'SHOP', targetId, createdAt: new Date().toISOString() }, ...current]),
+          );
+          return !currentlyFavourite;
+        }
+
+        if (!session?.accessToken) {
           const next = currentlyFavourite
-            ? favourites.filter((item) => !(item.targetType === targetType && item.targetId === targetId))
-            : [{ targetType, targetId, createdAt: new Date().toISOString() }, ...favourites];
+            ? favourites.filter((item) => !(item.targetType === 'PRODUCT' && item.targetId === targetId))
+            : [{ targetType: 'PRODUCT' as const, targetId, createdAt: new Date().toISOString() }, ...favourites];
+          await saveLocal(next);
           setFavourites(normalizeLocal(next));
-          const localOnly = session?.accessToken
-            ? next.filter((item) => item.targetType === 'SHOP' || item.targetType === 'PRODUCT')
-                .filter((item) => item.targetType === 'SHOP')
-            : next;
-          await saveLocal(localOnly);
           return !currentlyFavourite;
         }
 
@@ -210,6 +225,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
             { method: 'DELETE', headers: authHeaders(session.accessToken) },
           );
           if (!response.ok) throw await serverError(response);
+          await removeLocalProduct(targetId);
           setFavourites((current) =>
             current.filter((item) => !(item.targetType === 'PRODUCT' && item.targetId === targetId)),
           );
@@ -217,6 +233,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
         }
 
         const saved = await putProduct(session.accessToken, targetId);
+        await removeLocalProduct(targetId);
         setFavourites((current) => normalizeLocal([saved, ...current]));
         return true;
       } catch (error) {

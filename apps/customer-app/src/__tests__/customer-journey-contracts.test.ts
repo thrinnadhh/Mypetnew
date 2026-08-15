@@ -171,10 +171,12 @@ describe('MyPet customer journey contracts', () => {
       'applySessionState(null)',
     ]);
     expectAll(profile, [
-      '/api/v1/addresses/default',
-      "method: 'PUT'",
-      'Authorization: `Bearer ${accessToken}`',
+      '/api/v1/customer/profile',
+      '/api/v1/customer/addresses',
+      'authHeaders(accessToken)',
     ]);
+    expect(profile).not.toContain('/api/v1/addresses/default');
+    expect(profile).not.toContain('customerId=');
     expect(payments).toContain('normalizedPhone');
   });
 

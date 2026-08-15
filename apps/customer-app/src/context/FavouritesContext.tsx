@@ -26,8 +26,19 @@ interface FavouritesContextType {
   toggleFavourite: (targetType: 'PRODUCT' | 'SHOP', targetId: string) => Promise<boolean>;
 }
 
+class FavouriteRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'FavouriteRequestError';
+  }
+}
+
 const FavouritesContext = createContext<FavouritesContextType | null>(null);
 const STORAGE_KEY = 'mypet_favourites_v3_local';
+const LEGACY_STORAGE_KEY = 'mypet_favourites_v2_guest';
 
 function authHeaders(accessToken: string): Record<string, string> {
   return {
@@ -36,9 +47,12 @@ function authHeaders(accessToken: string): Record<string, string> {
   };
 }
 
-async function serverError(response: Response): Promise<Error> {
+async function serverError(response: Response): Promise<FavouriteRequestError> {
   const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null;
-  return new Error(body?.message || body?.error || `Favourite request failed (${response.status})`);
+  return new FavouriteRequestError(
+    body?.message || body?.error || `Favourite request failed (${response.status})`,
+    response.status,
+  );
 }
 
 function normalizeLocal(items: FavouriteItem[]): FavouriteItem[] {
@@ -51,14 +65,25 @@ function normalizeLocal(items: FavouriteItem[]): FavouriteItem[] {
   return [...unique.values()];
 }
 
-async function loadLocal(): Promise<FavouriteItem[]> {
-  const stored = await AsyncStorage.getItem(STORAGE_KEY);
+async function parseStored(key: string): Promise<FavouriteItem[]> {
+  const stored = await AsyncStorage.getItem(key);
   if (!stored) return [];
   try {
     return normalizeLocal(JSON.parse(stored) as FavouriteItem[]);
   } catch {
     return [];
   }
+}
+
+async function loadLocal(): Promise<FavouriteItem[]> {
+  const current = await parseStored(STORAGE_KEY);
+  const legacy = await parseStored(LEGACY_STORAGE_KEY);
+  if (legacy.length === 0) return current;
+
+  const merged = normalizeLocal([...current, ...legacy]);
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+  await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
+  return merged;
 }
 
 async function saveLocal(items: FavouriteItem[]): Promise<void> {
@@ -116,19 +141,28 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
         const localProducts = local.filter((item) => item.targetType === 'PRODUCT');
         const localShops = local.filter((item) => item.targetType === 'SHOP');
         const serverIds = new Set(serverProducts.map((item) => item.targetId));
+        const retryableLocalProducts: FavouriteItem[] = [];
 
         for (const product of localProducts) {
-          if (!serverIds.has(product.targetId)) {
+          if (serverIds.has(product.targetId)) continue;
+          try {
             const saved = await putProduct(session.accessToken, product.targetId);
             serverProducts = [saved, ...serverProducts];
             serverIds.add(product.targetId);
+          } catch (error) {
+            // A product removed from the canonical catalog is a stale guest preference, not a reason to block the
+            // rest of the merge. Network/server failures remain retryable and keep the local product preference.
+            if (error instanceof FavouriteRequestError && error.status === 404) continue;
+            retryableLocalProducts.push(product);
           }
         }
 
         // Product favourites become server-owned after sign-in. Shop favourites are intentionally local until a
         // canonical outlet-favourite contract is approved; P3 does not send them through the old generic API.
-        await saveLocal(localShops);
-        if (active) setFavourites(normalizeLocal([...serverProducts, ...localShops]));
+        await saveLocal([...localShops, ...retryableLocalProducts]);
+        if (active) {
+          setFavourites(normalizeLocal([...serverProducts, ...localShops, ...retryableLocalProducts]));
+        }
       } catch (error) {
         console.warn('Failed to load favourites', error);
         const local = await loadLocal();
@@ -163,7 +197,8 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
             : [{ targetType, targetId, createdAt: new Date().toISOString() }, ...favourites];
           setFavourites(normalizeLocal(next));
           const localOnly = session?.accessToken
-            ? next.filter((item) => item.targetType === 'SHOP')
+            ? next.filter((item) => item.targetType === 'SHOP' || item.targetType === 'PRODUCT')
+                .filter((item) => item.targetType === 'SHOP')
             : next;
           await saveLocal(localOnly);
           return !currentlyFavourite;

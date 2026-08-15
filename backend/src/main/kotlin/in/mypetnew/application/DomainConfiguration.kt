@@ -8,7 +8,10 @@ import `in`.mypetnew.commerce.domain.OrderService
 import `in`.mypetnew.commerce.domain.QuoteService
 import `in`.mypetnew.customer.domain.CustomerDataPersistence
 import `in`.mypetnew.customer.domain.CustomerDataService
+import `in`.mypetnew.customer.domain.CustomerFavouritePersistence
+import `in`.mypetnew.customer.domain.CustomerFavouriteService
 import `in`.mypetnew.customer.domain.InMemoryCustomerDataPersistence
+import `in`.mypetnew.customer.domain.InMemoryCustomerFavouritePersistence
 import `in`.mypetnew.engagement.domain.DeviceRegistrationService
 import `in`.mypetnew.engagement.domain.DeviceRegistrationPersistence
 import `in`.mypetnew.engagement.domain.NotificationService
@@ -82,6 +85,16 @@ class DomainConfiguration {
 
     @Bean @Profile("test", "development")
     fun customerDataService(persistence: CustomerDataPersistence) = CustomerDataService(persistence)
+
+    @Bean @Profile("test", "development")
+    fun customerFavouritePersistence(): CustomerFavouritePersistence = InMemoryCustomerFavouritePersistence()
+
+    @Bean @Profile("test", "development")
+    fun customerFavouriteService(
+        persistence: CustomerFavouritePersistence,
+        catalog: CatalogService,
+        providers: ProviderService,
+    ) = CustomerFavouriteService(persistence, catalog, providers)
 
     @Bean
     fun deviceRegistrationService(persistence: ObjectProvider<DeviceRegistrationPersistence>) =

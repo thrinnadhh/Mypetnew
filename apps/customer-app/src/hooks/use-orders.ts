@@ -1,19 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useAuth } from '@/context/AuthContext';
-import { useCart } from '@/context/CartContext';
 import { cancelCustomerOrder } from '@/services/customer-order-detail';
 import {
   fetchCustomerOrderPage,
   type CustomerOrderSummaryRecord,
   type OrderTabCategory,
 } from '@/services/customer-order-list';
-import {
-  reorderItems,
-  type ReorderValidationResult,
-} from '@/services/customer-orders';
 import { isOfflineError } from '@/services/customer-profile';
-import { buildCartFromRevalidation } from '@/services/revalidated-cart';
 
 export type OrdersStateKind = 'idle' | 'loading' | 'ready' | 'error' | 'offline';
 
@@ -21,7 +15,6 @@ const PAGE_SIZE = 20;
 
 export function useOrders() {
   const { user, session } = useAuth();
-  const { replaceCart } = useCart();
   const [orders, setOrders] = useState<CustomerOrderSummaryRecord[]>([]);
   const [state, setState] = useState<OrdersStateKind>('idle');
   const [activeTab, setActiveTab] = useState<OrderTabCategory>('active');
@@ -50,7 +43,10 @@ export function useOrders() {
     setLoadingMore(true);
     try {
       const page = await fetchCustomerOrderPage(session.accessToken, nextPage, PAGE_SIZE);
-      setOrders((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setOrders((current) => [
+        ...current,
+        ...page.items.filter((item) => !current.some((existing) => existing.id === item.id)),
+      ]);
       setNextPage((current) => current + 1);
       setHasNext(page.hasNext);
     } catch (error) {
@@ -66,12 +62,10 @@ export function useOrders() {
 
   const filteredOrders = useMemo(() => {
     return orders.filter((order) => {
-      const isPast = ['DELIVERED', 'COMPLETED', 'CANCELLED', 'REJECTED'].includes(order.status);
-      const isSub = order.isSubscription;
+      const isPast = ['DELIVERED', 'CANCELLED', 'REJECTED'].includes(order.status);
 
-      if (activeTab === 'subscription' && !isSub) return false;
       if (activeTab === 'past' && !isPast) return false;
-      if (activeTab === 'active' && (isPast || isSub)) return false;
+      if (activeTab === 'active' && isPast) return false;
 
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
@@ -98,24 +92,6 @@ export function useOrders() {
     [load, session],
   );
 
-  const reorder = useCallback(
-    async (orderId: string): Promise<ReorderValidationResult | null> => {
-      if (!session) return null;
-      setActionLoading(true);
-      try {
-        const result = await reorderItems(orderId, session.accessToken);
-        if (result.canReorder) {
-          const nextItems = await buildCartFromRevalidation(result);
-          await replaceCart(nextItems);
-        }
-        return result;
-      } finally {
-        setActionLoading(false);
-      }
-    },
-    [replaceCart, session],
-  );
-
   return {
     user,
     session,
@@ -132,6 +108,5 @@ export function useOrders() {
     reload: load,
     loadMore,
     cancel,
-    reorder,
   };
 }

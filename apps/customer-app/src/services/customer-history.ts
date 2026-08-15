@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { appConfig } from '@/utils/app-config';
 
-export type HistoryAppointmentStatus = 'SLOT_HELD' | 'PAID' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW' | 'EXPIRED';
+export type HistoryAppointmentStatus = 'SLOT_HELD' | 'HOLD' | 'PAID' | 'BOOKED' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW' | 'EXPIRED' | 'HOLD_EXPIRED';
 export type AppointmentTabCategory = 'upcoming' | 'past' | 'cancelled';
 
 export interface CustomerAppointmentRecord {
@@ -25,7 +25,7 @@ export interface CustomerAppointmentRecord {
 interface AppointmentDto {
   appointmentId?: string;
   id?: string;
-  customerId: string;
+  customerId?: string;
   providerId: string;
   offeringId: string;
   slotId: string;
@@ -33,6 +33,7 @@ interface AppointmentDto {
   status: HistoryAppointmentStatus;
   bookedAt?: string;
   priceAmount?: number | string;
+  pricePaise?: number;
   prescriptionDocUrl?: string;
 }
 
@@ -41,6 +42,11 @@ interface ProviderDto {
   name: string;
   address?: string;
   phone?: string;
+}
+
+interface PublicOutletDto {
+  id: string;
+  name: string;
 }
 
 interface OfferingDto {
@@ -60,6 +66,7 @@ interface ReviewDto {
 }
 
 const CACHE_PREFIX = '@mypet_appointments_cache_v1_';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function authHeaders(accessToken: string | null | undefined): Record<string, string> {
   const headers: Record<string, string> = { Accept: 'application/json' };
@@ -68,10 +75,7 @@ function authHeaders(accessToken: string | null | undefined): Record<string, str
 }
 
 function jsonHeaders(accessToken: string | null | undefined): Record<string, string> {
-  return {
-    ...authHeaders(accessToken),
-    'Content-Type': 'application/json',
-  };
+  return { ...authHeaders(accessToken), 'Content-Type': 'application/json' };
 }
 
 async function readJson<T>(response: Response, fallbackMessage: string): Promise<T> {
@@ -84,11 +88,15 @@ async function readJson<T>(response: Response, fallbackMessage: string): Promise
 
 async function fetchProviderDetails(providerId: string, accessToken: string | null | undefined): Promise<ProviderDto> {
   try {
-    const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/providers/${providerId}`, {
-      headers: authHeaders(accessToken),
-    });
+    const path = UUID_RE.test(providerId)
+      ? `/api/v1/public/outlets/${encodeURIComponent(providerId)}`
+      : `/api/v1/providers/${encodeURIComponent(providerId)}`;
+    const response = await fetch(`${appConfig.apiBaseUrl}${path}`, { headers: authHeaders(accessToken) });
     if (!response.ok) return { providerId, name: `Provider ${providerId.slice(0, 8)}` };
-    return (await response.json()) as ProviderDto;
+    const value = (await response.json()) as ProviderDto | PublicOutletDto;
+    return 'providerId' in value
+      ? value
+      : { providerId: value.id, name: value.name };
   } catch {
     return { providerId, name: `Provider ${providerId.slice(0, 8)}` };
   }
@@ -118,6 +126,13 @@ async function fetchSlotStart(slotId: string, accessToken: string | null | undef
   } catch {
     return null;
   }
+}
+
+function appointmentPrice(appointment: AppointmentDto): number | undefined {
+  const amount = Number(appointment.priceAmount);
+  if (Number.isFinite(amount) && amount > 0) return amount;
+  if (typeof appointment.pricePaise === 'number' && appointment.pricePaise > 0) return appointment.pricePaise / 100;
+  return undefined;
 }
 
 export async function fetchCustomerAppointments(
@@ -164,7 +179,7 @@ export async function fetchCustomerAppointments(
           slotStartsAt: slotStart ?? appointment.bookedAt ?? new Date().toISOString(),
           status: appointment.status,
           hasReview: reviewedAppointmentIds.has(id),
-          priceAmount: Number(appointment.priceAmount) || undefined,
+          priceAmount: appointmentPrice(appointment),
           address: provider.address,
           providerPhone: provider.phone,
           prescriptionDocUrl: appointment.prescriptionDocUrl,
@@ -181,7 +196,7 @@ export async function fetchCustomerAppointments(
       try {
         return JSON.parse(cached) as CustomerAppointmentRecord[];
       } catch {
-        // Fall through
+        // Fall through.
       }
     }
     throw error;
@@ -216,7 +231,7 @@ export async function fetchAppointmentDetails(
     slotStartsAt: slotStart ?? appt.bookedAt ?? new Date().toISOString(),
     status: appt.status,
     hasReview: false,
-    priceAmount: Number(appt.priceAmount) || undefined,
+    priceAmount: appointmentPrice(appt),
     address: provider.address,
     providerPhone: provider.phone,
     prescriptionDocUrl: appt.prescriptionDocUrl,
@@ -229,10 +244,7 @@ export async function cancelAppointment(
   accessToken: string | null | undefined,
 ): Promise<void> {
   const url = `${appConfig.apiBaseUrl}/api/v1/appointments/${appointmentId}/status?status=CANCELLED&note=${encodeURIComponent(reason)}`;
-  const response = await fetch(url, {
-    method: 'PUT',
-    headers: authHeaders(accessToken),
-  });
+  const response = await fetch(url, { method: 'PUT', headers: authHeaders(accessToken) });
   await readJson<unknown>(response, 'Could not cancel appointment.');
 }
 
@@ -242,10 +254,7 @@ export async function rescheduleAppointment(
   accessToken: string | null | undefined,
 ): Promise<void> {
   const url = `${appConfig.apiBaseUrl}/api/v1/appointments/${appointmentId}/reschedule?newSlotId=${newSlotId}`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: authHeaders(accessToken),
-  });
+  const response = await fetch(url, { method: 'POST', headers: authHeaders(accessToken) });
   await readJson<unknown>(response, 'Could not reschedule appointment.');
 }
 

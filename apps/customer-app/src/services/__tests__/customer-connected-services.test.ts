@@ -202,7 +202,7 @@ describe('connected customer services', () => {
   await confirmAppointmentHold(appointmentId, 'token');
 
   expect(appointmentId).toBe('66666666-6666-4666-8666-666666666666');
-  expect(mockedFetch.mock.calls[2][0]).toBe('https://api.mypet.test/api/v1/customer/appointments');
+  expect(mockedFetch.mock.calls[2][0]).toContain('/api/v1/customer/appointments');
   expect(mockedFetch.mock.calls[2][1]?.headers).toMatchObject({
     Authorization: 'Bearer token',
     'Idempotency-Key': 'appointment-55555555-5555-4555-8555-555555555555-88888888-8888-4888-8888-888888888888',

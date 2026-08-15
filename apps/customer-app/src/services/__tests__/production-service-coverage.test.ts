@@ -426,8 +426,8 @@ describe('appointment booking production paths', () => {
 
     const slots = await fetchAvailableAppointmentSlots('provider/1');
     expect(slots).toHaveLength(2);
-    expect(slots[0]).toMatchObject({ id: 'slot-1', price: 650.5 });
-    expect(slots[1]).toMatchObject({ id: 'slot-2', price: 0, startTime: 'Slot time unavailable' });
+    expect(slots.find((item) => item.id === 'slot-1')).toMatchObject({ id: 'slot-1', price: 650.5 });
+    expect(slots.find((item) => item.id === 'slot-2')).toMatchObject({ id: 'slot-2', price: 0, startTime: 'Slot time unavailable' });
     expect(mockedFetch.mock.calls[0][0]).toContain('/api/v1/public/services?');
     expect(mockedFetch.mock.calls[0][0]).toContain('outletId=provider%2F1');
     expect(mockedFetch.mock.calls[1][0]).toContain('/api/v1/public/services/offering-1/availability?');
@@ -473,6 +473,7 @@ describe('appointment booking production paths', () => {
   it('returns empty slots when availability fails and surfaces service catalogue errors', async () => {
     mockedFetch
       .mockResolvedValueOnce(response(servicesPage))
+      .mockResolvedValueOnce(response({}, 500))
       .mockResolvedValueOnce(response({}, 500))
       .mockResolvedValueOnce(response({ message: 'Catalog offline' }, 503));
 

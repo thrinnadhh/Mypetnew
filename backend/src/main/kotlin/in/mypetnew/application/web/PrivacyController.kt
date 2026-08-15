@@ -4,6 +4,7 @@ import `in`.mypetnew.common.auth.Authorizer
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.customer.domain.CustomerDataService
+import `in`.mypetnew.customer.domain.CustomerFavouriteService
 import `in`.mypetnew.privacy.domain.AccountDeletionReceipt
 import `in`.mypetnew.privacy.domain.ConsentPurpose
 import `in`.mypetnew.privacy.domain.ConsentRecord
@@ -51,6 +52,7 @@ data class RightsRequestPage(val items: List<RightsRequest>)
 class PrivacyController(
     private val privacy: PrivacyService,
     private val customerData: CustomerDataService,
+    private val favourites: CustomerFavouriteService,
 ) {
     @GetMapping("/me")
     fun summary(authentication: Authentication): PersonalDataSummary = withCustomer(authentication) { customerId ->
@@ -143,10 +145,10 @@ class PrivacyController(
         if (request.confirmation != "DELETE") {
             throw DomainException("ACCOUNT_DELETE_CONFIRMATION_INVALID", "Account deletion was not confirmed")
         }
-        // Erase Customer-owned profile extensions first. Each production JDBC deletion is transactional and idempotent;
-        // the existing privacy deletion then revokes identity/session/device material. A retry is therefore safe if the
-        // second stage fails after the first stage has completed.
+        // Erase Customer-owned product data first. Each operation is idempotent so a retry remains safe if a later
+        // privacy stage fails after an earlier data-erasure step completed.
         customerData.eraseCustomerOwnedData(customerId)
+        favourites.eraseAll(customerId)
         privacy.deleteAccount(customerId, request.confirmation)
     }
 

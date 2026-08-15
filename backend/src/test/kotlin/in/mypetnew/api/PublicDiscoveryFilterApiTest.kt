@@ -221,5 +221,5 @@ class PublicDiscoveryFilterApiTest {
         return json.readTree(response)
     }
 
-    private fun JsonNode.uuid(field: String): UUID = UUID.fromString(get(field).asText())
+    private fun JsonNode.uuid(field: String): UUID = UUID.fromString(path(field).asString())
 }

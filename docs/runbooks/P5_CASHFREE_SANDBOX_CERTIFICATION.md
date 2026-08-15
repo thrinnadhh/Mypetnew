@@ -4,11 +4,11 @@ Status: Checkpoint 1 runtime certification procedure.
 
 Scope: ProductOrder `ONLINE_PAYMENT` through Cashfree sandbox only. Appointment payment remains fail-closed until Plan 8. This runbook does not approve production use and does not replace the P5 refund/adversarial certification checkpoints.
 
-## 1. Provider version alignment
+## 1. Provider version gate
 
-For the live sandbox gate, MyPet uses Cashfree Payment Gateway API version `2025-01-01` and payment-webhook version `2025-01-01`.
+For the live sandbox gate, MyPet uses Cashfree Payment Gateway API version `2026-01-01` and payment-webhook version `2026-01-01`.
 
-The earlier Plan 5 design draft pinned `2026-01-01`. That pin is superseded for runtime integration because the current Cashfree Payment Gateway API/webhook documentation exposes `2025-01-01` as the supported latest version. Runtime code must fail closed if a different version is configured.
+Cashfree's current Payment Gateway reference identifies `2026-01-01` as the latest API version, and the current Payment Webhooks reference explicitly documents the `2026-01-01` webhook headers and payload. Runtime code must fail closed if a different version is configured.
 
 Approved Payment Gateway base URLs:
 
@@ -45,8 +45,8 @@ Set these in the deployed backend secret/configuration store. Do not commit real
 export CASHFREE_ENABLED=true
 export CASHFREE_CLIENT_ID='<sandbox-client-id>'
 export CASHFREE_CLIENT_SECRET='<sandbox-client-secret>'
-export CASHFREE_API_VERSION='2025-01-01'
-export CASHFREE_WEBHOOK_VERSION='2025-01-01'
+export CASHFREE_API_VERSION='2026-01-01'
+export CASHFREE_WEBHOOK_VERSION='2026-01-01'
 export CASHFREE_BASE_URL='https://sandbox.cashfree.com/pg'
 export CASHFREE_RETURN_URL='https://<public-return-host>/payments/cashfree/return'
 export CASHFREE_NOTIFY_URL='https://<public-api-host>/api/v1/webhooks/cashfree/payments'
@@ -95,7 +95,7 @@ Configure the sandbox payment webhook to the exact value of `CASHFREE_NOTIFY_URL
 https://<public-api-host>/api/v1/webhooks/cashfree/payments
 ```
 
-Select payment success, failed, and user-dropped events for webhook version `2025-01-01`.
+Select payment success, failed, and user-dropped events for webhook version `2026-01-01`.
 
 MyPet verifies the exact raw body using `x-webhook-timestamp` plus the raw payload and HMAC-SHA256 with the Cashfree client secret. Required headers include `x-webhook-signature`, `x-webhook-timestamp`, `x-webhook-version`, and the provider delivery identity used by the durable inbox contract.
 
@@ -267,7 +267,7 @@ ORDER BY received_at;
 Required evidence:
 
 - the verified delivery is durable;
-- `webhook_version = '2025-01-01'`;
+- `webhook_version = '2026-01-01'`;
 - normalized amount/currency match canonical Payment;
 - payload hash is present, raw payload is not stored;
 - successful processing ends `PROCESSED` with `processed_at` populated.
@@ -322,7 +322,7 @@ Checkpoint 1 is **SANDBOX_RUNTIME_CERTIFIED** only when all are true:
 - deployed backend starts with `CASHFREE_ENABLED=true` and the sandbox runtime guard passes;
 - public HTTPS health endpoint is reachable;
 - unsigned webhook is rejected;
-- Cashfree dashboard sends the configured `2025-01-01` payment webhook to the public endpoint;
+- Cashfree dashboard sends the configured `2026-01-01` payment webhook to the public endpoint;
 - a physical Android staging build completes a sandbox ProductOrder payment;
 - Customer callback alone cannot mark success;
 - canonical Payment reaches `CAPTURED` from server/provider truth;

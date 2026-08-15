@@ -142,6 +142,9 @@ class JdbcAppointmentPersistence(
                     .param("slot_id", appointment.slotId)
                     .update()
 
+                // Lock the canonical slot row first. Every hold for this slot follows
+                // this path, so concurrent transactions serialize before occupancy is
+                // checked and a second customer cannot create another active hold.
                 val slotAvailable = jdbc.sql(
                     """
                     SELECT id FROM mypet.service_slot
@@ -155,6 +158,19 @@ class JdbcAppointmentPersistence(
                     .optional()
                     .isPresent
                 if (!slotAvailable) slotUnavailable()
+
+                val slotOccupied = jdbc.sql(
+                    """
+                    SELECT id FROM mypet.appointment
+                    WHERE slot_id = :slot_id
+                      AND status IN ('HOLD','BOOKED','CONFIRMED','CHECKED_IN','IN_SERVICE')
+                    LIMIT 1
+                    """.trimIndent(),
+                ).param("slot_id", appointment.slotId)
+                    .query(UUID::class.java)
+                    .optional()
+                    .isPresent
+                if (slotOccupied) slotUnavailable()
 
                 insertAppointment(appointment, idempotencyKey, requestFingerprint)
                 appendHistory(

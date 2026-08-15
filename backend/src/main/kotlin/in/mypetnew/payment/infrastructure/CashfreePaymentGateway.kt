@@ -156,7 +156,7 @@ class CashfreePaymentGateway(
             val root = json.readTree(response.body)
             val orderId = requiredText(root, "order_id")
             val currency = requiredText(root, "order_currency")
-            val amount = MoneyBoundary.fromProvider(root.path("order_amount").asText())
+            val amount = MoneyBoundary.fromProvider(root.path("order_amount").asString())
             val sessionId = requiredText(root, "payment_session_id")
             if (orderId != command.providerOrderReference || currency != command.currency || amount != command.amountPaise) {
                 CreateProviderOrderResult.Unknown("CASHFREE_ORDER_RESPONSE_MISMATCH")
@@ -254,7 +254,7 @@ class CashfreePaymentGateway(
                 providerRefundId = requiredText(node, "refund_id"),
                 status = status,
                 providerStatus = providerStatus,
-                amountPaise = MoneyBoundary.fromProvider(node.path("refund_amount").asText()),
+                amountPaise = MoneyBoundary.fromProvider(node.path("refund_amount").asString()),
                 currency = requiredText(node, "refund_currency"),
             ),
         )
@@ -275,9 +275,9 @@ class CashfreePaymentGateway(
             providerOrderReference = orderId,
             providerPaymentId = requiredText(node, "cf_payment_id"),
             outcome = outcome,
-            orderAmountPaise = MoneyBoundary.fromProvider(node.path("order_amount").asText()),
+            orderAmountPaise = MoneyBoundary.fromProvider(node.path("order_amount").asString()),
             orderCurrency = requiredText(node, "order_currency"),
-            paymentAmountPaise = MoneyBoundary.fromProvider(node.path("payment_amount").asText()),
+            paymentAmountPaise = MoneyBoundary.fromProvider(node.path("payment_amount").asString()),
             paymentCurrency = requiredText(node, "payment_currency"),
             providerPaymentTime = parseInstant(node.path("payment_time").asString()),
             safeErrorCode = errorCode,
@@ -372,7 +372,7 @@ class CashfreeWebhookVerifier(
         }
     }
 
-    private fun exactMoney(node: JsonNode): Long = runCatching { MoneyBoundary.fromProvider(node.asText()) }
+    private fun exactMoney(node: JsonNode): Long = runCatching { MoneyBoundary.fromProvider(node.asString()) }
         .getOrElse { invalidWebhook() }
 
     private fun invalidWebhook(): Nothing =

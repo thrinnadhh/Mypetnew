@@ -16,8 +16,8 @@ beforeEach(() => {
   postMock.mockReset();
 });
 
-describe('P4 canonical Customer delivery client', () => {
-  it('requests a server-owned delivery quote with saved address identity and no customer id', async () => {
+describe('P5 canonical Customer delivery client', () => {
+  it('requests a server-owned delivery quote with normalized payment method and no customer id', async () => {
     postMock.mockResolvedValue({
       id: 'quote-1',
       customerId: 'server-customer',
@@ -54,12 +54,50 @@ describe('P4 canonical Customer delivery client', () => {
         outletId: 'outlet-1',
         addressId: 'address-1',
         lines: [{ listingId: 'listing-1', quantity: 2 }],
+        paymentMethod: 'PAY_ON_FULFILMENT',
       },
-      { Authorization: 'Bearer access-token' },
     );
     expect(JSON.stringify(postMock.mock.calls[0][1])).not.toContain('customerId');
     expect(quote.pricing.deliveryFeePaise).toBe(2_500);
     expect(quote.etaMinutes).toBe(35);
+  });
+
+  it('supports an online-payment delivery quote without client-authored amount or identity', async () => {
+    postMock.mockResolvedValue({
+      id: 'quote-online',
+      customerId: 'server-customer',
+      outletId: 'outlet-1',
+      cartSignature: 'signature-online',
+      fulfilmentMode: 'MYPET_CAPTAIN_DELIVERY',
+      paymentMethod: 'ONLINE_PAYMENT',
+      pricing: {
+        itemSubtotalPaise: 20_000,
+        itemDiscountPaise: 0,
+        couponDiscountPaise: 0,
+        loyaltyRewardPaise: 0,
+        taxPaise: 0,
+        platformFeePaise: 1_000,
+        deliveryFeePaise: 2_500,
+        merchantCommissionPaise: 1_000,
+        grandTotalPaise: 23_500,
+        currency: 'INR',
+        ruleVersion: 'p5-v1',
+      },
+      expiresAt: '2026-08-15T10:00:00Z',
+      etaMinutes: 35,
+    });
+
+    await fetchDeliveryQuote({
+      outletId: 'outlet-1',
+      addressId: 'address-1',
+      lines: [{ listingId: 'listing-1', quantity: 1 }],
+      paymentMethod: 'ONLINE_PAYMENT',
+    }, 'access-token');
+
+    const body = postMock.mock.calls[0][1];
+    expect(body).toMatchObject({ paymentMethod: 'ONLINE_PAYMENT' });
+    expect(JSON.stringify(body)).not.toContain('customerId');
+    expect(JSON.stringify(body)).not.toContain('amount');
   });
 
   it('fails closed when delivery quote mode or server pricing is unsupported', async () => {
@@ -110,7 +148,7 @@ describe('P4 canonical Customer delivery client', () => {
     expect(postMock).not.toHaveBeenCalled();
   });
 
-  it('reads canonical Customer-owned order tracking with bearer auth', async () => {
+  it('reads canonical Customer-owned order tracking while apiClient owns bearer auth', async () => {
     getMock.mockResolvedValue({
       orderId: 'order/1',
       status: 'PICKED_UP',
@@ -125,10 +163,7 @@ describe('P4 canonical Customer delivery client', () => {
 
     const tracking = await fetchCustomerOrderTracking('order/1', 'access-token');
 
-    expect(getMock).toHaveBeenCalledWith(
-      '/api/v1/customer/orders/order%2F1/tracking',
-      { Authorization: 'Bearer access-token' },
-    );
+    expect(getMock).toHaveBeenCalledWith('/api/v1/customer/orders/order%2F1/tracking');
     expect(tracking.deliveryStatus).toBe('PICKED_UP');
   });
 });

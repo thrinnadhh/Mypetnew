@@ -60,10 +60,20 @@ async function apiError(response: Response, fallback: string): Promise<Error> {
   return new Error(body?.message || body?.error || fallback);
 }
 
+export type CustomerLoyaltyRewardStatus = 'ISSUED' | 'RESERVED' | 'REDEEMED' | 'REVOKED' | 'EXPIRED';
+
+export interface CustomerLoyaltyRewardResponse {
+  rewardId: string;
+  valuePaise: number;
+  status: CustomerLoyaltyRewardStatus;
+  issuedAt: string;
+  expiresAt: string;
+}
+
 export interface CustomerLoyaltyBalanceResponse {
   organizationId: string;
   availableStars: number;
-  rewards: number;
+  rewards: CustomerLoyaltyRewardResponse[];
 }
 
 export async function fetchCustomerLoyaltyBalance(
@@ -71,7 +81,7 @@ export async function fetchCustomerLoyaltyBalance(
   accessToken: string,
 ): Promise<CustomerLoyaltyBalanceResponse> {
   const response = await fetch(
-    `${appConfig.apiBaseUrl}/api/v1/customer/loyalty/${encodeURIComponent(organizationId)}`,
+    `${appConfig.apiBaseUrl}/api/v2/customer/loyalty/${encodeURIComponent(organizationId)}`,
     { headers: authHeaders(accessToken) },
   );
   if (!response.ok) throw await apiErrorFromResponse(response);

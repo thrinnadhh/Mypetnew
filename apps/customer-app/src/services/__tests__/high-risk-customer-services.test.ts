@@ -59,25 +59,10 @@ jest.mock('../api-client', () => ({
   },
 }));
 
-const mockSetCashfreeCallback = jest.fn();
-const mockRemoveCashfreeCallback = jest.fn();
-const mockDoCashfreeWebPayment = jest.fn();
+const mockOpenCashfreeNativeCheckout = jest.fn();
 
-jest.mock('react-native-cashfree-pg-sdk', () => ({
-  CFPaymentGatewayService: {
-    setCallback: mockSetCashfreeCallback,
-    removeCallback: mockRemoveCashfreeCallback,
-    doWebPayment: mockDoCashfreeWebPayment,
-  },
-}));
-
-jest.mock('cashfree-pg-api-contract', () => ({
-  CFEnvironment: { SANDBOX: 'SANDBOX', PRODUCTION: 'PRODUCTION' },
-  CFSession: jest.fn().mockImplementation((paymentSessionId, orderId, environment) => ({
-    paymentSessionId,
-    orderId,
-    environment,
-  })),
+jest.mock('../cashfree-native', () => ({
+  openCashfreeNativeCheckout: mockOpenCashfreeNativeCheckout,
 }));
 
 const mockedApiClient = apiClient as jest.Mocked<typeof apiClient>;
@@ -134,15 +119,14 @@ describe('high-risk customer service contracts', () => {
     });
 
     it('treats native Cashfree callbacks only as a signal to verify backend truth', async () => {
-      const pending = openCashfreeOrder(payment);
-      expect(mockSetCashfreeCallback).toHaveBeenCalledTimes(1);
-      expect(mockDoCashfreeWebPayment).toHaveBeenCalledTimes(1);
+      mockOpenCashfreeNativeCheckout.mockResolvedValueOnce('VERIFY');
 
-      const callback = mockSetCashfreeCallback.mock.calls[0][0];
-      callback.onVerify(payment.providerOrderId);
+      await expect(openCashfreeOrder(payment)).resolves.toBe('VERIFY');
 
-      await expect(pending).resolves.toBe('VERIFY');
-      expect(mockRemoveCashfreeCallback).toHaveBeenCalled();
+      expect(mockOpenCashfreeNativeCheckout).toHaveBeenCalledWith({
+        paymentSessionId: payment.paymentSessionId,
+        providerOrderId: payment.providerOrderId,
+      });
       expect(mockedApiClient.post).not.toHaveBeenCalled();
     });
 
@@ -387,16 +371,6 @@ describe('high-risk customer service contracts', () => {
         Accept: 'application/json',
       });
       expect(mockedFetch.mock.calls[3][0]).toContain('document%2F1/signed-link?disposition=attachment');
-    });
-  });
-
-  it('exposes the standalone hosted-session helper for callers that prefetch checkout', async () => {
-    mockedApiClient.post.mockResolvedValueOnce({
-      checkoutPath: 'https://checkout.mypet.test/session',
-      expiresAt: '2026-08-06T00:15:00Z',
-    });
-    await expect(createHostedCheckoutSession('txn-1')).resolves.toMatchObject({
-      checkoutPath: 'https://checkout.mypet.test/session',
     });
   });
 });

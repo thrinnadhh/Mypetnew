@@ -63,17 +63,9 @@ interface AppointmentPersistence {
     fun listOfferings(outletId: UUID): List<ServiceOffering>
     fun createSlot(slot: ServiceSlot): ServiceSlot
     fun listSlots(offeringId: UUID, now: Instant): List<ServiceSlot>
-    fun hold(
-        appointment: Appointment,
-        now: Instant,
-    ): Appointment
+    fun hold(appointment: Appointment, now: Instant): Appointment
     fun getAppointment(appointmentId: UUID): Appointment?
-    fun confirm(
-        appointmentId: UUID,
-        customerId: UUID,
-        paymentId: UUID?,
-        now: Instant,
-    ): Appointment
+    fun confirm(appointmentId: UUID, customerId: UUID, paymentId: UUID?, now: Instant): Appointment
     fun listCustomerAppointments(customerId: UUID): List<Appointment>
 }
 
@@ -152,12 +144,7 @@ class InMemoryAppointmentPersistence : AppointmentPersistence {
     override fun getAppointment(appointmentId: UUID): Appointment? = appointments[appointmentId]
 
     @Synchronized
-    override fun confirm(
-        appointmentId: UUID,
-        customerId: UUID,
-        paymentId: UUID?,
-        now: Instant,
-    ): Appointment {
+    override fun confirm(appointmentId: UUID, customerId: UUID, paymentId: UUID?, now: Instant): Appointment {
         expireHolds(now)
         val current = appointments[appointmentId]?.takeIf { it.customerId == customerId } ?: unavailable()
         if (current.status == AppointmentStatus.HOLD_EXPIRED) {
@@ -167,12 +154,15 @@ class InMemoryAppointmentPersistence : AppointmentPersistence {
             if (current.status == AppointmentStatus.BOOKED) return current
             throw DomainException("APPOINTMENT_STATE_INVALID", "The appointment cannot be confirmed from its current state")
         }
-        if (!current.payAtClinic && paymentId == null) {
-            throw DomainException("APPOINTMENT_PAYMENT_REQUIRED", "A reconciled appointment payment is required")
+        if (!current.payAtClinic) {
+            throw DomainException("APPOINTMENT_ONLINE_PAYMENT_UNAVAILABLE", "Online appointment payment is not enabled yet")
+        }
+        if (paymentId != null) {
+            throw DomainException("APPOINTMENT_PAYMENT_NOT_ACCEPTED", "A client-supplied payment reference cannot confirm this appointment")
         }
         val updated = current.copy(
             status = AppointmentStatus.BOOKED,
-            paymentId = paymentId,
+            paymentId = null,
             bookedAt = now,
             holdExpiresAt = null,
             updatedAt = now,
@@ -234,10 +224,12 @@ class AppointmentService(
         )
     }
 
+    fun getOffering(offeringId: UUID): ServiceOffering = persistence.getOffering(offeringId) ?: unavailable()
+
     fun listOfferings(outletId: UUID): List<ServiceOffering> = persistence.listOfferings(outletId)
 
     fun createSlot(offeringId: UUID, slotStart: Instant, slotEnd: Instant): ServiceSlot {
-        val offering = persistence.getOffering(offeringId) ?: unavailable()
+        val offering = getOffering(offeringId)
         if (offering.status != ServiceOfferingStatus.ACTIVE) unavailable()
         val now = clock.instant()
         if (!slotStart.isAfter(now)) throw DomainException("VALIDATION_ERROR", "Slot must start in the future")
@@ -245,13 +237,11 @@ class AppointmentService(
         if (Duration.between(slotStart, slotEnd).toMinutes() != offering.durationMinutes.toLong()) {
             throw DomainException("VALIDATION_ERROR", "Slot duration must match the service offering")
         }
-        return persistence.createSlot(
-            ServiceSlot(UUID.randomUUID(), offeringId, slotStart, slotEnd, now),
-        )
+        return persistence.createSlot(ServiceSlot(UUID.randomUUID(), offeringId, slotStart, slotEnd, now))
     }
 
     fun listAvailableSlots(offeringId: UUID): List<ServiceSlot> {
-        val offering = persistence.getOffering(offeringId) ?: unavailable()
+        val offering = getOffering(offeringId)
         if (offering.status != ServiceOfferingStatus.ACTIVE) unavailable()
         return persistence.listSlots(offeringId, clock.instant())
     }
@@ -264,7 +254,7 @@ class AppointmentService(
         petId: UUID,
         payAtClinic: Boolean,
     ): Appointment {
-        val offering = persistence.getOffering(offeringId) ?: unavailable()
+        val offering = getOffering(offeringId)
         if (offering.outletId != providerId || offering.status != ServiceOfferingStatus.ACTIVE) unavailable()
         val now = clock.instant()
         return persistence.hold(

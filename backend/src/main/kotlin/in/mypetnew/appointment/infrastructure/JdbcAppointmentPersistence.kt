@@ -106,7 +106,7 @@ class JdbcAppointmentPersistence(
             offeringId,
             java.sql.Timestamp.from(now),
         )
-    } ?: emptyList()
+    }
 
     override fun hold(appointment: Appointment, now: Instant): Appointment = transactions.execute {
         val offering = jdbc.query(
@@ -168,7 +168,7 @@ class JdbcAppointmentPersistence(
         )
         appendHistory(appointment.id, null, AppointmentStatus.HOLD, appointment.customerId, "Slot held", now)
         appointment
-    } ?: throw IllegalStateException("Appointment hold transaction returned no result")
+    }
 
     override fun getAppointment(appointmentId: UUID): Appointment? = jdbc.query(
         appointmentSelect + " WHERE id = ?",
@@ -209,7 +209,7 @@ class JdbcAppointmentPersistence(
             )
             appendHistory(appointmentId, AppointmentStatus.HOLD, AppointmentStatus.BOOKED, customerId, "Customer confirmed pay-at-clinic booking", now)
             current.copy(status = AppointmentStatus.BOOKED, paymentId = null, bookedAt = now, holdExpiresAt = null, updatedAt = now)
-        } ?: throw IllegalStateException("Appointment confirmation transaction returned no result")
+        }
 
     override fun cancel(appointmentId: UUID, customerId: UUID, reason: String?, now: Instant): Appointment =
         transactions.execute {
@@ -233,7 +233,7 @@ class JdbcAppointmentPersistence(
             )
             appendHistory(appointmentId, current.status, AppointmentStatus.CANCELLED, customerId, reason ?: "Customer cancelled", now)
             current.copy(status = AppointmentStatus.CANCELLED, holdExpiresAt = null, updatedAt = now)
-        } ?: throw IllegalStateException("Appointment cancellation transaction returned no result")
+        }
 
     override fun listCustomerAppointments(customerId: UUID): List<Appointment> = jdbc.query(
         appointmentSelect + " WHERE customer_id = ? ORDER BY created_at DESC, id DESC",

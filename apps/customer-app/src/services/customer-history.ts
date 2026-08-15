@@ -16,6 +16,7 @@ export interface CustomerAppointmentRecord {
   slotStartsAt: string;
   status: HistoryAppointmentStatus;
   hasReview: boolean;
+  canReview: boolean;
   priceAmount?: number;
   address?: string;
   providerPhone?: string;
@@ -23,43 +24,37 @@ export interface CustomerAppointmentRecord {
 }
 
 interface AppointmentDto {
-  appointmentId?: string;
-  id?: string;
-  customerId: string;
-  providerId: string;
-  offeringId: string;
+  appointmentId: string;
+  outletId: string;
+  providerId?: string;
+  serviceId: string;
+  offeringId?: string;
   slotId: string;
   petId: string;
-  status: HistoryAppointmentStatus;
-  bookedAt?: string;
-  priceAmount?: number | string;
-  prescriptionDocUrl?: string;
+  providerName: string;
+  serviceName: string;
+  petName: string;
+  startsAt: string;
+  endsAt: string;
+  status: 'HOLD' | 'BOOKED' | 'CONFIRMED' | 'CHECKED_IN' | 'IN_SERVICE' | 'COMPLETED' | 'HOLD_EXPIRED' | 'REJECTED' | 'CANCELLED' | 'NO_SHOW';
+  paymentMethod: 'PAY_AT_PROVIDER';
+  paymentStatus: 'NOT_REQUIRED' | 'PENDING';
+  pricePaise: number | string;
+  currency: string;
+  notes?: string | null;
+  holdExpiresAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
-interface ProviderDto {
-  providerId: string;
-  name: string;
-  address?: string;
-  phone?: string;
+interface PageResponse<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  hasNext: boolean;
 }
 
-interface OfferingDto {
-  offeringId: string;
-  name: string;
-}
-
-interface SlotDto {
-  slotStart?: string;
-  startTime?: string;
-}
-
-interface ReviewDto {
-  id: string;
-  targetType: 'APPOINTMENT' | 'ORDER' | 'PROVIDER';
-  targetId: string;
-}
-
-const CACHE_PREFIX = '@mypet_appointments_cache_v1_';
+const CACHE_PREFIX = '@mypet_appointments_cache_v2_';
 
 function authHeaders(accessToken: string | null | undefined): Record<string, string> {
   const headers: Record<string, string> = { Accept: 'application/json' };
@@ -76,48 +71,54 @@ function jsonHeaders(accessToken: string | null | undefined): Record<string, str
 
 async function readJson<T>(response: Response, fallbackMessage: string): Promise<T> {
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
-    throw new Error(body?.error ?? body?.message ?? fallbackMessage);
+    const body = (await response.json().catch(() => null)) as { code?: string; error?: string; message?: string } | null;
+    const error = new Error(body?.message ?? body?.error ?? fallbackMessage);
+    if (body?.code) error.name = body.code;
+    throw error;
   }
   return (await response.json()) as T;
 }
 
-async function fetchProviderDetails(providerId: string, accessToken: string | null | undefined): Promise<ProviderDto> {
-  try {
-    const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/providers/${providerId}`, {
-      headers: authHeaders(accessToken),
-    });
-    if (!response.ok) return { providerId, name: `Provider ${providerId.slice(0, 8)}` };
-    return (await response.json()) as ProviderDto;
-  } catch {
-    return { providerId, name: `Provider ${providerId.slice(0, 8)}` };
+function isNetworkFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const value = `${error.name} ${error.message}`.toLowerCase();
+  return error instanceof TypeError || value.includes('network') || value.includes('offline') || value.includes('failed to fetch');
+}
+
+function mapStatus(status: AppointmentDto['status']): HistoryAppointmentStatus {
+  switch (status) {
+    case 'HOLD': return 'SLOT_HELD';
+    case 'BOOKED':
+    case 'CONFIRMED':
+    case 'CHECKED_IN':
+    case 'IN_SERVICE': return 'CONFIRMED';
+    case 'COMPLETED': return 'COMPLETED';
+    case 'NO_SHOW': return 'NO_SHOW';
+    case 'HOLD_EXPIRED': return 'EXPIRED';
+    case 'REJECTED':
+    case 'CANCELLED': return 'CANCELLED';
   }
 }
 
-async function fetchOfferingName(providerId: string, offeringId: string, accessToken: string | null | undefined): Promise<string> {
-  try {
-    const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/catalog/offerings?providerId=${providerId}`, {
-      headers: authHeaders(accessToken),
-    });
-    if (!response.ok) return `Service ${offeringId.slice(0, 8)}`;
-    const offerings = (await response.json()) as OfferingDto[];
-    return offerings.find((offering) => offering.offeringId === offeringId)?.name ?? `Service ${offeringId.slice(0, 8)}`;
-  } catch {
-    return `Service ${offeringId.slice(0, 8)}`;
-  }
-}
-
-async function fetchSlotStart(slotId: string, accessToken: string | null | undefined): Promise<string | null> {
-  try {
-    const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/catalog/slots/${slotId}`, {
-      headers: authHeaders(accessToken),
-    });
-    if (!response.ok) return null;
-    const slot = (await response.json()) as SlotDto;
-    return slot.slotStart ?? slot.startTime ?? null;
-  } catch {
-    return null;
-  }
+function mapAppointment(appointment: AppointmentDto): CustomerAppointmentRecord {
+  const pricePaise = Number(appointment.pricePaise);
+  return {
+    id: appointment.appointmentId,
+    providerName: appointment.providerName,
+    providerId: appointment.providerId ?? appointment.outletId,
+    serviceName: appointment.serviceName,
+    offeringId: appointment.offeringId ?? appointment.serviceId,
+    slotId: appointment.slotId,
+    petName: appointment.petName,
+    petId: appointment.petId,
+    slotStartsAt: appointment.startsAt,
+    status: mapStatus(appointment.status),
+    hasReview: false,
+    // Reviews are hidden until a canonical customer-owned review contract is
+    // implemented. This prevents a dead legacy /api/v1/reviews button.
+    canReview: false,
+    priceAmount: Number.isFinite(pricePaise) ? pricePaise / 100 : undefined,
+  };
 }
 
 export async function fetchCustomerAppointments(
@@ -127,61 +128,21 @@ export async function fetchCustomerAppointments(
   const cacheKey = `${CACHE_PREFIX}${customerId}`;
 
   try {
-    const [appointmentsResponse, reviewsResponse] = await Promise.all([
-      fetch(`${appConfig.apiBaseUrl}/api/v1/appointments/customer/${customerId}`, {
-        headers: authHeaders(accessToken),
-      }),
-      fetch(`${appConfig.apiBaseUrl}/api/v1/reviews/customer/${customerId}`, {
-        headers: authHeaders(accessToken),
-      }),
-    ]);
-
-    const appointments = await readJson<AppointmentDto[]>(appointmentsResponse, 'Could not load appointment history.');
-    const reviews = reviewsResponse.ok ? ((await reviewsResponse.json()) as ReviewDto[]) : [];
-    const reviewedAppointmentIds = new Set(
-      reviews.filter((review) => review.targetType === 'APPOINTMENT').map((review) => review.targetId),
-    );
-
-    const enriched = await Promise.all(
-      appointments.map(async (appointment): Promise<CustomerAppointmentRecord> => {
-        const id = appointment.appointmentId ?? appointment.id;
-        if (!id) throw new Error('Appointment response did not include an appointment ID.');
-        const [provider, serviceName, slotStart] = await Promise.all([
-          fetchProviderDetails(appointment.providerId, accessToken),
-          fetchOfferingName(appointment.providerId, appointment.offeringId, accessToken),
-          fetchSlotStart(appointment.slotId, accessToken),
-        ]);
-
-        return {
-          id,
-          providerName: provider.name,
-          providerId: appointment.providerId,
-          serviceName,
-          offeringId: appointment.offeringId,
-          slotId: appointment.slotId,
-          petName: `Pet ${appointment.petId.slice(0, 8)}`,
-          petId: appointment.petId,
-          slotStartsAt: slotStart ?? appointment.bookedAt ?? new Date().toISOString(),
-          status: appointment.status,
-          hasReview: reviewedAppointmentIds.has(id),
-          priceAmount: Number(appointment.priceAmount) || undefined,
-          address: provider.address,
-          providerPhone: provider.phone,
-          prescriptionDocUrl: appointment.prescriptionDocUrl,
-        };
-      }),
-    );
-
-    const result = enriched.sort((left, right) => right.slotStartsAt.localeCompare(left.slotStartsAt));
+    const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/customer/appointments?page=0&pageSize=100`, {
+      headers: authHeaders(accessToken),
+    });
+    const page = await readJson<PageResponse<AppointmentDto>>(response, 'Could not load appointment history.');
+    const result = page.items.map(mapAppointment).sort((left, right) => right.slotStartsAt.localeCompare(left.slotStartsAt));
     await AsyncStorage.setItem(cacheKey, JSON.stringify(result)).catch(() => null);
     return result;
   } catch (error) {
+    if (!isNetworkFailure(error)) throw error;
     const cached = await AsyncStorage.getItem(cacheKey).catch(() => null);
     if (cached) {
       try {
         return JSON.parse(cached) as CustomerAppointmentRecord[];
       } catch {
-        // Fall through
+        await AsyncStorage.removeItem(cacheKey).catch(() => null);
       }
     }
     throw error;
@@ -192,35 +153,11 @@ export async function fetchAppointmentDetails(
   appointmentId: string,
   accessToken: string | null | undefined,
 ): Promise<CustomerAppointmentRecord> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/appointments/${appointmentId}`, {
-    headers: authHeaders(accessToken),
-  });
-  const appt = await readJson<AppointmentDto>(response, 'Could not load appointment details.');
-  const id = appt.appointmentId ?? appt.id ?? appointmentId;
-
-  const [provider, serviceName, slotStart] = await Promise.all([
-    fetchProviderDetails(appt.providerId, accessToken),
-    fetchOfferingName(appt.providerId, appt.offeringId, accessToken),
-    fetchSlotStart(appt.slotId, accessToken),
-  ]);
-
-  return {
-    id,
-    providerName: provider.name,
-    providerId: appt.providerId,
-    serviceName,
-    offeringId: appt.offeringId,
-    slotId: appt.slotId,
-    petName: `Pet ${appt.petId.slice(0, 8)}`,
-    petId: appt.petId,
-    slotStartsAt: slotStart ?? appt.bookedAt ?? new Date().toISOString(),
-    status: appt.status,
-    hasReview: false,
-    priceAmount: Number(appt.priceAmount) || undefined,
-    address: provider.address,
-    providerPhone: provider.phone,
-    prescriptionDocUrl: appt.prescriptionDocUrl,
-  };
+  const response = await fetch(
+    `${appConfig.apiBaseUrl}/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}`,
+    { headers: authHeaders(accessToken) },
+  );
+  return mapAppointment(await readJson<AppointmentDto>(response, 'Could not load appointment details.'));
 }
 
 export async function cancelAppointment(
@@ -228,28 +165,26 @@ export async function cancelAppointment(
   reason: string,
   accessToken: string | null | undefined,
 ): Promise<void> {
-  const url = `${appConfig.apiBaseUrl}/api/v1/appointments/${appointmentId}/status?status=CANCELLED&note=${encodeURIComponent(reason)}`;
-  const response = await fetch(url, {
-    method: 'PUT',
-    headers: authHeaders(accessToken),
-  });
-  await readJson<unknown>(response, 'Could not cancel appointment.');
+  const response = await fetch(
+    `${appConfig.apiBaseUrl}/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}/cancel`,
+    {
+      method: 'POST',
+      headers: jsonHeaders(accessToken),
+      body: JSON.stringify({ reason: reason.trim() || null }),
+    },
+  );
+  await readJson<AppointmentDto>(response, 'Could not cancel appointment.');
 }
 
 export async function rescheduleAppointment(
-  appointmentId: string,
-  newSlotId: string,
-  accessToken: string | null | undefined,
+  _appointmentId: string,
+  _newSlotId: string,
+  _accessToken: string | null | undefined,
 ): Promise<void> {
-  const url = `${appConfig.apiBaseUrl}/api/v1/appointments/${appointmentId}/reschedule?newSlotId=${newSlotId}`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: authHeaders(accessToken),
-  });
-  await readJson<unknown>(response, 'Could not reschedule appointment.');
+  throw new Error('Appointment rescheduling is not available in the current canonical booking contract.');
 }
 
-export async function submitAppointmentReview(input: {
+export async function submitAppointmentReview(_input: {
   customerId: string;
   providerId: string;
   targetId: string;
@@ -257,20 +192,5 @@ export async function submitAppointmentReview(input: {
   comment: string;
   accessToken: string | null | undefined;
 }): Promise<'created' | 'duplicate'> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/reviews`, {
-    method: 'POST',
-    headers: jsonHeaders(input.accessToken),
-    body: JSON.stringify({
-      customerId: input.customerId,
-      providerId: input.providerId,
-      targetType: 'APPOINTMENT',
-      targetId: input.targetId,
-      rating: input.rating,
-      comment: input.comment.trim() || null,
-    }),
-  });
-
-  if (response.status === 409) return 'duplicate';
-  await readJson<unknown>(response, 'Could not submit review.');
-  return 'created';
+  throw new Error('Appointment reviews are not available in the current canonical booking contract.');
 }

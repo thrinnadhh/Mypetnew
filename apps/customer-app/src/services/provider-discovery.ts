@@ -20,6 +20,15 @@ interface PublicOutletDto {
   pickupEnabled: boolean;
 }
 
+interface LegacyProviderDto {
+  providerId: string;
+  name: string;
+  description?: string | null;
+  distanceKm?: number | string;
+  ratingAvg?: number | string;
+  ratingCount?: number;
+}
+
 interface PageResponse<T> {
   items: T[];
   page: number;
@@ -27,9 +36,10 @@ interface PageResponse<T> {
   hasNext: boolean;
 }
 
-const capabilityByType: Record<Exclude<DiscoverableProviderType, 'VET_HOSPITAL'>, string> = {
+const capabilityByType: Record<DiscoverableProviderType, string> = {
   GROOMER: 'GROOMING',
   PET_STORE: 'PRODUCT_STORE',
+  VET_HOSPITAL: 'VETERINARY_HOSPITAL',
 };
 
 function descriptionFor(outlet: PublicOutletDto): string {
@@ -46,14 +56,31 @@ function descriptionFor(outlet: PublicOutletDto): string {
   return labels.join(' · ');
 }
 
-async function fetchOutlets(capability: string): Promise<PublicOutletDto[]> {
-  const query = new URLSearchParams({ capability, page: '0', pageSize: '100' });
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/public/outlets?${query.toString()}`, {
-    headers: { Accept: 'application/json' },
-  });
-  if (!response.ok) throw new Error(`PROVIDER_DISCOVERY_${response.status}`);
-  const page = await response.json() as PageResponse<PublicOutletDto>;
-  return Array.isArray(page) ? page : page.items;
+function isLegacyProvider(value: PublicOutletDto | LegacyProviderDto): value is LegacyProviderDto {
+  return 'providerId' in value;
+}
+
+function toSummary(value: PublicOutletDto | LegacyProviderDto): ProviderSummary {
+  if (isLegacyProvider(value)) {
+    return {
+      id: value.providerId,
+      name: value.name,
+      description: value.description?.trim() || '',
+      distanceKm: Number(value.distanceKm ?? 0),
+      rating: Number(value.ratingAvg ?? 0),
+      ratingCount: Number(value.ratingCount ?? 0),
+    };
+  }
+  return {
+    id: value.id,
+    name: value.name,
+    description: descriptionFor(value),
+    // The canonical outlet contract intentionally does not invent geo/rating
+    // aggregates. These remain neutral until the backend exposes real values.
+    distanceKm: 0,
+    rating: 0,
+    ratingCount: 0,
+  };
 }
 
 export async function fetchProviders(type: DiscoverableProviderType, market: LaunchMarket): Promise<ProviderSummary[]> {
@@ -61,27 +88,23 @@ export async function fetchProviders(type: DiscoverableProviderType, market: Lau
     return DEMO_PROVIDER_FIXTURES[type].map((provider) => ({ ...provider }));
   }
 
-  // MyPetNew exposes provider discovery through the canonical public-outlet API.
-  // Location remains part of the public client contract for future geo ranking,
-  // but the current backend filters providers by capability/serviceability rather
-  // than accepting legacy longitude/latitude/radius parameters.
-  void market;
+  const query = new URLSearchParams({
+    capability: capabilityByType[type],
+    page: '0',
+    pageSize: '100',
+    // Retain the legacy discovery context in the request so an API gateway can
+    // use it for geo-ranking without requiring the mobile client to fork paths.
+    longitude: String(market.longitude),
+    latitude: String(market.latitude),
+    radius: String(market.discoveryRadiusKm),
+    type,
+  });
+  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/public/outlets?${query.toString()}`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) throw new Error(`PROVIDER_DISCOVERY_${response.status}`);
 
-  const capabilities = type === 'VET_HOSPITAL'
-    ? ['VETERINARY_HOSPITAL', 'VETERINARY_CLINIC']
-    : [capabilityByType[type]];
-  const groups = await Promise.all(capabilities.map(fetchOutlets));
-  const byId = new Map<string, PublicOutletDto>();
-  groups.flat().forEach((outlet) => byId.set(outlet.id, outlet));
-
-  return [...byId.values()].map((outlet) => ({
-    id: outlet.id,
-    name: outlet.name,
-    description: descriptionFor(outlet),
-    // Canonical public outlets do not yet expose geo/rating aggregates. Keep
-    // neutral values instead of inventing customer-facing data.
-    distanceKm: 0,
-    rating: 0,
-    ratingCount: 0,
-  }));
+  const payload = await response.json() as PageResponse<PublicOutletDto> | LegacyProviderDto[];
+  const values: Array<PublicOutletDto | LegacyProviderDto> = Array.isArray(payload) ? payload : payload.items;
+  return values.map(toSummary);
 }

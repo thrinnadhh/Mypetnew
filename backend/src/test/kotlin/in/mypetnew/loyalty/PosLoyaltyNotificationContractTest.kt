@@ -120,12 +120,12 @@ class PosLoyaltyNotificationContractTest {
             devices.recordPermissionDenied(attacker, AppKind.CUSTOMER, Platform.ANDROID, installation, "development")
         }
         assertThrows(DomainException::class.java) {
-            devices.unregister(attacker, AppKind.CUSTOMER, installation, "development")
+            devices.revoke(attacker, AppKind.CUSTOMER, installation, "development")
         }
         assertEquals(1, devices.activeFor(owner).size)
         assertEquals(0, devices.activeFor(attacker).size)
 
-        devices.unregister(owner, AppKind.CUSTOMER, installation, "development")
+        assertTrue(devices.revoke(owner, AppKind.CUSTOMER, installation, "development"))
         assertEquals(0, devices.activeFor(owner).size)
     }
 

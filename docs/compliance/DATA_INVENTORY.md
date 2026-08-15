@@ -38,11 +38,10 @@ Business tables `merchant_organization`, `provider_outlet`, `outlet_capability`,
 
 | Location / fields | Purpose | Access | Retention / deletion | Class and evidence |
 |---|---|---|---|---|
-| Customer native SecureStore: access token, refresh token | authenticated API session | OS-protected app sandbox | cleared on logout; account deletion invalidates server sessions | RESTRICTED; `src/session.ts`; no AsyncStorage |
-| Role-app native SecureStore: installation UUID | idempotent device binding | app sandbox | may persist across logout; not sufficient for authentication; revoke server binding | RESTRICTED identifier; `mobile-notifications` |
+| Customer native SecureStore: access token, refresh token | authenticated API session | OS-protected app sandbox | cleared on logout; account deletion invalidates server sessions | RESTRICTED; `src/auth/session-storage.ts`; no AsyncStorage for credentials |
+| Customer/Merchant native SecureStore: installation UUID | idempotent device binding | app sandbox | may persist across logout; not sufficient for authentication; revoke server binding | RESTRICTED identifier; Customer `src/utils/installation-id.ts`, Merchant `src/auth/session.ts` |
 | FCM/APNs native token | push routing | OS, app, Firebase, backend | rotate/unregister/invalid-token cleanup; erase on deletion | RESTRICTED; encrypted at backend |
 | Customer in-memory form state: mobile, OTP, profile, grievance, deletion confirmation | complete user action | current UI process | clear on screen/process end; OTP code cleared after verification | RESTRICTED while resident; never logged |
-| Admin web | no implemented persistent auth/customer cache | browser runtime | N/A in current shell | INTERNAL; production authentication is still absent/blocking |
 
 ## Non-production and transient stores
 

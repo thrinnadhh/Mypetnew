@@ -1,48 +1,47 @@
 # Requirements Traceability Matrix
 
-Status: **Living release-control document**  
-Version: **1.1**  
+Status: **Sprint 1 active / later implementation deferred**
+
+Version: **2.0**
+
 Date: **2026-08-11**
 
 ## 1. Purpose
 
-This matrix prevents “implemented” claims without a requirement, owner, flow, sprint, test, and evidence path. It begins at product-family level; implementation PRs add row-level links to API/schema/code and immutable test evidence.
+This matrix prevents implementation claims without requirement, flow, test, and evidence coverage.
+
+Only **Sprint 1** is currently authorized for implementation. Product requirements outside Sprint 1 remain design/reference input and are marked `DEFERRED`. They must not trigger backend, database, payment, delivery, settlement, recurring-order, or other implementation work until a new sprint baseline is explicitly created.
 
 ## 2. Product requirement coverage
 
-| Requirement family | Locked decisions | Owning module | Canonical flow | Delivery sprint(s) | Mandatory verification |
+| Requirement family | Locked decisions | Owning module | Canonical flow | Active delivery | Mandatory verification |
 |---|---|---|---|---|---|
-| roles and Admin permissions | D-002, D-004 | Identity & Access | [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | S1, S8 | S1-AUTH-008..011, S1-SEC-001, S1-SEC-011 |
-| Merchant organization/outlet/capability | D-005, D-013 | Provider | [Merchant Barcode/POS](../flows/MERCHANT_BARCODE_POS_LOYALTY.md) | S1, S3, S5 | S1-TEN-001..010, S1-E2E-001 |
-| guest discovery and Customer OTP | D-010 | Identity, Discovery | [Customer Commerce](../flows/CUSTOMER_COMMERCE.md) | S1, S2 | S1-AUTH-001..007, S1-ORD-003..004 |
-| pet profiles and medical context | D-020, D-021 | Customer, Appointments | [Services/Recurring](../flows/SERVICES_RECURRING.md) | S5 | service E2E, medical authorization and document security gates |
-| single-merchant cart | D-006 | Commerce | [Customer Commerce](../flows/CUSTOMER_COMMERCE.md) | S1, S2 | S1-ORD-001..005 |
-| quote/pricing/fees | D-012 | Commerce, Finance | [Customer Commerce](../flows/CUSTOMER_COMMERCE.md) | S1, S2 | S1-ORD-006..014, S1-E2E-002 |
+| roles and Admin permissions | D-002, D-004 | Identity & Access | [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | S1 | S1-AUTH-008..011, S1-SEC-001, S1-SEC-011 |
+| Merchant organization/outlet/capability | D-005, D-013 | Provider | [Merchant Barcode/POS](../flows/MERCHANT_BARCODE_POS_LOYALTY.md) | S1 | S1-TEN-001..010, S1-E2E-001 |
+| guest discovery and Customer OTP | D-010 | Identity, Discovery | [Customer Commerce](../flows/CUSTOMER_COMMERCE.md) | S1 | S1-AUTH-001..007, S1-ORD-003..004 |
+| single-merchant cart | D-006 | Commerce | [Customer Commerce](../flows/CUSTOMER_COMMERCE.md) | S1 | S1-ORD-001..005 |
+| quote/pricing/fees | D-012 | Commerce, Finance | [Customer Commerce](../flows/CUSTOMER_COMMERCE.md) | S1 | S1-ORD-006..014, S1-E2E-002 |
 | pickup/pay-on-fulfilment | D-009, DD-008 | Commerce | [Customer Commerce](../flows/CUSTOMER_COMMERCE.md) | S1 | S1-ORD-007..020, S1-E2E-002..003 |
-| canonical order lifecycle/DTOs | D-001, DD-006..007 | Commerce | [Customer Commerce](../flows/CUSTOMER_COMMERCE.md) | S1, S2, S3 | S1-ORD-015..020, S1-E2E-003 |
-| Cashfree online payment | D-011 | Payments & Finance | [Customer Commerce](../flows/CUSTOMER_COMMERCE.md) | S2 | payment webhook/replay/reconciliation/late-success/refund E2E |
-| returns/refunds/settlement | D-012, D-018 | Commerce, Payments, Finance, Loyalty | [Customer Commerce](../flows/CUSTOMER_COMMERCE.md), [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | S2, S3, S6, S8 | refund/reconciliation/ledger conservation and Admin permission gates |
-| merchant-owned listings | D-007 | Catalog & Inventory | [Merchant Barcode/POS](../flows/MERCHANT_BARCODE_POS_LOYALTY.md) | S1, S3 | S1-TEN, S1-BAR-005..010, S1-E2E-006 |
+| canonical Sprint 1 order lifecycle/DTOs | D-001, DD-006..007 | Commerce | [Customer Commerce](../flows/CUSTOMER_COMMERCE.md) | S1 | S1-ORD-015..020, S1-E2E-003 |
+| merchant-owned listings | D-007 | Catalog & Inventory | [Merchant Barcode/POS](../flows/MERCHANT_BARCODE_POS_LOYALTY.md) | S1 | S1-TEN, S1-BAR-005..010, S1-E2E-006 |
 | barcode onboarding | D-008, DD-001..002 | Catalog & Inventory | [Merchant Barcode/POS](../flows/MERCHANT_BARCODE_POS_LOYALTY.md) | S1 | S1-BAR-001..018, physical scanner gate |
-| inventory ledger/counting | DD-006 | Catalog & Inventory | [Merchant Barcode/POS](../flows/MERCHANT_BARCODE_POS_LOYALTY.md) | S1, S3 | S1-INV-001..015, S1-OPS-010 |
-| POS billing | D-008, DD-004 | Catalog & Inventory, Finance | [Merchant Barcode/POS](../flows/MERCHANT_BARCODE_POS_LOYALTY.md) | S1, S3 | S1-POS-001..015, S1-E2E-004 |
-| loyalty eligible sources | D-014, D-015 | Loyalty & Promotions | [Merchant Barcode/POS](../flows/MERCHANT_BARCODE_POS_LOYALTY.md) | S1, S5, S6 | S1-LOY-001..011, S1-E2E-004..005 |
-| ten-star flat reward/expiry | D-016, D-017 | Loyalty & Promotions | [Merchant Barcode/POS](../flows/MERCHANT_BARCODE_POS_LOYALTY.md) | S1 domain, S2/S6 UI/integration | S1-LOY-012..018; coupon/reward checkout race tests |
-| loyalty reversal/star debt | D-018 | Loyalty & Promotions | [Merchant Barcode/POS](../flows/MERCHANT_BARCODE_POS_LOYALTY.md) | S6 | S1-LOY-015..018 baseline; full refund/service/settlement E2E |
-| grooming/veterinary offerings and slots | D-020, D-021 | Appointments | [Services/Recurring](../flows/SERVICES_RECURRING.md) | S5 | concurrent final-slot, hold expiry, reschedule, cancellation/payment tests |
-| completed-service loyalty | D-014, D-018 | Appointments, Loyalty | [Services/Recurring](../flows/SERVICES_RECURRING.md) | S5, S6 | completion replay, no-show/cancel/refund reversal, tenant tests |
-| medicine view-only | D-020, DD-009 | Provider, Catalog | [Services/Recurring](../flows/SERVICES_RECURRING.md) | S1, S5, S11 | S1-BAR-018, S1-ORD-005, S1-POS-002, S1-E2E-008 |
-| recurring 7/15/25/30/35 | D-019 | Commerce | [Services/Recurring](../flows/SERVICES_RECURRING.md) | S7 | duplicate scheduler, time boundary, pause/due, confirm/expire, current-state validation E2E |
-| Captain onboarding/location | D-002, D-009 | Delivery | [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | S4 | KYC/role, physical background location, stale/offline/busy/suspend tests |
-| dispatch/offers/proofs | D-009 | Delivery, Commerce | [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | S4 | duplicate ready, no captain, rejection, timeout, accept race, wrong proof, restart E2E |
-| Admin control plane | D-004 | Engagement & Operations plus owning modules | [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | S8 | permission matrix, no generic state/balance edit, audit/reconciliation E2E |
-| reviews/support/content | product scope | Engagement & Operations | [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | S8, S9 | verified-source, evidence privacy, XSS/media, SLA, notification replay tests |
-| Supabase PostgreSQL/private schema | D-003, D-024, DD-011 | all domain modules through owned repositories | [Notification](../flows/NOTIFICATIONS.md) plus all transaction flows | S1 continuously, S10/S11 certification | S1-SUP-001..007, 011..012; S1-OPS-001..010 |
-| Supabase private object storage | D-024, DD-012 | Provider and owning document modules via `DocumentStore` | [Notification](../flows/NOTIFICATIONS.md), [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | S1 baseline, S4/S5/S8 expansion | S1-SUP-004, 006, 008..010, 012; cross-tenant/file-abuse tests |
-| Firebase mobile push and in-app notifications | D-025, DD-013..014 | Engagement & Operations | [Notification](../flows/NOTIFICATIONS.md) | S1 spine, S9 completion, S10/S11 certification | S1-PUSH-001..019, S1-E2E-009; provider outage/deep-link/device matrix |
-| multi-city/PIN expansion | D-013 | Provider, Operations | all affected | S10 | city activation/isolation, PIN conflict/import, no-code-change test |
-| security/privacy/accessibility | DD-006..007 | cross-cutting | all flows | S1 continuously, S10/S11 certification | S1-SEC-001..012, S1-MOB-001..012, external review |
-| reliability/observability/recovery | product principles | cross-cutting | all flows | every sprint, S10 | S1-OPS-001..010, load/chaos/restore/full E2E |
+| inventory ledger/counting | DD-006 | Catalog & Inventory | [Merchant Barcode/POS](../flows/MERCHANT_BARCODE_POS_LOYALTY.md) | S1 | S1-INV-001..015, S1-OPS-010 |
+| POS billing | D-008, DD-004 | Catalog & Inventory, Finance | [Merchant Barcode/POS](../flows/MERCHANT_BARCODE_POS_LOYALTY.md) | S1 | S1-POS-001..015, S1-E2E-004 |
+| loyalty onboarding/POS star baseline | D-014, D-015 | Loyalty & Promotions | [Merchant Barcode/POS](../flows/MERCHANT_BARCODE_POS_LOYALTY.md) | S1 | S1-LOY-001..018, S1-E2E-004..005 |
+| medicine view-only baseline | D-020, DD-009 | Provider, Catalog | [Services/Recurring](../flows/SERVICES_RECURRING.md) | S1 | S1-BAR-018, S1-ORD-005, S1-POS-002, S1-E2E-008 |
+| Supabase PostgreSQL/private schema | D-003, D-024, DD-011 | owned server repositories | all Sprint 1 transaction flows | S1 | S1-SUP-001..007, 011..012; S1-OPS-001..010 |
+| Supabase private object storage | D-024, DD-012 | Provider via `DocumentStore` | [Notification](../flows/NOTIFICATIONS.md) | S1 | S1-SUP-004, 006, 008..010, 012 |
+| Firebase mobile push and in-app notifications | D-025, DD-013..014 | Engagement & Operations | [Notification](../flows/NOTIFICATIONS.md) | S1 | S1-PUSH-001..019, S1-E2E-009 |
+| security/privacy/accessibility | DD-006..007 | cross-cutting | all Sprint 1 flows | S1 | S1-SEC-001..012, S1-MOB-001..012 |
+| reliability/observability/recovery | product principles | cross-cutting | all Sprint 1 flows | S1 | S1-OPS-001..010 |
+| richer catalog/search/favorites/media/batch depth | product scope | Catalog | Customer/Merchant flows | DEFERRED | design/reference only |
+| online payment/Cashfree | D-011 | Payments & Finance | [Customer Commerce](../flows/CUSTOMER_COMMERCE.md) | DEFERRED | no implementation authorized |
+| coupons/reward redemption/refunds/settlement depth | D-012, D-016..018 | Commerce, Finance, Loyalty | Customer/Merchant/Admin flows | DEFERRED | no implementation authorized |
+| grooming/veterinary appointments | D-020, D-021 | Appointments | [Services/Recurring](../flows/SERVICES_RECURRING.md) | DEFERRED | design/reference only |
+| recurring 7/15/25/30/35 | D-019 | Commerce | [Services/Recurring](../flows/SERVICES_RECURRING.md) | DEFERRED | design/reference only |
+| Captain delivery/location/dispatch/proofs | D-009 | Delivery | [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | DEFERRED | Captain remains Sprint 1 shell only |
+| expanded Admin control plane | D-004 | Operations | [Captain/Admin](../flows/CAPTAIN_ADMIN_OPERATIONS.md) | DEFERRED | only Sprint 1 provider-review needs are active |
+| reviews/support/content/multi-city expansion | product scope | Operations | relevant flows | DEFERRED | design/reference only |
 
 ## 3. Sprint 1 ticket-to-test matrix
 
@@ -67,28 +66,36 @@ This matrix prevents “implemented” claims without a requirement, owner, flow
 | S1-17 outbox/inbox/FCM | S1-INV-013..014, S1-POS-010..011, S1-LOY-010..013, S1-OPS-004..005, S1-PUSH-001..019 |
 | S1-18 connected certification | S1-E2E-001..009 plus every pass-matrix gate, including Supabase and physical native-push evidence |
 
-## 4. Implementation row template
+## 4. Frontend-first traceability rule
 
-Every implementation PR adds or updates a row using this schema:
+Every Sprint 1 screen must map to:
 
-| Requirement ID | Decision | Ticket/issue | API/event/schema | Code module | Automated test | Manual/device evidence | Observability/runbook | Status |
+`screen -> actor -> Sprint 1 ticket -> API/state authority -> loading/error/offline states -> navigation/back/deep-link behavior -> test/evidence`
+
+A polished screen with mock-only behavior is not complete. A backend endpoint without a usable Sprint 1 screen is also not complete when the ticket requires role UI.
+
+## 5. Implementation row template
+
+| Requirement ID | Decision | Ticket | API/event/schema | Code module/screen | Automated test | Manual/device evidence | Observability/runbook | Status |
 |---|---|---|---|---|---|---|---|---|
-| example | D-xxx | Sx-yy / issue | link/path | link/path | test ID/report | evidence link | dashboard/runbook | NOT RUN/PASS |
+| example | D-xxx | S1-yy | link/path | link/path | test ID/report | evidence link | dashboard/runbook | NOT RUN/PASS |
 
-## 5. Traceability audit rules
+## 6. Traceability audit rules
 
 The release traceability gate fails when:
 
-- a changed business behavior has no PRD/decision entry;
-- a requirement has no delivery sprint/ticket;
-- a ticket has no happy/failure/race tests;
-- a test claims coverage but does not assert the stated invariant;
-- role UI uses a field/state absent from canonical contract;
-- migration/API/event changes are missing compatibility/consumer evidence;
-- a manual/device requirement is replaced by a unit test;
-- evidence points to a mutable/latest report without commit/build identity;
-- a known failure is relabeled or excluded without approved rationale.
+- changed business behavior has no PRD/decision entry;
+- Sprint 1 behavior has no ticket or test;
+- a ticket has no happy/failure/race coverage;
+- a screen invents a state or total absent from canonical contracts;
+- a client action has no real API path when the ticket requires integration;
+- a test claims coverage but does not assert the invariant;
+- tenant/role boundaries are tested only through happy paths;
+- migration/API/event changes lack compatibility evidence;
+- a physical-device requirement is replaced by a unit/emulator-only result;
+- later/deferred product scope is implemented without a newly approved sprint baseline;
+- evidence points to an unversioned mutable/latest artifact.
 
-## 6. Release status
+## 7. Release status
 
-Initial status for every row and test is `NOT RUN`. This repository defines what must be built and proven; it does not claim implementation or production readiness.
+Sprint 1 remains the only active release target. `DEFERRED` rows are not implementation commitments and must not be reported as completed work.

@@ -89,7 +89,7 @@ class WalkingSkeletonApiTest {
             "/api/v1/merchant/listings",
             merchantToken,
             "listing-create",
-            """{"outletId":"$outletId","barcodeType":"GTIN_13","barcode":"4006381333931","name":"Dog Food","kind":"PRODUCT","mrpPaise":15000,"sellingPricePaise":12500}""",
+            """{"outletId":"$outletId","barcodeType":"GTIN_13","barcode":"4006381333931","name":"Dog Food","kind":"PRODUCT","mrpPaise":15000,"sellingPricePaise":12500,"category":"food"}""",
         )
         val listingId = listing.uuid("id")
         post(
@@ -127,7 +127,7 @@ class WalkingSkeletonApiTest {
             jsonPath("$.items[0].payload.route") { value("merchant/orders/detail") }
             jsonPath("$.items[0].payload.resourceId") { value(orderId.toString()) }
         }
-        listOf("ACCEPTED", "PREPARING", "READY_FOR_PICKUP", "DELIVERED").forEachIndexed { index, status ->
+        listOf("ACCEPTED", "PREPARING", "READY_FOR_PICKUP", "PICKED_UP", "DELIVERED").forEachIndexed { index, status ->
             post(
                 "/api/v1/merchant/orders/$orderId/transitions",
                 merchantToken,

@@ -28,6 +28,7 @@ data class OtpVerifyBody(
     val adultEligibilityAttested: Boolean,
 )
 data class OtpSessionResponse(
+    val accountId: UUID,
     val accessToken: String,
     val refreshToken: String,
     val tokenType: String = "Bearer",
@@ -68,6 +69,7 @@ class IdentityController(
         }
         val principal = Principal(verified.subjectId, Role.CUSTOMER, sessionId = session.sessionId)
         return OtpSessionResponse(
+            accountId = session.accountId,
             accessToken = tokens.issue(principal),
             refreshToken = session.refreshToken,
             accessTokenExpiresAt = tokens.expiresAt(verified.verifiedAt),
@@ -81,6 +83,7 @@ class IdentityController(
         val session = sessions.rotate(body.refreshToken)
         val now = Instant.now()
         return OtpSessionResponse(
+            accountId = session.accountId,
             accessToken = tokens.issue(Principal(session.accountId, session.role, sessionId = session.sessionId)),
             refreshToken = session.refreshToken,
             accessTokenExpiresAt = tokens.expiresAt(now),

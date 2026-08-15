@@ -1,0 +1,66 @@
+{
+  "expo": {
+    "name": "MyPet Customer",
+    "slug": "mypetstore",
+    "version": "0.9.0-beta.1",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "customerapp",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "icon": "./assets/expo.icon",
+      "buildNumber": "1",
+      "bundleIdentifier": "com.mypet.customer"
+    },
+    "android": {
+      "package": "com.mypet.customer",
+      "versionCode": 901,
+      "adaptiveIcon": {
+        "backgroundColor": "#F8F9FF",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-notifications",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow MyPet Customer to use your location while selecting the nearest active service city."
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#004AC6",
+          "android": {
+            "image": "./assets/images/splash-icon.png",
+            "imageWidth": 76
+          }
+        }
+      ],
+      "expo-web-browser"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "releaseChannel": "internal-beta",
+      "releaseVersion": "v0.9.0-beta.1",
+      "eas": {
+        "projectId": "be8dd022-9cd8-4c69-aa97-b2c6d3854e50"
+      }
+    },
+    "owner": "trinadh-software-solutions"
+  }
+}

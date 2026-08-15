@@ -16,6 +16,7 @@ import `in`.mypetnew.identity.domain.OtpProvider
 import `in`.mypetnew.identity.domain.OtpService
 import `in`.mypetnew.identity.domain.InMemorySessionStore
 import `in`.mypetnew.identity.domain.SessionStore
+import `in`.mypetnew.identity.infrastructure.ConsoleOtpProvider
 import `in`.mypetnew.pos.domain.CustomerAssociationChallengeService
 import `in`.mypetnew.pos.domain.PosService
 import `in`.mypetnew.provider.domain.ProviderService
@@ -34,6 +35,10 @@ class DomainConfiguration {
     @Bean
     @Profile("test", "development")
     fun otpProvider(): OtpProvider = InMemoryOtpProvider()
+
+    @Bean
+    @Profile("device")
+    fun deviceOtpProvider(): OtpProvider = ConsoleOtpProvider()
 
     @Bean fun otpService(provider: OtpProvider) = OtpService(provider)
 

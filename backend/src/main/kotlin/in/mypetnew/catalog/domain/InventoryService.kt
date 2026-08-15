@@ -25,7 +25,108 @@ data class StockMovement(
     val occurredAt: Instant = Instant.now(),
 )
 
-class InventoryService {
+interface InventoryPersistence {
+    fun adjust(
+        listingId: UUID,
+        delta: Int,
+        reason: StockReason,
+        idempotencyKey: String,
+        actorId: UUID,
+        traceId: String,
+    ): StockMovement
+
+    fun reserve(
+        listingId: UUID,
+        quantity: Int,
+        sourceReference: String,
+        actorId: UUID,
+        traceId: String,
+    ): StockMovement
+
+    fun release(
+        listingId: UUID,
+        quantity: Int,
+        sourceReference: String,
+        actorId: UUID,
+        traceId: String,
+    ): StockMovement
+
+    fun fulfil(
+        listingId: UUID,
+        quantity: Int,
+        sourceReference: String,
+        actorId: UUID,
+        traceId: String,
+    ): StockMovement
+
+    fun sell(
+        listingId: UUID,
+        quantity: Int,
+        sourceReference: String,
+        actorId: UUID,
+        traceId: String,
+    ): StockMovement
+
+    fun available(listingId: UUID): Int
+    fun reserved(listingId: UUID): Int
+    fun history(listingId: UUID): List<StockMovement>
+}
+
+class InventoryService(
+    private val persistence: InventoryPersistence = InMemoryInventoryPersistence(),
+) {
+    fun adjust(
+        listingId: UUID,
+        delta: Int,
+        reason: StockReason,
+        idempotencyKey: String,
+        actorId: UUID = SYSTEM_ACTOR_ID,
+        traceId: String = SYSTEM_TRACE_ID,
+    ): StockMovement = persistence.adjust(listingId, delta, reason, idempotencyKey, actorId, traceId)
+
+    fun reserve(
+        listingId: UUID,
+        quantity: Int,
+        sourceReference: String,
+        actorId: UUID = SYSTEM_ACTOR_ID,
+        traceId: String = SYSTEM_TRACE_ID,
+    ): StockMovement = persistence.reserve(listingId, quantity, sourceReference, actorId, traceId)
+
+    fun release(
+        listingId: UUID,
+        quantity: Int,
+        sourceReference: String,
+        actorId: UUID = SYSTEM_ACTOR_ID,
+        traceId: String = SYSTEM_TRACE_ID,
+    ): StockMovement = persistence.release(listingId, quantity, sourceReference, actorId, traceId)
+
+    fun fulfil(
+        listingId: UUID,
+        quantity: Int,
+        sourceReference: String,
+        actorId: UUID = SYSTEM_ACTOR_ID,
+        traceId: String = SYSTEM_TRACE_ID,
+    ): StockMovement = persistence.fulfil(listingId, quantity, sourceReference, actorId, traceId)
+
+    fun sell(
+        listingId: UUID,
+        quantity: Int,
+        sourceReference: String,
+        actorId: UUID = SYSTEM_ACTOR_ID,
+        traceId: String = SYSTEM_TRACE_ID,
+    ): StockMovement = persistence.sell(listingId, quantity, sourceReference, actorId, traceId)
+
+    fun available(listingId: UUID): Int = persistence.available(listingId)
+    fun reserved(listingId: UUID): Int = persistence.reserved(listingId)
+    fun history(listingId: UUID): List<StockMovement> = persistence.history(listingId)
+
+    companion object {
+        val SYSTEM_ACTOR_ID: UUID = UUID(0L, 0L)
+        const val SYSTEM_TRACE_ID: String = "system"
+    }
+}
+
+private class InMemoryInventoryPersistence : InventoryPersistence {
     private data class StockState(
         var onHand: Int = 0,
         var reserved: Int = 0,
@@ -36,7 +137,14 @@ class InventoryService {
     private val movementKeys = IdempotencyStore<StockMovement>()
 
     @Synchronized
-    fun adjust(listingId: UUID, delta: Int, reason: StockReason, idempotencyKey: String): StockMovement {
+    override fun adjust(
+        listingId: UUID,
+        delta: Int,
+        reason: StockReason,
+        idempotencyKey: String,
+        actorId: UUID,
+        traceId: String,
+    ): StockMovement {
         val fingerprint = "$listingId:$delta:$reason"
         return movementKeys.execute("stock-adjust", idempotencyKey, fingerprint) {
             val state = stocks.getOrPut(listingId) { StockState() }
@@ -47,7 +155,13 @@ class InventoryService {
     }
 
     @Synchronized
-    fun reserve(listingId: UUID, quantity: Int, sourceReference: String): StockMovement {
+    override fun reserve(
+        listingId: UUID,
+        quantity: Int,
+        sourceReference: String,
+        actorId: UUID,
+        traceId: String,
+    ): StockMovement {
         requirePositive(quantity)
         return movementKeys.execute("stock-reserve", sourceReference, "$listingId:$quantity") {
             val state = stocks.getOrPut(listingId) { StockState() }
@@ -58,7 +172,13 @@ class InventoryService {
     }
 
     @Synchronized
-    fun release(listingId: UUID, quantity: Int, sourceReference: String): StockMovement {
+    override fun release(
+        listingId: UUID,
+        quantity: Int,
+        sourceReference: String,
+        actorId: UUID,
+        traceId: String,
+    ): StockMovement {
         requirePositive(quantity)
         return movementKeys.execute("stock-release", sourceReference, "$listingId:$quantity") {
             val state = stocks.getOrPut(listingId) { StockState() }
@@ -71,7 +191,13 @@ class InventoryService {
     }
 
     @Synchronized
-    fun fulfil(listingId: UUID, quantity: Int, sourceReference: String): StockMovement {
+    override fun fulfil(
+        listingId: UUID,
+        quantity: Int,
+        sourceReference: String,
+        actorId: UUID,
+        traceId: String,
+    ): StockMovement {
         requirePositive(quantity)
         return movementKeys.execute("stock-fulfil", sourceReference, "$listingId:$quantity") {
             val state = stocks.getOrPut(listingId) { StockState() }
@@ -83,7 +209,13 @@ class InventoryService {
     }
 
     @Synchronized
-    fun sell(listingId: UUID, quantity: Int, sourceReference: String): StockMovement {
+    override fun sell(
+        listingId: UUID,
+        quantity: Int,
+        sourceReference: String,
+        actorId: UUID,
+        traceId: String,
+    ): StockMovement {
         requirePositive(quantity)
         return movementKeys.execute("stock-pos", sourceReference, "$listingId:$quantity") {
             val state = stocks.getOrPut(listingId) { StockState() }
@@ -94,13 +226,13 @@ class InventoryService {
     }
 
     @Synchronized
-    fun available(listingId: UUID): Int = stocks[listingId]?.let { it.onHand - it.reserved } ?: 0
+    override fun available(listingId: UUID): Int = stocks[listingId]?.let { it.onHand - it.reserved } ?: 0
 
     @Synchronized
-    fun reserved(listingId: UUID): Int = stocks[listingId]?.reserved ?: 0
+    override fun reserved(listingId: UUID): Int = stocks[listingId]?.reserved ?: 0
 
     @Synchronized
-    fun history(listingId: UUID): List<StockMovement> = stocks[listingId]?.movements?.toList().orEmpty()
+    override fun history(listingId: UUID): List<StockMovement> = stocks[listingId]?.movements?.toList().orEmpty()
 
     private fun movement(
         state: StockState,
@@ -124,4 +256,3 @@ class InventoryService {
 
     private fun insufficient(): Nothing = throw DomainException("INSUFFICIENT_STOCK", "Stock is unavailable")
 }
-

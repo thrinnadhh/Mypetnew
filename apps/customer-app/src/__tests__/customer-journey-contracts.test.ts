@@ -1,0 +1,210 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { RECURRING_CADENCES, isRecurringCadence } from '../contracts/recurring-orders';
+
+function source(relativePath: string): string {
+  return readFileSync(join(process.cwd(), relativePath), 'utf8');
+}
+
+function expectAll(content: string, values: string[]) {
+  for (const value of values) expect(content).toContain(value);
+}
+
+describe('MyPet customer journey contracts', () => {
+  it('connects home discovery to the requested commerce and care categories', () => {
+    const home = source('src/screens/home-screen.tsx');
+    const category = source('src/app/category/[id].tsx');
+
+    expectAll(home, [
+      'Food & Nutrition',
+      'Treats & Chews',
+      'Toys & Enrichment',
+      'Travel & Apparel',
+    ]);
+    expectAll(category, [
+      "food: 'Food & Nutrition'",
+      "toys: 'Toys & Enrichment'",
+      "travel: 'Travel & Apparel'",
+      "treats: 'Treats & Chews'",
+      "apparel: 'Travel & Apparel'",
+      "appearance: 'Travel & Apparel'",
+      'fetchCommerceProducts',
+    ]);
+  });
+
+  it('prevents blank catalog, banner and shop images with resilient fallbacks', () => {
+    const categoryTemplate = source('src/components/commerce/CategoryTemplate.tsx');
+    const banners = source('src/components/ui/banner-carousel.tsx');
+    const provider = source('src/components/commerce/ProviderProfileTemplate.tsx');
+    const resilientImage = source('src/components/ui/resilient-remote-image.tsx');
+
+    expectAll(categoryTemplate, ['ResilientRemoteImage', 'fallbackUri']);
+    expectAll(banners, ['ResilientRemoteImage', 'DEMO_BANNER_IMAGES', 'fallbackUri={DEMO_MEDIA.store}']);
+    expectAll(provider, ['ResilientRemoteImage', 'shop.heroImageUrl', 'item.imageUrl']);
+    expectAll(resilientImage, ['onError', 'fallbackUri']);
+  });
+
+  it('keeps dummy marketplace data explicit and development-only', () => {
+    const config = source('src/utils/app-config.ts');
+    const catalog = source('src/services/customer-catalog.ts');
+    const providers = source('src/services/provider-discovery.ts');
+    const pets = source('src/services/customer-pets.ts');
+    const demoData = source('src/services/demo-customer-data.ts');
+
+    expect(config).toContain('allowDemoMode');
+    expectAll(catalog, ['allowDemoMode', 'SAMPLE_PRODUCTS', 'DEMO_PROVIDER_FIXTURES']);
+    expectAll(providers, ['allowDemoMode', 'DEMO_PROVIDER_FIXTURES']);
+    expectAll(pets, ['allowDemoMode', 'demoPets']);
+    expectAll(demoData, [
+      'DEMO_MEDIA',
+      'DEMO_BANNER_IMAGES',
+      'DEMO_PROVIDER_FIXTURES',
+      'getDemoAppointmentSlots',
+      'demoShopImage',
+    ]);
+  });
+
+  it('routes vet and grooming bookings through hold -> payment -> confirmation', () => {
+    const discovery = source('src/screens/appointment-discovery-screen.tsx');
+    const payment = source('src/app/appointments/payment.tsx');
+    const booking = source('src/services/appointment-booking.ts');
+
+    expectAll(discovery, [
+      'fetchAvailableAppointmentSlots',
+      'fetchCustomerPets',
+      'holdAppointmentSlot',
+      "pathname: '/appointments/payment'",
+      'Tap to review & pay',
+    ]);
+    expect(discovery).not.toContain('confirmAppointmentHold(');
+    expectAll(booking, ['payAtClinic: false', 'petId: input.petId']);
+
+    expectAll(payment, [
+      'initiateAppointmentPayment',
+      'openCashfreeOrder',
+      'waitForReferencePaymentOutcome',
+      'confirmAppointmentHold',
+      "payment.status === 'SUCCESS'",
+      'Payment breakdown',
+      'Total payable',
+      'The appointment is confirmed only after server-side payment verification.',
+    ]);
+  });
+
+  it('supports safe demo appointment payment without changing live payment truth', () => {
+    const payment = source('src/app/appointments/payment.tsx');
+
+    expectAll(payment, [
+      "appointmentId.startsWith('demo-appointment-')",
+      "await finishAppointment('demo-payment')",
+      'No real money will be charged.',
+    ]);
+    expect(payment.indexOf('if (demoPayment)')).toBeLessThan(
+      payment.indexOf('const initialization = await initiateAppointmentPayment'),
+    );
+  });
+
+  it('documents Cashfree online payment integration as a deferred contract while Sprint 1 uses PAY_ON_FULFILMENT', () => {
+    const client = source('src/services/customer-payments.ts');
+    const decisions = source('../../docs/product/DECISIONS.md');
+    const matrix = source('../../docs/architecture/CUSTOMER_API_COMPATIBILITY_MATRIX.md');
+
+    expectAll(client, [
+      "'/api/v1/payments/appointments'",
+      "'APPOINTMENT_PAYMENT'",
+      'waitForReferencePaymentOutcome',
+    ]);
+    expectAll(decisions, [
+      'Cashfree is the first payment adapter',
+      'Store pickup',
+      'PAY_ON_FULFILMENT',
+    ]);
+    expect(matrix).toContain('- **2.6.1 Online & Appointment Payments (`DEFERRED`)**:');
+    expect(matrix).toContain('| Online / Appointment Payment | POST | `/api/v1/payments/appointments` (Legacy client route) | N/A (Sprint 1 uses `PAY_ON_FULFILMENT` / `STORE_PICKUP`) | **DEFERRED** | Post-Sprint 1 |');
+  });
+
+  it('keeps product checkout on the server-authoritative Sprint 1 pickup contract', () => {
+    const checkout = source('src/app/checkout/index.tsx');
+    const orderClient = source('src/services/customer-checkout.ts');
+
+    expectAll(checkout, [
+      'Order items',
+      'Server-authoritative total',
+      'Store pickup',
+      'Pay on fulfilment',
+      'fetchCheckoutQuote',
+      'createPickupOrder',
+    ]);
+    expect(checkout).not.toContain('initiateOrderPayment');
+    expect(checkout).not.toContain('openCashfreeOrder');
+    expect(checkout).not.toContain('waitForPaymentOutcome');
+    expectAll(orderClient, [
+      "'/api/v1/customer/orders'",
+      'quoteId: input.quoteId, cartSignature: input.cartSignature',
+      "'Idempotency-Key': `checkout:${input.quoteId}`",
+      "order.fulfilmentMode !== 'STORE_PICKUP'",
+      "order.paymentMethod !== 'PAY_ON_FULFILMENT'",
+    ]);
+  });
+
+  it('keeps demo checkout non-chargeable while production remains server-authoritative', () => {
+    const checkout = source('src/app/checkout/index.tsx');
+
+    expectAll(checkout, [
+      'const demoCheckout = appConfig.allowDemoMode',
+      'Demo pickup simulated',
+      'No backend order was created',
+      'fetchCheckoutQuote',
+      'createPickupOrder',
+    ]);
+    expect(checkout.indexOf('if (demoCheckout)')).toBeLessThan(checkout.indexOf('const order = await createPickupOrder'));
+  });
+
+  it('preserves authenticated customer identity across profile and payment requests', () => {
+    const auth = source('src/context/AuthContext.tsx');
+    const profile = source('src/services/customer-profile.ts');
+    const payments = source('src/services/customer-payments.ts');
+
+    expectAll(auth, [
+      'apiClient.setSessionToken(nextSession?.accessToken ?? null)',
+      'applySessionState(null)',
+    ]);
+    expectAll(profile, [
+      '/api/v1/addresses/default',
+      "method: 'PUT'",
+      'Authorization: `Bearer ${accessToken}`',
+    ]);
+    expect(payments).toContain('normalizedPhone');
+  });
+
+  it('verifies recurring-order cadences (7/15/25/30/35) and confirmation safety per Decision D-019 while backend runtime is deferred', () => {
+    const subscriptions = source('src/app/subscriptions/index.tsx');
+    const service = source('src/services/recurring-orders.ts');
+    const decisions = source('../../docs/product/DECISIONS.md');
+    const matrix = source('../../docs/architecture/CUSTOMER_API_COMPATIBILITY_MATRIX.md');
+
+    expect(RECURRING_CADENCES).toEqual([7, 15, 25, 30, 35]);
+    for (const cadence of RECURRING_CADENCES) expect(isRecurringCadence(cadence)).toBe(true);
+    expect(isRecurringCadence(10)).toBe(false);
+
+    expectAll(subscriptions, ['No silent charging', 'Revalidate and confirm']);
+    expect(service).toContain('/api/v1/orders/subscriptions');
+    expectAll(decisions, [
+      'Recurring product orders support fixed cadences of 7, 15, 25, 30, and 35 days',
+      'No automatic COD placement or payment mandate charge occurs',
+    ]);
+    expect(matrix).toContain('- **2.6.2 Recurring Orders & Subscriptions (`DEFERRED`)**:');
+    expect(matrix).toContain('| Recurring Subscriptions | POST | `/api/v1/orders/subscriptions` (Legacy client route) | N/A (Sprint 1 uses single-order pickup) | **DEFERRED** | Post-Sprint 1 |');
+  });
+
+  it('keeps the core customer journeys free of mock appointment confirmation timers', () => {
+    const discovery = source('src/screens/appointment-discovery-screen.tsx');
+    const grooming = source('src/app/grooming/index.tsx');
+
+    expect(discovery).not.toContain('setTimeout(');
+    expect(discovery).not.toContain('mockAppointment');
+    expect(grooming).not.toContain('setTimeout(');
+    expectAll(grooming, ['/groom', 'Choose live slot & pay']);
+  });
+});

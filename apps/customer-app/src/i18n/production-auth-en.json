@@ -1,0 +1,28 @@
+{
+  "auth": {
+    "subtitle": "Continue with Google or verify your mobile number.",
+    "continueGoogle": "Continue with Google",
+    "orMobile": "or continue with mobile",
+    "changeIdentifier": "Use a different mobile number",
+    "providerUnavailable": "Mobile verification is temporarily unavailable. Please use Google sign-in or try again later."
+  },
+  "profileFoundation": {
+    "mobileVerificationTitle": "Verify mobile number",
+    "mobileVerificationMessage": "Attach a verified mobile number to this MyPet account for recovery and authentication.",
+    "sendMobileCode": "Send verification code",
+    "mobileCodeSent": "A verification code was requested for your mobile number.",
+    "mobileCodeFor": "Enter the 6-digit code sent to {{phone}}.",
+    "verifyMobile": "Verify mobile number",
+    "mobileVerified": "Your mobile number is verified and linked to this account.",
+    "deliveryContact": "Delivery contact",
+    "deliveryContactMessage": "Add the mobile number the store or delivery captain should call for this address. Google Sign-In verifies your account; this contact does not need an OTP.",
+    "deliveryContactPlaceholder": "+91 99999 99999",
+    "deliveryContactRequired": "Add a valid 10-digit Indian delivery mobile number before saving this address.",
+    "addressAndContactSaved": "Delivery address and contact number saved.",
+    "contactVerifiedByAuth": "Verified phone",
+    "contactCustomerProvided": "Customer-provided contact"
+  },
+  "states": {
+    "unauthenticatedMessage": "This action is protected. Sign in with Google or verify your mobile number to continue."
+  }
+}

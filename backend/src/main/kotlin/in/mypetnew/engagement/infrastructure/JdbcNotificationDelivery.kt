@@ -8,6 +8,7 @@ import `in`.mypetnew.engagement.domain.NotificationProvider
 import `in`.mypetnew.engagement.domain.NotificationRepository
 import `in`.mypetnew.engagement.domain.PushDeliveryCommand
 import java.sql.ResultSet
+import java.sql.Timestamp
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -58,7 +59,7 @@ class JdbcNotificationDeliveryRepository(
                 :id, :source_event_id, :recipient_id, :event_type, :template_version,
                 :safe_route, :resource_id, :title, :body, :created_at
             )
-            ON CONFLICT (source_event_id, recipient_id, template_version) DO NOTHING
+            ON CONFLICT DO NOTHING
             """.trimIndent(),
         ).param("id", notification.id)
             .param("source_event_id", notification.sourceEventId)
@@ -69,7 +70,7 @@ class JdbcNotificationDeliveryRepository(
             .param("resource_id", notification.resourceId)
             .param("title", notification.title)
             .param("body", notification.body)
-            .param("created_at", notification.createdAt)
+            .param("created_at", notification.createdAt.jdbcTimestamp())
             .update()
         if (inserted == 0) return@execute findByDedupe(notification)
 
@@ -105,7 +106,7 @@ class JdbcNotificationDeliveryRepository(
             """.trimIndent(),
         ).param("recipient_id", notification.recipientId)
             .param("environment", firebase.environment)
-            .param("now", notification.createdAt)
+            .param("now", notification.createdAt.jdbcTimestamp())
             .query(UUID::class.java)
             .list()
         registrationIds.forEach { registrationId ->
@@ -114,12 +115,12 @@ class JdbcNotificationDeliveryRepository(
                 INSERT INTO mypet.notification_attempt(
                     id, notification_id, registration_id, channel, status, attempt_count, next_attempt_at
                 ) VALUES (:id, :notification_id, :registration_id, 'PUSH', 'PENDING', 0, :next_attempt_at)
-                ON CONFLICT (notification_id, registration_id, channel) DO NOTHING
+                ON CONFLICT DO NOTHING
                 """.trimIndent(),
             ).param("id", UUID.randomUUID())
                 .param("notification_id", notification.id)
                 .param("registration_id", registrationId)
-                .param("next_attempt_at", notification.createdAt)
+                .param("next_attempt_at", notification.createdAt.jdbcTimestamp())
                 .update()
         }
         if (registrationIds.isEmpty()) completeOutbox(notification.id, notification.createdAt)
@@ -157,8 +158,8 @@ class JdbcNotificationDeliveryRepository(
             LIMIT :batch_limit
             FOR UPDATE OF a SKIP LOCKED
             """.trimIndent(),
-        ).param("now", at)
-            .param("stale_before", at.minus(Duration.ofMinutes(5)))
+        ).param("now", at.jdbcTimestamp())
+            .param("stale_before", at.minus(Duration.ofMinutes(5)).jdbcTimestamp())
             .param("environment", firebase.environment)
             .param("batch_limit", limit)
             .query(::mapClaimedRow)
@@ -172,7 +173,10 @@ class JdbcNotificationDeliveryRepository(
                     updated_at = :claimed_at
                 WHERE id = :id
                 """.trimIndent(),
-            ).param("attempt_count", attemptCount).param("claimed_at", at).param("id", row.attemptId).update()
+            ).param("attempt_count", attemptCount)
+                .param("claimed_at", at.jdbcTimestamp())
+                .param("id", row.attemptId)
+                .update()
             val nativeToken = runCatching { tokenCipher.decrypt(row.protectedToken) }.getOrElse {
                 deadLetterUndeliverable(row, attemptCount, at, "DEVICE_TOKEN_DECRYPT_FAILED", true)
                 return@mapNotNull null
@@ -218,11 +222,11 @@ class JdbcNotificationDeliveryRepository(
                 next_attempt_at = NULL, updated_at = :now
             WHERE id = :id AND status = 'PROCESSING'
             """.trimIndent(),
-        ).param("safe_code", safeCode).param("now", at).param("id", row.attemptId).update()
+        ).param("safe_code", safeCode).param("now", at.jdbcTimestamp()).param("id", row.attemptId).update()
         if (invalidateRegistration) {
             jdbc.sql(
                 "UPDATE mypet.device_registration SET status = 'INVALID', updated_at = :now WHERE id = :id",
-            ).param("now", at).param("id", row.registrationId).update()
+            ).param("now", at.jdbcTimestamp()).param("id", row.registrationId).update()
         }
         jdbc.sql(
             """
@@ -250,7 +254,7 @@ class JdbcNotificationDeliveryRepository(
                 WHERE id = :id AND status = 'PROCESSING'
                 """.trimIndent(),
             ).param("provider_reference", providerReference.take(160))
-                .param("now", at)
+                .param("now", at.jdbcTimestamp())
                 .param("id", attempt.id)
                 .update()
             completeOutbox(attempt.command.notificationId, at)
@@ -266,10 +270,13 @@ class JdbcNotificationDeliveryRepository(
                     next_attempt_at = NULL, updated_at = :now
                 WHERE id = :id AND status = 'PROCESSING'
                 """.trimIndent(),
-            ).param("safe_code", safeCode.take(80)).param("now", at).param("id", attempt.id).update()
+            ).param("safe_code", safeCode.take(80))
+                .param("now", at.jdbcTimestamp())
+                .param("id", attempt.id)
+                .update()
             jdbc.sql(
                 "UPDATE mypet.device_registration SET status = 'INVALID', updated_at = :now WHERE id = :id",
-            ).param("now", at).param("id", attempt.command.registrationId).update()
+            ).param("now", at.jdbcTimestamp()).param("id", attempt.command.registrationId).update()
             completeOutbox(attempt.command.notificationId, at)
         }
     }
@@ -288,8 +295,8 @@ class JdbcNotificationDeliveryRepository(
             WHERE id = :id AND status = 'PROCESSING'
             """.trimIndent(),
         ).param("safe_code", safeCode.take(80))
-            .param("next_attempt_at", nextAttemptAt)
-            .param("now", at)
+            .param("next_attempt_at", nextAttemptAt.jdbcTimestamp())
+            .param("now", at.jdbcTimestamp())
             .param("id", attempt.id)
             .update()
     }
@@ -303,7 +310,10 @@ class JdbcNotificationDeliveryRepository(
                     next_attempt_at = NULL, updated_at = :now
                 WHERE id = :id AND status = 'PROCESSING'
                 """.trimIndent(),
-            ).param("safe_code", safeCode.take(80)).param("now", at).param("id", attempt.id).update()
+            ).param("safe_code", safeCode.take(80))
+                .param("now", at.jdbcTimestamp())
+                .param("id", attempt.id)
+                .update()
             jdbc.sql(
                 """
                 INSERT INTO mypet.dead_letter(
@@ -356,7 +366,7 @@ class JdbcNotificationDeliveryRepository(
                 WHERE a.notification_id = :notification_id AND a.status IN ('PENDING', 'RETRY', 'PROCESSING')
               )
             """.trimIndent(),
-        ).param("now", at).param("notification_id", notificationId).update()
+        ).param("now", at.jdbcTimestamp()).param("notification_id", notificationId).update()
     }
 
     private fun mapNotification(rows: ResultSet, rowNumber: Int): Notification {
@@ -400,6 +410,8 @@ class JdbcNotificationDeliveryRepository(
         )
     }
 }
+
+private fun Instant.jdbcTimestamp(): Timestamp = Timestamp.from(this)
 
 @ConfigurationProperties("mypet.notifications.worker")
 data class NotificationWorkerProperties(val batchSize: Int = 50, val maxAttempts: Int = 5) {

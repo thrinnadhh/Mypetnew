@@ -6,8 +6,8 @@ Scoring rubric: 0 = absent/unknown; 25 = documented intent only; 50 = meaningful
 
 | Dimension | Score | Evidence present | What prevents a higher score / next accountable action |
 |---|---:|---|---|
-| Data inventory completeness | 78 | `DATA_INVENTORY.md`, Flyway V1–V4, explicit absent-flow register, field-purpose/access/retention classification | Verify real production schema/config/buckets, CI/provider logs and every processor; Data/Privacy owner signs quarterly inventory |
-| Consent capture and withdrawal | 66 | purpose-specific V4 ledger; actor/source-bound PUT/DELETE; independent default-off Customer UI; FCM consent gate/revocation and grant/withdraw tests | Approved immutable notice registry, general downstream suppression/outbox, retry/idempotency and accessibility/dark-pattern evidence absent |
+| Data inventory completeness | 78 | `DATA_INVENTORY.md`, Flyway V1–V11, explicit absent-flow register, field-purpose/access/retention classification | Verify real production schema/config/buckets, CI/provider logs and every processor; Data/Privacy owner signs quarterly inventory |
+| Consent capture and withdrawal | 66 | purpose-specific V11 ledger; actor/source-bound PUT/DELETE; independent default-off Customer UI; FCM consent gate/revocation and grant/withdraw tests | Approved immutable notice registry, general downstream suppression/outbox, retry/idempotency and accessibility/dark-pattern evidence absent |
 | Rights and deletion workflow | 66 | self summary/profile/case/grievance/nomination/delete API; deletion transaction; cross-user and session/FCM revocation tests | Full export/correction workflow, step-up auth, assignment/SLA alerts, staff authorization, provider/backup deletion proof absent |
 | Authentication/session security | 68 | hashed/salted OTP state; cooldown/attempt cap; short access + hashed rotating refresh; replay/logout/disable tests; SecureStore | Distributed OTP/rate store, production SMS adapter, device/anomaly controls, recovery process and physical extraction tests absent |
 | Authorization and IDOR resistance | 65 | server-derived principal; role/org/outlet guards; cross-user privacy and cross-merchant contract tests | Production repository/admin surfaces incomplete; Captain/assignment domain absent; no deployed/API dynamic test suite or DB defence-in-depth evidence |
@@ -20,7 +20,7 @@ Scoring rubric: 0 = absent/unknown; 25 = documented intent only; 50 = meaningful
 | Logging, monitoring and retention | 38 | retention schedule, incident/audit schema, tested text redactor, direct stdout prohibition, CI privacy scan | No central structured logger integration, durable India-located 180-day ICT sink, 365-day security target enforcement, alerting, access audit, purge job or restore drill |
 | CERT-In readiness | 37 | six-hour/180-day/NTP runbook, schema clocks/states, report/evidence templates | Named PoC/team, India log/NTP proof, current reporting credentials, provider escalation, asset map and tabletop absent |
 | DPDP breach readiness | 37 | dual-track runbook, without-delay/72-hour templates, schema clocks and affected-user fields | Named Privacy/DPO contact, Board channel, multilingual user delivery, processor SLA, case tooling and exercise absent; duties are also phased per baseline |
-| CI security gates | 72 | wrapper validation; frozen install; secret/privacy scans; unit/contract/coverage/type/lint/build; dependency review/audit and artifacts; three Expo Doctor 20/20 results | Expo current-version validation is transparently excluded during a short supply-chain release-age hold; physical/EAS/deployment gates, SBOM/provenance/signing, complete expiry automation and branch-protection evidence absent |
+| CI security gates | 64 | Gradle wrapper validation; secret/privacy scans; backend unit/contract/coverage checks and artifacts; frozen Customer/Merchant installs with type/lint/tests; Merchant production audit allowlist and web export | Expo Doctor is documented but not CI-enforced; Customer production audit gate, physical/EAS/deployment gates, SBOM/provenance/signing, exception-expiry automation and branch-protection evidence absent |
 
 ## Release-blocking evidence gates
 
@@ -44,10 +44,10 @@ Scoring rubric: 0 = absent/unknown; 25 = documented intent only; 50 = meaningful
 - Security: `SECURITY_ARCHITECTURE.md`, `THREAT_MODEL.md`, `CERTIN_INCIDENT_RESPONSE.md`, `DPDP_BREACH_RESPONSE.md`, security scan and backend/package tests
 - Third parties: `DATA_PROCESSOR_REGISTER.md`
 - Public language draft: `PRIVACY_NOTICE_ENGINEERING_DRAFT.md`
-- Dependencies: `SECURITY_DEPENDENCY_EXCEPTIONS.md`, `docs/qa/SECURITY_EXCEPTIONS.md`, dependency audit script
+- Dependencies: `SECURITY_DEPENDENCY_EXCEPTIONS.md`, `docs/qa/CUSTOMER_DEPENDENCY_SECURITY_TRIAGE.md`, Merchant dependency audit workflow
 
 ## Evidence integrity
 
 Automated source results must be linked to an immutable commit/CI run. Screenshots, provider settings, contracts, physical-device recordings and incident exercises require owner, date, environment, artifact hash/location and expiry. No row may be changed to `VERIFIED` based only on this document or a local test.
 
-Local Expo project hashes calculated on 2026-08-15 with the SDK-bundled fingerprint library: Customer `4eaf7ccee8742f00c955292bdf38b1c9930840f1`; Merchant `5c757a4a45176882fa62916e0c3b33782445d10d`; Captain `c2a2f971463d2e6fb0e09bbc3ce6f402828e031d`. These identify the working-tree native inputs; they are not signed EAS build attestations.
+The restored Customer and Merchant SDK 56 projects do not yet have committed, signed EAS build fingerprints. Generate immutable fingerprints and physical-device evidence from the merge commit before release; local source checks are not build attestations.

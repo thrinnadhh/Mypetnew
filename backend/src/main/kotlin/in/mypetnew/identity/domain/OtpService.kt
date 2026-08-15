@@ -36,6 +36,7 @@ data class OtpChallengeResponse(
     val challengeId: UUID,
     val message: String,
     val expiresAt: Instant,
+    val resendAfterSeconds: Long = 30L,
 )
 
 data class VerifiedMobile(
@@ -95,6 +96,7 @@ class OtpService(
             challengeId = id,
             message = "If the mobile number can receive messages, a verification code has been sent.",
             expiresAt = challenge.expiresAt,
+            resendAfterSeconds = 30L,
         )
     }
 

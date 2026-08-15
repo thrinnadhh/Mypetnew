@@ -1,15 +1,14 @@
-import { Stack } from 'expo-router'
+import { Stack } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 
-export default function MerchantLayout() {
+export default function RootLayout() {
   return (
-    <Stack screenOptions={{ headerBackTitle: 'Back' }}>
-      <Stack.Screen name="index" options={{ title: 'Merchant' }} />
-      <Stack.Screen name="scanner" options={{ title: 'Barcode scanner' }} />
-      <Stack.Screen name="inventory" options={{ title: 'Inventory' }} />
-      <Stack.Screen name="pos" options={{ title: 'POS' }} />
-      <Stack.Screen name="orders" options={{ title: 'Pickup orders' }} />
-      <Stack.Screen name="inbox" options={{ title: 'Notifications' }} />
-    </Stack>
-  )
+    <>
+      <StatusBar style="auto" />
+      <Stack>
+        <Stack.Screen name="index" options={{ title: "MyPet Merchant" }} />
+        <Stack.Screen name="login" options={{ title: "Merchant sign in" }} />
+      </Stack>
+    </>
+  );
 }
-

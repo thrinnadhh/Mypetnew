@@ -25,6 +25,7 @@ import `in`.mypetnew.pos.domain.PosService
 import `in`.mypetnew.provider.domain.ProviderCapability
 import `in`.mypetnew.provider.domain.ProviderService
 import `in`.mypetnew.provider.domain.ProviderStatus
+import org.slf4j.MDC
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -72,6 +73,14 @@ data class CreateListingRequest(
     val kind: ListingKind,
     val mrpPaise: Long,
     val sellingPricePaise: Long,
+    val category: String,
+    val brand: String? = null,
+    val description: String? = null,
+    val petType: String? = null,
+    val lifeStage: String? = null,
+    val packLabel: String? = null,
+    val sku: String? = null,
+    val imageUrls: List<String>? = null,
 )
 
 @RestController
@@ -100,6 +109,14 @@ class CatalogInventoryApiController(
                 mrpPaise = request.mrpPaise,
                 sellingPricePaise = request.sellingPricePaise,
                 capabilities = outlet.capabilities,
+                category = request.category,
+                brand = request.brand,
+                description = request.description,
+                petType = request.petType,
+                lifeStage = request.lifeStage,
+                packLabel = request.packLabel,
+                sku = request.sku,
+                imageUrls = request.imageUrls.orEmpty(),
             ),
             idempotencyKey,
         )
@@ -118,7 +135,14 @@ class CatalogInventoryApiController(
         val listing = catalog.getListing(request.listingId)
         if (listing.outletId != request.outletId) resourceUnavailable()
         if (request.quantity <= 0) throw DomainException("QUANTITY_INVALID", "Quantity must be positive")
-        return inventory.adjust(listing.id, request.quantity, StockReason.RECEIPT, idempotencyKey)
+        return inventory.adjust(
+            listing.id,
+            request.quantity,
+            StockReason.RECEIPT,
+            idempotencyKey,
+            actorId = principal.actorId,
+            traceId = currentTraceId(),
+        )
     }
 }
 
@@ -146,7 +170,11 @@ class CustomerCommerceApiController(
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
         val outlet = providers.getOutlet(request.outletId)
-        if (outlet.status != ProviderStatus.ACTIVE || !outlet.capabilities.contains(ProviderCapability.PRODUCT_STORE)) {
+        if (
+            outlet.status != ProviderStatus.ACTIVE ||
+            !outlet.pickupEnabled ||
+            !outlet.capabilities.contains(ProviderCapability.PRODUCT_STORE)
+        ) {
             resourceUnavailable()
         }
         val lines = request.lines.associate { line ->
@@ -175,14 +203,37 @@ class CustomerCommerceApiController(
         Authorizer.requireRole(customer, Role.CUSTOMER)
         val quote = quotes.requireValid(request.quoteId, request.cartSignature)
         if (quote.customerId != customer.actorId) resourceUnavailable()
+
+        val outlet = providers.getOutlet(quote.outletId)
+        if (
+            outlet.status != ProviderStatus.ACTIVE ||
+            !outlet.pickupEnabled ||
+            !outlet.capabilities.contains(ProviderCapability.PRODUCT_STORE)
+        ) {
+            throw DomainException("QUOTE_STALE", "The provider changed after this quote was created")
+        }
+        val listingNames = quote.lines.map { (listingId, quotedLine) ->
+            val listing = catalog.getListing(listingId)
+            val (quantity, quotedUnitPrice) = quotedLine
+            if (
+                listing.outletId != outlet.id ||
+                listing.commerceMode != CommerceMode.COMMERCE ||
+                listing.sellingPricePaise != quotedUnitPrice ||
+                inventory.available(listing.id) < quantity
+            ) {
+                throw DomainException("QUOTE_STALE", "A cart item changed after this quote was created")
+            }
+            listingId to listing.name
+        }.toMap()
+
         val order = orders.checkout(
-            customer.actorId,
-            quote.outletId,
-            quote.lines.mapValues { it.value.first },
-            quote.pricing.grandTotalPaise,
-            idempotencyKey,
+            quote = quote,
+            organizationId = outlet.organizationId,
+            listingNames = listingNames,
+            idempotencyKey = idempotencyKey,
+            actorId = customer.actorId,
+            traceId = currentTraceId(),
         )
-        val outlet = providers.getOutlet(order.outletId)
         notifications.enqueue(
             sourceEventId = order.id,
             recipientId = outlet.ownerActorId,
@@ -224,7 +275,7 @@ class CustomerCommerceApiController(
     }
 }
 
-data class TransitionRequest(val target: OrderStatus)
+data class TransitionRequest(val target: OrderStatus, val reason: String? = null)
 data class PosSaleRequest(
     val outletId: UUID,
     val associationChallengeId: UUID?,
@@ -252,7 +303,15 @@ class MerchantCommerceApiController(
     ): ProductOrder {
         val principal = authentication.domainPrincipal()
         val order = authorizedOrder(principal, orderId)
-        return orders.transition(order.id, request.target, idempotencyKey)
+        return orders.transition(
+            orderId = order.id,
+            target = request.target,
+            idempotencyKey = idempotencyKey,
+            actorId = principal.actorId,
+            actorRole = principal.role,
+            reason = request.reason,
+            traceId = currentTraceId(),
+        )
     }
 
     @GetMapping("/orders/{orderId}")
@@ -270,23 +329,29 @@ class MerchantCommerceApiController(
         val customerId = request.associationChallengeId?.let {
             associations.consume(it, outlet.organizationId, outlet.id)
         }
+        val listingNames = mutableMapOf<UUID, String>()
         val lines = request.lines.associate { line ->
             val listing = catalog.getListing(line.listingId)
             if (
                 listing.outletId != outlet.id ||
                 listing.commerceMode != CommerceMode.COMMERCE ||
+                line.quantity <= 0 ||
                 inventory.available(listing.id) < line.quantity
             ) throw DomainException("LISTING_UNAVAILABLE", "A POS item is unavailable")
+            listingNames[listing.id] = listing.name
             listing.id to Pair(line.quantity, listing.sellingPricePaise)
         }
         if (lines.size != request.lines.size) throw DomainException("POS_LINE_INVALID", "The POS cart contains duplicate lines")
         val sale = pos.complete(
-            outlet.organizationId,
-            outlet.id,
-            customerId,
-            lines,
-            request.paymentDeclaration,
-            idempotencyKey,
+            merchantId = outlet.organizationId,
+            outletId = outlet.id,
+            customerId = customerId,
+            lines = lines,
+            payment = request.paymentDeclaration,
+            idempotencyKey = idempotencyKey,
+            listingNames = listingNames,
+            cashierId = principal.actorId,
+            traceId = currentTraceId(),
         )
         if (sale.customerId != null && sale.loyaltyAwarded) {
             notifications.enqueue(
@@ -326,6 +391,8 @@ private fun authorizedActiveOutlet(
     ) resourceUnavailable()
     return outlet
 }
+
+private fun currentTraceId(): String = MDC.get("traceId") ?: InventoryService.SYSTEM_TRACE_ID
 
 private fun resourceUnavailable(): Nothing = throw DomainException(
     "RESOURCE_NOT_FOUND",

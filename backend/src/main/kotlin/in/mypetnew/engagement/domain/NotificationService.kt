@@ -54,7 +54,13 @@ interface DeviceRegistrationPersistence {
     ): DeviceRegistration
 
     fun activeFor(userId: UUID): List<DeviceRegistration>
-    fun unregister(userId: UUID, appKind: AppKind, installationId: UUID, environment: String)
+    fun revoke(
+        userId: UUID,
+        appKind: AppKind,
+        installationId: UUID,
+        environment: String,
+    ): Boolean
+
     fun revokeAll(userId: UUID)
 }
 
@@ -196,20 +202,29 @@ class DeviceRegistrationService(private val persistence: DeviceRegistrationPersi
             .filter { it.userId == userId && it.status == RegistrationStatus.ACTIVE }
 
     @Synchronized
-    fun unregister(userId: UUID, appKind: AppKind, installationId: UUID, environment: String) {
-        if (environment !in setOf("development", "staging", "production")) invalidRegistration()
+    fun revoke(
+        userId: UUID,
+        appKind: AppKind,
+        installationId: UUID,
+        environment: String,
+    ): Boolean {
+        if (environment !in setOf("development", "staging", "production")) {
+            throw DomainException("DEVICE_REGISTRATION_INVALID", "The device registration is invalid")
+        }
         persistence?.let {
-            it.unregister(userId, appKind, installationId, environment)
-            return
+            return it.revoke(userId, appKind, installationId, environment)
         }
         requireInstallationOwner(userId, appKind, installationId, environment)
+        var revokedAny = false
         registrations.replaceAll { _, stored ->
             if (
                 stored.public.userId == userId &&
                 stored.public.installationId == installationId &&
                 stored.public.appKind == appKind &&
-                stored.public.environment == environment
+                stored.public.environment == environment &&
+                stored.public.status != RegistrationStatus.REVOKED
             ) {
+                revokedAny = true
                 stored.copy(
                     public = stored.public.copy(status = RegistrationStatus.REVOKED),
                     protectedToken = "",
@@ -218,6 +233,7 @@ class DeviceRegistrationService(private val persistence: DeviceRegistrationPersi
                 stored
             }
         }
+        return revokedAny
     }
 
     @Synchronized
@@ -254,11 +270,6 @@ class DeviceRegistrationService(private val persistence: DeviceRegistrationPersi
             throw DomainException("DEVICE_REGISTRATION_INVALID", "The device registration is invalid")
         }
     }
-
-    private fun invalidRegistration(): Nothing = throw DomainException(
-        "DEVICE_REGISTRATION_INVALID",
-        "The device registration is invalid",
-    )
 
     private fun fingerprint(token: String): String = MessageDigest.getInstance("SHA-256")
         .digest(token.toByteArray(StandardCharsets.UTF_8))

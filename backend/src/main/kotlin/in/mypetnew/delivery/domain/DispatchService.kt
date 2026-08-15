@@ -195,6 +195,19 @@ class DispatchService(
         val result = persistence.inTransaction {
             val offer = persistence.getOffer(offerId) ?: unavailable()
             if (offer.captainId != captainId) unavailable()
+            if (offer.status == DispatchOfferStatus.ACCEPTED && accept) {
+                val assigned = requireJob(offer.jobId)
+                if (
+                    assigned.assignedCaptainId == captainId &&
+                    assigned.status in setOf(DispatchStatus.ASSIGNED, DispatchStatus.PICKED_UP, DispatchStatus.DELIVERED)
+                ) {
+                    return@inTransaction assigned
+                }
+                throw DomainException("DISPATCH_CONFLICT", "The accepted delivery assignment changed unexpectedly")
+            }
+            if (offer.status == DispatchOfferStatus.REJECTED && !accept) {
+                return@inTransaction requireJob(offer.jobId)
+            }
             if (offer.status != DispatchOfferStatus.PENDING) {
                 throw DomainException("DISPATCH_OFFER_RESOLVED", "The dispatch offer is already resolved")
             }
@@ -305,17 +318,16 @@ class DispatchService(
         val attempted = persistence.offers(job.id).map { it.captainId }.toSet()
         val candidate = geoIndex.nearest(job.originLatitude, job.originLongitude, searchRadiusKm, 50)
             .firstOrNull { it !in attempted && eligible(it, now) }
-        val nextAttempt = job.attemptCount + 1
         if (candidate == null) {
             return@inTransaction persistence.saveJob(
                 job.copy(
-                    attemptCount = nextAttempt,
                     failureReason = "NO_ELIGIBLE_CAPTAIN",
-                    status = if (nextAttempt >= maxAttempts) DispatchStatus.FAILED else DispatchStatus.SEARCHING,
+                    status = DispatchStatus.SEARCHING,
                     updatedAt = now,
                 ),
             )
         }
+        val nextAttempt = job.attemptCount + 1
         val offer = DispatchOffer(
             id = UUID.randomUUID(),
             jobId = job.id,

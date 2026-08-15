@@ -35,6 +35,11 @@ CREATE TABLE mypet.appointment (
     provider_id UUID NOT NULL REFERENCES mypet.provider_outlet(id) ON DELETE RESTRICT,
     offering_id UUID NOT NULL REFERENCES mypet.service_offering(id) ON DELETE RESTRICT,
     slot_id UUID NOT NULL REFERENCES mypet.service_slot(id) ON DELETE RESTRICT,
+    -- Portable replacement for a PostgreSQL partial unique index. Active
+    -- appointments store slot_id here; terminal/expired rows clear it. A plain
+    -- UNIQUE constraint therefore prevents two simultaneously active bookings
+    -- for one slot in both PostgreSQL and the H2 compatibility suite.
+    active_slot_id UUID REFERENCES mypet.service_slot(id) ON DELETE RESTRICT,
     pet_id UUID NOT NULL REFERENCES mypet.customer_pet(id) ON DELETE RESTRICT,
     price_paise BIGINT NOT NULL,
     status VARCHAR(32) NOT NULL,
@@ -45,12 +50,9 @@ CREATE TABLE mypet.appointment (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CHECK (price_paise >= 0),
-    CHECK (status IN ('HOLD', 'HOLD_EXPIRED', 'BOOKED', 'CONFIRMED', 'CHECKED_IN', 'IN_SERVICE', 'COMPLETED', 'CANCELLED', 'REJECTED', 'NO_SHOW'))
+    CHECK (status IN ('HOLD', 'HOLD_EXPIRED', 'BOOKED', 'CONFIRMED', 'CHECKED_IN', 'IN_SERVICE', 'COMPLETED', 'CANCELLED', 'REJECTED', 'NO_SHOW')),
+    CONSTRAINT uq_appointment_active_slot UNIQUE (active_slot_id)
 );
-
-CREATE UNIQUE INDEX uq_appointment_active_slot
-    ON mypet.appointment(slot_id)
-    WHERE status IN ('HOLD', 'BOOKED', 'CONFIRMED', 'CHECKED_IN', 'IN_SERVICE');
 
 CREATE INDEX idx_appointment_customer_created
     ON mypet.appointment(customer_id, created_at DESC, id DESC);

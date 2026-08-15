@@ -270,10 +270,10 @@ export default function AppointmentsScreen() {
                     ]}
                     onPress={() => router.push(`/appointments/${appt.id}` as never)}
                     accessibilityRole="button"
-                    accessibilityLabel={isUpcoming ? `Reschedule ${appt.serviceName}` : `View ${appt.serviceName} details`}
+                    accessibilityLabel={`View ${appt.serviceName} details`}
                   >
                     <ThemedText type="smallBold" style={{ color: theme.primary }}>
-                      {isUpcoming ? 'Reschedule' : 'View details'}
+                      View details
                     </ThemedText>
                   </Pressable>
 
@@ -310,7 +310,7 @@ export default function AppointmentsScreen() {
                     </Pressable>
                   ) : null}
 
-                  {isCompleted && !appt.hasReview ? (
+                  {isCompleted && appt.canReview && !appt.hasReview ? (
                     <Pressable
                       style={({ pressed }) => [
                         styles.reviewAction,

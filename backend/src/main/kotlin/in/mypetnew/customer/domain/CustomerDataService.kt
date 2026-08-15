@@ -145,7 +145,7 @@ class InMemoryCustomerDataPersistence : CustomerDataPersistence {
         if (current.isDefault) {
             addresses.values
                 .filter { it.customerId == customerId }
-                .minByOrNull(CustomerAddress::createdAt)
+                .minByOrNull { it.createdAt }
                 ?.let { replacement -> addresses[replacement.id] = replacement.copy(isDefault = true, updatedAt = now) }
         }
         return true
@@ -308,12 +308,11 @@ class CustomerDataService(
 
     private fun normalizePhone(value: String): String {
         val digits = value.filter(Char::isDigit)
-        val normalized = when {
-            digits.length == 10 && digits.firstOrNull() in '6'..'9' -> "+91$digits"
+        return when {
+            digits.length == 10 && digits.firstOrNull()?.let { it in '6'..'9' } == true -> "+91$digits"
             digits.length == 12 && digits.startsWith("91") && digits[2] in '6'..'9' -> "+$digits"
             else -> invalidAddress()
         }
-        return normalized
     }
 
     private fun validatePagination(page: Int, pageSize: Int) {

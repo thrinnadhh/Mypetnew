@@ -1,19 +1,9 @@
 import * as Crypto from 'expo-crypto';
-import {
-  CFPaymentGatewayService,
-  type CFCallback,
-  type CFErrorResponse,
-} from 'react-native-cashfree-pg-sdk';
-import {
-  CFEnvironment,
-  CFSession,
-} from 'cashfree-pg-api-contract';
 
 import type {
   CustomerPaymentStatus,
   CustomerRefundStatus,
 } from '../contracts/customer-payment';
-import { appConfig } from '../utils/app-config';
 import { apiClient } from './api-client';
 import {
   clearPendingPayment,
@@ -72,36 +62,19 @@ export async function fetchPaymentStatus(paymentId: string): Promise<CustomerPay
  * The Cashfree native callback is never payment truth. Both callback paths only
  * return a local signal so the caller can show "Verifying payment…" and poll
  * the canonical backend.
+ *
+ * The native SDK is loaded lazily at the moment checkout is launched. Merely
+ * importing payment/auth services therefore does not initialize native payment
+ * bindings in Jest, cold-start auth, or non-payment screens.
  */
 export async function openCashfreeOrder(payment: CustomerPaymentView): Promise<CashfreeCallbackSignal> {
   if (!payment.paymentSessionId || !payment.providerOrderId) {
     throw new Error('Cashfree returned an invalid checkout session.');
   }
-  const environment = appConfig.environment === 'production'
-    ? CFEnvironment.PRODUCTION
-    : CFEnvironment.SANDBOX;
-  const session = new CFSession(payment.paymentSessionId, payment.providerOrderId, environment);
-
-  return new Promise<CashfreeCallbackSignal>((resolve, reject) => {
-    let settled = false;
-    const settle = (signal: CashfreeCallbackSignal) => {
-      if (settled) return;
-      settled = true;
-      CFPaymentGatewayService.removeCallback();
-      resolve(signal);
-    };
-    const callback: CFCallback = {
-      onVerify: () => settle('VERIFY'),
-      onError: (_error: CFErrorResponse, _orderId: string) => settle('ERROR'),
-    };
-
-    try {
-      CFPaymentGatewayService.setCallback(callback);
-      CFPaymentGatewayService.doWebPayment(session);
-    } catch (error) {
-      CFPaymentGatewayService.removeCallback();
-      reject(error);
-    }
+  const { openCashfreeNativeCheckout } = await import('./cashfree-native');
+  return openCashfreeNativeCheckout({
+    paymentSessionId: payment.paymentSessionId,
+    providerOrderId: payment.providerOrderId,
   });
 }
 

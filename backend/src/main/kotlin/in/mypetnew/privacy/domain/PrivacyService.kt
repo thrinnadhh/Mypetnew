@@ -292,6 +292,7 @@ class PrivacyService(
         private val EMAIL_PATTERN = Regex("[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+")
         private val PROCESSING_CATEGORIES = listOf(
             "identity and authentication",
+            "customer pet profiles and saved delivery addresses",
             "commerce and order history",
             "merchant-scoped loyalty",
             "notification and device registration",

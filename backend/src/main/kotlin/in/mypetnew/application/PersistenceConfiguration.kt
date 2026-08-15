@@ -1,5 +1,8 @@
 package `in`.mypetnew.application
 
+import `in`.mypetnew.appointment.domain.AppointmentPersistence
+import `in`.mypetnew.appointment.domain.AppointmentService
+import `in`.mypetnew.appointment.infrastructure.JdbcAppointmentPersistence
 import `in`.mypetnew.catalog.domain.CatalogPersistence
 import `in`.mypetnew.catalog.domain.CatalogService
 import `in`.mypetnew.catalog.domain.InventoryPersistence
@@ -132,6 +135,17 @@ class PersistenceConfiguration {
     @Bean
     fun productionCustomerDataService(persistence: CustomerDataPersistence): CustomerDataService =
         CustomerDataService(persistence)
+
+    @Bean
+    fun appointmentPersistence(jdbc: JdbcClient, transactions: TransactionTemplate): AppointmentPersistence =
+        JdbcAppointmentPersistence(jdbc, transactions)
+
+    @Bean
+    fun productionAppointmentService(
+        persistence: AppointmentPersistence,
+        providers: ProviderService,
+        customerData: CustomerDataService,
+    ): AppointmentService = AppointmentService(persistence, providers, customerData)
 
     @Bean
     fun customerFavouritePersistence(jdbc: JdbcClient): CustomerFavouritePersistence =

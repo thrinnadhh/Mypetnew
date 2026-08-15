@@ -63,7 +63,12 @@ export async function fetchCustomerPetPage(
 }
 
 export async function fetchCustomerPets(accessToken: string): Promise<CustomerPet[]> {
-  return (await fetchCustomerPetPage(accessToken, 0, 100)).items;
+  if (appConfig.allowDemoMode) return (await fetchCustomerPetPage(accessToken, 0, 100)).items;
+  const response = await apiClient.get<CustomerPetPage | CustomerPet[]>(
+    '/api/v1/customer/pets?page=0&pageSize=100',
+    authHeaders(accessToken),
+  );
+  return Array.isArray(response) ? response : response.items;
 }
 
 export async function createCustomerPet(

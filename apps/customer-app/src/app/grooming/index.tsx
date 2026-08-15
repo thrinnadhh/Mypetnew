@@ -8,7 +8,9 @@ import { ThemedText } from '@/components/themed-text';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { INITIAL_MARKET } from '@/config/markets';
 import { BottomTabInset } from '@/constants/theme';
+import { useLocation } from '@/context/LocationContext';
 import { radii, shadows, spacing, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import {
@@ -16,6 +18,7 @@ import {
   type AppointmentServiceOption,
 } from '@/services/appointment-booking';
 import { isOfflineError } from '@/services/customer-profile';
+import { fetchProviders } from '@/services/provider-discovery';
 
 type DurationFilter = 'ALL' | 'QUICK' | 'STANDARD' | 'EXTENDED';
 type LoadState = 'loading' | 'ready' | 'offline' | 'error';
@@ -37,19 +40,35 @@ function matchesDuration(service: AppointmentServiceOption, filter: DurationFilt
 export default function GroomingServicesScreen() {
   const router = useRouter();
   const theme = useTheme();
+  const { activeCity } = useLocation();
   const [filterCategory, setFilterCategory] = useState<DurationFilter>('ALL');
   const [services, setServices] = useState<AppointmentServiceOption[]>([]);
   const [state, setState] = useState<LoadState>('loading');
 
   const load = useCallback(async () => {
     setState('loading');
+    if (!activeCity.featureFlags.allowGrooming) {
+      setServices([]);
+      setState('ready');
+      return;
+    }
+
     try {
-      setServices(await fetchAppointmentServices({ capability: 'GROOMING' }));
+      const providers = await fetchProviders('GROOMER', INITIAL_MARKET, activeCity.pincodes);
+      const groups = await Promise.all(
+        providers.map((provider) => fetchAppointmentServices({
+          providerId: provider.id,
+          capability: 'GROOMING',
+        })),
+      );
+      const unique = new Map<string, AppointmentServiceOption>();
+      for (const service of groups.flat()) unique.set(service.id, service);
+      setServices([...unique.values()].sort((left, right) => left.name.localeCompare(right.name)));
       setState('ready');
     } catch (error) {
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, []);
+  }, [activeCity.featureFlags.allowGrooming, activeCity.pincodes]);
 
   useEffect(() => {
     void load();
@@ -63,7 +82,12 @@ export default function GroomingServicesScreen() {
   return (
     <ScreenShell
       scroll={false}
-      header={<ScreenHeader title="Grooming Services & Spa" subtitle="Live services from active MyPet groomers" />}
+      header={(
+        <ScreenHeader
+          title="Grooming Services & Spa"
+          subtitle={`Live services in ${activeCity.displayName}`}
+        />
+      )}
       contentContainerStyle={styles.shellContent}
       testID="grooming-services-screen"
     >
@@ -104,11 +128,18 @@ export default function GroomingServicesScreen() {
           onAction={() => void load()}
         />
       ) : null}
-      {state === 'ready' && services.length === 0 ? (
+      {state === 'ready' && !activeCity.featureFlags.allowGrooming ? (
         <StateView
           kind="empty"
-          title="No grooming services yet"
-          message="Active groomers have not published bookable services yet."
+          title={`Grooming is not enabled in ${activeCity.displayName}`}
+          message="Choose another service city to see bookable grooming services."
+        />
+      ) : null}
+      {state === 'ready' && activeCity.featureFlags.allowGrooming && services.length === 0 ? (
+        <StateView
+          kind="empty"
+          title="No serviceable grooming services yet"
+          message={`Groomers serving the selected ${activeCity.displayName} PIN codes have not published bookable services yet.`}
         />
       ) : null}
       {state === 'ready' && services.length > 0 && filteredServices.length === 0 ? (

@@ -74,5 +74,6 @@ class CustomerPaymentApiController(private val payments: PaymentService) {
         expiresAt = expiresAt,
         amountPaise = amountPaise,
         currency = currency,
+        refundStatus = refundStatus?.name,
     )
 }

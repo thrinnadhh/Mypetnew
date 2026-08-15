@@ -5,6 +5,7 @@ import `in`.mypetnew.customer.domain.CustomerFavouritePage
 import `in`.mypetnew.customer.domain.CustomerFavouritePersistence
 import org.springframework.jdbc.core.simple.JdbcClient
 import java.sql.ResultSet
+import java.sql.Timestamp
 import java.util.UUID
 
 class JdbcCustomerFavouritePersistence(
@@ -36,7 +37,7 @@ class JdbcCustomerFavouritePersistence(
             """.trimIndent(),
         ).param("customer_id", favourite.customerId)
             .param("listing_id", favourite.listingId)
-            .param("created_at", favourite.createdAt)
+            .param("created_at", Timestamp.from(favourite.createdAt))
             .update()
         return jdbc.sql(
             """

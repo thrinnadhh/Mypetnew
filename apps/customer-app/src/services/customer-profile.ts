@@ -35,6 +35,22 @@ export interface AddressInput {
   isDefault?: boolean;
 }
 
+/** Compatibility shape for old tests/importers. The active Profile screen does not use precise coordinates. */
+export interface LegacyDefaultAddressInput {
+  label: string;
+  recipientName?: string;
+  phoneNumber?: string;
+  line1: string;
+  line2?: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+  geoLat?: number;
+  geoLng?: number;
+}
+
+export type LegacyDefaultAddress = CustomerAddress & { geoLat?: number; geoLng?: number };
+
 export interface ServiceabilityResponse {
   serviceable: boolean;
   fulfilmentMode: 'STORE_PICKUP' | 'MYPET_CAPTAIN_DELIVERY';
@@ -96,8 +112,13 @@ export async function deleteCustomerAddress(accessToken: string, addressId: stri
 }
 
 export async function fetchDefaultAddress(accessToken: string): Promise<CustomerAddress | null> {
-  const addresses = await fetchCustomerAddresses(accessToken);
-  return addresses.find((address) => address.isDefault) ?? addresses[0] ?? null;
+  try {
+    const addresses = await fetchCustomerAddresses(accessToken);
+    return addresses.find((address) => address.isDefault) ?? addresses[0] ?? null;
+  } catch (error) {
+    if ((error as { status?: number })?.status === 404) return null;
+    throw error;
+  }
 }
 
 export async function saveDefaultAddress(
@@ -109,6 +130,19 @@ export async function saveDefaultAddress(
   return existingAddressId
     ? updateCustomerAddress(accessToken, existingAddressId, payload)
     : createCustomerAddress(accessToken, payload);
+}
+
+/** @deprecated Use createCustomerAddress/saveDefaultAddress with recipient and phone. */
+export async function createDefaultAddress(
+  accessToken: string,
+  input: LegacyDefaultAddressInput,
+): Promise<LegacyDefaultAddress> {
+  const { geoLat: _geoLat, geoLng: _geoLng, ...canonical } = input;
+  return apiClient.post<LegacyDefaultAddress>(
+    '/api/v1/customer/addresses',
+    { ...canonical, isDefault: true },
+    authHeaders(accessToken),
+  );
 }
 
 export async function checkOutletServiceability(

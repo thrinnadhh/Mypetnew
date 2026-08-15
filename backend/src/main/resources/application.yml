@@ -47,8 +47,8 @@ mypet:
     enabled: ${CASHFREE_ENABLED:false}
     client-id: ${CASHFREE_CLIENT_ID:}
     client-secret: ${CASHFREE_CLIENT_SECRET:}
-    api-version: ${CASHFREE_API_VERSION:2025-01-01}
-    webhook-version: ${CASHFREE_WEBHOOK_VERSION:2025-01-01}
+    api-version: ${CASHFREE_API_VERSION:2026-01-01}
+    webhook-version: ${CASHFREE_WEBHOOK_VERSION:2026-01-01}
     base-url: ${CASHFREE_BASE_URL:https://sandbox.cashfree.com/pg}
     return-url: ${CASHFREE_RETURN_URL:}
     notify-url: ${CASHFREE_NOTIFY_URL:}

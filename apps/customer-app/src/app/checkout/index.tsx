@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { AppBar, PrimaryAction, StateView, StatusBadge } from '@/components/foundation/primitives';
@@ -11,13 +11,19 @@ import { useCart } from '@/context/CartContext';
 import { radii, shadows, spacing, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
-import { createPickupOrder } from '@/services/customer-checkout';
+import { createProductOrder, type ProductFulfilmentMode } from '@/services/customer-checkout';
+import { fetchDeliveryQuote } from '@/services/customer-delivery';
 import { fetchCheckoutQuote, type CheckoutQuoteOutput } from '@/services/customer-orders';
+import { fetchCustomerAddresses, type CustomerAddress } from '@/services/customer-profile';
 import { appConfig } from '@/utils/app-config';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function demoQuote(subtotal: number): CheckoutQuoteOutput {
+type CheckoutViewQuote = Omit<CheckoutQuoteOutput, 'fulfilmentMode'> & {
+  fulfilmentMode: ProductFulfilmentMode;
+};
+
+function demoQuote(subtotal: number): CheckoutViewQuote {
   const quoteId = `DEMO-${Date.now()}`;
   return {
     quoteToken: quoteId,
@@ -39,6 +45,32 @@ function demoQuote(subtotal: number): CheckoutQuoteOutput {
     couponCode: null,
     isCodAvailable: true,
     expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+  };
+}
+
+function deliveryQuoteToView(quote: Awaited<ReturnType<typeof fetchDeliveryQuote>>): CheckoutViewQuote {
+  const rupees = (paise: number) => paise / 100;
+  return {
+    quoteToken: quote.id,
+    quoteId: quote.id,
+    cartSignature: quote.cartSignature,
+    fulfilmentMode: 'MYPET_CAPTAIN_DELIVERY',
+    paymentMethod: 'PAY_ON_FULFILMENT',
+    subtotal: rupees(quote.pricing.itemSubtotalPaise),
+    itemDiscount: rupees(quote.pricing.itemDiscountPaise),
+    couponDiscount: rupees(quote.pricing.couponDiscountPaise),
+    loyaltyDiscount: rupees(quote.pricing.loyaltyRewardPaise),
+    deliveryFee: rupees(quote.pricing.deliveryFeePaise),
+    tax: rupees(quote.pricing.taxPaise),
+    platformFee: rupees(quote.pricing.platformFeePaise),
+    roundOff: 0,
+    payableTotal: rupees(quote.pricing.grandTotalPaise),
+    currency: quote.pricing.currency,
+    ruleVersion: quote.pricing.ruleVersion,
+    couponCode: null,
+    isCodAvailable: true,
+    codRejectionReason: null,
+    expiresAt: quote.expiresAt,
   };
 }
 
@@ -66,10 +98,37 @@ export default function CheckoutScreen() {
     || checkoutItems.some((item) => !UUID_PATTERN.test(item.offeringId));
   const demoCheckout = appConfig.allowDemoMode && Boolean(providerId) && checkoutItems.length > 0 && hasPreviewItems;
 
-  const [quote, setQuote] = useState<CheckoutQuoteOutput | null>(null);
+  const [fulfilmentMode, setFulfilmentMode] = useState<ProductFulfilmentMode>('STORE_PICKUP');
+  const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
+  const [quote, setQuote] = useState<CheckoutViewQuote | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
+
+  useEffect(() => {
+    if (!session) {
+      setAddresses([]);
+      setSelectedAddressId(null);
+      return;
+    }
+    let active = true;
+    void fetchCustomerAddresses(session.accessToken)
+      .then((nextAddresses) => {
+        if (!active) return;
+        setAddresses(nextAddresses);
+        const preferred = nextAddresses.find((address) => address.isDefault) ?? nextAddresses[0] ?? null;
+        setSelectedAddressId((current) => current && nextAddresses.some((address) => address.addressId === current)
+          ? current
+          : preferred?.addressId ?? null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setAddresses([]);
+        setSelectedAddressId(null);
+      });
+    return () => { active = false; };
+  }, [session]);
 
   const loadQuote = useCallback(async () => {
     if (!user || !session || cartLoading) return;
@@ -79,6 +138,7 @@ export default function CheckoutScreen() {
       return;
     }
     if (demoCheckout) {
+      setFulfilmentMode('STORE_PICKUP');
       setQuote(demoQuote(itemSubtotal));
       setErrorMessage(null);
       setState('ready');
@@ -90,28 +150,40 @@ export default function CheckoutScreen() {
       setState('ready');
       return;
     }
+    if (fulfilmentMode === 'MYPET_CAPTAIN_DELIVERY' && !selectedAddressId) {
+      setQuote(null);
+      setErrorMessage(null);
+      setState('ready');
+      return;
+    }
 
     setState('loading');
     setErrorMessage(null);
     try {
-      const nextQuote = await fetchCheckoutQuote({
-        customerId: user.id,
-        providerId,
-        deliveryAddressId: '',
-        items: checkoutItems,
-        paymentMethod: 'PAY_ON_FULFILMENT',
-      }, session.accessToken);
+      const nextQuote = fulfilmentMode === 'STORE_PICKUP'
+        ? await fetchCheckoutQuote({
+          customerId: user.id,
+          providerId,
+          deliveryAddressId: '',
+          items: checkoutItems,
+          paymentMethod: 'PAY_ON_FULFILMENT',
+        }, session.accessToken)
+        : deliveryQuoteToView(await fetchDeliveryQuote({
+          outletId: providerId,
+          addressId: selectedAddressId as string,
+          lines: checkoutItems.map((item) => ({ listingId: item.offeringId, quantity: item.quantity })),
+        }, session.accessToken));
       if (!nextQuote.quoteId || !nextQuote.cartSignature) {
         throw new Error('Checkout quote is missing the canonical order credentials.');
       }
-      setQuote(nextQuote);
+      setQuote({ ...nextQuote, fulfilmentMode });
       setState('ready');
     } catch (error) {
       setQuote(null);
       setErrorMessage(error instanceof Error ? error.message : 'Could not load checkout quote.');
       setState('error');
     }
-  }, [cartLoading, checkoutItems, demoCheckout, hasPreviewItems, itemSubtotal, providerId, session, user]);
+  }, [cartLoading, checkoutItems, demoCheckout, fulfilmentMode, hasPreviewItems, itemSubtotal, providerId, selectedAddressId, session, user]);
 
   useEffect(() => {
     if (user && session) void loadQuote();
@@ -130,14 +202,15 @@ export default function CheckoutScreen() {
 
     setPlacing(true);
     try {
-      const order = await createPickupOrder(
+      const order = await createProductOrder(
         { quoteId: quote.quoteId, cartSignature: quote.cartSignature },
+        fulfilmentMode,
         session.accessToken,
       );
       await clearCart();
       router.replace(`/orders/${order.id}` as never);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not place the pickup order.';
+      const message = error instanceof Error ? error.message : 'Could not place the order.';
       Alert.alert('Checkout failed', message);
       void loadQuote();
     } finally {
@@ -162,7 +235,7 @@ export default function CheckoutScreen() {
   if (state === 'loading' || cartLoading) {
     return (
       <ScreenShell scroll={false} header={<AppBar title={t('routes.checkout')} />}>
-        <StateView kind="loading" title={t('states.loading')} message="Fetching the server-authoritative pickup total…" />
+        <StateView kind="loading" title={t('states.loading')} message="Fetching the server-authoritative checkout total…" />
       </ScreenShell>
     );
   }
@@ -203,8 +276,18 @@ export default function CheckoutScreen() {
     );
   }
 
+  const selectedAddress = addresses.find((address) => address.addressId === selectedAddressId) ?? null;
+  const isDelivery = fulfilmentMode === 'MYPET_CAPTAIN_DELIVERY';
+
   return (
-    <ScreenShell header={<AppBar title={t('routes.checkout')} subtitle="Store pickup · Pay on fulfilment" />}>
+    <ScreenShell
+      header={(
+        <AppBar
+          title={t('routes.checkout')}
+          subtitle={isDelivery ? 'MyPet Captain delivery · Pay on fulfilment' : 'Store pickup · Pay on fulfilment'}
+        />
+      )}
+    >
       <View style={styles.container}>
         {demoCheckout ? (
           <View style={[styles.notice, { backgroundColor: theme.primarySoft }]}>
@@ -215,17 +298,86 @@ export default function CheckoutScreen() {
 
         <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
           <ThemedText style={styles.cardTitle}>Fulfilment</ThemedText>
-          <View style={styles.row}>
-            <ThemedText>Store pickup</ThemedText>
-            <StatusBadge label="SPRINT 1" tone="success" />
+          <View style={styles.modeRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: !isDelivery }}
+              onPress={() => setFulfilmentMode('STORE_PICKUP')}
+              style={[
+                styles.modeOption,
+                { borderColor: !isDelivery ? theme.primary : theme.border, backgroundColor: !isDelivery ? theme.primarySoft : theme.backgroundElement },
+              ]}
+            >
+              <ThemedText style={styles.modeTitle}>Store pickup</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">Collect from the merchant.</ThemedText>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: isDelivery, disabled: demoCheckout }}
+              disabled={demoCheckout}
+              onPress={() => setFulfilmentMode('MYPET_CAPTAIN_DELIVERY')}
+              style={[
+                styles.modeOption,
+                { borderColor: isDelivery ? theme.primary : theme.border, backgroundColor: isDelivery ? theme.primarySoft : theme.backgroundElement },
+                demoCheckout && styles.disabledOption,
+              ]}
+            >
+              <ThemedText style={styles.modeTitle}>Captain delivery</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">Server-checked PIN serviceability.</ThemedText>
+            </Pressable>
           </View>
-          <ThemedText type="small" themeColor="textSecondary">The merchant prepares the order for pickup. Delivery is not enabled in Sprint 1.</ThemedText>
         </View>
+
+        {isDelivery ? (
+          <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            <View style={styles.row}>
+              <ThemedText style={styles.cardTitle}>Delivery address</ThemedText>
+              <StatusBadge label="PIN CHECKED" tone="success" />
+            </View>
+            {addresses.length === 0 ? (
+              <View style={styles.addressEmpty}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Save an address in Profile before choosing Captain delivery. Precise Customer location is not required.
+                </ThemedText>
+                <PrimaryAction label="Open profile" onPress={() => router.push('/profile' as never)} />
+              </View>
+            ) : (
+              addresses.map((address) => {
+                const selected = address.addressId === selectedAddressId;
+                return (
+                  <Pressable
+                    key={address.addressId}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => setSelectedAddressId(address.addressId)}
+                    style={[
+                      styles.addressOption,
+                      { borderColor: selected ? theme.primary : theme.border, backgroundColor: selected ? theme.primarySoft : theme.background },
+                    ]}
+                  >
+                    <View style={styles.row}>
+                      <ThemedText style={styles.modeTitle}>{address.label}</ThemedText>
+                      {address.isDefault ? <StatusBadge label="DEFAULT" /> : null}
+                    </View>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {address.line1}{address.line2 ? `, ${address.line2}` : ''}, {address.city}, {address.state} {address.pincode}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })
+            )}
+            {selectedAddress ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                Deliver to {selectedAddress.recipientName} · {selectedAddress.phoneNumber}
+              </ThemedText>
+            ) : null}
+          </View>
+        ) : null}
 
         <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
           <ThemedText style={styles.cardTitle}>Payment</ThemedText>
           <ThemedText>Pay on fulfilment</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">No online payment is collected in Sprint 1.</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">Online payment remains deferred to Plan 5.</ThemedText>
         </View>
 
         <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
@@ -263,9 +415,14 @@ export default function CheckoutScreen() {
         ) : null}
 
         <PrimaryAction
-          label={demoCheckout ? `Simulate pickup · ₹${quote?.payableTotal.toFixed(2) ?? '0.00'}` : 'Place pickup order'}
+          label={demoCheckout
+            ? `Simulate pickup · ₹${quote?.payableTotal.toFixed(2) ?? '0.00'}`
+            : isDelivery
+              ? `Place delivery order · ₹${quote?.payableTotal.toFixed(2) ?? '0.00'}`
+              : 'Place pickup order'}
           onPress={() => void handlePlaceOrder()}
           loading={placing}
+          disabled={!quote || (isDelivery && !selectedAddressId)}
         />
       </View>
     </ScreenShell>
@@ -286,6 +443,12 @@ const styles = StyleSheet.create({
   card: { borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card, padding: spacing.x4, gap: spacing.x3 },
   cardTitle: { ...typography.label, fontWeight: '700' },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.x2 },
+  modeRow: { flexDirection: 'row', gap: spacing.x2 },
+  modeOption: { flex: 1, minHeight: 88, borderWidth: 1, borderRadius: radii.compact, padding: spacing.x3, gap: spacing.x1, justifyContent: 'center' },
+  modeTitle: { fontWeight: '700' },
+  disabledOption: { opacity: 0.5 },
+  addressEmpty: { gap: spacing.x3 },
+  addressOption: { borderWidth: 1, borderRadius: radii.compact, padding: spacing.x3, gap: spacing.x1 },
   itemCopy: { flex: 1, minWidth: 0 },
   itemName: { fontWeight: '700', fontSize: 13, lineHeight: 18 },
   price: { fontWeight: '700' },

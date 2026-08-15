@@ -82,6 +82,14 @@ interface AppointmentPersistence {
     ): CustomerAppointment
     fun confirm(customerId: UUID, appointmentId: UUID, now: Instant): CustomerAppointment?
     fun cancel(customerId: UUID, appointmentId: UUID, reason: String?, now: Instant): CustomerAppointment?
+    fun merchantTransition(
+        outletId: UUID,
+        appointmentId: UUID,
+        allowedFrom: Set<AppointmentStatus>,
+        target: AppointmentStatus,
+        actorId: UUID,
+        now: Instant,
+    ): CustomerAppointment?
     fun get(customerId: UUID, appointmentId: UUID, now: Instant): CustomerAppointment?
     fun list(customerId: UUID, page: Int, pageSize: Int, now: Instant): AppointmentPage
 }
@@ -134,6 +142,22 @@ class InMemoryAppointmentPersistence : AppointmentPersistence {
         if (current.status == AppointmentStatus.CANCELLED) return current
         if (current.status !in setOf(AppointmentStatus.HOLD, AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)) invalidState()
         return current.copy(status = AppointmentStatus.CANCELLED, notes = reason?.trim()?.takeIf { it.isNotEmpty() } ?: current.notes, holdExpiresAt = null, updatedAt = now)
+            .also { appointments[appointmentId] = it }
+    }
+
+    @Synchronized override fun merchantTransition(
+        outletId: UUID,
+        appointmentId: UUID,
+        allowedFrom: Set<AppointmentStatus>,
+        target: AppointmentStatus,
+        actorId: UUID,
+        now: Instant,
+    ): CustomerAppointment? {
+        expireHolds(now)
+        val current = appointments[appointmentId]?.takeIf { it.outletId == outletId } ?: return null
+        if (current.status == target) return current
+        if (current.status !in allowedFrom) invalidState()
+        return current.copy(status = target, holdExpiresAt = null, updatedAt = now)
             .also { appointments[appointmentId] = it }
     }
 
@@ -246,6 +270,29 @@ class AppointmentService(
         Authorizer.requireRole(customer, Role.CUSTOMER)
         if (reason != null && reason.trim().length > 500) invalidAppointment()
         return persistence.cancel(customer.actorId, appointmentId, reason, clock.instant()) ?: unavailable()
+    }
+
+    fun merchantTransition(
+        merchant: Principal,
+        outletId: UUID,
+        appointmentId: UUID,
+        target: AppointmentStatus,
+    ): CustomerAppointment {
+        Authorizer.requireRole(merchant, Role.MERCHANT)
+        Authorizer.requireOutlet(merchant, outletId)
+        val allowedFrom = when (target) {
+            AppointmentStatus.CONFIRMED -> setOf(AppointmentStatus.BOOKED)
+            AppointmentStatus.REJECTED -> setOf(AppointmentStatus.BOOKED)
+            AppointmentStatus.CHECKED_IN -> setOf(AppointmentStatus.CONFIRMED)
+            AppointmentStatus.IN_SERVICE -> setOf(AppointmentStatus.CHECKED_IN)
+            AppointmentStatus.COMPLETED -> setOf(AppointmentStatus.IN_SERVICE)
+            AppointmentStatus.NO_SHOW -> setOf(AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)
+            AppointmentStatus.CANCELLED -> setOf(AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)
+            else -> throw DomainException("APPOINTMENT_STATUS_TARGET_INVALID", "The requested merchant appointment status is not allowed")
+        }
+        return persistence.merchantTransition(
+            outletId, appointmentId, allowedFrom, target, merchant.actorId, clock.instant(),
+        ) ?: unavailable()
     }
 
     fun get(customer: Principal, appointmentId: UUID): CustomerAppointment {

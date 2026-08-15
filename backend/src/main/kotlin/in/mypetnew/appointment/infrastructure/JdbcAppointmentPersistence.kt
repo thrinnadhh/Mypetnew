@@ -190,6 +190,33 @@ class JdbcAppointmentPersistence(
         getOwned(customerId, appointmentId)
     }
 
+    override fun merchantTransition(
+        outletId: UUID,
+        appointmentId: UUID,
+        allowedFrom: Set<AppointmentStatus>,
+        target: AppointmentStatus,
+        actorId: UUID,
+        now: Instant,
+    ): CustomerAppointment? = transaction.execute {
+        val current = jdbc.sql(
+            """
+            SELECT id, customer_id, pet_id, organization_id, outlet_id, service_id, slot_id,
+                   service_name, outlet_name, pet_name, starts_at, ends_at, status, payment_method,
+                   payment_status, price_paise, notes, hold_expires_at, created_at, updated_at
+            FROM mypet.appointment WHERE id = :id AND outlet_id = :outlet_id FOR UPDATE
+            """.trimIndent(),
+        ).param("id", appointmentId)
+            .param("outlet_id", outletId)
+            .query(::mapAppointment).optional().orElse(null) ?: return@execute null
+        if (current.status == target) return@execute current
+        if (current.status !in allowedFrom) invalidState()
+        jdbc.sql(
+            "UPDATE mypet.appointment SET status = :status, hold_expires_at = NULL, updated_at = :now WHERE id = :id",
+        ).param("status", target.name).param("now", now).param("id", appointmentId).update()
+        appendHistory(appointmentId, target, actorId, now, "MERCHANT_STATUS")
+        current.copy(status = target, holdExpiresAt = null, updatedAt = now)
+    }
+
     override fun get(customerId: UUID, appointmentId: UUID, now: Instant): CustomerAppointment? {
         expireOwnedHold(customerId, appointmentId, now)
         return getOwned(customerId, appointmentId)

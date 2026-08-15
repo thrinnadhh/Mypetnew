@@ -53,6 +53,7 @@ data class MerchantServiceRequest(
 )
 
 data class MerchantServiceSlotRequest(val startsAt: Instant)
+data class MerchantAppointmentStatusRequest(val outletId: UUID, val status: AppointmentStatus)
 
 data class CustomerAppointmentCreateRequest(
     val outletId: UUID,
@@ -146,6 +147,19 @@ class MerchantServiceApiController(private val appointments: AppointmentService)
         @RequestBody request: MerchantServiceSlotRequest,
     ): PublicServiceSlotResponse = publicSlot(
         appointments.createSlot(merchant(authentication), serviceId, request.startsAt),
+    )
+}
+
+@RestController
+@RequestMapping("/api/v1/merchant/appointments")
+class MerchantAppointmentApiController(private val appointments: AppointmentService) {
+    @PostMapping("/{appointmentId}/status")
+    fun transition(
+        authentication: Authentication,
+        @PathVariable appointmentId: UUID,
+        @RequestBody request: MerchantAppointmentStatusRequest,
+    ): CustomerAppointmentResponse = appointmentResponse(
+        appointments.merchantTransition(merchant(authentication), request.outletId, appointmentId, request.status),
     )
 }
 

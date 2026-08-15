@@ -1,18 +1,23 @@
 # P5 Checkpoint 3 status
 
-Current state: **SOURCE_CANDIDATE**
+Current source state: **CHECKPOINT3_SOURCE_READY**
 
-This file tracks the certification boundary for the Checkpoint 3 branch.
+Live sandbox state: **NOT YET CERTIFIED**
+
+Checkpoint 3 source readiness means the repository contains the current Cashfree provider contract, sandbox preflight, live certification runbook, read-only evidence harness, contract tests, and Checkpoint 2 adversarial protections. It does not mean a real Cashfree sandbox transaction has been executed.
 
 ## Source gate
 
-Checkpoint 3 becomes **CHECKPOINT3_SOURCE_READY** only when the exact final branch head passes:
+The source-ready state is valid only for an exact commit that passes:
 
 - backend verification/checks;
 - Customer app validation;
 - Merchant app validation;
 - Cashfree request/webhook contract tests;
-- existing Checkpoint 2 JDBC failure/race certification.
+- existing Checkpoint 2 JDBC failure/race certification;
+- syntax validation for the P5 sandbox preflight and Checkpoint 3 evidence scripts.
+
+Any later source change requires a fresh exact-head gate before merge or certification.
 
 ## Live gate
 

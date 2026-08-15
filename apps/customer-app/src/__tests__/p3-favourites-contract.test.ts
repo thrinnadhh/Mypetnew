@@ -35,7 +35,7 @@ describe('P3 canonical favourites contract', () => {
   });
 
   it('keeps outlet favourites local until an outlet-owned server contract exists', () => {
-    expect(source).toContain("targetType === 'SHOP'");
-    expect(source).toContain('Shop favourites are intentionally local');
+    expect(source).toContain("if (targetType === 'SHOP')");
+    expect(source).not.toContain("targetType: 'SHOP', targetId: body");
   });
 });

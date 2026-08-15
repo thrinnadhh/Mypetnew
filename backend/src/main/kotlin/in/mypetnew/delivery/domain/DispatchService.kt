@@ -42,7 +42,7 @@ data class CaptainDeliveryState(
     val approved: Boolean = false,
     val online: Boolean = false,
     val busy: Boolean = false,
-    val lastLocation: CaptainLocation? = null,
+    val lastLocationAt: Instant? = null,
 )
 
 data class DispatchJob(
@@ -76,7 +76,7 @@ data class DispatchOffer(
 interface DispatchPersistence {
     fun <T> inTransaction(block: () -> T): T
     fun approveCaptain(captainId: UUID): CaptainDeliveryState
-    fun updateCaptainPresence(captainId: UUID, online: Boolean, location: CaptainLocation?): CaptainDeliveryState
+    fun updateCaptainPresence(captainId: UUID, online: Boolean, lastLocationAt: Instant?): CaptainDeliveryState
     fun updateCaptainBusy(captainId: UUID, busy: Boolean): CaptainDeliveryState
     fun captainState(captainId: UUID): CaptainDeliveryState?
     fun findJobByOrder(orderId: UUID): DispatchJob?
@@ -94,6 +94,7 @@ interface DispatchPersistence {
 interface CaptainGeoIndex {
     fun update(captainId: UUID, location: CaptainLocation)
     fun remove(captainId: UUID)
+    fun location(captainId: UUID): CaptainLocation?
     fun nearest(latitude: Double, longitude: Double, radiusKm: Double, limit: Int): List<UUID>
 }
 
@@ -109,6 +110,9 @@ class InMemoryCaptainGeoIndex : CaptainGeoIndex {
     override fun remove(captainId: UUID) {
         locations.remove(captainId)
     }
+
+    @Synchronized
+    override fun location(captainId: UUID): CaptainLocation? = locations[captainId]
 
     @Synchronized
     override fun nearest(latitude: Double, longitude: Double, radiusKm: Double, limit: Int): List<UUID> =
@@ -157,7 +161,7 @@ class DispatchService(
         if (online && location == null) {
             throw DomainException("CAPTAIN_LOCATION_REQUIRED", "An online captain must provide a current location")
         }
-        val state = persistence.updateCaptainPresence(captainId, online, location)
+        val state = persistence.updateCaptainPresence(captainId, online, location?.observedAt)
         if (online && location != null) geoIndex.update(captainId, location) else geoIndex.remove(captainId)
         return state
     }
@@ -287,6 +291,8 @@ class DispatchService(
 
     fun captainState(captainId: UUID): CaptainDeliveryState? = persistence.captainState(captainId)
 
+    fun captainLocation(captainId: UUID): CaptainLocation? = geoIndex.location(captainId)
+
     private fun offerNext(jobId: UUID): DispatchJob = persistence.inTransaction {
         val job = requireJob(jobId)
         if (job.status != DispatchStatus.SEARCHING) return@inTransaction job
@@ -332,8 +338,8 @@ class DispatchService(
 
     private fun eligible(captainId: UUID, now: Instant): Boolean {
         val state = persistence.captainState(captainId) ?: return false
-        val location = state.lastLocation ?: return false
-        return state.approved && state.online && !state.busy && !location.observedAt.isBefore(now.minus(locationFreshness))
+        val lastLocationAt = state.lastLocationAt ?: return false
+        return state.approved && state.online && !state.busy && !lastLocationAt.isBefore(now.minus(locationFreshness))
     }
 
     private fun requireAssignedJob(jobId: UUID, captainId: UUID, allowed: Set<DispatchStatus>): DispatchJob {
@@ -368,7 +374,7 @@ class InMemoryDispatchPersistence : DispatchPersistence {
     private val captains = mutableMapOf<UUID, CaptainDeliveryState>()
     private val jobs = mutableMapOf<UUID, DispatchJob>()
     private val jobByOrder = mutableMapOf<UUID, UUID>()
-    private val offers = mutableMapOf<UUID, DispatchOffer>()
+    private val offersById = mutableMapOf<UUID, DispatchOffer>()
 
     override fun <T> inTransaction(block: () -> T): T = synchronized(monitor) { block() }
 
@@ -380,10 +386,10 @@ class InMemoryDispatchPersistence : DispatchPersistence {
     override fun updateCaptainPresence(
         captainId: UUID,
         online: Boolean,
-        location: CaptainLocation?,
+        lastLocationAt: Instant?,
     ): CaptainDeliveryState = synchronized(monitor) {
         val state = captains[captainId] ?: CaptainDeliveryState(captainId)
-        state.copy(online = online, lastLocation = location ?: state.lastLocation).also { captains[captainId] = it }
+        state.copy(online = online, lastLocationAt = lastLocationAt ?: state.lastLocationAt).also { captains[captainId] = it }
     }
 
     override fun updateCaptainBusy(captainId: UUID, busy: Boolean): CaptainDeliveryState = synchronized(monitor) {
@@ -393,7 +399,9 @@ class InMemoryDispatchPersistence : DispatchPersistence {
 
     override fun captainState(captainId: UUID): CaptainDeliveryState? = synchronized(monitor) { captains[captainId] }
 
-    override fun findJobByOrder(orderId: UUID): DispatchJob? = synchronized(monitor) { jobByOrder[orderId]?.let(jobs::get) }
+    override fun findJobByOrder(orderId: UUID): DispatchJob? = synchronized(monitor) {
+        jobByOrder[orderId]?.let { jobs[it] }
+    }
 
     override fun getJob(jobId: UUID): DispatchJob? = synchronized(monitor) { jobs[jobId] }
 
@@ -415,24 +423,24 @@ class InMemoryDispatchPersistence : DispatchPersistence {
     }
 
     override fun offers(jobId: UUID): List<DispatchOffer> = synchronized(monitor) {
-        offers.values.filter { it.jobId == jobId }.sortedBy { it.rank }
+        offersById.values.filter { it.jobId == jobId }.sortedBy { it.rank }
     }
 
     override fun pendingOffers(captainId: UUID): List<DispatchOffer> = synchronized(monitor) {
-        offers.values.filter { it.captainId == captainId && it.status == DispatchOfferStatus.PENDING }
+        offersById.values.filter { it.captainId == captainId && it.status == DispatchOfferStatus.PENDING }
             .sortedBy { it.offeredAt }
     }
 
-    override fun getOffer(offerId: UUID): DispatchOffer? = synchronized(monitor) { offers[offerId] }
+    override fun getOffer(offerId: UUID): DispatchOffer? = synchronized(monitor) { offersById[offerId] }
 
     override fun createOffer(offer: DispatchOffer): DispatchOffer = synchronized(monitor) {
-        offers[offer.id] = offer
+        offersById[offer.id] = offer
         offer
     }
 
     override fun saveOffer(offer: DispatchOffer): DispatchOffer = synchronized(monitor) {
-        if (!offers.containsKey(offer.id)) unavailable()
-        offers[offer.id] = offer
+        if (!offersById.containsKey(offer.id)) unavailable()
+        offersById[offer.id] = offer
         offer
     }
 

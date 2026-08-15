@@ -37,7 +37,7 @@ describe('customer end-to-end regression contracts', () => {
     expect(payments).not.toMatch(/customerPhone|normalizedPhone|userId:/);
   });
 
-  it('keeps appointment online payment fail-closed until Plan 8 while preserving owned-pet slot holds', () => {
+  it('uses owned pets, idempotent server-priced slot holds and Pay at Provider confirmation', () => {
     const discovery = source('src/screens/appointment-discovery-screen.tsx');
     const payment = source('src/app/appointments/payment.tsx');
     const service = source('src/services/appointment-booking.ts');
@@ -48,14 +48,21 @@ describe('customer end-to-end regression contracts', () => {
     expect(discovery).toMatch(/holdAppointmentSlot/);
     expect(discovery).toMatch(/\/appointments\/payment/);
     expect(discovery).not.toMatch(/confirmAppointmentHold\(appointmentId/);
-    expect(payment).toMatch(/Online appointment payment is not available yet/);
-    expect(payment).toMatch(/Plan 5 online payment is limited to product orders/);
+
+    expect(payment).toMatch(/Confirm booking · Pay at provider/);
+    expect(payment).toMatch(/confirmAppointmentHold\(appointmentId, session\.accessToken\)/);
+    expect(payment).toMatch(/No online payment is created for this booking/);
     expect(payment).not.toMatch(/initiateAppointmentPayment|openCashfreeOrder|waitForReferencePaymentOutcome/);
-    expect(payments).toMatch(/Appointment online payment is not available until Plan 8/);
-    expect(payments).not.toMatch(/APPOINTMENT_PAYMENT/);
+
+    expect(service).toMatch(/\/api\/v1\/public\/services/);
+    expect(service).toMatch(/\/api\/v1\/customer\/appointments/);
+    expect(service).toMatch(/'Idempotency-Key'/);
+    expect(service).toMatch(/paymentMethod: 'PAY_AT_PROVIDER'/);
     expect(service).toMatch(/petId: input\.petId/);
-    expect(service).toMatch(/payAtClinic: false/);
-    expect(service).not.toMatch(/petId: bookingUserId/);
+    expect(service).not.toMatch(/customerId: resolveBookingUserId|priceAmount: input\.slot\.price|payAtClinic/);
+    expect(service).not.toMatch(/\/api\/v1\/catalog\/offerings|\/api\/v1\/appointments\/hold/);
+
+    expect(payments).not.toMatch(/APPOINTMENT_PAYMENT/);
   });
 
   it('does not retain the obsolete mock appointment modal or timer hook', () => {

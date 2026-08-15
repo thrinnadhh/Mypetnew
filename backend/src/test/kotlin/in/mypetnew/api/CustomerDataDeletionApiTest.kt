@@ -42,7 +42,7 @@ class CustomerDataDeletionApiTest {
     fun `account deletion erases customer pets and addresses`() {
         val mobile = "+919812345682"
         val session = login(mobile, "p2-delete-device")
-        val customerId = UUID.nameUUIDFromBytes(mobile.toByteArray())
+        val customerId = UUID.fromString(session.path("accountId").asString())
 
         post(
             "/api/v1/customer/pets",

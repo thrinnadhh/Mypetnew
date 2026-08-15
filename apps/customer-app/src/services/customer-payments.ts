@@ -1,146 +1,155 @@
-import * as WebBrowser from 'expo-web-browser';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Crypto from 'expo-crypto';
+import {
+  CFPaymentGatewayService,
+  type CFCallback,
+  type CFErrorResponse,
+} from 'react-native-cashfree-pg-sdk';
+import {
+  CFEnvironment,
+  CFSession,
+} from 'cashfree-pg-api-contract';
 
-import type { CustomerPaymentStatus } from '../contracts/customer-payment';
+import type {
+  CustomerPaymentStatus,
+  CustomerRefundStatus,
+} from '../contracts/customer-payment';
 import { appConfig } from '../utils/app-config';
 import { apiClient } from './api-client';
 
-export interface CashfreeOrderInitialization {
-  orderId: string;
-  paymentSessionId: string;
-  amount: number;
-  currency: string;
-  transactionId: string;
-  environment: 'SANDBOX' | 'PRODUCTION';
-}
-
-export interface HostedCheckoutSession {
-  checkoutPath: string;
-  expiresAt: string;
-}
-
-export interface CustomerPaymentStatusView {
-  transactionId: string;
+export interface CustomerPaymentView {
+  paymentId: string;
+  referenceType: 'PRODUCT_ORDER';
   referenceId: string;
-  transactionType: string;
-  amount: number;
-  currency: string;
+  provider: 'CASHFREE';
+  providerOrderId: string;
   status: CustomerPaymentStatus;
-  createdAt: string;
-  updatedAt: string;
+  paymentSessionId: string | null;
+  expiresAt: string;
+  amountPaise: number;
+  currency: 'INR';
+  refundStatus?: CustomerRefundStatus | null;
 }
 
-export interface CashfreeCustomerDetails {
-  phone: string;
-  email?: string | null;
-  name?: string | null;
+export interface PendingPaymentRecovery {
+  paymentId: string;
+  orderId: string;
 }
 
-function normalizedPhone(value: string): string {
-  const digits = value.replace(/\D/g, '');
-  if (digits.length === 12 && digits.startsWith('91')) return digits.slice(-10);
-  if (digits.length === 10) return digits;
-  throw new Error('Add a valid Indian mobile number before paying online.');
-}
+export type CashfreeCallbackSignal = 'VERIFY' | 'ERROR';
 
-function paymentPayload(
-  userId: string,
-  referenceId: string,
-  amount: number,
-  transactionType: 'ORDER_PAYMENT' | 'APPOINTMENT_PAYMENT',
-  customer: CashfreeCustomerDetails,
-) {
-  return {
-    userId,
-    referenceId,
-    amount,
-    transactionType,
-    customerPhone: normalizedPhone(customer.phone),
-    customerEmail: customer.email?.trim() || null,
-    customerName: customer.name?.trim() || null,
-  };
-}
+const RECOVERY_KEY = 'mypet.customer.pending-payment.v1';
 
 export async function initiateOrderPayment(
-  userId: string,
   orderId: string,
-  amount: number,
-  customer: CashfreeCustomerDetails,
-): Promise<CashfreeOrderInitialization> {
-  let paymentCustomer = customer;
-  if (!customer.phone.trim()) {
-    const order = await apiClient.get<{ deliveryContactPhone?: string | null }>(
-      `/api/v1/orders/${encodeURIComponent(orderId)}`,
-    );
-    paymentCustomer = { ...customer, phone: order.deliveryContactPhone ?? '' };
-  }
-  return apiClient.post<CashfreeOrderInitialization>(
-    '/api/v1/payments/orders',
-    paymentPayload(userId, orderId, amount, 'ORDER_PAYMENT', paymentCustomer),
+  idempotencyKey = Crypto.randomUUID(),
+): Promise<CustomerPaymentView> {
+  const payment = await apiClient.post<CustomerPaymentView>(
+    '/api/v1/customer/payments',
+    {
+      referenceType: 'PRODUCT_ORDER',
+      referenceId: orderId,
+      provider: 'CASHFREE',
+    },
+    { 'Idempotency-Key': idempotencyKey },
   );
+  await rememberPendingPayment(payment.paymentId, orderId);
+  return payment;
 }
 
-export async function initiateAppointmentPayment(
-  userId: string,
-  appointmentId: string,
-  amount: number,
-  customer: CashfreeCustomerDetails,
-): Promise<CashfreeOrderInitialization> {
-  return apiClient.post<CashfreeOrderInitialization>(
-    '/api/v1/payments/appointments',
-    paymentPayload(userId, appointmentId, amount, 'APPOINTMENT_PAYMENT', customer),
+export async function fetchPaymentStatus(paymentId: string): Promise<CustomerPaymentView> {
+  return apiClient.get<CustomerPaymentView>(
+    `/api/v1/customer/payments/${encodeURIComponent(paymentId)}`,
   );
-}
-
-export async function createHostedCheckoutSession(transactionId: string): Promise<HostedCheckoutSession> {
-  return apiClient.post<HostedCheckoutSession>('/api/v1/payments/checkout-sessions', { transactionId });
-}
-
-export async function fetchReferencePaymentStatus(referenceId: string): Promise<CustomerPaymentStatusView> {
-  return apiClient.get<CustomerPaymentStatusView>(
-    `/api/v1/payments/transactions/reference/${encodeURIComponent(referenceId)}`,
-  );
-}
-
-export async function fetchOrderPaymentStatus(orderId: string): Promise<CustomerPaymentStatusView> {
-  return fetchReferencePaymentStatus(orderId);
-}
-
-export async function openCashfreeOrder(initialization: CashfreeOrderInitialization): Promise<void> {
-  if (!initialization.paymentSessionId || !initialization.orderId) {
-    throw new Error('Cashfree returned an invalid checkout session.');
-  }
-  const session = await createHostedCheckoutSession(initialization.transactionId);
-  const baseUrl = (appConfig.apiBaseUrl || 'http://localhost:8080').replace(/\/+$/, '');
-  const checkoutUrl = session.checkoutPath.startsWith('http')
-    ? session.checkoutPath
-    : `${baseUrl}/${session.checkoutPath.replace(/^\/+/, '')}`;
-  await WebBrowser.openAuthSessionAsync(checkoutUrl, 'customerapp://payments/result', {
-    showInRecents: true,
-    preferEphemeralSession: true,
-  });
 }
 
 /**
- * Payment reconciliation is server-owned. The customer app only observes the
- * status produced by Cashfree webhook -> PaymentService -> owning domain.
+ * The Cashfree native callback is never payment truth. Both callback paths only
+ * return a local signal so the caller can show "Verifying payment…" and poll
+ * the canonical backend.
  */
-export async function waitForReferencePaymentOutcome(
-  referenceId: string,
-  attempts = 15,
+export async function openCashfreeOrder(payment: CustomerPaymentView): Promise<CashfreeCallbackSignal> {
+  if (!payment.paymentSessionId || !payment.providerOrderId) {
+    throw new Error('Cashfree returned an invalid checkout session.');
+  }
+  const environment = appConfig.environment === 'production'
+    ? CFEnvironment.PRODUCTION
+    : CFEnvironment.SANDBOX;
+  const session = new CFSession(payment.paymentSessionId, payment.providerOrderId, environment);
+
+  return new Promise<CashfreeCallbackSignal>((resolve, reject) => {
+    let settled = false;
+    const settle = (signal: CashfreeCallbackSignal) => {
+      if (settled) return;
+      settled = true;
+      CFPaymentGatewayService.removeCallback();
+      resolve(signal);
+    };
+    const callback: CFCallback = {
+      onVerify: () => settle('VERIFY'),
+      onError: (_error: CFErrorResponse, _orderId: string) => settle('ERROR'),
+    };
+
+    try {
+      CFPaymentGatewayService.setCallback(callback);
+      CFPaymentGatewayService.doWebPayment(session);
+    } catch (error) {
+      CFPaymentGatewayService.removeCallback();
+      reject(error);
+    }
+  });
+}
+
+export async function waitForPaymentOutcome(
+  paymentId: string,
+  attempts = 30,
   delayMs = 2_000,
-): Promise<CustomerPaymentStatusView> {
-  let latest = await fetchReferencePaymentStatus(referenceId);
-  for (let attempt = 1; attempt < attempts && latest.status === 'PENDING'; attempt += 1) {
+): Promise<CustomerPaymentView> {
+  let latest = await fetchPaymentStatus(paymentId);
+  for (
+    let attempt = 1;
+    attempt < attempts && (latest.status === 'PENDING' || latest.status === 'AUTHORIZED');
+    attempt += 1
+  ) {
     await new Promise((resolve) => setTimeout(resolve, delayMs));
-    latest = await fetchReferencePaymentStatus(referenceId);
+    latest = await fetchPaymentStatus(paymentId);
+  }
+  if (latest.status === 'CAPTURED' || latest.status === 'FAILED' || latest.status === 'EXPIRED') {
+    await clearPendingPayment(paymentId);
   }
   return latest;
 }
 
-export async function waitForPaymentOutcome(
-  orderId: string,
-  attempts = 15,
-  delayMs = 2_000,
-): Promise<CustomerPaymentStatusView> {
-  return waitForReferencePaymentOutcome(orderId, attempts, delayMs);
+export async function rememberPendingPayment(paymentId: string, orderId: string): Promise<void> {
+  if (!paymentId || !orderId) return;
+  await AsyncStorage.setItem(RECOVERY_KEY, JSON.stringify({ paymentId, orderId } satisfies PendingPaymentRecovery));
+}
+
+export async function loadPendingPayment(): Promise<PendingPaymentRecovery | null> {
+  const raw = await AsyncStorage.getItem(RECOVERY_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<PendingPaymentRecovery>;
+    if (typeof parsed.paymentId !== 'string' || typeof parsed.orderId !== 'string') {
+      await AsyncStorage.removeItem(RECOVERY_KEY);
+      return null;
+    }
+    return { paymentId: parsed.paymentId, orderId: parsed.orderId };
+  } catch {
+    await AsyncStorage.removeItem(RECOVERY_KEY);
+    return null;
+  }
+}
+
+export async function clearPendingPayment(expectedPaymentId?: string): Promise<void> {
+  if (expectedPaymentId) {
+    const current = await loadPendingPayment();
+    if (current && current.paymentId !== expectedPaymentId) return;
+  }
+  await AsyncStorage.removeItem(RECOVERY_KEY);
+}
+
+// Plan 8 appointment payment runtime is intentionally fail-closed in Plan 5.
+export async function initiateAppointmentPayment(): Promise<never> {
+  throw new Error('Appointment online payment is not available yet.');
 }

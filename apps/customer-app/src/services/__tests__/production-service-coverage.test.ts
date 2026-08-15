@@ -470,14 +470,13 @@ describe('appointment booking production paths', () => {
     expect(mockedFetch.mock.calls[3][0]).toContain('appointment%2F1/confirm');
   });
 
-  it('returns empty slots when availability fails and surfaces service catalogue errors', async () => {
+  it('surfaces availability failures and service catalogue errors', async () => {
     mockedFetch
       .mockResolvedValueOnce(response(servicesPage))
-      .mockResolvedValueOnce(response({}, 500))
-      .mockResolvedValueOnce(response({}, 500))
+      .mockResolvedValueOnce(response({ message: 'Availability offline' }, 503))
       .mockResolvedValueOnce(response({ message: 'Catalog offline' }, 503));
 
-    await expect(fetchAvailableAppointmentSlots('provider-1')).resolves.toEqual([]);
+    await expect(fetchAvailableAppointmentSlots('provider-1')).rejects.toThrow('Availability offline');
     await expect(fetchAvailableAppointmentSlots('provider-1')).rejects.toThrow('Catalog offline');
   });
 });

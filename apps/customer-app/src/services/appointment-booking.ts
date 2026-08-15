@@ -148,12 +148,14 @@ export async function fetchAppointmentServices(input: {
 
 export async function fetchAvailableAppointmentSlots(
   providerId: string,
+  serviceId?: string,
 ): Promise<AppointmentSlotOption[]> {
   if (appConfig.allowDemoMode) {
-    return getDemoAppointmentSlots(providerId);
+    return getDemoAppointmentSlots(providerId).filter((slot) => !serviceId || slot.offeringId === serviceId);
   }
 
-  const services = await fetchAppointmentServices({ providerId });
+  const discovered = await fetchAppointmentServices({ providerId });
+  const services = serviceId ? discovered.filter((service) => service.id === serviceId) : discovered;
   const from = new Date();
   const to = new Date(from.getTime() + AVAILABILITY_WINDOW_DAYS * 24 * 60 * 60 * 1000);
 

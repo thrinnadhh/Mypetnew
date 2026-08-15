@@ -111,7 +111,8 @@ class InMemoryAppointmentPersistence : AppointmentPersistence {
     @Synchronized override fun availableSlots(serviceId: UUID, from: Instant, to: Instant, now: Instant): List<ServiceSlot> {
         expireHolds(now)
         val occupied = appointments.values.filter { it.status in OCCUPYING_STATUSES }.mapTo(mutableSetOf()) { it.slotId }
-        return slots.values.filter { it.serviceId == serviceId && it.active && it.startsAt >= from && it.startsAt < to && it.startsAt > now && it.id !in occupied }
+        return slots.values
+            .filter { it.serviceId == serviceId && it.active && it.startsAt >= from && it.startsAt < to && it.startsAt > now && it.id !in occupied }
             .sortedBy { it.startsAt }
     }
 
@@ -127,22 +128,33 @@ class InMemoryAppointmentPersistence : AppointmentPersistence {
     }
 
     @Synchronized override fun confirm(customerId: UUID, appointmentId: UUID, now: Instant): CustomerAppointment? {
-        expireHolds(now)
         val current = appointments[appointmentId]?.takeIf { it.customerId == customerId } ?: return null
         if (current.status == AppointmentStatus.BOOKED || current.status == AppointmentStatus.CONFIRMED) return current
+        if (current.status == AppointmentStatus.HOLD_EXPIRED) holdExpired()
+        if (current.status == AppointmentStatus.HOLD && (current.holdExpiresAt == null || !current.holdExpiresAt.isAfter(now))) {
+            appointments[appointmentId] = current.copy(status = AppointmentStatus.HOLD_EXPIRED, updatedAt = now)
+            holdExpired()
+        }
         if (current.status != AppointmentStatus.HOLD) invalidState()
-        if (current.holdExpiresAt == null || !current.holdExpiresAt.isAfter(now)) holdExpired()
         return current.copy(status = AppointmentStatus.BOOKED, holdExpiresAt = null, updatedAt = now)
             .also { appointments[appointmentId] = it }
     }
 
     @Synchronized override fun cancel(customerId: UUID, appointmentId: UUID, reason: String?, now: Instant): CustomerAppointment? {
-        expireHolds(now)
         val current = appointments[appointmentId]?.takeIf { it.customerId == customerId } ?: return null
         if (current.status == AppointmentStatus.CANCELLED) return current
+        if (current.status == AppointmentStatus.HOLD_EXPIRED) holdExpired()
+        if (current.status == AppointmentStatus.HOLD && (current.holdExpiresAt == null || !current.holdExpiresAt.isAfter(now))) {
+            appointments[appointmentId] = current.copy(status = AppointmentStatus.HOLD_EXPIRED, updatedAt = now)
+            holdExpired()
+        }
         if (current.status !in setOf(AppointmentStatus.HOLD, AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)) invalidState()
-        return current.copy(status = AppointmentStatus.CANCELLED, notes = reason?.trim()?.takeIf { it.isNotEmpty() } ?: current.notes, holdExpiresAt = null, updatedAt = now)
-            .also { appointments[appointmentId] = it }
+        return current.copy(
+            status = AppointmentStatus.CANCELLED,
+            notes = reason?.trim()?.takeIf { it.isNotEmpty() } ?: current.notes,
+            holdExpiresAt = null,
+            updatedAt = now,
+        ).also { appointments[appointmentId] = it }
     }
 
     @Synchronized override fun merchantTransition(
@@ -180,7 +192,9 @@ class InMemoryAppointmentPersistence : AppointmentPersistence {
         appointments.replaceAll { _, value ->
             if (value.status == AppointmentStatus.HOLD && value.holdExpiresAt?.isAfter(now) == false) {
                 value.copy(status = AppointmentStatus.HOLD_EXPIRED, updatedAt = now)
-            } else value
+            } else {
+                value
+            }
         }
     }
 }
@@ -203,26 +217,58 @@ class AppointmentService(
     ): ServiceOffering {
         Authorizer.requireOutlet(merchant, outletId)
         val outlet = providers.getOutlet(outletId)
+        if (merchant.organizationId == null || merchant.organizationId != outlet.organizationId) unavailable()
         if (outlet.status != ProviderStatus.ACTIVE || !supports(outlet.capabilities, capability)) unavailable()
         val cleanName = name.trim()
         val cleanDescription = description?.trim()?.takeIf { it.isNotEmpty() }
-        if (cleanName.length !in 2..160 || (cleanDescription != null && cleanDescription.length > 1_000) || durationMinutes !in 5..480 || pricePaise !in 0..10_000_000) invalidService()
+        if (
+            cleanName.length !in 2..160 ||
+            (cleanDescription != null && cleanDescription.length > 1_000) ||
+            durationMinutes !in 5..480 ||
+            pricePaise !in 0..10_000_000
+        ) {
+            invalidService()
+        }
         return persistence.saveOffering(
-            ServiceOffering(UUID.randomUUID(), outlet.organizationId, outletId, capability, cleanName, cleanDescription, durationMinutes, pricePaise, true, clock.instant()),
+            ServiceOffering(
+                UUID.randomUUID(),
+                outlet.organizationId,
+                outletId,
+                capability,
+                cleanName,
+                cleanDescription,
+                durationMinutes,
+                pricePaise,
+                true,
+                clock.instant(),
+            ),
         )
     }
 
     fun createSlot(merchant: Principal, serviceId: UUID, startsAt: Instant): ServiceSlot {
         val offering = activeOffering(serviceId)
         Authorizer.requireOutlet(merchant, offering.outletId)
+        if (merchant.organizationId == null || merchant.organizationId != offering.organizationId) unavailable()
         val now = clock.instant()
         if (!startsAt.isAfter(now)) invalidSlot()
-        return persistence.saveSlot(ServiceSlot(UUID.randomUUID(), serviceId, startsAt, startsAt.plusSeconds(offering.durationMinutes * 60L), true))
+        return persistence.saveSlot(
+            ServiceSlot(
+                UUID.randomUUID(),
+                serviceId,
+                startsAt,
+                startsAt.plusSeconds(offering.durationMinutes * 60L),
+                true,
+            ),
+        )
     }
 
     fun listServices(capability: ServiceCapability?, outletId: UUID?): List<ServiceOffering> =
         persistence.listOfferings(capability, outletId).filter { offering ->
-            providers.allOutlets().any { outlet -> outlet.id == offering.outletId && outlet.status == ProviderStatus.ACTIVE && supports(outlet.capabilities, offering.capability) }
+            providers.allOutlets().any { outlet ->
+                outlet.id == offering.outletId &&
+                    outlet.status == ProviderStatus.ACTIVE &&
+                    supports(outlet.capabilities, offering.capability)
+            }
         }
 
     fun availability(serviceId: UUID, from: Instant, to: Instant): List<ServiceSlot> {
@@ -253,12 +299,31 @@ class AppointmentService(
         val cleanNotes = notes?.trim()?.takeIf { it.isNotEmpty() }
         if (cleanNotes != null && cleanNotes.length > 1_000) invalidAppointment()
         val appointment = CustomerAppointment(
-            UUID.randomUUID(), customer.actorId, petId, offering.organizationId, outletId, serviceId, slotId,
-            offering.name, outlet.name, pet.name, slot.startsAt, slot.endsAt, AppointmentStatus.HOLD,
-            paymentMethod, AppointmentPaymentStatus.NOT_REQUIRED, offering.pricePaise, cleanNotes,
-            now.plus(holdDuration), now, now,
+            UUID.randomUUID(),
+            customer.actorId,
+            petId,
+            offering.organizationId,
+            outletId,
+            serviceId,
+            slotId,
+            offering.name,
+            outlet.name,
+            pet.name,
+            slot.startsAt,
+            slot.endsAt,
+            AppointmentStatus.HOLD,
+            paymentMethod,
+            AppointmentPaymentStatus.NOT_REQUIRED,
+            offering.pricePaise,
+            cleanNotes,
+            now.plus(holdDuration),
+            now,
+            now,
         )
-        return persistence.hold(appointment, idempotencyKey, fingerprint("${customer.actorId}:$outletId:$serviceId:$petId:$slotId:$paymentMethod:$cleanNotes"), now)
+        val fingerprint = fingerprint(
+            "${customer.actorId}:$outletId:$serviceId:$petId:$slotId:$paymentMethod:$cleanNotes",
+        )
+        return persistence.hold(appointment, idempotencyKey, fingerprint, now)
     }
 
     fun confirm(customer: Principal, appointmentId: UUID): CustomerAppointment {
@@ -280,6 +345,8 @@ class AppointmentService(
     ): CustomerAppointment {
         Authorizer.requireRole(merchant, Role.MERCHANT)
         Authorizer.requireOutlet(merchant, outletId)
+        val outlet = providers.getOutlet(outletId)
+        if (merchant.organizationId == null || merchant.organizationId != outlet.organizationId) unavailable()
         val allowedFrom = when (target) {
             AppointmentStatus.CONFIRMED -> setOf(AppointmentStatus.BOOKED)
             AppointmentStatus.REJECTED -> setOf(AppointmentStatus.BOOKED)
@@ -288,10 +355,18 @@ class AppointmentService(
             AppointmentStatus.COMPLETED -> setOf(AppointmentStatus.IN_SERVICE)
             AppointmentStatus.NO_SHOW -> setOf(AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)
             AppointmentStatus.CANCELLED -> setOf(AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)
-            else -> throw DomainException("APPOINTMENT_STATUS_TARGET_INVALID", "The requested merchant appointment status is not allowed")
+            else -> throw DomainException(
+                "APPOINTMENT_STATUS_TARGET_INVALID",
+                "The requested merchant appointment status is not allowed",
+            )
         }
         return persistence.merchantTransition(
-            outletId, appointmentId, allowedFrom, target, merchant.actorId, clock.instant(),
+            outletId,
+            appointmentId,
+            allowedFrom,
+            target,
+            merchant.actorId,
+            clock.instant(),
         ) ?: unavailable()
     }
 
@@ -302,28 +377,39 @@ class AppointmentService(
 
     fun list(customer: Principal, page: Int, pageSize: Int): AppointmentPage {
         Authorizer.requireRole(customer, Role.CUSTOMER)
-        if (page < 0 || pageSize !in 1..100) throw DomainException("PAGE_SIZE_INVALID", "Pagination values are outside the allowed range")
+        if (page < 0 || pageSize !in 1..100) {
+            throw DomainException("PAGE_SIZE_INVALID", "Pagination values are outside the allowed range")
+        }
         return persistence.list(customer.actorId, page, pageSize, clock.instant())
     }
 
     private fun activeOffering(serviceId: UUID): ServiceOffering {
         val offering = persistence.getOffering(serviceId)?.takeIf { it.active } ?: unavailable()
         val outlet = providers.allOutlets().find { it.id == offering.outletId }
-        if (outlet?.status != ProviderStatus.ACTIVE || !supports(outlet.capabilities, offering.capability)) unavailable()
+        if (
+            outlet?.status != ProviderStatus.ACTIVE ||
+            !supports(outlet.capabilities, offering.capability)
+        ) {
+            unavailable()
+        }
         return offering
     }
 
     private fun supports(capabilities: Set<ProviderCapability>, capability: ServiceCapability) = when (capability) {
         ServiceCapability.GROOMING -> ProviderCapability.GROOMING in capabilities
-        ServiceCapability.VETERINARY -> ProviderCapability.VETERINARY_CLINIC in capabilities || ProviderCapability.VETERINARY_HOSPITAL in capabilities
+        ServiceCapability.VETERINARY ->
+            ProviderCapability.VETERINARY_CLINIC in capabilities || ProviderCapability.VETERINARY_HOSPITAL in capabilities
     }
 
     private fun validateIdempotencyKey(key: String) {
-        if (!key.matches(Regex("[A-Za-z0-9._:-]{1,128}"))) throw DomainException("IDEMPOTENCY_KEY_INVALID", "The idempotency key is invalid")
+        if (!key.matches(Regex("[A-Za-z0-9._:-]{1,128}"))) {
+            throw DomainException("IDEMPOTENCY_KEY_INVALID", "The idempotency key is invalid")
+        }
     }
 
     private fun fingerprint(value: String): String = MessageDigest.getInstance("SHA-256")
-        .digest(value.toByteArray(StandardCharsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        .digest(value.toByteArray(StandardCharsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
 
     private fun invalidService(): Nothing = throw DomainException("SERVICE_INVALID", "The service details are invalid")
     private fun invalidSlot(): Nothing = throw DomainException("SERVICE_SLOT_INVALID", "The service slot is invalid")
@@ -331,7 +417,19 @@ class AppointmentService(
     private fun unavailable(): Nothing = throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
 }
 
-private val OCCUPYING_STATUSES = setOf(AppointmentStatus.HOLD, AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_SERVICE)
-private fun slotUnavailable(): Nothing = throw DomainException("APPOINTMENT_SLOT_UNAVAILABLE", "This appointment slot is no longer available")
-private fun invalidState(): Nothing = throw DomainException("APPOINTMENT_STATE_INVALID", "The appointment cannot be changed from its current state")
-private fun holdExpired(): Nothing = throw DomainException("APPOINTMENT_HOLD_EXPIRED", "The appointment hold has expired")
+private val OCCUPYING_STATUSES = setOf(
+    AppointmentStatus.HOLD,
+    AppointmentStatus.BOOKED,
+    AppointmentStatus.CONFIRMED,
+    AppointmentStatus.CHECKED_IN,
+    AppointmentStatus.IN_SERVICE,
+)
+
+private fun slotUnavailable(): Nothing =
+    throw DomainException("APPOINTMENT_SLOT_UNAVAILABLE", "This appointment slot is no longer available")
+
+private fun invalidState(): Nothing =
+    throw DomainException("APPOINTMENT_STATE_INVALID", "The appointment cannot be changed from its current state")
+
+private fun holdExpired(): Nothing =
+    throw DomainException("APPOINTMENT_HOLD_EXPIRED", "The appointment hold has expired")

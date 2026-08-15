@@ -1,98 +1,69 @@
 import { useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, StyleSheet, View } from 'react-native';
 
-import { FilterChip } from '@/components/foundation/primitives';
+import { FilterChip, StateView } from '@/components/foundation/primitives';
 import { ScreenShell } from '@/components/foundation/screen-shell';
 import { ThemedText } from '@/components/themed-text';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { BottomTabInset } from '@/constants/theme';
-import {
-  radii,
-  shadows,
-  spacing,
-  typography,
-} from '@/design/tokens';
+import { radii, shadows, spacing, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
+import {
+  fetchAppointmentServices,
+  type AppointmentServiceOption,
+} from '@/services/appointment-booking';
+import { isOfflineError } from '@/services/customer-profile';
 
-interface GroomingServiceItem {
-  id: string;
-  category: 'FULL' | 'HYGIENE' | 'DESHEDDING' | 'PUPPY';
-  title: string;
-  desc: string;
-  price: number;
-  duration: string;
-  petApplicability: string;
-  inclusions: string[];
-}
+type DurationFilter = 'ALL' | 'QUICK' | 'STANDARD' | 'EXTENDED';
+type LoadState = 'loading' | 'ready' | 'offline' | 'error';
 
-const GROOMING_SERVICES_CATALOG: GroomingServiceItem[] = [
-  {
-    id: 'gs-1',
-    category: 'FULL',
-    title: 'Full Spa & Breed Haircut Package',
-    desc: 'Complete luxury spa day with warm bath, blow dry, breed-standard haircut, ear cleaning & paw balm.',
-    price: 1299,
-    duration: '60 mins',
-    petApplicability: 'All Dog Breeds & Sizes',
-    inclusions: ['Warm Herbal Bath', 'Blow Dry & Fluff', 'Styling Haircut', 'Nail Trimming', 'Ear Cleaning', 'Paw Balm'],
-  },
-  {
-    id: 'gs-2',
-    category: 'HYGIENE',
-    title: 'Basic Hygiene Bath & Tick Protection',
-    desc: 'Anti-tick bath using natural neem extracts, sanitary area trimming, paw massage & nail buffing.',
-    price: 699,
-    duration: '40 mins',
-    petApplicability: 'Small & Medium Dogs / Cats',
-    inclusions: ['Anti-Tick Bath', 'Sanitary Trim', 'Paw Buffing', 'Scented Spray'],
-  },
-  {
-    id: 'gs-3',
-    category: 'DESHEDDING',
-    title: 'De-Shedding & Undercoat Furminator',
-    desc: 'Deep undercoat de-shedding treatment reducing loose fur for heavy-coat breeds.',
-    price: 899,
-    duration: '45 mins',
-    petApplicability: 'Golden Retrievers, Huskies, Labs',
-    inclusions: ['De-Shedding Shampoo', 'Furminator Raking', 'Blow Out', 'Coat Conditioning'],
-  },
-  {
-    id: 'gs-4',
-    category: 'PUPPY',
-    title: 'Puppy First Spa Experience',
-    desc: 'Ultra-gentle tearless bath for puppies under 6 months, warm fluff dry, paw balm & puppy treat cup.',
-    price: 499,
-    duration: '30 mins',
-    petApplicability: 'Puppies (2-6 Months)',
-    inclusions: ['Tearless Shampoo', 'Gentle Fluff Dry', 'Nail Clip', 'Treat Cup'],
-  },
+const FILTERS: ReadonlyArray<{ id: DurationFilter; label: string }> = [
+  { id: 'ALL', label: 'All Services' },
+  { id: 'QUICK', label: 'Quick Care' },
+  { id: 'STANDARD', label: '30–60 mins' },
+  { id: 'EXTENDED', label: '60+ mins' },
 ];
 
-const FILTERS = [
-  { id: 'ALL', label: 'All Services' },
-  { id: 'FULL', label: 'Full Spa' },
-  { id: 'HYGIENE', label: 'Hygiene Baths' },
-  { id: 'DESHEDDING', label: 'De-Shedding' },
-  { id: 'PUPPY', label: 'Puppy Spa' },
-] as const;
+function matchesDuration(service: AppointmentServiceOption, filter: DurationFilter): boolean {
+  if (filter === 'ALL') return true;
+  if (filter === 'QUICK') return service.durationMinutes < 30;
+  if (filter === 'STANDARD') return service.durationMinutes >= 30 && service.durationMinutes <= 60;
+  return service.durationMinutes > 60;
+}
 
 export default function GroomingServicesScreen() {
   const router = useRouter();
   const theme = useTheme();
-  const [filterCategory, setFilterCategory] = useState<string>('ALL');
+  const [filterCategory, setFilterCategory] = useState<DurationFilter>('ALL');
+  const [services, setServices] = useState<AppointmentServiceOption[]>([]);
+  const [state, setState] = useState<LoadState>('loading');
 
-  const filteredServices = useMemo(() => {
-    if (filterCategory === 'ALL') return GROOMING_SERVICES_CATALOG;
-    return GROOMING_SERVICES_CATALOG.filter((service) => service.category === filterCategory);
-  }, [filterCategory]);
+  const load = useCallback(async () => {
+    setState('loading');
+    try {
+      setServices(await fetchAppointmentServices({ capability: 'GROOMING' }));
+      setState('ready');
+    } catch (error) {
+      setState(isOfflineError(error) ? 'offline' : 'error');
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const filteredServices = useMemo(
+    () => services.filter((service) => matchesDuration(service, filterCategory)),
+    [filterCategory, services],
+  );
 
   return (
     <ScreenShell
       scroll={false}
-      header={<ScreenHeader title="Grooming Services & Spa" subtitle="Certified pet groomers in Tirupati" />}
+      header={<ScreenHeader title="Grooming Services & Spa" subtitle="Live services from active MyPet groomers" />}
       contentContainerStyle={styles.shellContent}
       testID="grooming-services-screen"
     >
@@ -112,46 +83,84 @@ export default function GroomingServicesScreen() {
         )}
       />
 
-      <FlatList
-        style={styles.serviceList}
-        data={filteredServices}
-        keyExtractor={(item) => item.id}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => (
-          <View
-            style={[
-              styles.serviceCard,
-              shadows.raised,
-              { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-            ]}
-          >
-            <View style={styles.cardHeader}>
-              <View style={styles.cardCopy}>
-                <StatusBadge label={`⏱ ${item.duration}`} color={theme.primary} />
-                <ThemedText style={[styles.serviceTitle, { color: theme.text }]}>{item.title}</ThemedText>
-                <ThemedText numberOfLines={2} style={[styles.applicability, { color: theme.textSecondary }]}>
-                  🐾 {item.petApplicability}
-                </ThemedText>
+      {state === 'loading' ? (
+        <StateView kind="loading" title="Loading grooming services" message="Checking live provider availability." />
+      ) : null}
+      {state === 'offline' ? (
+        <StateView
+          kind="offline"
+          title="You're offline"
+          message="Reconnect to load current grooming services and prices."
+          actionLabel="Retry"
+          onAction={() => void load()}
+        />
+      ) : null}
+      {state === 'error' ? (
+        <StateView
+          kind="error"
+          title="Grooming services unavailable"
+          message="We couldn't load the current service catalogue."
+          actionLabel="Retry"
+          onAction={() => void load()}
+        />
+      ) : null}
+      {state === 'ready' && services.length === 0 ? (
+        <StateView
+          kind="empty"
+          title="No grooming services yet"
+          message="Active groomers have not published bookable services yet."
+        />
+      ) : null}
+      {state === 'ready' && services.length > 0 && filteredServices.length === 0 ? (
+        <StateView
+          kind="empty"
+          title="No services in this duration"
+          message="Choose another filter to see currently published grooming services."
+          actionLabel="Show all"
+          onAction={() => setFilterCategory('ALL')}
+        />
+      ) : null}
+
+      {state === 'ready' && filteredServices.length > 0 ? (
+        <FlatList
+          style={styles.serviceList}
+          data={filteredServices}
+          keyExtractor={(item) => item.id}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.listContent}
+          renderItem={({ item }) => (
+            <View
+              style={[
+                styles.serviceCard,
+                shadows.raised,
+                { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+              ]}
+            >
+              <View style={styles.cardHeader}>
+                <View style={styles.cardCopy}>
+                  <StatusBadge label={`⏱ ${item.durationMinutes} mins`} color={theme.primary} />
+                  <ThemedText style={[styles.serviceTitle, { color: theme.text }]}>{item.name}</ThemedText>
+                  <ThemedText numberOfLines={3} style={[styles.description, { color: theme.textSecondary }]}>
+                    {item.description || 'Published by an active MyPet grooming provider.'}
+                  </ThemedText>
+                </View>
+                <ThemedText style={[styles.price, { color: theme.primary }]}>₹{item.price.toFixed(0)}</ThemedText>
               </View>
-              <ThemedText style={[styles.price, { color: theme.primary }]}>₹{item.price}</ThemedText>
+
+              <View style={styles.inclusionGrid}>
+                <StatusBadge label="✓ Live price" color={theme.success} />
+                <StatusBadge label="✓ Live slots" color={theme.success} />
+                <StatusBadge label="✓ Pay at provider" color={theme.success} />
+              </View>
+
+              <PrimaryButton
+                label="Choose live slot & pay"
+                onPress={() => router.push(`/groom?providerId=${encodeURIComponent(item.providerId)}&serviceId=${encodeURIComponent(item.id)}` as never)}
+              />
             </View>
-
-            <ThemedText style={[styles.desc, { color: theme.textSecondary }]}>{item.desc}</ThemedText>
-
-            <View style={styles.inclusionGrid}>
-              {item.inclusions.map((inclusion) => (
-                <StatusBadge key={inclusion} label={`✓ ${inclusion}`} color={theme.success} />
-              ))}
-            </View>
-
-            <PrimaryButton
-              label="Choose live slot & pay"
-              onPress={() => router.push('/groom' as never)}
-            />
-          </View>
-        )}
-      />
+          )}
+        />
+      ) : null}
     </ScreenShell>
   );
 }
@@ -166,8 +175,7 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.x3 },
   cardCopy: { flex: 1, minWidth: 0, gap: spacing.x1 },
   serviceTitle: { ...typography.headline, fontSize: 16, lineHeight: 22, fontWeight: '700' },
-  applicability: { fontSize: 12, lineHeight: 18 },
+  description: { fontSize: 13, lineHeight: 19 },
   price: { ...typography.headline, fontSize: 20, fontWeight: '900' },
-  desc: { fontSize: 13, lineHeight: 19 },
   inclusionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x2 },
 });

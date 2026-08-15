@@ -37,7 +37,7 @@ export interface AddressInput {
 
 /** Compatibility shape for old tests/importers. The active Profile screen does not use precise coordinates. */
 export interface LegacyDefaultAddressInput {
-  label: string;
+  label?: string;
   recipientName?: string;
   phoneNumber?: string;
   line1: string;
@@ -111,10 +111,21 @@ export async function deleteCustomerAddress(accessToken: string, addressId: stri
   );
 }
 
-export async function fetchDefaultAddress(accessToken: string): Promise<CustomerAddress | null> {
+function normalizeLegacyAddress(value: LegacyDefaultAddress): LegacyDefaultAddress {
+  const geoLat = value.geoLat == null ? undefined : Number(value.geoLat);
+  const geoLng = value.geoLng == null ? undefined : Number(value.geoLng);
+  return { ...value, geoLat, geoLng };
+}
+
+export async function fetchDefaultAddress(accessToken: string): Promise<LegacyDefaultAddress | null> {
   try {
-    const addresses = await fetchCustomerAddresses(accessToken);
-    return addresses.find((address) => address.isDefault) ?? addresses[0] ?? null;
+    const response = await apiClient.get<CustomerAddress[] | LegacyDefaultAddress>(
+      '/api/v1/customer/addresses',
+      authHeaders(accessToken),
+    );
+    if (!Array.isArray(response)) return normalizeLegacyAddress(response);
+    const address = response.find((item) => item.isDefault) ?? response[0] ?? null;
+    return address;
   } catch (error) {
     if ((error as { status?: number })?.status === 404) return null;
     throw error;
@@ -138,11 +149,12 @@ export async function createDefaultAddress(
   input: LegacyDefaultAddressInput,
 ): Promise<LegacyDefaultAddress> {
   const { geoLat: _geoLat, geoLng: _geoLng, ...canonical } = input;
-  return apiClient.post<LegacyDefaultAddress>(
+  const response = await apiClient.post<LegacyDefaultAddress>(
     '/api/v1/customer/addresses',
     { ...canonical, isDefault: true },
     authHeaders(accessToken),
   );
+  return normalizeLegacyAddress(response);
 }
 
 export async function checkOutletServiceability(

@@ -149,7 +149,21 @@ export async function clearPendingPayment(expectedPaymentId?: string): Promise<v
   await AsyncStorage.removeItem(RECOVERY_KEY);
 }
 
-// Plan 8 appointment payment runtime is intentionally fail-closed in Plan 5.
-export async function initiateAppointmentPayment(): Promise<never> {
-  throw new Error('Appointment online payment is not available yet.');
+// These compatibility exports intentionally keep the already-restored Plan 8
+// screen compiling while the Plan 5 backend rejects APPOINTMENT references.
+// They never perform network or provider I/O and therefore cannot accidentally
+// revive the old client-authored appointment payment contract.
+export async function initiateAppointmentPayment(
+  _userId?: string,
+  _appointmentId?: string,
+  _amount?: number,
+  _customer?: unknown,
+): Promise<CustomerPaymentView> {
+  throw new Error('Appointment online payment is not available until Plan 8.');
+}
+
+export async function waitForReferencePaymentOutcome(
+  _referenceId: string,
+): Promise<{ status: 'SUCCESS' | 'PENDING' | 'FAILED'; transactionId: string }> {
+  throw new Error('Appointment online payment is not available until Plan 8.');
 }

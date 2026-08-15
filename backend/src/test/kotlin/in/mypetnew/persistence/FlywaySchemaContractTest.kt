@@ -64,9 +64,8 @@ class FlywaySchemaContractTest {
                 "payment_refund_history",
                 "service_offering",
                 "service_slot",
-                "service_appointment",
-                "appointment_idempotency",
-                "appointment_status_history",
+                "appointment",
+                "appointment_history",
             )), "tables=$tables")
 
             val organizationId = UUID.randomUUID()

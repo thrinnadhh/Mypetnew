@@ -21,7 +21,7 @@ class FlywaySchemaContractTest {
             .load()
 
         val result = flyway.migrate()
-        assertEquals(15, result.migrationsExecuted)
+        assertEquals(16, result.migrationsExecuted)
 
         DriverManager.getConnection(url, "sa", "").use { connection ->
             val tables = connection.prepareStatement(
@@ -55,6 +55,13 @@ class FlywaySchemaContractTest {
                 "account_deletion_request",
                 "deleted_identity_tombstone",
                 "security_incident",
+                "payment",
+                "payment_initiation_command",
+                "payment_history",
+                "payment_attempt",
+                "payment_webhook_inbox",
+                "payment_refund",
+                "payment_refund_history",
             )), "tables=$tables")
 
             val organizationId = UUID.randomUUID()

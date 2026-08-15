@@ -31,8 +31,8 @@ class CashfreePaymentContractTest {
         enabled = true,
         clientId = "test-client",
         clientSecret = secret,
-        apiVersion = "2026-01-01",
-        webhookVersion = "2026-01-01",
+        apiVersion = "2025-01-01",
+        webhookVersion = "2025-01-01",
         baseUrl = "https://sandbox.cashfree.com/pg",
         returnUrl = "https://staging.example.com/payments/cashfree/return",
         notifyUrl = "https://api-staging.example.com/api/v1/webhooks/cashfree/payments",
@@ -71,7 +71,7 @@ class CashfreePaymentContractTest {
 
         val result = gateway.createOrder(command)
         assertTrue(result is CreateProviderOrderResult.Created)
-        assertEquals("2026-01-01", observed?.headers?.get("x-api-version"))
+        assertEquals("2025-01-01", observed?.headers?.get("x-api-version"))
         assertEquals(command.providerIdempotencyKey, observed?.headers?.get("x-idempotency-key"))
         assertTrue(observed?.body.orEmpty().contains("\"order_amount\":135.00"))
         assertTrue(observed?.body.orEmpty().contains("\"customer_phone\":\"9876543210\""))
@@ -89,7 +89,7 @@ class CashfreePaymentContractTest {
         """.trimIndent().toByteArray(StandardCharsets.UTF_8)
         val signature = sign(timestamp, body)
 
-        val event = verifier.verifyAndNormalize(body, signature, timestamp, "2026-01-01", "delivery-1")
+        val event = verifier.verifyAndNormalize(body, signature, timestamp, "2025-01-01", "delivery-1")
 
         assertEquals("delivery-1", event.deliveryIdentity)
         assertEquals("mp_12345678901234567890123456789012", event.providerOrderReference)
@@ -110,13 +110,13 @@ class CashfreePaymentContractTest {
         val signature = sign(timestamp, body)
 
         assertEquals("PAYMENT_WEBHOOK_SIGNATURE_INVALID", assertThrows(DomainException::class.java) {
-            verifier.verifyAndNormalize(body, Base64.getEncoder().encodeToString(ByteArray(32)), timestamp, "2026-01-01", "delivery")
+            verifier.verifyAndNormalize(body, Base64.getEncoder().encodeToString(ByteArray(32)), timestamp, "2025-01-01", "delivery")
         }.code)
         assertEquals("PAYMENT_WEBHOOK_VERSION_INVALID", assertThrows(DomainException::class.java) {
-            verifier.verifyAndNormalize(body, signature, timestamp, "2025-01-01", "delivery")
+            verifier.verifyAndNormalize(body, signature, timestamp, "2026-01-01", "delivery")
         }.code)
         assertEquals("PAYMENT_WEBHOOK_INVALID", assertThrows(DomainException::class.java) {
-            verifier.verifyAndNormalize(body, signature, timestamp, "2026-01-01", null)
+            verifier.verifyAndNormalize(body, signature, timestamp, "2025-01-01", null)
         }.code)
     }
 
@@ -130,7 +130,7 @@ class CashfreePaymentContractTest {
                 enabled = true,
                 clientId = "id",
                 clientSecret = secret,
-                apiVersion = "2025-01-01",
+                apiVersion = "2026-01-01",
                 returnUrl = properties.returnUrl,
                 notifyUrl = properties.notifyUrl,
             )

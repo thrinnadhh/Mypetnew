@@ -16,8 +16,6 @@ spring:
     create-schemas: true
   jackson:
     default-property-inclusion: non_null
-    deserialization:
-      fail-on-unknown-properties: true
   threads:
     virtual:
       enabled: true

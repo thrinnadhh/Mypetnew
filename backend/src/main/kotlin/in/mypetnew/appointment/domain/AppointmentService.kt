@@ -62,10 +62,12 @@ interface AppointmentPersistence {
     fun getOffering(offeringId: UUID): ServiceOffering?
     fun listOfferings(outletId: UUID): List<ServiceOffering>
     fun createSlot(slot: ServiceSlot): ServiceSlot
+    fun getSlot(slotId: UUID): ServiceSlot?
     fun listSlots(offeringId: UUID, now: Instant): List<ServiceSlot>
     fun hold(appointment: Appointment, now: Instant): Appointment
     fun getAppointment(appointmentId: UUID): Appointment?
     fun confirm(appointmentId: UUID, customerId: UUID, paymentId: UUID?, now: Instant): Appointment
+    fun cancel(appointmentId: UUID, customerId: UUID, reason: String?, now: Instant): Appointment
     fun listCustomerAppointments(customerId: UUID): List<Appointment>
 }
 
@@ -95,11 +97,14 @@ class InMemoryAppointmentPersistence : AppointmentPersistence {
     }
 
     @Synchronized
+    override fun getSlot(slotId: UUID): ServiceSlot? = slots[slotId]
+
+    @Synchronized
     override fun listSlots(offeringId: UUID, now: Instant): List<ServiceSlot> {
         expireHolds(now)
         val unavailable = appointments.values
             .filter {
-                it.slotId in slots && it.status in setOf(
+                it.status in setOf(
                     AppointmentStatus.HOLD,
                     AppointmentStatus.BOOKED,
                     AppointmentStatus.CONFIRMED,
@@ -172,6 +177,18 @@ class InMemoryAppointmentPersistence : AppointmentPersistence {
     }
 
     @Synchronized
+    override fun cancel(appointmentId: UUID, customerId: UUID, reason: String?, now: Instant): Appointment {
+        expireHolds(now)
+        val current = appointments[appointmentId]?.takeIf { it.customerId == customerId } ?: unavailable()
+        if (current.status !in setOf(AppointmentStatus.HOLD, AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)) {
+            throw DomainException("APPOINTMENT_STATE_INVALID", "The appointment cannot be cancelled from its current state")
+        }
+        val updated = current.copy(status = AppointmentStatus.CANCELLED, holdExpiresAt = null, updatedAt = now)
+        appointments[appointmentId] = updated
+        return updated
+    }
+
+    @Synchronized
     override fun listCustomerAppointments(customerId: UUID): List<Appointment> = appointments.values
         .filter { it.customerId == customerId }
         .sortedWith(compareByDescending<Appointment> { it.createdAt }.thenByDescending { it.id.toString() })
@@ -225,7 +242,7 @@ class AppointmentService(
     }
 
     fun getOffering(offeringId: UUID): ServiceOffering = persistence.getOffering(offeringId) ?: unavailable()
-
+    fun getSlot(slotId: UUID): ServiceSlot = persistence.getSlot(slotId) ?: unavailable()
     fun listOfferings(outletId: UUID): List<ServiceOffering> = persistence.listOfferings(outletId)
 
     fun createSlot(offeringId: UUID, slotStart: Instant, slotEnd: Instant): ServiceSlot {
@@ -280,6 +297,9 @@ class AppointmentService(
 
     fun confirm(customerId: UUID, appointmentId: UUID, paymentId: UUID?): Appointment =
         persistence.confirm(appointmentId, customerId, paymentId, clock.instant())
+
+    fun cancel(customerId: UUID, appointmentId: UUID, reason: String?): Appointment =
+        persistence.cancel(appointmentId, customerId, reason?.trim()?.take(240), clock.instant())
 
     fun get(customerId: UUID, appointmentId: UUID): Appointment =
         persistence.getAppointment(appointmentId)?.takeIf { it.customerId == customerId } ?: unavailable()

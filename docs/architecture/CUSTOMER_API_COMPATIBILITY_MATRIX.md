@@ -2,6 +2,8 @@
 
 This document presents the authoritative inventory of Customer HTTP contracts in `apps/customer-app` evaluated against the canonical `MyPetNew` Spring Boot modular monolith backend (`in.mypetnew`).
 
+> **Plan 5 overlay — 2026-08-15:** The inventory below originated as the T1 migration snapshot and is retained for historical ticket context. For the capabilities changed by Plans 2–5, the current repository implementation supersedes the old `MISMATCH`/`DEFERRED` labels below. In particular, product pickup/Captain quotes now use `/api/v1/customer/quotes/pickup` and `/api/v1/customer/quotes/delivery`, ProductOrder checkout uses `/api/v1/customer/orders`, and Plan 5 product online payment uses `POST /api/v1/customer/payments` plus owned `GET /api/v1/customer/payments/{paymentId}`. `paymentMethod` is quote-owned, checkout cannot override it, Customer identity/amount/success are server-authoritative, and Cashfree callbacks only trigger backend verification. **Appointment online payment remains fail-closed/deferred until Plan 8**, and recurring-order runtime remains deferred. The dedicated `P5_PAYMENT_CONTRACT.md` and its 2026-08-15 durability amendment are authoritative for Plan-5 payment semantics.
+
 ---
 
 ## 1. Executive Endpoint Inventory

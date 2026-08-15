@@ -159,15 +159,11 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
             serverProducts = [saved, ...serverProducts];
             serverIds.add(product.targetId);
           } catch (error) {
-            // A product removed from the canonical catalog is a stale guest preference, not a reason to block the
-            // rest of the merge. Network/server failures remain retryable and keep the local product preference.
             if (error instanceof FavouriteRequestError && error.status === 404) continue;
             retryableLocalProducts.push(product);
           }
         }
 
-        // Product favourites become server-owned after sign-in. Shop favourites are intentionally local until a
-        // canonical outlet-favourite contract is approved; P3 does not send them through the old generic API.
         await saveLocal([...localShops, ...retryableLocalProducts]);
         if (active) {
           setFavourites(normalizeLocal([...serverProducts, ...localShops, ...retryableLocalProducts]));
@@ -246,7 +242,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
         return currentlyFavourite;
       }
     },
-    [favourites, session?.accessToken],
+    [favourites, session],
   );
 
   return (

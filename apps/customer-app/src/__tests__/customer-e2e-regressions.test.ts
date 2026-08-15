@@ -111,8 +111,9 @@ describe('customer end-to-end regression contracts', () => {
     const profile = source('src/services/customer-profile.ts');
     const location = source('src/context/LocationContext.tsx');
 
-    expect(profile).toMatch(/\/api\/v1\/addresses\/default/);
-    expect(profile).toMatch(/method: 'PUT'/);
+    expect(profile).toMatch(/\/api\/v1\/customer\/addresses/);
+    expect(profile).toMatch(/apiClient\.(post|patch)/);
+    expect(profile).not.toMatch(/\/api\/v1\/addresses\/default/);
     expect(location).toMatch(/\/api\/v1\/service-regions\/launch-requests/);
     expect(location).toMatch(/method: 'POST'/);
   });

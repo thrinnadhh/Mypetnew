@@ -13,8 +13,8 @@ export interface CustomerOrderSummaryRecord {
   status: OrderStatus;
   orderedAt: string;
   lastUpdatedAt: string;
-  fulfilmentMode: string;
-  paymentMethod: string;
+  fulfilmentMode: 'STORE_PICKUP';
+  paymentMethod: 'PAY_ON_FULFILMENT';
   paymentStatus: string;
 }
 
@@ -61,11 +61,14 @@ function toRecord(order: CustomerOrderSummaryDto): CustomerOrderSummaryRecord {
   if (!order.orderId || !order.outlet?.id || !order.outlet?.name) {
     throw new Error('Order service returned an invalid order summary.');
   }
-  if (!Number.isInteger(order.itemCount) || order.itemCount < 0) {
+  if (!Number.isSafeInteger(order.itemCount) || order.itemCount < 0) {
     throw new Error('Order service returned an invalid item count.');
   }
-  if (!Number.isFinite(order.grandTotalPaise) || order.grandTotalPaise < 0) {
+  if (!Number.isSafeInteger(order.grandTotalPaise) || order.grandTotalPaise < 0) {
     throw new Error('Order service returned invalid server pricing.');
+  }
+  if (order.fulfilmentMode !== 'STORE_PICKUP' || order.paymentMethod !== 'PAY_ON_FULFILMENT') {
+    throw new Error('Order service returned an unsupported P1 order contract.');
   }
 
   const rawTotal = order.grandTotalPaise / 100;

@@ -1,7 +1,7 @@
 import type { OrderStatus } from '@/contracts/order-contract.generated';
 import { apiClient } from '@/services/api-client';
 
-export type OrderTabCategory = 'active' | 'past' | 'subscription';
+export type OrderTabCategory = 'active' | 'past';
 
 export interface CustomerOrderSummaryRecord {
   id: string;
@@ -16,7 +16,6 @@ export interface CustomerOrderSummaryRecord {
   fulfilmentMode: string;
   paymentMethod: string;
   paymentStatus: string;
-  isSubscription: false;
 }
 
 interface CustomerOrderSummaryDto {
@@ -83,7 +82,6 @@ function toRecord(order: CustomerOrderSummaryDto): CustomerOrderSummaryRecord {
     fulfilmentMode: order.fulfilmentMode,
     paymentMethod: order.paymentMethod,
     paymentStatus: order.paymentStatus,
-    isSubscription: false,
   };
 }
 

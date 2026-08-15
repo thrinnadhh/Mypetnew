@@ -193,25 +193,27 @@ class JdbcAppointmentPersistence(
         if (current.status != AppointmentStatus.HOLD) {
             throw DomainException("APPOINTMENT_STATE_INVALID", "The appointment cannot be confirmed from its current state")
         }
-        if (!current.payAtClinic && paymentId == null) {
-            throw DomainException("APPOINTMENT_PAYMENT_REQUIRED", "A reconciled appointment payment is required")
+        if (!current.payAtClinic) {
+            throw DomainException("APPOINTMENT_ONLINE_PAYMENT_UNAVAILABLE", "Online appointment payment is not enabled yet")
+        }
+        if (paymentId != null) {
+            throw DomainException("APPOINTMENT_PAYMENT_NOT_ACCEPTED", "A client-supplied payment reference cannot confirm this appointment")
         }
 
         jdbc.update(
             """
             UPDATE mypet.appointment
-            SET status = 'BOOKED', payment_id = ?, booked_at = ?, hold_expires_at = NULL, updated_at = ?
+            SET status = 'BOOKED', payment_id = NULL, booked_at = ?, hold_expires_at = NULL, updated_at = ?
             WHERE id = ? AND status = 'HOLD'
             """.trimIndent(),
-            paymentId,
             java.sql.Timestamp.from(now),
             java.sql.Timestamp.from(now),
             appointmentId,
         )
-        appendHistory(appointmentId, AppointmentStatus.HOLD, AppointmentStatus.BOOKED, customerId, "Customer confirmed booking", now)
+        appendHistory(appointmentId, AppointmentStatus.HOLD, AppointmentStatus.BOOKED, customerId, "Customer confirmed pay-at-clinic booking", now)
         current.copy(
             status = AppointmentStatus.BOOKED,
-            paymentId = paymentId,
+            paymentId = null,
             bookedAt = now,
             holdExpiresAt = null,
             updatedAt = now,

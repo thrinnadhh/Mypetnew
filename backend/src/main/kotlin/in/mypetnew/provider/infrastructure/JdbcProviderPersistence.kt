@@ -132,6 +132,23 @@ class JdbcProviderPersistence(
         get(outletId) ?: notFound()
     }
 
+    override fun updateDispatchOrigin(outletId: UUID, latitude: Double, longitude: Double): ProviderOutlet =
+        transactions.execute {
+            val updated = jdbc.update(
+                """
+                UPDATE mypet.provider_outlet
+                SET dispatch_latitude = ?, dispatch_longitude = ?,
+                    version = version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """.trimIndent(),
+                latitude,
+                longitude,
+                outletId,
+            )
+            if (updated != 1) notFound()
+            get(outletId) ?: notFound()
+        }
+
     override fun all(): List<ProviderOutlet> = jdbc.query(
         """
         SELECT o.id, o.organization_id, m.owner_actor_id, o.name, o.status, o.pickup_enabled,

@@ -42,17 +42,25 @@ data class CashfreeProperties(
     val clientSecret: String = "",
     val apiVersion: String = SUPPORTED_VERSION,
     val webhookVersion: String = SUPPORTED_VERSION,
-    val baseUrl: String = "https://sandbox.cashfree.com/pg",
+    val baseUrl: String = SANDBOX_BASE_URL,
     val returnUrl: String = "",
     val notifyUrl: String = "",
 ) {
     init {
         require(apiVersion == SUPPORTED_VERSION) { "CASHFREE_API_VERSION is unsupported" }
         require(webhookVersion == SUPPORTED_VERSION) { "CASHFREE_WEBHOOK_VERSION is unsupported" }
-        require(baseUrl.startsWith("https://")) { "CASHFREE_BASE_URL must use HTTPS" }
+        val normalizedBaseUrl = baseUrl.trimEnd('/')
+        require(normalizedBaseUrl == SANDBOX_BASE_URL || normalizedBaseUrl == PRODUCTION_BASE_URL) {
+            "CASHFREE_BASE_URL must be an approved Cashfree Payment Gateway endpoint"
+        }
         if (enabled) {
             require(clientId.isNotBlank()) { "CASHFREE_CLIENT_ID is required when online payments are enabled" }
             require(clientSecret.length >= 16) { "CASHFREE_CLIENT_SECRET is invalid" }
+            requirePublicHttpsUrl("CASHFREE_RETURN_URL", returnUrl)
+            val notify = requirePublicHttpsUrl("CASHFREE_NOTIFY_URL", notifyUrl)
+            require(notify.path == WEBHOOK_PATH && notify.query == null && notify.fragment == null) {
+                "CASHFREE_NOTIFY_URL must end at $WEBHOOK_PATH without query or fragment"
+            }
         }
     }
 
@@ -60,8 +68,26 @@ data class CashfreeProperties(
         "CashfreeProperties(enabled=$enabled, clientId=[REDACTED], clientSecret=[REDACTED], apiVersion=$apiVersion, webhookVersion=$webhookVersion, baseUrl=$baseUrl)"
 
     companion object {
-        const val SUPPORTED_VERSION = "2026-01-01"
+        const val SUPPORTED_VERSION = "2025-01-01"
+        const val SANDBOX_BASE_URL = "https://sandbox.cashfree.com/pg"
+        const val PRODUCTION_BASE_URL = "https://api.cashfree.com/pg"
+        const val WEBHOOK_PATH = "/api/v1/webhooks/cashfree/payments"
     }
+}
+
+private fun requirePublicHttpsUrl(name: String, value: String): URI {
+    require(value.isNotBlank()) { "$name is required when online payments are enabled" }
+    val uri = runCatching { URI.create(value) }
+        .getOrElse { throw IllegalArgumentException("$name is invalid") }
+    require(uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank()) {
+        "$name must be an absolute HTTPS URL"
+    }
+    require(uri.userInfo == null) { "$name must not contain user-info credentials" }
+    val host = uri.host.lowercase()
+    require(host !in setOf("localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]")) {
+        "$name must use a public HTTPS host"
+    }
+    return uri
 }
 
 data class CashfreeHttpResponse(val status: Int, val body: String)

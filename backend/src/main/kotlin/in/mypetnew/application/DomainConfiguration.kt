@@ -3,6 +3,8 @@ package `in`.mypetnew.application
 import `in`.mypetnew.catalog.domain.CatalogService
 import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.commerce.domain.CartService
+import `in`.mypetnew.commerce.domain.CustomerOrderQuery
+import `in`.mypetnew.commerce.domain.InMemoryQueryableOrderPersistence
 import `in`.mypetnew.commerce.domain.OrderService
 import `in`.mypetnew.commerce.domain.QuoteService
 import `in`.mypetnew.engagement.domain.DeviceRegistrationService
@@ -62,7 +64,12 @@ class DomainConfiguration {
     @Bean @Profile("test", "development") fun inventoryService() = InventoryService()
     @Bean @Profile("test", "development") fun cartService() = CartService()
     @Bean @Profile("test", "development") fun quoteService() = QuoteService()
-    @Bean @Profile("test", "development") fun orderService(inventory: InventoryService) = OrderService(inventory)
+    @Bean @Profile("test", "development") fun inMemoryOrderPersistence() = InMemoryQueryableOrderPersistence()
+    @Bean @Profile("test", "development")
+    fun orderService(inventory: InventoryService, persistence: InMemoryQueryableOrderPersistence) =
+        OrderService(inventory, persistence)
+    @Bean @Profile("test", "development")
+    fun customerOrderQuery(persistence: InMemoryQueryableOrderPersistence): CustomerOrderQuery = persistence
     @Bean @Profile("test", "development") fun loyaltyService() = LoyaltyService()
     @Bean @Profile("test", "development")
     fun posService(inventory: InventoryService, loyalty: LoyaltyService) = PosService(inventory, loyalty)

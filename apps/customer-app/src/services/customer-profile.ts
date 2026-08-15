@@ -1,53 +1,47 @@
-import { appConfig } from '@/utils/app-config';
+import { apiClient } from '@/services/api-client';
+
+export interface CustomerProfile {
+  accountId: string;
+  name: string | null;
+  mobile: string;
+  email: string | null;
+  profileCompletion: number;
+}
 
 export interface CustomerAddress {
   addressId: string;
-  label: string | null;
+  label: string;
+  recipientName: string;
+  phoneNumber: string;
   line1: string;
   line2: string | null;
   city: string;
   state: string;
   pincode: string;
-  geoLat: number;
-  geoLng: number;
   isDefault: boolean;
-}
-
-export interface DeliveryContact {
-  addressId: string;
-  phoneNumber: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AddressInput {
-  label?: string;
+  label: string;
+  recipientName: string;
+  phoneNumber: string;
   line1: string;
-  line2?: string;
+  line2?: string | null;
   city: string;
   state: string;
   pincode: string;
-  geoLat: number;
-  geoLng: number;
+  isDefault?: boolean;
 }
 
-const authHeaders = (accessToken: string) => ({
-  Accept: 'application/json',
-  Authorization: `Bearer ${accessToken}`,
-  'Content-Type': 'application/json',
-});
-
-async function addressError(response: Response): Promise<Error> {
-  const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null;
-  return new Error(body?.message || body?.error || `ADDRESS_${response.status}`);
+export interface ServiceabilityResponse {
+  serviceable: boolean;
+  fulfilmentMode: 'STORE_PICKUP' | 'MYPET_CAPTAIN_DELIVERY';
+  reasonCode: string;
 }
 
-function normalizeAddress(
-  value: Omit<CustomerAddress, 'geoLat' | 'geoLng'> & {
-    geoLat: number | string;
-    geoLng: number | string;
-  },
-): CustomerAddress {
-  return { ...value, geoLat: Number(value.geoLat), geoLng: Number(value.geoLng) };
-}
+const authHeaders = (accessToken: string) => ({ Authorization: `Bearer ${accessToken}` });
 
 export function normalizeDeliveryPhone(value: string): string {
   const digits = value.replace(/\D/g, '');
@@ -56,57 +50,76 @@ export function normalizeDeliveryPhone(value: string): string {
   throw new Error('Enter a valid 10-digit Indian mobile number.');
 }
 
-export async function fetchDefaultAddress(accessToken: string): Promise<CustomerAddress | null> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/addresses/default`, {
-    headers: authHeaders(accessToken),
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) throw await addressError(response);
-  return normalizeAddress(await response.json());
+export async function fetchCustomerProfile(accessToken: string): Promise<CustomerProfile> {
+  return apiClient.get<CustomerProfile>('/api/v1/customer/profile', authHeaders(accessToken));
 }
 
-export async function createDefaultAddress(
+export async function updateCustomerProfile(
+  accessToken: string,
+  input: { name?: string | null; email?: string | null },
+): Promise<CustomerProfile> {
+  return apiClient.patch<CustomerProfile>('/api/v1/customer/profile', input, authHeaders(accessToken));
+}
+
+export async function fetchCustomerAddresses(accessToken: string): Promise<CustomerAddress[]> {
+  return apiClient.get<CustomerAddress[]>('/api/v1/customer/addresses', authHeaders(accessToken));
+}
+
+export async function createCustomerAddress(
   accessToken: string,
   input: AddressInput,
 ): Promise<CustomerAddress> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/addresses/default`, {
-    method: 'PUT',
-    headers: authHeaders(accessToken),
-    body: JSON.stringify({ ...input, isDefault: true }),
-  });
-  if (!response.ok) throw await addressError(response);
-  return normalizeAddress(await response.json());
+  return apiClient.post<CustomerAddress>(
+    '/api/v1/customer/addresses',
+    { ...input, phoneNumber: normalizeDeliveryPhone(input.phoneNumber) },
+    authHeaders(accessToken),
+  );
 }
 
-export async function fetchDeliveryContact(
+export async function updateCustomerAddress(
   accessToken: string,
   addressId: string,
-): Promise<DeliveryContact | null> {
-  const response = await fetch(
-    `${appConfig.apiBaseUrl}/api/v1/addresses/${encodeURIComponent(addressId)}/contact`,
-    { headers: authHeaders(accessToken) },
+  input: AddressInput,
+): Promise<CustomerAddress> {
+  return apiClient.patch<CustomerAddress>(
+    `/api/v1/customer/addresses/${encodeURIComponent(addressId)}`,
+    { ...input, phoneNumber: normalizeDeliveryPhone(input.phoneNumber) },
+    authHeaders(accessToken),
   );
-  if (response.status === 404) return null;
-  if (!response.ok) throw await addressError(response);
-  return (await response.json()) as DeliveryContact;
 }
 
-export async function saveDeliveryContact(
-  accessToken: string,
-  addressId: string,
-  rawPhoneNumber: string,
-): Promise<DeliveryContact> {
-  const phoneNumber = normalizeDeliveryPhone(rawPhoneNumber);
-  const response = await fetch(
-    `${appConfig.apiBaseUrl}/api/v1/addresses/${encodeURIComponent(addressId)}/contact`,
-    {
-      method: 'PUT',
-      headers: authHeaders(accessToken),
-      body: JSON.stringify({ phoneNumber }),
-    },
+export async function deleteCustomerAddress(accessToken: string, addressId: string): Promise<void> {
+  await apiClient.delete<void>(
+    `/api/v1/customer/addresses/${encodeURIComponent(addressId)}`,
+    authHeaders(accessToken),
   );
-  if (!response.ok) throw await addressError(response);
-  return (await response.json()) as DeliveryContact;
+}
+
+export async function fetchDefaultAddress(accessToken: string): Promise<CustomerAddress | null> {
+  const addresses = await fetchCustomerAddresses(accessToken);
+  return addresses.find((address) => address.isDefault) ?? addresses[0] ?? null;
+}
+
+export async function saveDefaultAddress(
+  accessToken: string,
+  input: AddressInput,
+  existingAddressId?: string | null,
+): Promise<CustomerAddress> {
+  const payload = { ...input, isDefault: true };
+  return existingAddressId
+    ? updateCustomerAddress(accessToken, existingAddressId, payload)
+    : createCustomerAddress(accessToken, payload);
+}
+
+export async function checkOutletServiceability(
+  outletId: string,
+  pincode: string,
+  mode: 'DELIVERY' | 'PICKUP' = 'DELIVERY',
+): Promise<ServiceabilityResponse> {
+  if (!/^[1-9]\d{5}$/.test(pincode)) throw new Error('Enter a valid six-digit PIN code.');
+  return apiClient.get<ServiceabilityResponse>(
+    `/api/v1/public/outlets/${encodeURIComponent(outletId)}/serviceability?pincode=${encodeURIComponent(pincode)}&mode=${mode}`,
+  );
 }
 
 export function isOfflineError(error: unknown): boolean {

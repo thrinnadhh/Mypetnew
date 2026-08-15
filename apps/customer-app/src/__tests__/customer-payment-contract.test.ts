@@ -7,18 +7,20 @@ import {
 } from '../contracts/customer-payment';
 
 describe('customer payment contract', () => {
-  it('clears the cart only after server-confirmed success', () => {
+  it('clears the cart only after server-confirmed capture', () => {
     expect(paymentAllowsCartClear('PENDING')).toBe(false);
+    expect(paymentAllowsCartClear('AUTHORIZED')).toBe(false);
     expect(paymentAllowsCartClear('FAILED')).toBe(false);
-    expect(paymentAllowsCartClear('SUCCESS')).toBe(true);
+    expect(paymentAllowsCartClear('CAPTURED')).toBe(true);
   });
 
-  it('polls only pending payments and exposes retryable failures', () => {
+  it('polls pending or authorized payments and exposes server failures as retryable', () => {
     expect(shouldPollPayment('PENDING')).toBe(true);
-    expect(shouldPollPayment('SUCCESS')).toBe(false);
-    expect(paymentNeedsRetry('NOT_STARTED')).toBe(true);
+    expect(shouldPollPayment('AUTHORIZED')).toBe(true);
+    expect(shouldPollPayment('CAPTURED')).toBe(false);
     expect(paymentNeedsRetry('FAILED')).toBe(true);
-    expect(paymentNeedsRetry('SUCCESS')).toBe(false);
+    expect(paymentNeedsRetry('EXPIRED')).toBe(true);
+    expect(paymentNeedsRetry('CAPTURED')).toBe(false);
   });
 
   it('stops order polling at terminal states', () => {

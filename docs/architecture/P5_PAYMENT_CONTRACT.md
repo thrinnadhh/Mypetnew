@@ -2,7 +2,7 @@
 
 Status: **Checkpoint A — implementation contract for architect review**
 
-Version: **3.1**
+Version: **3.2**
 
 Date: **2026-08-15**
 
@@ -132,9 +132,12 @@ This guard is distinct from the ordinary transition matrix so the stable error
 is not collapsed into `ORDER_TRANSITION_INVALID`. `PAY_ON_FULFILMENT` acceptance
 must behave exactly as in Plan 4.
 
-Cancellation or rejection of a paid order creates/reuses the one full Refund
-and changes only the order payment projection. It does not rewrite Payment
-provider truth.
+Customer cancellation, Merchant rejection, or another authorized cancellation
+of a paid order creates/reuses the one full Refund and changes only the order
+payment projection. It does not rewrite Payment provider truth. The transaction
+atomically commits the order transition, existing inventory-release bookkeeping,
+`REFUND_PENDING`, and the unique durable Refund intent. It performs no Cashfree
+HTTP; restart-safe external refund execution happens only after commit.
 
 ## 6. Customer payment API
 
@@ -219,6 +222,23 @@ canonical Payment `PENDING`/`AUTHORIZED`; only a validated success captures it.
 Every canonical Payment transition appends immutable `payment_history` in the
 same database transaction. `CAPTURED` is monotonic and cannot regress.
 
+### Mandatory global lock order
+
+Every Plan 5 transaction uses one global aggregate lock order:
+
+```text
+ProductOrder -> Payment -> Refund -> subordinate PaymentAttempt/history rows
+```
+
+A transaction that needs only a subset preserves the same relative order. It
+must never lock Payment and then ProductOrder, Refund and then Payment, or a
+subordinate attempt/history row before its owning aggregate. Capture, expiry,
+Customer cancellation, Merchant rejection, every other authorized paid
+cancellation, late capture, refund-intent creation, refund reconciliation, and
+refund projection must never reverse this order. Repository helpers and
+concurrency tests enforce this rule across request, inbox, reconciliation, and
+scheduled-worker paths.
+
 ## 8. Payment hold and expiry
 
 A scheduled worker claims expired online orders using database locking suitable
@@ -237,8 +257,9 @@ the expired order cannot be reopened.
 
 ## 9. Capture, cancellation, and race policy
 
-Applying payment success locks the Payment and ProductOrder in one consistent
-order and verifies provider reference, amount, currency, and attempt identity.
+Applying payment success locks ProductOrder and then Payment, followed by Refund
+only when required, and verifies provider reference, amount, currency, and
+attempt identity.
 
 If provider success is confirmed while the order is `PLACED`, the hold is still
 valid, and the order is not cancelled/rejected:
@@ -253,8 +274,15 @@ already `CANCELLED`/`REJECTED`:
 
 - still record Payment as `CAPTURED` because provider truth cannot be denied;
 - never resurrect or accept the order;
-- create/reuse exactly one durable full Refund; and
-- project `REFUND_PENDING`, then `REFUNDED` only after provider confirmation.
+- ensure existing inventory-release bookkeeping is durably complete exactly
+  once;
+- atomically create/reuse exactly one durable full Refund intent and project
+  `REFUND_PENDING` in the same transaction that records late capture; and
+- project `REFUNDED` only after provider confirmation.
+
+That late-capture transaction follows `ProductOrder -> Payment -> Refund` and
+performs no Cashfree HTTP. External refund execution starts after commit, uses
+the durable deterministic intent, and is restart-safe.
 
 Expiry and capture workers use database row locks, uniqueness, and deterministic
 commands so either serialization yields the same valid outcome: paid live order,
@@ -271,13 +299,20 @@ provider secrets cross into domain objects.
 Use the established Spring HTTP client convention. Test/CI injects a fake
 gateway and never calls live Cashfree.
 
-The adapter pins its Cashfree Payments API version through server configuration,
-with `CASHFREE_API_VERSION=2026-01-01` as the Plan 5 value. The same selected
-version governs Create Order, payment/status reconciliation, Create/Get Refund,
-and accepted webhook DTOs. Production startup rejects a missing or unsupported
-version. Contract fixtures and adapter tests cover the `2026-01-01` shapes; a
-future version change requires an explicit configuration, DTO, and contract-test
-change rather than silently following a provider default.
+The adapter pins two separate Cashfree operational contracts through server
+configuration:
+
+- `CASHFREE_API_VERSION=2026-01-01` governs REST Create Order, payment/status
+  reconciliation, and Create/Get Refund requests and responses.
+- `CASHFREE_WEBHOOK_VERSION=2026-01-01` governs the webhook shape configured in
+  the Cashfree Dashboard and the accepted webhook DTOs.
+
+They currently have the same value but are not one setting and must never be
+implicitly coupled. Production startup rejects either missing or unsupported
+value. Contract fixtures and adapter tests cover both `2026-01-01` contracts; a
+future change to either requires its own explicit configuration, DTO, deployment
+coordination, and contract-test change rather than silently following a provider
+default.
 
 ### Payment initiation
 
@@ -345,8 +380,8 @@ The implementation must not invent or accept `x-webhook-idempotency-key`.
 Signature input is the exact timestamp string concatenated with the exact raw
 request bytes/body. Compute HMAC-SHA256 with the Cashfree client secret, Base64
 encode the digest, and compare decoded/validated values in constant time. Verify
-required headers, configured/supported version, and signature before JSON parsing
-or normalization.
+required headers, the configured/supported `CASHFREE_WEBHOOK_VERSION`, and
+signature before JSON parsing or normalization.
 
 `x-webhook-timestamp` is mandatory and always participates in signature
 verification, but Plan 5 does not impose a hard five-minute age rejection on
@@ -369,7 +404,8 @@ Official references:
 The public webhook controller performs only bounded ingest work:
 
 1. capture exact raw body and required headers;
-2. verify configured version and HMAC against the exact raw body before parsing;
+2. verify `CASHFREE_WEBHOOK_VERSION` and HMAC against the exact raw body before
+   parsing;
 3. parse and validate the verified `2026-01-01` event into a complete normalized,
    non-sensitive processing snapshot;
 4. normalize delivery identity from the exact current `x-idempotency-key` and
@@ -386,7 +422,8 @@ business transition without retaining or reparsing the provider payload. Persist
 - `providerOrderReference`;
 - `providerPaymentId` (`cf_payment_id`) when present;
 - normalized `attemptStatus`;
-- exact `amountPaise` and `currency`;
+- exact `orderAmountPaise` and `orderCurrency`;
+- exact `paymentAmountPaise` and `paymentCurrency`;
 - `providerPaymentTime` and `providerEventTime`;
 - `payloadSha256` over the exact signed bytes;
 - bounded, non-sensitive provider error code/reason when applicable;
@@ -401,6 +438,11 @@ or other provider response data not required by the normalized transition.
 Failure to persist/commit the normalized snapshot returns non-2xx so Cashfree
 retries. A duplicate delivery whose existing inbox row is durably committed may
 be acknowledged without duplicating business effects.
+
+The asynchronous worker validates both durable order and payment amount/currency
+pairs against canonical Payment without access to the raw payload. Missing or
+inconsistent normalized fields fail closed into reconciliation; the worker never
+substitutes one pair for the other.
 
 `processedAt` starts `NULL`. Unique `(provider, delivery_identity)` makes replay
 safe. A worker atomically claims `RECEIVED`, retryable `FAILED`, and stale
@@ -428,6 +470,20 @@ Authorized triggers are owning-order policy events only, including paid Customer
 cancellation where currently allowed, paid Merchant rejection/cancellation, and
 late capture after cancellation/rejection/hold expiry. Duplicate triggers return
 the existing Refund.
+
+For every paid Customer cancellation, Merchant rejection, or other authorized
+paid cancellation, one `ProductOrder -> Payment -> Refund` transaction commits
+all of the following or none of them:
+
+1. the authorized order transition and history;
+2. the existing idempotent inventory-release bookkeeping;
+3. ProductOrder payment projection `REFUND_PENDING`; and
+4. the unique durable full Refund intent with deterministic provider identity.
+
+There is no Cashfree HTTP inside this transaction. A restart-safe worker executes
+or reconciles the external refund afterward. Late capture requiring refund uses
+the same atomic intent/projection invariant; it cannot acknowledge capture while
+leaving the terminal order without a durable Refund intent.
 
 Provider refund calls use a deterministic refund ID and stable idempotency key.
 Refund confirmation appends immutable refund history. Payment stays `CAPTURED`;
@@ -489,6 +545,9 @@ Mandatory database invariants include:
 - unique non-null provider order reference per provider;
 - unique actual attempt `(provider, provider_payment_id)`;
 - unique Refund by `payment_id`;
+- separate non-negative webhook `order_amount_paise` and
+  `payment_amount_paise`, with their exact currencies, sufficient for raw-free
+  asynchronous validation;
 - non-negative paise and exact currency/status checks;
 - nullable `processed_at` until inbox processing succeeds; and
 - indexes supporting owned reads, expiry, reconciliation, inbox claims, stale
@@ -558,9 +617,14 @@ Backend tests must cover:
 - complete normalized snapshot committed before HTTP 200; non-2xx on inbox write
   failure; no raw/instrument/Customer payload retention; crash after `RECEIVED`;
   retryable `FAILED`; and stale `PROCESSING` reclaim;
+- durable order/payment amount and currency pairs independently validated by the
+  asynchronous worker without raw payload access;
 - merchant unpaid-online rejection and pay-on-fulfilment regression;
 - expiry releasing stock once; capture-versus-expiry concurrency; late capture
   producing one refund without resurrection;
+- global `ProductOrder -> Payment -> Refund` lock order across capture, expiry,
+  cancellation, rejection, late capture, and refund paths; paid cancellation and
+  late-capture refund intent atomically committed without provider HTTP;
 - refund `SUCCESS`/`PENDING`/`ONHOLD`/`FAILED`/`CANCELLED` normalization; timeout
   or 5xx reconciliation before repeat POST; duplicate trigger; full-amount
   invariant; provider order ID and order/payment amount/currency mismatch; and

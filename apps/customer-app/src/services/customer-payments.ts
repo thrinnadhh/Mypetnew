@@ -65,13 +65,16 @@ export async function fetchPaymentStatus(paymentId: string): Promise<CustomerPay
  *
  * The native SDK is loaded lazily at the moment checkout is launched. Merely
  * importing payment/auth services therefore does not initialize native payment
- * bindings in Jest, cold-start auth, or non-payment screens.
+ * bindings in Jest, cold-start auth, or non-payment screens. A literal require
+ * keeps the dependency discoverable by Metro while deferring native module load
+ * until the user actually starts Cashfree checkout.
  */
 export async function openCashfreeOrder(payment: CustomerPaymentView): Promise<CashfreeCallbackSignal> {
   if (!payment.paymentSessionId || !payment.providerOrderId) {
     throw new Error('Cashfree returned an invalid checkout session.');
   }
-  const { openCashfreeNativeCheckout } = await import('./cashfree-native');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { openCashfreeNativeCheckout } = require('./cashfree-native') as typeof import('./cashfree-native');
   return openCashfreeNativeCheckout({
     paymentSessionId: payment.paymentSessionId,
     providerOrderId: payment.providerOrderId,

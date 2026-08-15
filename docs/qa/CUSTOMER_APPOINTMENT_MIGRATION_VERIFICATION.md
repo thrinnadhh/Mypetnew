@@ -9,8 +9,10 @@ This document records the repository-level verification scope for the MyPet-styl
 - Pet ownership is verified server-side before a hold is created.
 - Service price is snapshotted from the server-owned service offering; the Customer UI display amount is not authoritative.
 - Appointment holds use an `Idempotency-Key` and a request fingerprint.
-- PostgreSQL enforces one active occupying appointment per slot.
+- Slot exclusivity is enforced transactionally: the JDBC hold path locks the canonical `service_slot` row, expires stale holds for that slot, re-checks occupying appointment states after lock acquisition, and only then inserts the new hold. The schema retains an ordinary slot/status index rather than claiming a PostgreSQL partial uniqueness constraint that is not present.
 - Grooming and veterinary discovery use canonical public service and availability APIs rather than static production catalogues.
+- Availability API failures are surfaced to the Customer retry/error state; only a successful empty availability response is rendered as "no slots".
+- A deterministic Customer retry replays the same appointment hold while it remains active. If that key resolves to a terminal `CANCELLED`, `HOLD_EXPIRED`, or `REJECTED` appointment, the client creates one fresh attempt key so a still-future slot can legitimately be rebooked.
 - Appointment confirmation is `PAY_AT_PROVIDER`; appointment flows do not create a Cashfree session.
 - Product-order Cashfree support remains separate and retains its existing sandbox/live-certification boundaries.
 - Patchable Customer transitive findings are pinned to `brace-expansion` 1.1.18 and `nanoid` 3.3.18.

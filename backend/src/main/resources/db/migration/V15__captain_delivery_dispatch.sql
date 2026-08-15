@@ -77,6 +77,9 @@ CREATE TABLE mypet.dispatch_offer (
     CHECK (expires_at > offered_at)
 );
 
+CREATE INDEX idx_product_order_delivery_ready
+    ON mypet.product_order(fulfilment_mode, status, id);
+
 CREATE INDEX idx_dispatch_job_active
     ON mypet.dispatch_job(status, updated_at, id);
 

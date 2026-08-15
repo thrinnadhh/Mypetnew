@@ -1,0 +1,64 @@
+name: temporary-fix-appointment-expiry-parity
+
+on:
+  push:
+    branches:
+      - feat/customer-canonical-appointments-20260816
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/customer-canonical-appointments-20260816
+          fetch-depth: 0
+      - name: Patch JDBC expiry parity and tests
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          jdbc = Path('backend/src/main/kotlin/in/mypetnew/appointment/infrastructure/JdbcAppointmentPersistence.kt')
+          text = jdbc.read_text()
+          old = """        if (current.status == AppointmentStatus.BOOKED || current.status == AppointmentStatus.CONFIRMED) return@execute current
+        if (current.status != AppointmentStatus.HOLD) invalidState()
+        if (current.holdExpiresAt == null || !current.holdExpiresAt.isAfter(now)) holdExpired()"""
+          new = """        if (current.status == AppointmentStatus.BOOKED || current.status == AppointmentStatus.CONFIRMED) return@execute current
+        if (current.status == AppointmentStatus.HOLD_EXPIRED) holdExpired()
+        if (current.status != AppointmentStatus.HOLD) invalidState()
+        if (current.holdExpiresAt == null || !current.holdExpiresAt.isAfter(now)) holdExpired()"""
+          if old not in text:
+              raise SystemExit('confirm marker missing')
+          text = text.replace(old, new, 1)
+
+          old = """        if (current.status == AppointmentStatus.CANCELLED) return@execute current
+        if (current.status !in setOf(AppointmentStatus.HOLD, AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)) invalidState()"""
+          new = """        if (current.status == AppointmentStatus.CANCELLED) return@execute current
+        if (current.status == AppointmentStatus.HOLD_EXPIRED) holdExpired()
+        if (current.status == AppointmentStatus.HOLD && (current.holdExpiresAt == null || !current.holdExpiresAt.isAfter(now))) holdExpired()
+        if (current.status !in setOf(AppointmentStatus.HOLD, AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)) invalidState()"""
+          if old not in text:
+              raise SystemExit('cancel marker missing')
+          jdbc.write_text(text.replace(old, new, 1))
+
+          test = Path('backend/src/test/kotlin/in/mypetnew/appointment/AppointmentServiceTest.kt')
+          text = test.read_text()
+          old = '        assertEquals("APPOINTMENT_STATE_INVALID", error.code)\n        assertEquals(AppointmentStatus.HOLD_EXPIRED, later.get(customerA, held.id).status)\n        assertEquals(listOf(slot.id), later.availability(offering.id, now, now.plusSeconds(86_400)).map { it.id })'
+          new = '        assertEquals("APPOINTMENT_HOLD_EXPIRED", error.code)\n        assertEquals(AppointmentStatus.HOLD_EXPIRED, later.get(customerA, held.id).status)\n        val cancelError = assertThrows(DomainException::class.java) { later.cancel(customerA, held.id, "Too late") }\n        assertEquals("APPOINTMENT_HOLD_EXPIRED", cancelError.code)\n        assertEquals(listOf(slot.id), later.availability(offering.id, now, now.plusSeconds(86_400)).map { it.id })'
+          if old not in text:
+              raise SystemExit('expiry test marker missing')
+          test.write_text(text.replace(old, new, 1))
+          PY
+      - name: Commit patch and remove helper workflow
+        shell: bash
+        run: |
+          rm .github/workflows/zz-temp-fix-appointment-expiry-parity.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/main/kotlin/in/mypetnew/appointment/infrastructure/JdbcAppointmentPersistence.kt backend/src/test/kotlin/in/mypetnew/appointment/AppointmentServiceTest.kt .github/workflows/zz-temp-fix-appointment-expiry-parity.yml
+          git commit -m "fix(appointments): align JDBC hold expiry semantics"
+          git push origin HEAD:feat/customer-canonical-appointments-20260816

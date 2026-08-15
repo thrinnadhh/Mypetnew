@@ -3,7 +3,6 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import { Alert } from 'react-native';
 
 import { useAuth } from '@/context/AuthContext';
-import { useAuthIntent } from '@/context/AuthIntentContext';
 import { appConfig } from '@/utils/app-config';
 
 export interface FavouriteItem {
@@ -11,6 +10,13 @@ export interface FavouriteItem {
   targetType: 'PRODUCT' | 'SHOP';
   targetId: string;
   createdAt?: string;
+}
+
+interface FavouritePage {
+  items: Array<{ listingId: string; createdAt: string }>;
+  page: number;
+  pageSize: number;
+  hasNext: boolean;
 }
 
 interface FavouritesContextType {
@@ -21,13 +27,12 @@ interface FavouritesContextType {
 }
 
 const FavouritesContext = createContext<FavouritesContextType | null>(null);
-const STORAGE_KEY = 'mypet_favourites_v2_guest';
+const STORAGE_KEY = 'mypet_favourites_v3_local';
 
 function authHeaders(accessToken: string): Record<string, string> {
   return {
     Accept: 'application/json',
     Authorization: `Bearer ${accessToken}`,
-    'Content-Type': 'application/json',
   };
 }
 
@@ -36,9 +41,62 @@ async function serverError(response: Response): Promise<Error> {
   return new Error(body?.message || body?.error || `Favourite request failed (${response.status})`);
 }
 
+function normalizeLocal(items: FavouriteItem[]): FavouriteItem[] {
+  const unique = new Map<string, FavouriteItem>();
+  for (const item of items) {
+    if ((item.targetType === 'PRODUCT' || item.targetType === 'SHOP') && item.targetId) {
+      unique.set(`${item.targetType}:${item.targetId}`, item);
+    }
+  }
+  return [...unique.values()];
+}
+
+async function loadLocal(): Promise<FavouriteItem[]> {
+  const stored = await AsyncStorage.getItem(STORAGE_KEY);
+  if (!stored) return [];
+  try {
+    return normalizeLocal(JSON.parse(stored) as FavouriteItem[]);
+  } catch {
+    return [];
+  }
+}
+
+async function saveLocal(items: FavouriteItem[]): Promise<void> {
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeLocal(items)));
+}
+
+async function fetchAllServerProducts(accessToken: string): Promise<FavouriteItem[]> {
+  const result: FavouriteItem[] = [];
+  for (let page = 0; page < 100; page += 1) {
+    const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/customer/favourites?page=${page}&pageSize=100`, {
+      headers: authHeaders(accessToken),
+    });
+    if (!response.ok) throw await serverError(response);
+    const body = (await response.json()) as FavouritePage;
+    result.push(
+      ...body.items.map((item) => ({
+        targetType: 'PRODUCT' as const,
+        targetId: item.listingId,
+        createdAt: item.createdAt,
+      })),
+    );
+    if (!body.hasNext) return result;
+  }
+  throw new Error('Favourite pagination exceeded the supported client bound.');
+}
+
+async function putProduct(accessToken: string, listingId: string): Promise<FavouriteItem> {
+  const response = await fetch(
+    `${appConfig.apiBaseUrl}/api/v1/customer/favourites/${encodeURIComponent(listingId)}`,
+    { method: 'PUT', headers: authHeaders(accessToken) },
+  );
+  if (!response.ok) throw await serverError(response);
+  const body = (await response.json()) as { listingId: string; createdAt: string };
+  return { targetType: 'PRODUCT', targetId: body.listingId, createdAt: body.createdAt };
+}
+
 export function FavouritesProvider({ children }: { children: React.ReactNode }) {
-  const { user, session } = useAuth();
-  const { requireAuth } = useAuthIntent();
+  const { session } = useAuth();
   const [favourites, setFavourites] = useState<FavouriteItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -48,20 +106,33 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
     const loadFavourites = async () => {
       setLoading(true);
       try {
-        if (session?.accessToken) {
-          const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/customer/favourites`, {
-            headers: authHeaders(session.accessToken),
-          });
-          if (!response.ok) throw await serverError(response);
-          const data = (await response.json()) as FavouriteItem[];
-          if (active) setFavourites(Array.isArray(data) ? data : []);
-        } else {
-          const stored = await AsyncStorage.getItem(STORAGE_KEY);
-          if (active) setFavourites(stored ? (JSON.parse(stored) as FavouriteItem[]) : []);
+        const local = await loadLocal();
+        if (!session?.accessToken) {
+          if (active) setFavourites(local);
+          return;
         }
+
+        let serverProducts = await fetchAllServerProducts(session.accessToken);
+        const localProducts = local.filter((item) => item.targetType === 'PRODUCT');
+        const localShops = local.filter((item) => item.targetType === 'SHOP');
+        const serverIds = new Set(serverProducts.map((item) => item.targetId));
+
+        for (const product of localProducts) {
+          if (!serverIds.has(product.targetId)) {
+            const saved = await putProduct(session.accessToken, product.targetId);
+            serverProducts = [saved, ...serverProducts];
+            serverIds.add(product.targetId);
+          }
+        }
+
+        // Product favourites become server-owned after sign-in. Shop favourites are intentionally local until a
+        // canonical outlet-favourite contract is approved; P3 does not send them through the old generic API.
+        await saveLocal(localShops);
+        if (active) setFavourites(normalizeLocal([...serverProducts, ...localShops]));
       } catch (error) {
         console.warn('Failed to load favourites', error);
-        if (active) setFavourites([]);
+        const local = await loadLocal();
+        if (active) setFavourites(local);
       } finally {
         if (active) setLoading(false);
       }
@@ -71,74 +142,47 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
     return () => {
       active = false;
     };
-  }, [session?.accessToken, user?.id]);
+  }, [session?.accessToken]);
 
   const isFavourite = useCallback(
     (targetType: 'PRODUCT' | 'SHOP', targetId: string): boolean =>
-      favourites.some(
-        (favourite) =>
-          favourite.targetType.toUpperCase() === targetType.toUpperCase() &&
-          favourite.targetId === targetId,
-      ),
+      favourites.some((favourite) => favourite.targetType === targetType && favourite.targetId === targetId),
     [favourites],
   );
 
   const toggleFavourite = useCallback(
     async (targetType: 'PRODUCT' | 'SHOP', targetId: string): Promise<boolean> => {
-      const normalizedType = targetType.toUpperCase() as 'PRODUCT' | 'SHOP';
       const currentlyFavourite = favourites.some(
-        (favourite) =>
-          favourite.targetType.toUpperCase() === normalizedType &&
-          favourite.targetId === targetId,
+        (favourite) => favourite.targetType === targetType && favourite.targetId === targetId,
       );
 
-      if (!session?.accessToken) {
-        await requireAuth({ action: 'FAVOURITE', returnTo: '/favourites' });
-        return currentlyFavourite;
-      }
-
       try {
+        if (targetType === 'SHOP' || !session?.accessToken) {
+          const next = currentlyFavourite
+            ? favourites.filter((item) => !(item.targetType === targetType && item.targetId === targetId))
+            : [{ targetType, targetId, createdAt: new Date().toISOString() }, ...favourites];
+          setFavourites(normalizeLocal(next));
+          const localOnly = session?.accessToken
+            ? next.filter((item) => item.targetType === 'SHOP')
+            : next;
+          await saveLocal(localOnly);
+          return !currentlyFavourite;
+        }
+
         if (currentlyFavourite) {
           const response = await fetch(
-            `${appConfig.apiBaseUrl}/api/v1/customer/favourites?targetType=${encodeURIComponent(normalizedType)}&targetId=${encodeURIComponent(targetId)}`,
-            {
-              method: 'DELETE',
-              headers: authHeaders(session.accessToken),
-            },
+            `${appConfig.apiBaseUrl}/api/v1/customer/favourites/${encodeURIComponent(targetId)}`,
+            { method: 'DELETE', headers: authHeaders(session.accessToken) },
           );
           if (!response.ok) throw await serverError(response);
           setFavourites((current) =>
-            current.filter(
-              (favourite) =>
-                !(
-                  favourite.targetType.toUpperCase() === normalizedType &&
-                  favourite.targetId === targetId
-                ),
-            ),
+            current.filter((item) => !(item.targetType === 'PRODUCT' && item.targetId === targetId)),
           );
           return false;
         }
 
-        const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/customer/favourites`, {
-          method: 'POST',
-          headers: authHeaders(session.accessToken),
-          body: JSON.stringify({ targetType: normalizedType, targetId }),
-        });
-        if (!response.ok) throw await serverError(response);
-        const saved = (await response.json().catch(() => null)) as FavouriteItem | null;
-        const newItem: FavouriteItem = saved?.targetId
-          ? saved
-          : { targetType: normalizedType, targetId, createdAt: new Date().toISOString() };
-        setFavourites((current) => [
-          newItem,
-          ...current.filter(
-            (favourite) =>
-              !(
-                favourite.targetType.toUpperCase() === normalizedType &&
-                favourite.targetId === targetId
-              ),
-          ),
-        ]);
+        const saved = await putProduct(session.accessToken, targetId);
+        setFavourites((current) => normalizeLocal([saved, ...current]));
         return true;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Could not update favourite.';
@@ -146,7 +190,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
         return currentlyFavourite;
       }
     },
-    [favourites, requireAuth, session],
+    [favourites, session?.accessToken],
   );
 
   return (

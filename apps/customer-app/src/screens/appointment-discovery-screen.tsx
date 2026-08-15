@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, StyleSheet, TextInput, View } from 'react-native';
 
@@ -36,8 +36,15 @@ interface Props {
 
 type LoadState = 'loading' | 'ready' | 'offline' | 'error';
 
+function single(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 export default function AppointmentDiscoveryScreen({ providerType, route, titleKey }: Props) {
   const router = useRouter();
+  const params = useLocalSearchParams<{ providerId?: string | string[]; serviceId?: string | string[] }>();
+  const preferredProviderId = single(params.providerId);
+  const preferredServiceId = single(params.serviceId);
   const theme = useTheme();
   const { t } = useTranslation();
   const { user, session } = useAuth();
@@ -95,17 +102,23 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
     void loadPets();
   }, [loadPets]);
 
-  const chooseProvider = useCallback(async (next: ProviderSummary) => {
+  const chooseProvider = useCallback(async (next: ProviderSummary, serviceId?: string) => {
     setProvider(next);
     setSlots([]);
     setSlotState('loading');
     try {
-      setSlots(await fetchAvailableAppointmentSlots(next.id));
+      setSlots(await fetchAvailableAppointmentSlots(next.id, serviceId));
       setSlotState('ready');
     } catch (error) {
       setSlotState(isOfflineError(error) ? 'offline' : 'error');
     }
   }, []);
+
+  useEffect(() => {
+    if (state !== 'ready' || provider || !preferredProviderId) return;
+    const preferred = providers.find((item) => item.id === preferredProviderId);
+    if (preferred) void chooseProvider(preferred, preferredServiceId);
+  }, [chooseProvider, preferredProviderId, preferredServiceId, provider, providers, state]);
 
   const createPet = useCallback(async () => {
     if (!session || petName.trim().length < 2) return;
@@ -158,11 +171,13 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
       setSlots([]);
     } catch (error) {
       Alert.alert('Booking failed', error instanceof Error ? error.message : 'Could not reserve this appointment.');
-      if (provider) await chooseProvider(provider);
+      if (provider) {
+        await chooseProvider(provider, provider.id === preferredProviderId ? preferredServiceId : undefined);
+      }
     } finally {
       setBookingSlotId(null);
     }
-  }, [chooseProvider, pets, provider, requireAuth, route, router, selectedPetId, session, user]);
+  }, [chooseProvider, pets, preferredProviderId, preferredServiceId, provider, requireAuth, route, router, selectedPetId, session, user]);
 
   const close = () => {
     if (bookingSlotId) return;
@@ -254,7 +269,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
             title={t(slotState === 'offline' ? 'states.offline' : 'states.error')}
             message={t(slotState === 'offline' ? 'states.offlineMessage' : 'appointmentFoundation.holdFailed')}
             actionLabel={provider ? t('states.retry') : undefined}
-            onAction={provider ? () => void chooseProvider(provider) : undefined}
+            onAction={provider ? () => void chooseProvider(provider, provider.id === preferredProviderId ? preferredServiceId : undefined) : undefined}
           />
         ) : null}
         {slotState === 'ready' && slots.length === 0 ? (
@@ -267,7 +282,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
                 key={slot.id}
                 title={slot.serviceName}
                 subtitle={`${slot.startTime} – ${slot.endTime}`}
-                meta={bookingSlotId === slot.id ? 'Reserving slot…' : `₹${slot.price} · Tap to review & pay`}
+                meta={bookingSlotId === slot.id ? 'Reserving slot…' : `₹${slot.price} · Tap to review & book`}
                 icon="calendar"
                 onPress={() => {
                   if (!bookingSlotId) void requestBooking(slot);

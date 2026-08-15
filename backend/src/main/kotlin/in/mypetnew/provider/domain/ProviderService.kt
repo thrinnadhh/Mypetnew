@@ -42,6 +42,7 @@ interface ProviderPersistence {
         requestFingerprint: String,
     ): ProviderOutlet
 
+    fun updateDispatchOrigin(outletId: UUID, latitude: Double, longitude: Double): ProviderOutlet
     fun all(): List<ProviderOutlet>
     fun get(outletId: UUID): ProviderOutlet?
 }
@@ -96,6 +97,17 @@ class ProviderService(
         )
     }
 
+    fun configureDispatchOrigin(
+        merchant: Principal,
+        outletId: UUID,
+        latitude: Double,
+        longitude: Double,
+    ): ProviderOutlet {
+        Authorizer.requireOutlet(merchant, outletId)
+        validateCoordinates(latitude, longitude)
+        return persistence.updateDispatchOrigin(outletId, latitude, longitude)
+    }
+
     fun allOutlets(): List<ProviderOutlet> = persistence.all()
 
     fun getOutlet(outletId: UUID): ProviderOutlet = persistence.get(outletId)
@@ -115,9 +127,11 @@ class ProviderService(
             throw DomainException("PIN_CODE_INVALID", "Service PIN codes must contain exactly six digits")
         }
         if ((latitude == null) != (longitude == null)) invalidCoordinates()
-        if (latitude != null && (latitude !in -90.0..90.0 || longitude!! !in -180.0..180.0)) {
-            invalidCoordinates()
-        }
+        if (latitude != null) validateCoordinates(latitude, requireNotNull(longitude))
+    }
+
+    private fun validateCoordinates(latitude: Double, longitude: Double) {
+        if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) invalidCoordinates()
     }
 
     private fun validateIdempotencyKey(key: String) {
@@ -186,6 +200,13 @@ private class InMemoryProviderPersistence : ProviderPersistence {
             throw DomainException("PROVIDER_STATE_INVALID", "The provider cannot be approved from its current state")
         }
         outlet.copy(status = ProviderStatus.ACTIVE).also { outlets[outletId] = it }
+    }
+
+    @Synchronized
+    override fun updateDispatchOrigin(outletId: UUID, latitude: Double, longitude: Double): ProviderOutlet {
+        val outlet = outlets[outletId]
+            ?: throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+        return outlet.copy(latitude = latitude, longitude = longitude).also { outlets[outletId] = it }
     }
 
     @Synchronized

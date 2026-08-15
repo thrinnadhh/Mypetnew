@@ -8,6 +8,7 @@ import { ScreenHeader } from '@/components/ui/screen-header';
 import { INITIAL_MARKET } from '@/config/markets';
 import { useAuth } from '@/context/AuthContext';
 import { useAuthIntent } from '@/context/AuthIntentContext';
+import { useLocation } from '@/context/LocationContext';
 import { radii, spacing, touchTarget } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
@@ -49,6 +50,10 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
   const { t } = useTranslation();
   const { user, session } = useAuth();
   const { requireAuth } = useAuthIntent();
+  const { activeCity } = useLocation();
+  const careEnabled = providerType === 'GROOMER'
+    ? activeCity.featureFlags.allowGrooming
+    : activeCity.featureFlags.allowVet;
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [state, setState] = useState<LoadState>('loading');
   const [provider, setProvider] = useState<ProviderSummary | null>(null);
@@ -64,13 +69,20 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
 
   const loadProviders = useCallback(async () => {
     setState('loading');
+    setProvider(null);
+    setSlots([]);
+    if (!careEnabled) {
+      setProviders([]);
+      setState('ready');
+      return;
+    }
     try {
-      setProviders(await fetchProviders(providerType, INITIAL_MARKET));
+      setProviders(await fetchProviders(providerType, INITIAL_MARKET, activeCity.pincodes));
       setState('ready');
     } catch (error) {
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, [providerType]);
+  }, [activeCity.pincodes, careEnabled, providerType]);
 
   useEffect(() => {
     void loadProviders();
@@ -200,21 +212,28 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
           onAction={() => void loadProviders()}
         />
       ) : null}
-      {state === 'ready' && providers.length === 0 ? (
-        <StateView kind="empty" title={t('states.empty')} message={t('states.emptyMessage')} />
+      {state === 'ready' && !careEnabled ? (
+        <StateView
+          kind="empty"
+          title={`${providerType === 'GROOMER' ? 'Grooming' : 'Veterinary care'} is not enabled in ${activeCity.displayName}`}
+          message="Choose another service city to see providers that can accept bookings."
+        />
       ) : null}
-      {state === 'ready' ? (
+      {state === 'ready' && careEnabled && providers.length === 0 ? (
+        <StateView
+          kind="empty"
+          title={t('states.empty')}
+          message={`No serviceable ${providerType === 'GROOMER' ? 'groomers' : 'veterinary providers'} are available for the selected ${activeCity.displayName} PIN codes.`}
+        />
+      ) : null}
+      {state === 'ready' && careEnabled ? (
         <View style={styles.list}>
           {providers.map((item) => (
             <EntityCard
               key={item.id}
               title={item.name}
               subtitle={item.description || t('appointmentFoundation.providerFallback')}
-              meta={t('appointmentFoundation.providerMeta', {
-                distance: item.distanceKm.toFixed(1),
-                rating: item.rating.toFixed(1),
-                count: item.ratingCount,
-              })}
+              meta={`${activeCity.displayName} · Serviceable provider`}
               icon={providerType === 'GROOMER' ? 'groom' : 'medical'}
               onPress={() => void chooseProvider(item)}
             />

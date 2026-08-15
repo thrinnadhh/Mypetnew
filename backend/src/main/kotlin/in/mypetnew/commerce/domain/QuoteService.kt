@@ -67,6 +67,7 @@ class QuoteService(
     private val clock: Clock = Clock.systemUTC(),
     private val lifetime: Duration = Duration.ofMinutes(5),
     private val persistence: QuotePersistence = InMemoryQuotePersistence(),
+    private val onlinePaymentAvailable: () -> Boolean = { true },
 ) {
     fun createPickupQuote(
         customerId: UUID,
@@ -121,6 +122,9 @@ class QuoteService(
         if (!at.isBefore(quote.expiresAt)) {
             throw DomainException("QUOTE_EXPIRED", "The quote expired")
         }
+        if (quote.paymentMethod == PaymentMethods.ONLINE_PAYMENT && !onlinePaymentAvailable()) {
+            throw DomainException("PAYMENT_PROVIDER_UNAVAILABLE", "Online payment is temporarily unavailable")
+        }
         return quote
     }
 
@@ -148,6 +152,9 @@ class QuoteService(
             subtotal = Math.addExact(subtotal, Math.multiplyExact(quantity.toLong(), unitPricePaise))
         }
         val normalizedPaymentMethod = PaymentMethods.normalize(paymentMethod)
+        if (normalizedPaymentMethod == PaymentMethods.ONLINE_PAYMENT && !onlinePaymentAvailable()) {
+            throw DomainException("PAYMENT_PROVIDER_UNAVAILABLE", "Online payment is temporarily unavailable")
+        }
         val signature = signature(customerId, outletId, lines, fulfilmentMode, normalizedPaymentMethod, deliveryAddress)
         val grandTotal = Math.addExact(Math.addExact(subtotal, 1_000), deliveryFeePaise)
         val quote = Quote(

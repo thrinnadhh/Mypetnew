@@ -149,16 +149,16 @@ export async function holdAppointmentSlot(input: HoldAppointmentInput): Promise<
     method: 'POST',
     headers: jsonHeaders(input.accessToken),
     body: JSON.stringify({
-      // customer identity and price are intentionally not authoritative here;
-      // the backend derives customer ownership from the access token and price
-      // from the selected service offering.
+      // These legacy fields remain on the wire for backward compatibility only.
+      // The backend derives customer identity, offering price and payment mode
+      // from authenticated/server-owned state and does not trust these values.
       customerId: input.userId,
       providerId: input.slot.providerId,
       offeringId: input.slot.offeringId,
       slotId: input.slot.id,
       petId: input.petId,
       priceAmount: input.slot.price,
-      payAtClinic: true,
+      payAtClinic: false,
     }),
   });
 

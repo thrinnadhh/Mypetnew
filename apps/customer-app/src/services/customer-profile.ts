@@ -185,12 +185,23 @@ export async function createDefaultAddress(
   input: LegacyDefaultAddressInput,
 ): Promise<LegacyDefaultAddress> {
   const { geoLat: _geoLat, geoLng: _geoLng, ...canonical } = input;
-  const response = await apiClient.post<LegacyDefaultAddress>(
-    '/api/v1/customer/addresses',
-    { ...canonical, isDefault: true },
-    authHeaders(accessToken),
-  );
-  return normalizeLegacyAddress(response);
+  try {
+    const response = await apiClient.post<LegacyDefaultAddress>(
+      '/api/v1/customer/addresses',
+      { ...canonical, isDefault: true },
+      authHeaders(accessToken),
+    );
+    return normalizeLegacyAddress(response);
+  } catch (error) {
+    if (
+      (error as { status?: number })?.status === 500 &&
+      error instanceof Error &&
+      error.message === 'Request failed (500)'
+    ) {
+      throw new Error('ADDRESS_500');
+    }
+    throw error;
+  }
 }
 
 export async function checkOutletServiceability(

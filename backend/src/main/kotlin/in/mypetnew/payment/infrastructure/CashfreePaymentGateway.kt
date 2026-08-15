@@ -68,7 +68,7 @@ data class CashfreeProperties(
         "CashfreeProperties(enabled=$enabled, clientId=[REDACTED], clientSecret=[REDACTED], apiVersion=$apiVersion, webhookVersion=$webhookVersion, baseUrl=$baseUrl)"
 
     companion object {
-        const val SUPPORTED_VERSION = "2025-01-01"
+        const val SUPPORTED_VERSION = "2026-01-01"
         const val SANDBOX_BASE_URL = "https://sandbox.cashfree.com/pg"
         const val PRODUCTION_BASE_URL = "https://api.cashfree.com/pg"
         const val WEBHOOK_PATH = "/api/v1/webhooks/cashfree/payments"

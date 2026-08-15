@@ -4,6 +4,7 @@ import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.engagement.domain.DeviceRegistrationService
 import `in`.mypetnew.identity.domain.SessionStore
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
@@ -11,22 +12,28 @@ enum class ConsentPurpose {
     LOCATION,
     NOTIFICATIONS,
     MARKETING,
-    PRODUCT_ANALYTICS,
     PERSONALISATION,
+    PRODUCT_ANALYTICS,
     RECURRING_ORDER_REMINDERS,
 }
 
-enum class ConsentSource { CUSTOMER_APP, ADMIN_ASSISTED }
+enum class ConsentSource { CUSTOMER_APP, CUSTOMER_WEB, SUPPORT_ASSISTED }
 
 enum class RightsRequestType { ACCESS, CORRECTION, ERASURE, GRIEVANCE, NOMINATION }
 
-enum class RightsRequestStatus { IDENTITY_VERIFIED, IN_REVIEW, COMPLETED, REJECTED }
+enum class RightsRequestStatus {
+    REQUESTED,
+    IDENTITY_VERIFIED,
+    IN_REVIEW,
+    COMPLETED,
+    REJECTED_WITH_LAWFUL_REASON,
+}
 
 data class CustomerProfile(
     val displayName: String?,
     val email: String?,
     val adultEligibilityAttestedAt: Instant?,
-    val updatedAt: Instant,
+    val updatedAt: Instant?,
 )
 
 data class ConsentRecord(
@@ -51,13 +58,6 @@ data class RightsRequest(
     val updatedAt: Instant,
 )
 
-data class AccountDeletionReceipt(
-    val requestId: UUID,
-    val status: String,
-    val completedAt: Instant,
-    val retainedCategories: List<String>,
-)
-
 data class PersonalDataSummary(
     val customerId: UUID,
     val mobileE164: String,
@@ -67,100 +67,102 @@ data class PersonalDataSummary(
     val processorCategories: List<String>,
 )
 
+data class AccountDeletionReceipt(
+    val requestId: UUID,
+    val status: String,
+    val requestedAt: Instant,
+    val directIdentifiersErasedAt: Instant,
+    val legalRetentionReviewDueAt: Instant,
+    val backupSuppressionUntil: Instant,
+)
+
 interface PrivacyRepository {
     fun profileFor(customerId: UUID): CustomerProfile
-    fun mobileFor(customerId: UUID): String
     fun updateProfile(customerId: UUID, profile: CustomerProfile): CustomerProfile
-    fun grantConsent(consent: ConsentRecord): ConsentRecord
-    fun withdrawConsent(customerId: UUID, purpose: ConsentPurpose, at: Instant): ConsentRecord
+    fun grantConsent(record: ConsentRecord): ConsentRecord
+    fun withdrawConsent(customerId: UUID, purpose: ConsentPurpose, withdrawnAt: Instant): ConsentRecord
     fun consentsFor(customerId: UUID): List<ConsentRecord>
     fun createRightsRequest(request: RightsRequest): RightsRequest
-    fun requestsFor(customerId: UUID): List<RightsRequest>
     fun requestFor(customerId: UUID, requestId: UUID): RightsRequest?
-    fun eraseDirectIdentifiers(customerId: UUID, at: Instant): AccountDeletionReceipt
+    fun requestsFor(customerId: UUID): List<RightsRequest>
+    fun eraseDirectIdentifiers(customerId: UUID, now: Instant): AccountDeletionReceipt
 }
 
 class InMemoryPrivacyRepository : PrivacyRepository {
-    private data class ProfileState(val mobile: String, val profile: CustomerProfile)
-
-    private val profiles = mutableMapOf<UUID, ProfileState>()
-    private val consents = mutableMapOf<Pair<UUID, ConsentPurpose>, ConsentRecord>()
+    private val profiles = mutableMapOf<UUID, CustomerProfile>()
+    private val consents = mutableMapOf<UUID, ConsentRecord>()
     private val requests = mutableMapOf<UUID, RightsRequest>()
-    private val deleted = mutableMapOf<UUID, AccountDeletionReceipt>()
+    private val deletions = mutableMapOf<UUID, AccountDeletionReceipt>()
 
     @Synchronized
-    override fun profileFor(customerId: UUID): CustomerProfile =
-        profiles.getOrPut(customerId) {
-            ProfileState(
-                mobile = "+910000000000",
-                profile = CustomerProfile(null, null, null, Instant.EPOCH),
-            )
-        }.profile
+    override fun profileFor(customerId: UUID): CustomerProfile = profiles[customerId] ?: CustomerProfile(null, null, null, null)
 
     @Synchronized
-    override fun mobileFor(customerId: UUID): String = profiles.getOrPut(customerId) {
-        ProfileState(
-            mobile = "+910000000000",
-            profile = CustomerProfile(null, null, null, Instant.EPOCH),
-        )
-    }.mobile
-
-    @Synchronized
-    override fun updateProfile(customerId: UUID, profile: CustomerProfile): CustomerProfile {
-        val existing = profiles[customerId]
-        profiles[customerId] = ProfileState(existing?.mobile ?: "+910000000000", profile)
-        return profile
+    override fun updateProfile(customerId: UUID, profile: CustomerProfile): CustomerProfile = profile.also {
+        profiles[customerId] = it
     }
 
     @Synchronized
-    override fun grantConsent(consent: ConsentRecord): ConsentRecord {
-        consents[consent.customerId to consent.purpose] = consent
-        return consent
+    override fun grantConsent(record: ConsentRecord): ConsentRecord {
+        consents.replaceAll { _, existing ->
+            if (existing.customerId == record.customerId && existing.purpose == record.purpose && existing.withdrawnAt == null) {
+                existing.copy(withdrawnAt = record.grantedAt)
+            } else {
+                existing
+            }
+        }
+        consents[record.consentId] = record
+        return record
     }
 
     @Synchronized
-    override fun withdrawConsent(customerId: UUID, purpose: ConsentPurpose, at: Instant): ConsentRecord {
-        val key = customerId to purpose
-        val current = consents[key]
-            ?: throw DomainException("CONSENT_NOT_FOUND", "No active consent exists for that purpose")
-        if (current.withdrawnAt != null) return current
-        return current.copy(withdrawnAt = at).also { consents[key] = it }
+    override fun withdrawConsent(customerId: UUID, purpose: ConsentPurpose, withdrawnAt: Instant): ConsentRecord {
+        val active = consents.values.filter {
+            it.customerId == customerId && it.purpose == purpose && it.withdrawnAt == null
+        }.maxByOrNull(ConsentRecord::grantedAt) ?: noActiveConsent()
+        val withdrawn = active.copy(withdrawnAt = withdrawnAt)
+        consents[withdrawn.consentId] = withdrawn
+        return withdrawn
     }
 
     @Synchronized
-    override fun consentsFor(customerId: UUID): List<ConsentRecord> = consents.values.filter { it.customerId == customerId }
+    override fun consentsFor(customerId: UUID): List<ConsentRecord> = consents.values
+        .filter { it.customerId == customerId }
+        .sortedByDescending(ConsentRecord::grantedAt)
 
     @Synchronized
-    override fun createRightsRequest(request: RightsRequest): RightsRequest {
-        requests[request.requestId] = request
-        return request
-    }
+    override fun createRightsRequest(request: RightsRequest): RightsRequest = request.also { requests[it.requestId] = it }
 
     @Synchronized
-    override fun requestsFor(customerId: UUID): List<RightsRequest> = requests.values.filter { it.customerId == customerId }
+    override fun requestFor(customerId: UUID, requestId: UUID): RightsRequest? = requests[requestId]
+        ?.takeIf { it.customerId == customerId }
 
     @Synchronized
-    override fun requestFor(customerId: UUID, requestId: UUID): RightsRequest? =
-        requests[requestId]?.takeIf { it.customerId == customerId }
+    override fun requestsFor(customerId: UUID): List<RightsRequest> = requests.values
+        .filter { it.customerId == customerId }
+        .sortedByDescending(RightsRequest::requestedAt)
 
     @Synchronized
-    override fun eraseDirectIdentifiers(customerId: UUID, at: Instant): AccountDeletionReceipt {
-        deleted[customerId]?.let { return it }
-        val profile = profileFor(customerId)
-        profiles[customerId] = ProfileState(
-            mobile = "deleted-${customerId.toString().take(12)}",
-            profile = profile.copy(displayName = null, email = null, updatedAt = at),
-        )
-        consents.entries.removeIf { it.key.first == customerId }
-        val receipt = AccountDeletionReceipt(
+    override fun eraseDirectIdentifiers(customerId: UUID, now: Instant): AccountDeletionReceipt {
+        deletions[customerId]?.let { return it }
+        profiles[customerId] = CustomerProfile(null, null, null, now)
+        consents.replaceAll { _, consent ->
+            if (consent.customerId == customerId && consent.withdrawnAt == null) consent.copy(withdrawnAt = now) else consent
+        }
+        return AccountDeletionReceipt(
             requestId = UUID.randomUUID(),
-            status = "COMPLETED",
-            completedAt = at,
-            retainedCategories = listOf("order/accounting records", "security/audit records", "privacy-rights request evidence"),
-        )
-        deleted[customerId] = receipt
-        return receipt
+            status = "DIRECT_IDENTIFIERS_ERASED",
+            requestedAt = now,
+            directIdentifiersErasedAt = now,
+            legalRetentionReviewDueAt = now.plus(Duration.ofDays(365)),
+            backupSuppressionUntil = now.plus(Duration.ofDays(35)),
+        ).also { deletions[customerId] = it }
     }
+
+    private fun noActiveConsent(): Nothing = throw DomainException(
+        "CONSENT_NOT_ACTIVE",
+        "No active consent exists for this purpose",
+    )
 }
 
 class PrivacyService(
@@ -170,9 +172,11 @@ class PrivacyService(
     private val clock: Clock = Clock.systemUTC(),
 ) {
     fun summary(customerId: UUID): PersonalDataSummary {
+        val identity = sessions.identityFor(customerId)
+            ?: throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
         return PersonalDataSummary(
             customerId = customerId,
-            mobileE164 = repository.mobileFor(customerId),
+            mobileE164 = identity.mobileE164,
             profile = repository.profileFor(customerId),
             activeConsents = repository.consentsFor(customerId).filter { it.withdrawnAt == null },
             processingCategories = PROCESSING_CATEGORIES,

@@ -16,6 +16,7 @@ import `in`.mypetnew.common.auth.Authorizer
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
+import `in`.mypetnew.delivery.domain.DispatchService
 import `in`.mypetnew.loyalty.domain.LoyaltyService
 import `in`.mypetnew.engagement.domain.NotificationService
 import `in`.mypetnew.engagement.domain.SafeRoute
@@ -205,10 +206,21 @@ class CustomerCommerceApiController(
         if (quote.customerId != customer.actorId) resourceUnavailable()
 
         val outlet = providers.getOutlet(quote.outletId)
+        val fulfilmentAvailable = when (quote.fulfilmentMode) {
+            "STORE_PICKUP" -> outlet.pickupEnabled
+            DispatchService.DELIVERY_MODE -> {
+                val address = quote.deliveryAddress
+                address != null &&
+                    address.pincode in outlet.servicePinCodes &&
+                    outlet.latitude != null &&
+                    outlet.longitude != null
+            }
+            else -> false
+        }
         if (
             outlet.status != ProviderStatus.ACTIVE ||
-            !outlet.pickupEnabled ||
-            !outlet.capabilities.contains(ProviderCapability.PRODUCT_STORE)
+            ProviderCapability.PRODUCT_STORE !in outlet.capabilities ||
+            !fulfilmentAvailable
         ) {
             throw DomainException("QUOTE_STALE", "The provider changed after this quote was created")
         }
@@ -234,12 +246,17 @@ class CustomerCommerceApiController(
             actorId = customer.actorId,
             traceId = currentTraceId(),
         )
+        val isDelivery = order.fulfilmentMode == DispatchService.DELIVERY_MODE
         notifications.enqueue(
             sourceEventId = order.id,
             recipientId = outlet.ownerActorId,
-            templateVersion = "pickup-order-placed-v1",
-            title = "New pickup order",
-            body = "Open MyPet Merchant to review a new pickup order.",
+            templateVersion = if (isDelivery) "delivery-order-placed-v1" else "pickup-order-placed-v1",
+            title = if (isDelivery) "New delivery order" else "New pickup order",
+            body = if (isDelivery) {
+                "Open MyPet Merchant to review a new Captain-delivery order."
+            } else {
+                "Open MyPet Merchant to review a new pickup order."
+            },
             route = SafeRoute.MERCHANT_ORDER,
             resourceId = order.id,
         )
@@ -290,6 +307,7 @@ class MerchantCommerceApiController(
     private val catalog: CatalogService,
     private val inventory: InventoryService,
     private val orders: OrderService,
+    private val dispatch: DispatchService,
     private val pos: PosService,
     private val associations: CustomerAssociationChallengeService,
     private val notifications: NotificationService,
@@ -303,7 +321,7 @@ class MerchantCommerceApiController(
     ): ProductOrder {
         val principal = authentication.domainPrincipal()
         val order = authorizedOrder(principal, orderId)
-        return orders.transition(
+        val updated = orders.transition(
             orderId = order.id,
             target = request.target,
             idempotencyKey = idempotencyKey,
@@ -312,6 +330,18 @@ class MerchantCommerceApiController(
             reason = request.reason,
             traceId = currentTraceId(),
         )
+        if (
+            updated.fulfilmentMode == DispatchService.DELIVERY_MODE &&
+            request.target == OrderStatus.READY_FOR_PICKUP
+        ) {
+            val outlet = providers.getOutlet(updated.outletId)
+            val latitude = outlet.latitude
+                ?: throw DomainException("DELIVERY_DISPATCH_ORIGIN_REQUIRED", "The outlet dispatch origin is unavailable")
+            val longitude = outlet.longitude
+                ?: throw DomainException("DELIVERY_DISPATCH_ORIGIN_REQUIRED", "The outlet dispatch origin is unavailable")
+            dispatch.start(updated, latitude, longitude)
+        }
+        return updated
     }
 
     @GetMapping("/orders/{orderId}")

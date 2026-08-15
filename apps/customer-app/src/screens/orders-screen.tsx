@@ -28,9 +28,9 @@ function formattedOrderDate(value: string): string {
 }
 
 function statusTone(status: string): 'success' | 'warning' | 'error' | 'neutral' {
-  if (['DELIVERED', 'COMPLETED'].includes(status)) return 'success';
+  if (status === 'DELIVERED') return 'success';
   if (['CANCELLED', 'REJECTED'].includes(status)) return 'error';
-  if (['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'ASSIGNED', 'PICKED_UP'].includes(status)) {
+  if (['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'PICKED_UP'].includes(status)) {
     return 'warning';
   }
   return 'neutral';
@@ -57,7 +57,6 @@ export default function OrdersScreen() {
     reload,
     loadMore,
     cancel,
-    reorder,
   } = useOrders();
 
   const [selectedOrderForCancel, setSelectedOrderForCancel] = useState<CustomerOrderSummaryRecord | null>(null);
@@ -86,29 +85,6 @@ export default function OrdersScreen() {
       Alert.alert(t('common.success'), 'Order cancelled successfully.');
     } catch (error: unknown) {
       Alert.alert(t('common.error'), errorMessage(error, 'Could not cancel order.'));
-    }
-  };
-
-  const handleReorder = async (orderId: string) => {
-    try {
-      const result = await reorder(orderId);
-      if (result?.canReorder) {
-        Alert.alert('Reorder validated', 'All items are available at current prices. Continue to cart?', [
-          { text: 'Not now', style: 'cancel' },
-          { text: 'Go to cart', onPress: () => router.push('/cart' as never) },
-        ]);
-        return;
-      }
-
-      if (result) {
-        const unavailable = result.items
-          .filter((item) => !item.isAvailable)
-          .map((item) => `${item.offeringName}: ${item.message ?? 'Unavailable'}`)
-          .join('\n');
-        Alert.alert('Reorder unavailable', unavailable || 'One or more items are unavailable.');
-      }
-    } catch (error: unknown) {
-      Alert.alert(t('common.error'), errorMessage(error, 'Could not revalidate reorder.'));
     }
   };
 
@@ -183,7 +159,7 @@ export default function OrdersScreen() {
         <View style={styles.list}>
           {filteredOrders.map((order) => {
             const isCancellable = order.status === 'PLACED';
-            const isPast = ['DELIVERED', 'COMPLETED', 'CANCELLED', 'REJECTED'].includes(order.status);
+            const isPast = ['DELIVERED', 'CANCELLED', 'REJECTED'].includes(order.status);
             const tone = statusTone(order.status);
             const accentColor =
               tone === 'success'
@@ -246,12 +222,10 @@ export default function OrdersScreen() {
                     ]}
                     onPress={() => router.push(`/orders/${order.id}` as never)}
                     accessibilityRole="button"
-                    accessibilityLabel={isPast ? `View order ${order.id.slice(0, 8)}` : `Track order ${order.id.slice(0, 8)}`}
+                    accessibilityLabel={isPast ? `View order ${order.id.slice(0, 8)}` : `View order ${order.id.slice(0, 8)}`}
                   >
-                    <AppIcon name={isPast ? 'chevron' : 'location'} size={18} color={theme.primary} />
-                    <ThemedText type="smallBold" style={{ color: theme.primary }}>
-                      {isPast ? 'View details' : 'Track order'}
-                    </ThemedText>
+                    <AppIcon name="chevron" size={18} color={theme.primary} />
+                    <ThemedText type="smallBold" style={{ color: theme.primary }}>View details</ThemedText>
                   </Pressable>
 
                   {isCancellable ? (
@@ -262,22 +236,6 @@ export default function OrdersScreen() {
                       accessibilityLabel={`Cancel order ${order.id.slice(0, 8)}`}
                     >
                       <AppIcon name="close" size={20} color={theme.danger} />
-                    </Pressable>
-                  ) : null}
-
-                  {isPast ? (
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.reorderAction,
-                        { backgroundColor: theme.accentSoft },
-                        pressed && styles.pressed,
-                      ]}
-                      onPress={() => void handleReorder(order.id)}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Reorder from ${order.providerName}`}
-                    >
-                      <AppIcon name="cart" size={18} color={theme.accent} />
-                      <ThemedText type="smallBold" style={{ color: theme.accent }}>Reorder</ThemedText>
                     </Pressable>
                   ) : null}
                 </View>
@@ -384,15 +342,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  reorderAction: {
-    minHeight: touchTarget,
-    borderRadius: radii.compact,
-    paddingHorizontal: spacing.x3,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.x2,
   },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(11,28,48,0.52)', justifyContent: 'center', padding: spacing.x4 },
   modalBox: { borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card, padding: spacing.x6, gap: spacing.x3 },

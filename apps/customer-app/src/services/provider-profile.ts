@@ -50,9 +50,19 @@ function descriptionFor(capabilities: string[]): string | null {
   return labels.length > 0 ? labels.join(' · ') : null;
 }
 
+function profilePath(providerId: string): string {
+  // Production outlet identifiers are UUIDs and use the canonical MyPetNew
+  // public-outlet contract. Preserve the old encoded path only for historical
+  // non-UUID identifiers used by legacy fixtures/deep links.
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuid.test(providerId)
+    ? `/api/v1/public/outlets/${encodeURIComponent(providerId)}`
+    : `/api/v1/providers/${encodeURIComponent(providerId)}`;
+}
+
 export async function fetchProviderProfile(providerId: string): Promise<ProviderProfile> {
   const response = await fetch(
-    `${appConfig.apiBaseUrl}/api/v1/public/outlets/${encodeURIComponent(providerId)}`,
+    `${appConfig.apiBaseUrl}${profilePath(providerId)}`,
     { headers: { Accept: 'application/json' } },
   );
   if (!response.ok) throw new Error(`PROVIDER_PROFILE_${response.status}`);
@@ -72,8 +82,6 @@ export async function fetchProviderProfile(providerId: string): Promise<Provider
     fulfillmentType: value.pickupEnabled ? 'PICKUP' : 'APPOINTMENT',
     name: value.name,
     description: descriptionFor(value.capabilities),
-    // Public outlets do not yet expose city/rating aggregates. Keep these
-    // neutral rather than synthesising values the backend did not return.
     city: '',
     ratingAvg: 0,
     ratingCount: 0,

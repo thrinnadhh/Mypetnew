@@ -15,6 +15,7 @@ import { useTranslation } from '@/i18n';
 import {
   fetchAvailableAppointmentSlots,
   holdAppointmentSlot,
+  type AppointmentServiceCapability,
   type AppointmentSlotOption,
 } from '@/services/appointment-booking';
 import { isOfflineError } from '@/services/customer-profile';
@@ -51,6 +52,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
   const { user, session } = useAuth();
   const { requireAuth } = useAuthIntent();
   const { activeCity } = useLocation();
+  const serviceCapability: AppointmentServiceCapability = providerType === 'GROOMER' ? 'GROOMING' : 'VETERINARY';
   const careEnabled = providerType === 'GROOMER'
     ? activeCity.featureFlags.allowGrooming
     : activeCity.featureFlags.allowVet;
@@ -119,12 +121,12 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
     setSlots([]);
     setSlotState('loading');
     try {
-      setSlots(await fetchAvailableAppointmentSlots(next.id, serviceId));
+      setSlots(await fetchAvailableAppointmentSlots(next.id, serviceId, serviceCapability));
       setSlotState('ready');
     } catch (error) {
       setSlotState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, []);
+  }, [serviceCapability]);
 
   useEffect(() => {
     if (state !== 'ready' || provider || !preferredProviderId) return;

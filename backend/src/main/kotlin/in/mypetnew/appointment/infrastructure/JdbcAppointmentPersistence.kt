@@ -14,6 +14,7 @@ import org.springframework.dao.DuplicateKeyException
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.support.TransactionTemplate
 import java.sql.ResultSet
+import java.sql.Timestamp
 import java.time.Instant
 import java.util.UUID
 
@@ -41,7 +42,7 @@ class JdbcAppointmentPersistence(
             .param("duration_minutes", offering.durationMinutes)
             .param("price_paise", offering.pricePaise)
             .param("active", offering.active)
-            .param("created_at", offering.createdAt)
+            .param("created_at", offering.createdAt.jdbcTimestamp())
             .update()
         return offering
     }
@@ -55,8 +56,8 @@ class JdbcAppointmentPersistence(
                 """.trimIndent(),
             ).param("id", slot.id)
                 .param("service_id", slot.serviceId)
-                .param("starts_at", slot.startsAt)
-                .param("ends_at", slot.endsAt)
+                .param("starts_at", slot.startsAt.jdbcTimestamp())
+                .param("ends_at", slot.endsAt.jdbcTimestamp())
                 .param("active", slot.active)
                 .update()
         } catch (_: DuplicateKeyException) {
@@ -112,9 +113,9 @@ class JdbcAppointmentPersistence(
         ORDER BY s.starts_at, s.id
         """.trimIndent(),
     ).param("service_id", serviceId)
-        .param("from_time", from)
-        .param("to_time", to)
-        .param("now", now)
+        .param("from_time", from.jdbcTimestamp())
+        .param("to_time", to.jdbcTimestamp())
+        .param("now", now.jdbcTimestamp())
         .query(::mapSlot)
         .list()
 
@@ -137,7 +138,7 @@ class JdbcAppointmentPersistence(
                     SET status = 'HOLD_EXPIRED', updated_at = :now
                     WHERE slot_id = :slot_id AND status = 'HOLD' AND hold_expires_at <= :now
                     """.trimIndent(),
-                ).param("now", now)
+                ).param("now", now.jdbcTimestamp())
                     .param("slot_id", appointment.slotId)
                     .update()
 
@@ -149,7 +150,7 @@ class JdbcAppointmentPersistence(
                     """.trimIndent(),
                 ).param("slot_id", appointment.slotId)
                     .param("service_id", appointment.serviceId)
-                    .param("now", now)
+                    .param("now", now.jdbcTimestamp())
                     .query(UUID::class.java)
                     .optional()
                     .isPresent
@@ -185,7 +186,7 @@ class JdbcAppointmentPersistence(
 
         jdbc.sql(
             "UPDATE mypet.appointment SET status = 'BOOKED', hold_expires_at = NULL, updated_at = :now WHERE id = :id",
-        ).param("now", now)
+        ).param("now", now.jdbcTimestamp())
             .param("id", appointmentId)
             .update()
         appendHistory(appointmentId, AppointmentStatus.BOOKED, customerId, now, "CUSTOMER_CONFIRM")
@@ -214,7 +215,7 @@ class JdbcAppointmentPersistence(
             WHERE id = :id
             """.trimIndent(),
         ).param("reason", reason?.trim()?.takeIf { it.isNotEmpty() })
-            .param("now", now)
+            .param("now", now.jdbcTimestamp())
             .param("id", appointmentId)
             .update()
         appendHistory(
@@ -256,7 +257,7 @@ class JdbcAppointmentPersistence(
         jdbc.sql(
             "UPDATE mypet.appointment SET status = :status, hold_expires_at = NULL, updated_at = :now WHERE id = :id",
         ).param("status", target.name)
-            .param("now", now)
+            .param("now", now.jdbcTimestamp())
             .param("id", appointmentId)
             .update()
         appendHistory(appointmentId, target, actorId, now, "MERCHANT_STATUS")
@@ -275,7 +276,7 @@ class JdbcAppointmentPersistence(
             SET status = 'HOLD_EXPIRED', updated_at = :now
             WHERE customer_id = :customer_id AND status = 'HOLD' AND hold_expires_at <= :now
             """.trimIndent(),
-        ).param("now", now)
+        ).param("now", now.jdbcTimestamp())
             .param("customer_id", customerId)
             .update()
 
@@ -326,18 +327,18 @@ class JdbcAppointmentPersistence(
             .param("service_name", appointment.serviceName)
             .param("outlet_name", appointment.outletName)
             .param("pet_name", appointment.petName)
-            .param("starts_at", appointment.startsAt)
-            .param("ends_at", appointment.endsAt)
+            .param("starts_at", appointment.startsAt.jdbcTimestamp())
+            .param("ends_at", appointment.endsAt.jdbcTimestamp())
             .param("status", appointment.status.name)
             .param("payment_method", appointment.paymentMethod.name)
             .param("payment_status", appointment.paymentStatus.name)
             .param("price_paise", appointment.pricePaise)
             .param("notes", appointment.notes)
-            .param("hold_expires_at", appointment.holdExpiresAt)
+            .param("hold_expires_at", appointment.holdExpiresAt?.jdbcTimestamp())
             .param("idempotency_key", idempotencyKey)
             .param("request_fingerprint", fingerprint)
-            .param("created_at", appointment.createdAt)
-            .param("updated_at", appointment.updatedAt)
+            .param("created_at", appointment.createdAt.jdbcTimestamp())
+            .param("updated_at", appointment.updatedAt.jdbcTimestamp())
             .update()
     }
 
@@ -396,7 +397,7 @@ class JdbcAppointmentPersistence(
               AND status = 'HOLD'
               AND hold_expires_at <= :now
             """.trimIndent(),
-        ).param("now", now)
+        ).param("now", now.jdbcTimestamp())
             .param("id", appointmentId)
             .param("customer_id", customerId)
             .update()
@@ -419,7 +420,7 @@ class JdbcAppointmentPersistence(
             .param("status", status.name)
             .param("actor_id", actorId)
             .param("note", note.take(500))
-            .param("occurred_at", at)
+            .param("occurred_at", at.jdbcTimestamp())
             .update()
     }
 
@@ -491,3 +492,5 @@ class JdbcAppointmentPersistence(
             "The idempotency key was already used for another request",
         )
 }
+
+private fun Instant.jdbcTimestamp(): Timestamp = Timestamp.from(this)

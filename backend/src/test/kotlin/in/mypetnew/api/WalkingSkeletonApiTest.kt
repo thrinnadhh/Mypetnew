@@ -119,6 +119,33 @@ class WalkingSkeletonApiTest {
             """{"quoteId":"${quote.uuid("id")}","cartSignature":"${quote.path("cartSignature").asString()}"}""",
         )
         val orderId = order.uuid("id")
+
+        mockMvc.get("/api/v1/customer/orders?page=0&pageSize=20") {
+            header("Authorization", "Bearer $customerToken")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items.length()") { value(1) }
+            jsonPath("$.items[0].orderId") { value(orderId.toString()) }
+            jsonPath("$.items[0].outlet.id") { value(outletId.toString()) }
+            jsonPath("$.items[0].outlet.name") { value("Happy Pets Tirupati") }
+            jsonPath("$.items[0].itemCount") { value(1) }
+            jsonPath("$.items[0].grandTotalPaise") { value(13500) }
+            jsonPath("$.items[0].status") { value("PLACED") }
+            jsonPath("$.hasNext") { value(false) }
+        }
+        mockMvc.get("/api/v1/customer/orders?page=0&pageSize=20") {
+            header("Authorization", "Bearer ${tokens.issue(Principal(UUID.randomUUID(), Role.CUSTOMER))}")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items.length()") { value(0) }
+        }
+        mockMvc.get("/api/v1/customer/orders?page=0&pageSize=20") {
+            header("Authorization", "Bearer $merchantToken")
+        }.andExpect { status { isForbidden() } }
+        mockMvc.get("/api/v1/customer/orders?page=0&pageSize=101") {
+            header("Authorization", "Bearer $customerToken")
+        }.andExpect { status { isBadRequest() } }
+
         mockMvc.get("/api/v1/notifications") {
             header("Authorization", "Bearer $merchantToken")
         }.andExpect {

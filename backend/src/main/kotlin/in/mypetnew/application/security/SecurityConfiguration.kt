@@ -57,6 +57,7 @@ class SecurityConfiguration {
                     "/api/v1/public/**",
                     "/api/v1/auth/otp/**",
                     "/api/v1/auth/merchant/otp/verify",
+                    "/api/v1/auth/captain/otp/verify",
                     "/api/v1/auth/sessions/refresh",
                 ).permitAll()
                     .anyRequest().authenticated()

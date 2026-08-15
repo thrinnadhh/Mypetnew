@@ -97,8 +97,7 @@ class JdbcAppointmentPersistence(
               AND s.slot_start > ?
               AND NOT EXISTS (
                 SELECT 1 FROM mypet.appointment a
-                WHERE a.slot_id = s.id
-                  AND a.status IN ('HOLD', 'BOOKED', 'CONFIRMED', 'CHECKED_IN', 'IN_SERVICE')
+                WHERE a.active_slot_id = s.id
               )
             ORDER BY s.slot_start
             """.trimIndent(),
@@ -134,38 +133,39 @@ class JdbcAppointmentPersistence(
 
         expireHolds(now)
         val occupied = jdbc.queryForObject(
-            """
-            SELECT COUNT(*) FROM mypet.appointment
-            WHERE slot_id = ?
-              AND status IN ('HOLD', 'BOOKED', 'CONFIRMED', 'CHECKED_IN', 'IN_SERVICE')
-            """.trimIndent(),
+            "SELECT COUNT(*) FROM mypet.appointment WHERE active_slot_id = ?",
             Long::class.java,
             appointment.slotId,
         ) ?: 0L
         if (occupied > 0) throw DomainException("SLOT_UNAVAILABLE", "This slot was just taken")
 
-        jdbc.update(
-            """
-            INSERT INTO mypet.appointment
-                (id, customer_id, provider_id, offering_id, slot_id, pet_id, price_paise, status,
-                 pay_at_clinic, payment_id, hold_expires_at, booked_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """.trimIndent(),
-            appointment.id,
-            appointment.customerId,
-            appointment.providerId,
-            appointment.offeringId,
-            appointment.slotId,
-            appointment.petId,
-            appointment.pricePaise,
-            appointment.status.name,
-            appointment.payAtClinic,
-            appointment.paymentId,
-            appointment.holdExpiresAt?.let(java.sql.Timestamp::from),
-            appointment.bookedAt?.let(java.sql.Timestamp::from),
-            java.sql.Timestamp.from(appointment.createdAt),
-            java.sql.Timestamp.from(appointment.updatedAt),
-        )
+        try {
+            jdbc.update(
+                """
+                INSERT INTO mypet.appointment
+                    (id, customer_id, provider_id, offering_id, slot_id, active_slot_id, pet_id, price_paise, status,
+                     pay_at_clinic, payment_id, hold_expires_at, booked_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent(),
+                appointment.id,
+                appointment.customerId,
+                appointment.providerId,
+                appointment.offeringId,
+                appointment.slotId,
+                appointment.slotId,
+                appointment.petId,
+                appointment.pricePaise,
+                appointment.status.name,
+                appointment.payAtClinic,
+                appointment.paymentId,
+                appointment.holdExpiresAt?.let(java.sql.Timestamp::from),
+                appointment.bookedAt?.let(java.sql.Timestamp::from),
+                java.sql.Timestamp.from(appointment.createdAt),
+                java.sql.Timestamp.from(appointment.updatedAt),
+            )
+        } catch (error: org.springframework.dao.DuplicateKeyException) {
+            throw DomainException("SLOT_UNAVAILABLE", "This slot was just taken")
+        }
         appendHistory(appointment.id, null, AppointmentStatus.HOLD, appointment.customerId, "Slot held", now)
         appointment
     }
@@ -225,7 +225,7 @@ class JdbcAppointmentPersistence(
             jdbc.update(
                 """
                 UPDATE mypet.appointment
-                SET status = 'CANCELLED', hold_expires_at = NULL, updated_at = ?
+                SET status = 'CANCELLED', active_slot_id = NULL, hold_expires_at = NULL, updated_at = ?
                 WHERE id = ?
                 """.trimIndent(),
                 java.sql.Timestamp.from(now),
@@ -256,7 +256,7 @@ class JdbcAppointmentPersistence(
         jdbc.update(
             """
             UPDATE mypet.appointment
-            SET status = 'HOLD_EXPIRED', updated_at = ?
+            SET status = 'HOLD_EXPIRED', active_slot_id = NULL, updated_at = ?
             WHERE status = 'HOLD' AND hold_expires_at IS NOT NULL AND hold_expires_at <= ?
             """.trimIndent(),
             java.sql.Timestamp.from(now),

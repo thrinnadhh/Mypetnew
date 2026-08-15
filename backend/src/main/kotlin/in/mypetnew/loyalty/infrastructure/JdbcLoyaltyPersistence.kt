@@ -4,6 +4,7 @@ import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.loyalty.domain.LoyaltyAward
 import `in`.mypetnew.loyalty.domain.LoyaltyPersistence
 import `in`.mypetnew.loyalty.domain.LoyaltyReward
+import `in`.mypetnew.loyalty.domain.LoyaltyRewardStatus
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
@@ -114,25 +115,38 @@ class JdbcLoyaltyPersistence(
         merchantId,
     ).singleOrNull() ?: 0
 
-    override fun rewards(customerId: UUID, merchantId: UUID): List<LoyaltyReward> = jdbc.query(
-        """
-        SELECT id, amount_paise, rule_version, issued_at, expires_at
-        FROM mypet.loyalty_reward
-        WHERE customer_id = ? AND organization_id = ?
-        ORDER BY issued_at, id
-        """.trimIndent(),
-        { result, _ ->
-            LoyaltyReward(
-                id = result.getObject("id", UUID::class.java),
-                amountPaise = result.getLong("amount_paise"),
-                ruleVersion = result.getString("rule_version"),
-                issuedAt = result.getTimestamp("issued_at").toInstant(),
-                expiresAt = result.getTimestamp("expires_at").toInstant(),
-            )
-        },
-        customerId,
-        merchantId,
-    )
+    override fun rewards(customerId: UUID, merchantId: UUID): List<LoyaltyReward> {
+        val now = clock.instant()
+        return jdbc.query(
+            """
+            SELECT id, amount_paise, status, rule_version, issued_at, expires_at
+            FROM mypet.loyalty_reward
+            WHERE customer_id = ? AND organization_id = ?
+            ORDER BY issued_at, id
+            """.trimIndent(),
+            { result, _ ->
+                val persistedStatus = LoyaltyRewardStatus.valueOf(result.getString("status"))
+                val expiresAt = result.getTimestamp("expires_at").toInstant()
+                val effectiveStatus = if (
+                    persistedStatus == LoyaltyRewardStatus.ISSUED && !expiresAt.isAfter(now)
+                ) {
+                    LoyaltyRewardStatus.EXPIRED
+                } else {
+                    persistedStatus
+                }
+                LoyaltyReward(
+                    id = result.getObject("id", UUID::class.java),
+                    amountPaise = result.getLong("amount_paise"),
+                    status = effectiveStatus,
+                    ruleVersion = result.getString("rule_version"),
+                    issuedAt = result.getTimestamp("issued_at").toInstant(),
+                    expiresAt = expiresAt,
+                )
+            },
+            customerId,
+            merchantId,
+        )
+    }
 
     private fun lockCustomer(customerId: UUID) {
         val present = jdbc.query(

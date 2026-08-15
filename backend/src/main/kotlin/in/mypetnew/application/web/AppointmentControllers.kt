@@ -15,6 +15,7 @@ import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
@@ -70,6 +71,9 @@ class ServiceCatalogApiController(
     @GetMapping("/api/v1/catalog/slots")
     fun slots(@RequestParam offeringId: UUID): List<ServiceSlotResponse> =
         appointments.listAvailableSlots(offeringId).map(::slotResponse)
+
+    @GetMapping("/api/v1/catalog/slots/{slotId}")
+    fun slot(@PathVariable slotId: UUID): ServiceSlotResponse = slotResponse(appointments.getSlot(slotId))
 
     @PostMapping("/api/v1/merchant/service-offerings")
     fun createOffering(
@@ -141,6 +145,7 @@ data class AppointmentResponse(
     val slotId: UUID,
     val petId: UUID,
     val pricePaise: Long,
+    val priceAmount: BigDecimal,
     val status: String,
     val payAtClinic: Boolean,
     val holdExpiresAt: Instant?,
@@ -192,6 +197,19 @@ class AppointmentApiController(
         return appointments.list(customer.actorId).map { it.toResponse() }
     }
 
+    @GetMapping("/customer/{customerId}")
+    fun legacyCustomerList(
+        authentication: Authentication,
+        @PathVariable customerId: UUID,
+    ): List<AppointmentResponse> {
+        val customer = authentication.domainPrincipal()
+        Authorizer.requireRole(customer, Role.CUSTOMER)
+        if (customer.actorId != customerId) {
+            throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+        }
+        return appointments.list(customer.actorId).map { it.toResponse() }
+    }
+
     @GetMapping("/{appointmentId}")
     fun get(
         authentication: Authentication,
@@ -200,6 +218,21 @@ class AppointmentApiController(
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
         return appointments.get(customer.actorId, appointmentId).toResponse()
+    }
+
+    @PutMapping("/{appointmentId}/status")
+    fun updateStatus(
+        authentication: Authentication,
+        @PathVariable appointmentId: UUID,
+        @RequestParam status: String,
+        @RequestParam(required = false) note: String?,
+    ): AppointmentResponse {
+        val customer = authentication.domainPrincipal()
+        Authorizer.requireRole(customer, Role.CUSTOMER)
+        if (status != "CANCELLED") {
+            throw DomainException("APPOINTMENT_STATE_INVALID", "Customers may only cancel appointments from this endpoint")
+        }
+        return appointments.cancel(customer.actorId, appointmentId, note).toResponse()
     }
 }
 
@@ -210,6 +243,7 @@ private fun Appointment.toResponse() = AppointmentResponse(
     slotId = slotId,
     petId = petId,
     pricePaise = pricePaise,
+    priceAmount = BigDecimal.valueOf(pricePaise, 2),
     status = status.name,
     payAtClinic = payAtClinic,
     holdExpiresAt = holdExpiresAt,

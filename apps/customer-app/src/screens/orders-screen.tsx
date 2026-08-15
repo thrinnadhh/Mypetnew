@@ -28,7 +28,7 @@ function formattedOrderDate(value: string): string {
 }
 
 function statusTone(status: string): 'success' | 'warning' | 'error' | 'neutral' {
-  if (status === 'DELIVERED') return 'success';
+  if (['DELIVERED', 'COMPLETED'].includes(status)) return 'success';
   if (['CANCELLED', 'REJECTED'].includes(status)) return 'error';
   if (['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'PICKED_UP'].includes(status)) {
     return 'warning';
@@ -159,7 +159,6 @@ export default function OrdersScreen() {
         <View style={styles.list}>
           {filteredOrders.map((order) => {
             const isCancellable = order.status === 'PLACED';
-            const isPast = ['DELIVERED', 'CANCELLED', 'REJECTED'].includes(order.status);
             const tone = statusTone(order.status);
             const accentColor =
               tone === 'success'
@@ -222,7 +221,7 @@ export default function OrdersScreen() {
                     ]}
                     onPress={() => router.push(`/orders/${order.id}` as never)}
                     accessibilityRole="button"
-                    accessibilityLabel={isPast ? `View order ${order.id.slice(0, 8)}` : `View order ${order.id.slice(0, 8)}`}
+                    accessibilityLabel={`View order ${order.id.slice(0, 8)}`}
                   >
                     <AppIcon name="chevron" size={18} color={theme.primary} />
                     <ThemedText type="smallBold" style={{ color: theme.primary }}>View details</ThemedText>

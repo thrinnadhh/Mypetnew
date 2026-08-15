@@ -2,7 +2,7 @@ import { SymbolView } from 'expo-symbols';
 import { Text, type StyleProp, type ViewStyle } from 'react-native';
 
 export type AppIconName =
-  | 'cart' | 'calendar' | 'check' | 'clock' | 'location' | 'paw' | 'store' | 'medical'
+  | 'cart' | 'calendar' | 'check' | 'circle' | 'clock' | 'location' | 'paw' | 'store' | 'medical'
   | 'sparkle' | 'star' | 'history' | 'message' | 'support' | 'shield' | 'groom' | 'card'
   | 'home' | 'search' | 'profile' | 'offline' | 'warning' | 'chevron' | 'heart' | 'close'
   | 'phone' | 'document' | 'eye' | 'share' | 'upload' | 'download';
@@ -23,6 +23,7 @@ const SYMBOLS: Record<AppIconName, { ios: string; android: string; fallback: str
   shield: { ios: 'shield.lefthalf.filled', android: 'verified_user', fallback: 'S' },
   groom: { ios: 'scissors', android: 'content_cut', fallback: 'G' },
   check: { ios: 'checkmark.circle.fill', android: 'check_circle', fallback: '✓' },
+  circle: { ios: 'circle', android: 'radio_button_unchecked', fallback: '○' },
   card: { ios: 'creditcard.fill', android: 'credit_card', fallback: '₹' },
   home: { ios: 'house.fill', android: 'home', fallback: 'H' },
   search: { ios: 'magnifyingglass', android: 'search', fallback: '?' },

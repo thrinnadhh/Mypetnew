@@ -3,6 +3,7 @@ package `in`.mypetnew.customer.infrastructure
 import `in`.mypetnew.customer.domain.CustomerFavourite
 import `in`.mypetnew.customer.domain.CustomerFavouritePage
 import `in`.mypetnew.customer.domain.CustomerFavouritePersistence
+import org.springframework.dao.DuplicateKeyException
 import org.springframework.jdbc.core.simple.JdbcClient
 import java.sql.ResultSet
 import java.sql.Timestamp
@@ -29,16 +30,20 @@ class JdbcCustomerFavouritePersistence(
     }
 
     override fun put(favourite: CustomerFavourite): CustomerFavourite {
-        jdbc.sql(
-            """
-            INSERT INTO mypet.customer_favourite_listing(customer_id, listing_id, created_at)
-            VALUES (:customer_id, :listing_id, :created_at)
-            ON CONFLICT (customer_id, listing_id) DO NOTHING
-            """.trimIndent(),
-        ).param("customer_id", favourite.customerId)
-            .param("listing_id", favourite.listingId)
-            .param("created_at", Timestamp.from(favourite.createdAt))
-            .update()
+        try {
+            jdbc.sql(
+                """
+                INSERT INTO mypet.customer_favourite_listing(customer_id, listing_id, created_at)
+                VALUES (:customer_id, :listing_id, :created_at)
+                """.trimIndent(),
+            ).param("customer_id", favourite.customerId)
+                .param("listing_id", favourite.listingId)
+                .param("created_at", Timestamp.from(favourite.createdAt))
+                .update()
+        } catch (_: DuplicateKeyException) {
+            // The composite primary key is the idempotency/concurrency boundary. A concurrent or replayed PUT
+            // returns the row that won the insert instead of changing the original creation timestamp.
+        }
         return jdbc.sql(
             """
             SELECT customer_id, listing_id, created_at

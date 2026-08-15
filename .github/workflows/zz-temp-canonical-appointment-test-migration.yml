@@ -1,0 +1,384 @@
+name: temporary-canonical-appointment-test-migration
+
+on:
+  push:
+    branches:
+      - feat/customer-canonical-appointments-20260816
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/customer-canonical-appointments-20260816
+          fetch-depth: 0
+      - name: Rewrite only stale appointment test blocks
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_until(path: str, start: str, next_marker: str, replacement: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              i = text.index(start)
+              j = text.index(next_marker, i)
+              p.write_text(text[:i] + replacement.rstrip() + "\n\n" + text[j:])
+
+          # Preserve the existing installed-user appointment cache namespace.
+          history = Path('apps/customer-app/src/services/customer-history.ts')
+          text = history.read_text().replace(
+              "const CACHE_PREFIX = '@mypet_appointments_cache_v2_';",
+              "const CACHE_PREFIX = '@mypet_appointments_cache_v1_';",
+          )
+          history.write_text(text)
+
+          replace_until(
+              'apps/customer-app/src/services/__tests__/customer-connected-services.test.ts',
+              "  it('discovers service slots and holds with online payment required', async () => {",
+              "  it('reconstructs a validated cart with current live products', async () => {",
+              r'''  it('discovers canonical service slots and creates an idempotent Pay at Provider hold', async () => {
+            mockedFetch
+              .mockResolvedValueOnce(
+                jsonResponse({
+                  items: [{
+                    serviceId: '33333333-3333-4333-8333-333333333333',
+                    outletId: '44444444-4444-4444-8444-444444444444',
+                    capability: 'VETERINARY',
+                    name: 'Vet Consultation',
+                    description: 'General consultation',
+                    durationMinutes: 30,
+                    pricePaise: 60000,
+                    currency: 'INR',
+                  }],
+                  page: 0,
+                  pageSize: 100,
+                  hasNext: false,
+                }),
+              )
+              .mockResolvedValueOnce(
+                jsonResponse({
+                  items: [{
+                    slotId: '55555555-5555-4555-8555-555555555555',
+                    serviceId: '33333333-3333-4333-8333-333333333333',
+                    startsAt: '2026-08-20T10:00:00Z',
+                    endsAt: '2026-08-20T10:30:00Z',
+                  }],
+                  page: 0,
+                  pageSize: 100,
+                  hasNext: false,
+                }),
+              );
+
+            const slots = await fetchAvailableAppointmentSlots(
+              '44444444-4444-4444-8444-444444444444',
+            );
+            expect(slots).toHaveLength(1);
+            expect(slots[0]).toMatchObject({
+              id: '55555555-5555-4555-8555-555555555555',
+              offeringId: '33333333-3333-4333-8333-333333333333',
+              price: 600,
+            });
+            expect(mockedFetch.mock.calls[0][0]).toContain('/api/v1/public/services?');
+            expect(mockedFetch.mock.calls[0][0]).toContain('outletId=44444444-4444-4444-8444-444444444444');
+            expect(mockedFetch.mock.calls[1][0]).toContain('/availability?');
+
+            mockedFetch
+              .mockResolvedValueOnce(
+                jsonResponse({ appointmentId: '66666666-6666-4666-8666-666666666666' }, 201),
+              )
+              .mockResolvedValueOnce(jsonResponse({ status: 'BOOKED' }));
+
+            const appointmentId = await holdAppointmentSlot({
+              slot: slots[0],
+              userId: '77777777-7777-4777-8777-777777777777',
+              petId: '88888888-8888-4888-8888-888888888888',
+              accessToken: 'token',
+            });
+            await confirmAppointmentHold(appointmentId, 'token');
+
+            expect(appointmentId).toBe('66666666-6666-4666-8666-666666666666');
+            expect(mockedFetch.mock.calls[2][0]).toBe('https://api.mypet.test/api/v1/customer/appointments');
+            expect(mockedFetch.mock.calls[2][1]?.headers).toMatchObject({
+              Authorization: 'Bearer token',
+              'Idempotency-Key': 'appointment-55555555-5555-4555-8555-555555555555-88888888-8888-4888-8888-888888888888',
+            });
+            expect(JSON.parse(mockedFetch.mock.calls[2][1]?.body as string)).toEqual({
+              outletId: '44444444-4444-4444-8444-444444444444',
+              serviceId: '33333333-3333-4333-8333-333333333333',
+              slotId: '55555555-5555-4555-8555-555555555555',
+              petId: '88888888-8888-4888-8888-888888888888',
+              paymentMethod: 'PAY_AT_PROVIDER',
+            });
+            expect(mockedFetch.mock.calls[3][0]).toContain(
+              '/api/v1/customer/appointments/66666666-6666-4666-8666-666666666666/confirm',
+            );
+          });''',
+          )
+
+          replace_until(
+              'apps/customer-app/src/services/__tests__/high-risk-customer-services.test.ts',
+              "    it('enriches appointment details and sends encoded mutations', async () => {",
+              "    it('loads and updates locale and vaccination reminder settings', async () => {",
+              r'''    it('uses canonical customer-owned appointment detail and cancellation while hiding unsupported actions', async () => {
+            mockedFetch
+              .mockResolvedValueOnce(jsonResponse({
+                appointmentId: 'appointment-1',
+                outletId: 'provider-1',
+                providerId: 'provider-1',
+                serviceId: 'offering-1',
+                offeringId: 'offering-1',
+                slotId: 'slot-1',
+                petId: 'pet-1',
+                providerName: 'Happy Paws Clinic',
+                serviceName: 'Vet Consultation',
+                petName: 'Milo',
+                startsAt: '2026-08-20T10:00:00Z',
+                endsAt: '2026-08-20T10:30:00Z',
+                status: 'BOOKED',
+                paymentMethod: 'PAY_AT_PROVIDER',
+                paymentStatus: 'NOT_REQUIRED',
+                pricePaise: 65000,
+                currency: 'INR',
+                holdExpiresAt: null,
+                createdAt: '2026-08-16T00:00:00Z',
+                updatedAt: '2026-08-16T00:00:00Z',
+              }))
+              .mockResolvedValueOnce(jsonResponse({
+                appointmentId: 'appointment-1',
+                outletId: 'provider-1',
+                serviceId: 'offering-1',
+                slotId: 'slot-1',
+                petId: 'pet-1',
+                providerName: 'Happy Paws Clinic',
+                serviceName: 'Vet Consultation',
+                petName: 'Milo',
+                startsAt: '2026-08-20T10:00:00Z',
+                endsAt: '2026-08-20T10:30:00Z',
+                status: 'CANCELLED',
+                paymentMethod: 'PAY_AT_PROVIDER',
+                paymentStatus: 'NOT_REQUIRED',
+                pricePaise: 65000,
+                currency: 'INR',
+                holdExpiresAt: null,
+                createdAt: '2026-08-16T00:00:00Z',
+                updatedAt: '2026-08-16T00:01:00Z',
+              }));
+
+            const details = await fetchAppointmentDetails('appointment-1', 'token');
+            expect(details).toMatchObject({
+              providerName: 'Happy Paws Clinic',
+              serviceName: 'Vet Consultation',
+              petName: 'Milo',
+              priceAmount: 650,
+              slotStartsAt: '2026-08-20T10:00:00Z',
+              canReview: false,
+            });
+            await cancelAppointment('appointment-1', 'Pet is unwell & resting', 'token');
+            await expect(rescheduleAppointment('appointment-1', 'slot/2', 'token'))
+              .rejects.toThrow('rescheduling is not available');
+            await expect(submitAppointmentReview({
+              customerId: 'customer-1',
+              providerId: 'provider-1',
+              targetId: 'appointment-1',
+              rating: 5,
+              comment: ' Excellent ',
+              accessToken: 'token',
+            })).rejects.toThrow('reviews are not available');
+
+            expect(mockedFetch.mock.calls[0][0]).toBe(
+              'https://api.mypet.test/api/v1/customer/appointments/appointment-1',
+            );
+            expect(mockedFetch.mock.calls[1][0]).toBe(
+              'https://api.mypet.test/api/v1/customer/appointments/appointment-1/cancel',
+            );
+            expect(mockedFetch.mock.calls[1][1]?.method).toBe('POST');
+            expect(JSON.parse(mockedFetch.mock.calls[1][1]?.body as string)).toEqual({
+              reason: 'Pet is unwell & resting',
+            });
+            expect(mockedFetch).toHaveBeenCalledTimes(2);
+          });''',
+          )
+
+          replace_until(
+              'apps/customer-app/src/services/__tests__/production-service-coverage.test.ts',
+              "describe('appointment history production paths', () => {",
+              "describe('appointment booking production paths', () => {",
+              r'''describe('appointment history production paths', () => {
+            it('maps canonical snapshots, sorts appointments and preserves offline cache compatibility', async () => {
+              mockedFetch.mockResolvedValueOnce(response({
+                items: [
+                  {
+                    appointmentId: 'appointment-1', outletId: 'provider-1', serviceId: 'offering-1',
+                    slotId: 'slot-1', petId: 'pet-1', providerName: 'Clinic One',
+                    serviceName: 'Consultation', petName: 'Milo',
+                    startsAt: '2026-08-20T10:00:00Z', endsAt: '2026-08-20T10:30:00Z',
+                    status: 'COMPLETED', paymentMethod: 'PAY_AT_PROVIDER', paymentStatus: 'NOT_REQUIRED',
+                    pricePaise: 65000, currency: 'INR', holdExpiresAt: null,
+                    createdAt: '2026-08-01T09:00:00Z', updatedAt: '2026-08-20T11:00:00Z',
+                  },
+                  {
+                    appointmentId: 'appointment-2', outletId: 'provider-2', serviceId: 'offering-2',
+                    slotId: 'slot-2', petId: 'pet-2', providerName: 'Groomer Two',
+                    serviceName: 'Full Spa', petName: 'Luna',
+                    startsAt: '2026-08-21T10:00:00Z', endsAt: '2026-08-21T11:00:00Z',
+                    status: 'BOOKED', paymentMethod: 'PAY_AT_PROVIDER', paymentStatus: 'NOT_REQUIRED',
+                    pricePaise: '90000', currency: 'INR', holdExpiresAt: null,
+                    createdAt: '2026-08-03T09:00:00Z', updatedAt: '2026-08-03T09:00:00Z',
+                  },
+                ],
+                page: 0, pageSize: 100, hasNext: false,
+              }));
+
+              const appointments = await fetchCustomerAppointments('customer-1', token);
+              expect(appointments.map((item) => item.id)).toEqual(['appointment-2', 'appointment-1']);
+              expect(appointments[1]).toMatchObject({
+                providerName: 'Clinic One', serviceName: 'Consultation', petName: 'Milo',
+                hasReview: false, canReview: false, priceAmount: 650,
+              });
+              expect(appointments[0]).toMatchObject({
+                providerName: 'Groomer Two', serviceName: 'Full Spa', priceAmount: 900,
+                status: 'CONFIRMED',
+              });
+              expect(await AsyncStorage.getItem('@mypet_appointments_cache_v1_customer-1')).not.toBeNull();
+              expect(mockedFetch.mock.calls[0][0]).toBe(
+                'https://api.mypet.test/api/v1/customer/appointments?page=0&pageSize=100',
+              );
+            });
+
+            it('uses cached history only for network failures and never hides authorization errors', async () => {
+              const cached = [{ id: 'cached-appointment' }];
+              await AsyncStorage.setItem('@mypet_appointments_cache_v1_customer-1', JSON.stringify(cached));
+              mockedFetch.mockRejectedValueOnce(new TypeError('offline'));
+              await expect(fetchCustomerAppointments('customer-1', token)).resolves.toEqual(cached);
+
+              await AsyncStorage.setItem('@mypet_appointments_cache_v1_customer-2', JSON.stringify([{ id: 'stale' }]));
+              mockedFetch.mockResolvedValueOnce(response({ error: 'History denied' }, 403));
+              await expect(fetchCustomerAppointments('customer-2', token)).rejects.toThrow('History denied');
+            });
+
+            it('does not issue legacy appointment review requests', async () => {
+              await expect(submitAppointmentReview({
+                customerId: 'customer-1', providerId: 'provider-1', targetId: 'appointment-1',
+                rating: 5, comment: 'Excellent', accessToken: token,
+              })).rejects.toThrow('reviews are not available');
+              expect(mockedFetch).not.toHaveBeenCalled();
+            });
+          });''',
+          )
+
+          replace_until(
+              'apps/customer-app/src/services/__tests__/production-service-coverage.test.ts',
+              "describe('appointment booking production paths', () => {",
+              "describe('chat attachment and read paths', () => {",
+              r'''describe('appointment booking production paths', () => {
+            const slot = {
+              id: 'slot-1', providerId: 'provider-1', offeringId: 'offering-1',
+              serviceName: 'Consultation', startTime: 'start', endTime: 'end', price: 650,
+            };
+
+            const servicesPage = {
+              items: [
+                {
+                  serviceId: 'offering-1', outletId: 'provider-1', capability: 'VETERINARY',
+                  name: 'Consultation', description: 'General consultation', durationMinutes: 30,
+                  pricePaise: 65050, currency: 'INR',
+                },
+                {
+                  serviceId: 'offering-2', outletId: 'provider-1', capability: 'VETERINARY',
+                  name: 'Follow-up', description: null, durationMinutes: 15,
+                  pricePaise: '0', currency: 'INR',
+                },
+              ],
+              page: 0, pageSize: 100, hasNext: false,
+            };
+
+            it('loads canonical services and slots, handles missing times and normalizes paise prices', async () => {
+              mockedFetch
+                .mockResolvedValueOnce(response(servicesPage))
+                .mockResolvedValueOnce(response({
+                  items: [{
+                    slotId: 'slot-1', serviceId: 'offering-1',
+                    startsAt: '2026-08-20T10:00:00Z', endsAt: '2026-08-20T10:30:00Z',
+                  }], page: 0, pageSize: 100, hasNext: false,
+                }))
+                .mockResolvedValueOnce(response({
+                  items: [{ slotId: 'slot-2', serviceId: 'offering-2', startsAt: '', endsAt: '' }],
+                  page: 0, pageSize: 100, hasNext: false,
+                }));
+
+              const slots = await fetchAvailableAppointmentSlots('provider/1');
+              expect(slots).toHaveLength(2);
+              expect(slots[0]).toMatchObject({ id: 'slot-1', price: 650.5 });
+              expect(slots[1]).toMatchObject({ id: 'slot-2', price: 0, startTime: 'Slot time unavailable' });
+              expect(mockedFetch.mock.calls[0][0]).toContain('/api/v1/public/services?');
+              expect(mockedFetch.mock.calls[0][0]).toContain('outletId=provider%2F1');
+              expect(mockedFetch.mock.calls[1][0]).toContain('/api/v1/public/services/offering-1/availability?');
+            });
+
+            it('enforces booking validation, idempotent secure payloads, API failures and confirmation', async () => {
+              await expect(holdAppointmentSlot({ slot, userId: null, petId: 'pet-1', accessToken: token }))
+                .rejects.toThrow('sign in');
+              await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: '', accessToken: token }))
+                .rejects.toThrow('Select a pet');
+              await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', accessToken: null }))
+                .rejects.toThrow('sign in');
+
+              mockedFetch
+                .mockResolvedValueOnce(response({ error: 'Slot occupied' }, 409))
+                .mockResolvedValueOnce(response({}, 201))
+                .mockResolvedValueOnce(response({ appointmentId: 'appointment-1' }, 201))
+                .mockResolvedValueOnce(response({}, 204))
+                .mockResolvedValueOnce(response({ message: 'Expired hold' }, 409));
+
+              await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', accessToken: token }))
+                .rejects.toThrow('Slot occupied');
+              await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', accessToken: token }))
+                .rejects.toThrow('no appointment ID');
+              await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', accessToken: token }))
+                .resolves.toBe('appointment-1');
+
+              const holdRequest = mockedFetch.mock.calls[2][1];
+              expect(holdRequest?.headers).toMatchObject({
+                Authorization: 'Bearer access-token',
+                'Idempotency-Key': 'appointment-slot-1-pet-1',
+              });
+              expect(JSON.parse(holdRequest?.body as string)).toEqual({
+                outletId: 'provider-1', serviceId: 'offering-1', slotId: 'slot-1', petId: 'pet-1',
+                paymentMethod: 'PAY_AT_PROVIDER',
+              });
+
+              await expect(confirmAppointmentHold('appointment/1', token)).resolves.toBeUndefined();
+              await expect(confirmAppointmentHold('appointment/1', token)).rejects.toThrow('Expired hold');
+              expect(mockedFetch.mock.calls[3][0]).toContain('appointment%2F1/confirm');
+            });
+
+            it('returns empty slots when availability fails and surfaces service catalogue errors', async () => {
+              mockedFetch
+                .mockResolvedValueOnce(response(servicesPage))
+                .mockResolvedValueOnce(response({}, 500))
+                .mockResolvedValueOnce(response({ message: 'Catalog offline' }, 503));
+
+              await expect(fetchAvailableAppointmentSlots('provider-1')).resolves.toEqual([]);
+              await expect(fetchAvailableAppointmentSlots('provider-1')).rejects.toThrow('Catalog offline');
+            });
+          });''',
+          )
+
+          PY
+      - name: Commit migrated tests and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/zz-temp-canonical-appointment-test-migration.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "test(customer): migrate canonical appointment fixtures"
+          git push origin HEAD:feat/customer-canonical-appointments-20260816

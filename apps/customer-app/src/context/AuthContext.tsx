@@ -5,6 +5,7 @@ import { validateServerRole, type OtpSessionResponse } from '@/auth/otp-auth';
 import { clearPersistedSession, loadPersistedSession, savePersistedSession } from '@/auth/session-storage';
 import type { CustomerAuthSession, CustomerAuthUser } from '@/auth/types';
 import { apiClient } from '@/services/api-client';
+import { clearPendingPayment } from '@/services/customer-payments';
 import { revokeDeviceRegistration } from '@/hooks/usePushNotifications';
 import { getOrCreateInstallationId } from '@/utils/installation-id';
 
@@ -47,7 +48,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!nextSession) {
       authEpochRef.current += 1;
       applySessionState(null);
-      await runStorageMutation(clearPersistedSession);
+      await Promise.all([
+        runStorageMutation(clearPersistedSession),
+        clearPendingPayment(),
+      ]);
       return;
     }
 
@@ -55,6 +59,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!nextSession.mobile?.trim()) {
       throw new Error('CustomerAuthSession mobile is required');
     }
+
+    // A newly verified OTP/login is a new account generation. Do not carry a
+    // previous account's opaque pending-payment pointer into this session. Cold
+    // start refresh does not call setSession, so legitimate same-account payment
+    // recovery survives process restarts.
+    await clearPendingPayment();
 
     // A newly established login is a new auth generation. Any older refresh/request must
     // become stale even if there was no intermediate sign-out call.
@@ -87,6 +97,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (!persisted) {
         applySessionState(null);
+        await clearPendingPayment();
         return null;
       }
 
@@ -132,7 +143,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (authEpochRef.current === epochAtStart) {
         console.warn('Session refresh failed:', error);
         applySessionState(null);
-        await runStorageMutation(clearPersistedSession);
+        await Promise.all([
+          runStorageMutation(clearPersistedSession),
+          clearPendingPayment(),
+        ]);
       }
       return null;
     }
@@ -144,6 +158,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLastOtpVerifiedAt(null);
     applySessionState(null);
     void runStorageMutation(clearPersistedSession);
+    void clearPendingPayment();
   }, [applySessionState, runStorageMutation]);
 
   useEffect(() => {
@@ -163,6 +178,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const persisted = await loadPersistedSession();
         if (!persisted) {
+          await clearPendingPayment();
           if (active) {
             applySessionState(null);
             setLoading(false);
@@ -226,7 +242,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     applySessionState(null);
-    await runStorageMutation(clearPersistedSession);
+    await Promise.all([
+      runStorageMutation(clearPersistedSession),
+      clearPendingPayment(),
+    ]);
   }, [applySessionState, runStorageMutation]);
 
   const user = useMemo<CustomerAuthUser | null>(() => {

@@ -13,6 +13,7 @@ This document records the repository-level verification scope for the MyPet-styl
 - Grooming and veterinary discovery use canonical public service and availability APIs rather than static production catalogues.
 - Appointment confirmation is `PAY_AT_PROVIDER`; appointment flows do not create a Cashfree session.
 - Product-order Cashfree support remains separate and retains its existing sandbox/live-certification boundaries.
+- Patchable Customer transitive findings are pinned to `brace-expansion` 1.1.18 and `nanoid` 3.3.18.
 - Customer dependency validation must reject Critical and unexpected High advisories while allowing only the same two documented, currently unpatched Expo/Metro `image-size` build-tool advisories already permitted by the Merchant dependency guard.
 
 ## Required merge gates

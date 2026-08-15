@@ -68,10 +68,8 @@ class CustomerFavouriteService(
     }
 
     fun add(customerId: UUID, listingId: UUID): CustomerFavourite {
-        val listing = catalog.allListings().find { it.id == listingId }
-            ?: unavailable()
-        val outlet = providers.allOutlets().find { it.id == listing.outletId }
-            ?: unavailable()
+        val listing = catalog.getListing(listingId)
+        val outlet = providers.getOutlet(listing.outletId)
         if (outlet.status != ProviderStatus.ACTIVE) unavailable()
         return persistence.put(
             CustomerFavourite(

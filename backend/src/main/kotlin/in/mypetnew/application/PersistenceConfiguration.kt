@@ -44,6 +44,10 @@ import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.support.TransactionTemplate
+import `in`.mypetnew.payment.domain.PaymentGateway
+import `in`.mypetnew.payment.domain.PaymentPersistence
+import `in`.mypetnew.payment.domain.PaymentService
+import `in`.mypetnew.payment.infrastructure.JdbcPaymentPersistence
 
 @Configuration
 @Profile("!test & !development")
@@ -86,6 +90,14 @@ class PersistenceConfiguration {
     @Bean
     fun productionOrderService(inventory: InventoryService, persistence: OrderPersistence): OrderService =
         OrderService(inventory, persistence)
+
+    @Bean
+    fun paymentPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): PaymentPersistence =
+        JdbcPaymentPersistence(jdbc, transactions)
+
+    @Bean
+    fun productionPaymentService(persistence: PaymentPersistence, gateway: PaymentGateway): PaymentService =
+        PaymentService(persistence, gateway)
 
     @Bean
     fun dispatchPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): DispatchPersistence =

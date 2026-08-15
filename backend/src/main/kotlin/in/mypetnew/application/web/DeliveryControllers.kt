@@ -36,6 +36,7 @@ data class DeliveryQuoteRequest(
     val outletId: UUID,
     val addressId: UUID,
     val lines: List<OrderLineRequest>,
+    val paymentMethod: String? = null,
 )
 
 data class CustomerCaptainProjection(
@@ -124,6 +125,7 @@ class CustomerDeliveryApiController(
             ),
             deliveryFeePaise = estimate.deliveryFeePaise,
             etaMinutes = estimate.etaMinutes,
+            paymentMethod = request.paymentMethod,
         )
     }
 

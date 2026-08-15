@@ -36,6 +36,9 @@ import `in`.mypetnew.provider.domain.InMemoryPrivateDocumentStore
 import `in`.mypetnew.privacy.domain.InMemoryPrivacyRepository
 import `in`.mypetnew.privacy.domain.PrivacyRepository
 import `in`.mypetnew.privacy.domain.PrivacyService
+import `in`.mypetnew.payment.domain.FakePaymentGateway
+import `in`.mypetnew.payment.domain.InMemoryPaymentPersistence
+import `in`.mypetnew.payment.domain.PaymentService
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
@@ -78,6 +81,12 @@ class DomainConfiguration {
     @Bean @Profile("test", "development")
     fun orderService(inventory: InventoryService, persistence: InMemoryQueryableOrderPersistence) =
         OrderService(inventory, persistence)
+    @Bean @Profile("test", "development")
+    fun inMemoryPaymentPersistence(orders: OrderService) = InMemoryPaymentPersistence(orders)
+    @Bean @Profile("test", "development") fun fakePaymentGateway() = FakePaymentGateway()
+    @Bean @Profile("test", "development")
+    fun paymentService(persistence: InMemoryPaymentPersistence, gateway: FakePaymentGateway) =
+        PaymentService(persistence, gateway)
     @Bean @Profile("test", "development") fun loyaltyService() = LoyaltyService()
     @Bean @Profile("test", "development")
     fun posService(inventory: InventoryService, loyalty: LoyaltyService) = PosService(inventory, loyalty)

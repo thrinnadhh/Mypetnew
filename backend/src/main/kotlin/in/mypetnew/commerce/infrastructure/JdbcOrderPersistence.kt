@@ -51,9 +51,9 @@ class JdbcOrderPersistence(
                 INSERT INTO mypet.product_order (
                     id, order_number, customer_id, organization_id, outlet_id, quote_id, status,
                     fulfilment_mode, payment_method, payment_status, grand_total_paise,
-                    platform_fee_paise, merchant_commission_paise, currency, version,
+                    platform_fee_paise, merchant_commission_paise, currency, payment_hold_expires_at, version,
                     checkout_idempotency_key, checkout_request_fingerprint
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INR', 0, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INR', ?, 0, ?, ?)
                 """.trimIndent(),
                 order.id,
                 order.orderNumber,
@@ -68,6 +68,7 @@ class JdbcOrderPersistence(
                 order.grandTotalPaise,
                 order.platformFeePaise,
                 order.merchantCommissionPaise,
+                order.paymentHoldExpiresAt,
                 idempotencyKey,
                 requestFingerprint,
             )
@@ -133,7 +134,7 @@ class JdbcOrderPersistence(
             """
             SELECT id, order_number, customer_id, organization_id, outlet_id, quote_id, status,
                    fulfilment_mode, payment_method, payment_status, grand_total_paise,
-                   platform_fee_paise, merchant_commission_paise
+                   platform_fee_paise, merchant_commission_paise, payment_hold_expires_at
             FROM mypet.product_order
             WHERE id = ?
             FOR UPDATE
@@ -173,7 +174,7 @@ class JdbcOrderPersistence(
             """
             SELECT id, order_number, customer_id, organization_id, outlet_id, quote_id, status,
                    fulfilment_mode, payment_method, payment_status, grand_total_paise,
-                   platform_fee_paise, merchant_commission_paise
+                   platform_fee_paise, merchant_commission_paise, payment_hold_expires_at
             FROM mypet.product_order
             WHERE id = ?
             """.trimIndent(),
@@ -215,6 +216,7 @@ class JdbcOrderPersistence(
             fulfilmentMode = header.fulfilmentMode,
             status = header.status,
             history = history,
+            paymentHoldExpiresAt = header.paymentHoldExpiresAt,
         )
     }
 
@@ -253,6 +255,7 @@ class JdbcOrderPersistence(
         grandTotalPaise = result.getLong("grand_total_paise"),
         platformFeePaise = result.getLong("platform_fee_paise"),
         merchantCommissionPaise = result.getLong("merchant_commission_paise"),
+        paymentHoldExpiresAt = result.getTimestamp("payment_hold_expires_at")?.toInstant(),
     )
 
     private fun history(result: ResultSet): OrderHistoryEntry = OrderHistoryEntry(
@@ -282,5 +285,6 @@ class JdbcOrderPersistence(
         val grandTotalPaise: Long,
         val platformFeePaise: Long,
         val merchantCommissionPaise: Long,
+        val paymentHoldExpiresAt: java.time.Instant?,
     )
 }

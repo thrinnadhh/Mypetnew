@@ -115,6 +115,15 @@ object PaginationHelper {
     }
 }
 
+private fun normalizeOptionalPincode(pincode: String?): String? {
+    if (pincode == null) return null
+    val normalized = pincode.trim()
+    if (!normalized.matches(Regex("[1-9][0-9]{5}"))) {
+        throw DomainException("PIN_CODE_INVALID", "PIN code must contain exactly six digits")
+    }
+    return normalized
+}
+
 @RestController
 @RequestMapping("/api/v1/public/outlets")
 class PublicOutletController(
@@ -125,13 +134,16 @@ class PublicOutletController(
         @RequestParam(defaultValue = "0") page: Int,
         @RequestParam(defaultValue = "20") pageSize: Int,
         @RequestParam(required = false) capability: ProviderCapability?,
+        @RequestParam(required = false) pincode: String?,
         @RequestParam(required = false) q: String?,
     ): PageResponse<PublicOutletSummary> {
         val query = q?.trim()?.lowercase()
+        val pincodeFilter = normalizeOptionalPincode(pincode)
         val visible = providers.allOutlets()
             .filter { outlet ->
                 outlet.status == ProviderStatus.ACTIVE &&
                 (capability == null || capability in outlet.capabilities) &&
+                (pincodeFilter == null || pincodeFilter in outlet.servicePinCodes) &&
                 (query.isNullOrEmpty() || outlet.name.lowercase().contains(query))
             }
             .sortedWith(compareBy<ProviderOutlet> { it.name.lowercase() }.thenBy { it.id.toString() })
@@ -183,6 +195,7 @@ class PublicCatalogController(
         @RequestParam(required = false) brand: String?,
         @RequestParam(required = false) petType: String?,
         @RequestParam(required = false) lifeStage: String?,
+        @RequestParam(required = false) commerceMode: CommerceMode?,
         @RequestParam(required = false) availability: AvailabilityFilter?,
         @RequestParam(required = false) sort: CatalogSortOption?,
     ): PageResponse<PublicListingSummary> {
@@ -213,6 +226,7 @@ class PublicCatalogController(
                 (brandFilter.isNullOrEmpty() || listing.brand?.lowercase() == brandFilter) &&
                 (petTypeFilter.isNullOrEmpty() || listing.petType?.lowercase() == petTypeFilter) &&
                 (lifeStageFilter.isNullOrEmpty() || listing.lifeStage?.lowercase() == lifeStageFilter) &&
+                (commerceMode == null || listing.commerceMode == commerceMode) &&
                 (query.isNullOrEmpty() || matchesQuery(listing, outlet, query)) &&
                 matchesAvailability(availability, availableQty)
             }

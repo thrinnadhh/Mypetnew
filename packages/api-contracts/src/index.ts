@@ -79,6 +79,13 @@ export function assertSafeRoute(value: string): SafeRoute {
   return value as SafeRoute
 }
 
+export function assertSafeResourceId(value: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    throw new Error('Notification resource identifier is invalid')
+  }
+  return value
+}
+
 export function isApiErrorEnvelope(value: unknown): value is ApiErrorEnvelope {
   if (!isRecord(value)) return false
   return typeof value.code === 'string' &&
@@ -112,4 +119,3 @@ export function requirePublicRuntimeConfig(input: RuntimeConfigInput): PublicRun
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
-

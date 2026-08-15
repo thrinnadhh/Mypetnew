@@ -54,6 +54,8 @@ interface DeviceRegistrationPersistence {
     ): DeviceRegistration
 
     fun activeFor(userId: UUID): List<DeviceRegistration>
+    fun unregister(userId: UUID, appKind: AppKind, installationId: UUID, environment: String)
+    fun revokeAll(userId: UUID)
 }
 
 class DeviceRegistrationService(private val persistence: DeviceRegistrationPersistence? = null) {
@@ -104,7 +106,7 @@ class DeviceRegistrationService(private val persistence: DeviceRegistrationPersi
         }
         if (existing != null) {
             val activated = existing.public.copy(status = RegistrationStatus.ACTIVE, lastSeenAt = Instant.now())
-            registrations[activated.id] = existing.copy(public = activated)
+            registrations[activated.id] = existing.copy(public = activated, protectedToken = token)
             return activated
         }
         val registration = DeviceRegistration(
@@ -152,7 +154,14 @@ class DeviceRegistrationService(private val persistence: DeviceRegistrationPersi
                 stored.public.installationId == installationId &&
                 stored.public.appKind == appKind &&
                 stored.public.environment == environment
-            ) stored.copy(public = stored.public.copy(status = RegistrationStatus.DISABLED)) else stored
+            ) {
+                stored.copy(
+                    public = stored.public.copy(status = RegistrationStatus.DISABLED),
+                    protectedToken = "",
+                )
+            } else {
+                stored
+            }
         }
         val existing = registrations.values.firstOrNull {
             it.public.userId == userId &&
@@ -186,6 +195,49 @@ class DeviceRegistrationService(private val persistence: DeviceRegistrationPersi
         ?: registrations.values.map(StoredRegistration::public)
             .filter { it.userId == userId && it.status == RegistrationStatus.ACTIVE }
 
+    @Synchronized
+    fun unregister(userId: UUID, appKind: AppKind, installationId: UUID, environment: String) {
+        if (environment !in setOf("development", "staging", "production")) invalidRegistration()
+        persistence?.let {
+            it.unregister(userId, appKind, installationId, environment)
+            return
+        }
+        requireInstallationOwner(userId, appKind, installationId, environment)
+        registrations.replaceAll { _, stored ->
+            if (
+                stored.public.userId == userId &&
+                stored.public.installationId == installationId &&
+                stored.public.appKind == appKind &&
+                stored.public.environment == environment
+            ) {
+                stored.copy(
+                    public = stored.public.copy(status = RegistrationStatus.REVOKED),
+                    protectedToken = "",
+                )
+            } else {
+                stored
+            }
+        }
+    }
+
+    @Synchronized
+    fun revokeAll(userId: UUID) {
+        persistence?.let {
+            it.revokeAll(userId)
+            return
+        }
+        registrations.replaceAll { _, stored ->
+            if (stored.public.userId == userId) {
+                stored.copy(
+                    public = stored.public.copy(status = RegistrationStatus.REVOKED),
+                    protectedToken = "",
+                )
+            } else {
+                stored
+            }
+        }
+    }
+
     private fun requireInstallationOwner(
         userId: UUID,
         appKind: AppKind,
@@ -202,6 +254,11 @@ class DeviceRegistrationService(private val persistence: DeviceRegistrationPersi
             throw DomainException("DEVICE_REGISTRATION_INVALID", "The device registration is invalid")
         }
     }
+
+    private fun invalidRegistration(): Nothing = throw DomainException(
+        "DEVICE_REGISTRATION_INVALID",
+        "The device registration is invalid",
+    )
 
     private fun fingerprint(token: String): String = MessageDigest.getInstance("SHA-256")
         .digest(token.toByteArray(StandardCharsets.UTF_8))
@@ -274,6 +331,14 @@ class NotificationService(private val repository: NotificationRepository = InMem
         ) {
             throw DomainException("NOTIFICATION_TEMPLATE_INVALID", "The notification content is invalid")
         }
+        if (RESTRICTED_NOTIFICATION_CONTENT.containsMatchIn("$title $body")) {
+            throw DomainException("NOTIFICATION_CONTENT_RESTRICTED", "The notification content is not lock-screen safe")
+        }
+        val approved = APPROVED_LOCK_SCREEN_TEMPLATES[templateVersion]
+            ?: throw DomainException("NOTIFICATION_TEMPLATE_INVALID", "The notification template is not approved")
+        if (approved.title != title || approved.body != body || approved.route != route) {
+            throw DomainException("NOTIFICATION_CONTENT_RESTRICTED", "The notification content is not lock-screen safe")
+        }
         val notificationId = UUID.randomUUID()
         val candidate = Notification(
             id = notificationId,
@@ -295,4 +360,24 @@ class NotificationService(private val repository: NotificationRepository = InMem
     }
 
     fun forRecipient(recipientId: UUID): List<Notification> = repository.forRecipient(recipientId)
+
+    companion object {
+        private data class ApprovedTemplate(val title: String, val body: String, val route: SafeRoute)
+
+        private val APPROVED_LOCK_SCREEN_TEMPLATES = mapOf(
+            "pickup-order-placed-v1" to ApprovedTemplate(
+                "New pickup order",
+                "Open MyPet Merchant to review a new pickup order.",
+                SafeRoute.MERCHANT_ORDER,
+            ),
+            "pos-star-v1" to ApprovedTemplate(
+                "You earned a loyalty star",
+                "Open MyPet to view your merchant loyalty activity.",
+                SafeRoute.CUSTOMER_LOYALTY,
+            ),
+        )
+        private val RESTRICTED_NOTIFICATION_CONTENT = Regex(
+            "(?i)(\\+91[6-9][0-9]{9}|[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}|\\b(otp|cvv|cvc|upi[ _-]?pin|bank[ _-]?password|card[ _-]?number|prescription|diagnosis)\\b|\\b(latitude|longitude)\\s*[:=])",
+        )
+    }
 }

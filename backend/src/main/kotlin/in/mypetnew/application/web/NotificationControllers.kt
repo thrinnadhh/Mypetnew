@@ -9,8 +9,13 @@ import `in`.mypetnew.engagement.domain.DeviceRegistrationService
 import `in`.mypetnew.engagement.domain.Notification
 import `in`.mypetnew.engagement.domain.NotificationService
 import `in`.mypetnew.engagement.domain.Platform
+import `in`.mypetnew.privacy.domain.ConsentPurpose
+import `in`.mypetnew.privacy.domain.PrivacyService
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.DeleteMapping
+import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -33,6 +38,7 @@ data class NotificationPage(val items: List<Notification>)
 class NotificationApiController(
     private val devices: DeviceRegistrationService,
     private val notifications: NotificationService,
+    private val privacy: PrivacyService,
 ) {
     @PostMapping("/devices/registrations")
     fun register(authentication: Authentication, @RequestBody request: RegisterDeviceRequest): DeviceRegistration {
@@ -57,6 +63,9 @@ class NotificationApiController(
         if (request.permissionState != "GRANTED" || request.nativeToken.isBlank()) {
             throw DomainException("DEVICE_REGISTRATION_INVALID", "The device registration is invalid")
         }
+        if (request.appKind == AppKind.CUSTOMER) {
+            privacy.requireActiveConsent(principal.actorId, ConsentPurpose.NOTIFICATIONS)
+        }
         return devices.register(
             principal.actorId,
             request.appKind,
@@ -73,5 +82,22 @@ class NotificationApiController(
     fun inbox(authentication: Authentication): NotificationPage {
         val principal = authentication.domainPrincipal()
         return NotificationPage(notifications.forRecipient(principal.actorId))
+    }
+
+    @DeleteMapping("/devices/registrations/{installationId}")
+    fun unregister(
+        authentication: Authentication,
+        @PathVariable installationId: UUID,
+        @RequestParam appKind: AppKind,
+        @RequestParam environment: String,
+    ) {
+        val principal = authentication.domainPrincipal()
+        val requiredRole = when (appKind) {
+            AppKind.CUSTOMER -> Role.CUSTOMER
+            AppKind.MERCHANT -> Role.MERCHANT
+            AppKind.CAPTAIN -> Role.CAPTAIN
+        }
+        Authorizer.requireRole(principal, requiredRole)
+        devices.unregister(principal.actorId, appKind, installationId, environment)
     }
 }

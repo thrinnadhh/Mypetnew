@@ -143,7 +143,8 @@ class JdbcDeviceRegistrationPersistence(
         val now = clock.instant()
         jdbc.sql(
             """
-            UPDATE mypet.device_registration SET status = 'DISABLED', permission_state = 'DENIED', updated_at = :now
+            UPDATE mypet.device_registration
+            SET status = 'DISABLED', permission_state = 'DENIED', protected_token = '', updated_at = :now
             WHERE environment = :environment AND app_kind = :app_kind AND installation_id = :installation_id
             """.trimIndent(),
         ).params(bindingParameters(environment, appKind, installationId)).param("now", now).update()
@@ -176,6 +177,34 @@ class JdbcDeviceRegistrationPersistence(
         FROM mypet.device_registration WHERE user_id = :user_id AND status = 'ACTIVE'
         """.trimIndent(),
     ).param("user_id", userId).query(::mapRegistration).list()
+
+    override fun unregister(userId: UUID, appKind: AppKind, installationId: UUID, environment: String) {
+        transaction.executeWithoutResult {
+            lockBinding(environment, appKind, installationId)
+            requireOwner(userId, environment, appKind, installationId)
+            jdbc.sql(
+                """
+                UPDATE mypet.device_registration
+                SET status = 'REVOKED', protected_token = '', updated_at = :now
+                WHERE user_id = :user_id AND environment = :environment AND app_kind = :app_kind
+                  AND installation_id = :installation_id
+                """.trimIndent(),
+            ).params(bindingParameters(environment, appKind, installationId))
+                .param("user_id", userId)
+                .param("now", clock.instant())
+                .update()
+        }
+    }
+
+    override fun revokeAll(userId: UUID) {
+        jdbc.sql(
+            """
+            UPDATE mypet.device_registration
+            SET status = 'REVOKED', protected_token = '', updated_at = :now
+            WHERE user_id = :user_id AND status <> 'REVOKED'
+            """.trimIndent(),
+        ).param("user_id", userId).param("now", clock.instant()).update()
+    }
 
     private fun findExact(
         userId: UUID,

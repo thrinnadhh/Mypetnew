@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   assertSafeRoute,
+  assertSafeResourceId,
   formatInrPaise,
   isApiErrorEnvelope,
   requirePublicRuntimeConfig
@@ -17,6 +18,10 @@ describe('shared API contracts', () => {
     expect(assertSafeRoute('merchant/orders/detail')).toBe('merchant/orders/detail')
     expect(() => assertSafeRoute('https://evil.example')).toThrow('route')
     expect(() => assertSafeRoute('../admin')).toThrow('route')
+    expect(() => assertSafeRoute('javascript:alert(1)')).toThrow('route')
+    expect(() => assertSafeRoute('admin/customers')).toThrow('route')
+    expect(assertSafeResourceId('123e4567-e89b-12d3-a456-426614174000')).toContain('123e4567')
+    expect(() => assertSafeResourceId('../admin')).toThrow('identifier')
   })
 
   it('recognizes the stable API error envelope', () => {

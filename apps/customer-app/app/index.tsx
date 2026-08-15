@@ -45,6 +45,7 @@ export default function CustomerHome() {
       <View style={{ flexDirection: 'row', gap: 12 }}>
         <Link href="/otp" asChild><Pressable accessibilityRole="button" style={styles.button}><Text style={styles.buttonText}>Verify mobile</Text></Pressable></Link>
         <Link href="/cart" asChild><Pressable accessibilityRole="button" style={styles.button}><Text style={styles.buttonText}>Cart</Text></Pressable></Link>
+        <Link href="/privacy" asChild><Pressable accessibilityRole="button" style={styles.button}><Text style={styles.buttonText}>Privacy</Text></Pressable></Link>
       </View>
       {loading ? <ActivityIndicator accessibilityLabel="Loading catalog" /> : null}
       {error ? <Pressable accessibilityRole="button" onPress={() => { void load() }}><Text style={styles.error}>{error} Tap to retry.</Text></Pressable> : null}
@@ -59,4 +60,3 @@ export default function CustomerHome() {
     </ScrollView>
   )
 }
-

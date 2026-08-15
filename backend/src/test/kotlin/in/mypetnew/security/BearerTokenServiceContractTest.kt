@@ -7,6 +7,7 @@ import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
 import java.time.Clock
 import java.time.Instant
+import java.time.Duration
 import java.time.ZoneOffset
 import java.util.UUID
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -31,6 +32,10 @@ class BearerTokenServiceContractTest {
         }
         assertThrows(DomainException::class.java) {
             BearerTokenService(SecurityProperties(secret, "mypet-api", "foreign-app"), clock).verify(token)
+        }
+        assertThrows(DomainException::class.java) {
+            val expiredClock = Clock.fixed(clock.instant().plus(Duration.ofMinutes(15)), ZoneOffset.UTC)
+            BearerTokenService(SecurityProperties(secret, "mypet-api", "customer-app"), expiredClock).verify(token)
         }
     }
 }

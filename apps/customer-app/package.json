@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "main": "expo-router/entry",
+  "expo": {
+    "install": {
+      "exclude": ["expo", "expo-constants", "expo-linking", "expo-notifications", "expo-router"]
+    }
+  },
   "scripts": {
     "build": "expo export --platform android --output-dir dist",
     "typecheck": "tsc -p tsconfig.json"
@@ -13,14 +18,17 @@
     "@mypet/mobile-notifications": "workspace:*",
     "expo": "57.0.12",
     "expo-constants": "57.0.10",
+    "expo-linking": "57.0.5",
     "expo-notifications": "57.0.10",
     "expo-router": "57.0.12",
     "expo-secure-store": "57.0.1",
-    "react": "19.2.8",
-    "react-native": "0.86.2"
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-safe-area-context": "5.7.0"
   },
   "devDependencies": {
     "@types/react": "19.2.18",
-    "typescript": "5.9.3"
+    "typescript": "~6.0.3"
   }
 }

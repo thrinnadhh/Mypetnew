@@ -3,6 +3,7 @@ import * as SecureStore from 'expo-secure-store'
 import { Platform } from 'react-native'
 import {
   assertSafeRoute,
+  assertSafeResourceId,
   type DeviceRegistrationRequest,
   type PublicRuntimeConfig,
   type SafeRoute
@@ -17,7 +18,7 @@ export async function registerNativePush(
 ): Promise<'ACTIVE' | 'DENIED'> {
   const current = await Notifications.getPermissionsAsync()
   const permission = current.granted ? current : await Notifications.requestPermissionsAsync()
-  const installationId = await getInstallationId()
+  const installationId = await getNativeInstallationId()
   if (!permission.granted) {
     await postRegistration(config, accessToken, {
       appKind,
@@ -48,11 +49,26 @@ export function subscribeToSafeNotificationRoutes(
     const data = response.notification.request.content.data
     if (!data || typeof data.route !== 'string' || typeof data.resourceId !== 'string') return
     try {
-      navigate(assertSafeRoute(data.route), data.resourceId)
+      navigate(assertSafeRoute(data.route), assertSafeResourceId(data.resourceId))
     } catch {
       navigate('inbox', '')
     }
   })
+}
+
+export async function unregisterNativePush(
+  config: PublicRuntimeConfig,
+  appKind: DeviceRegistrationRequest['appKind'],
+  accessToken: string
+): Promise<void> {
+  const installationId = await SecureStore.getItemAsync(installationKey)
+  if (!installationId) return
+  const query = new URLSearchParams({ appKind, environment: config.environment }).toString()
+  const response = await fetch(
+    `${config.apiUrl}/api/v1/devices/registrations/${encodeURIComponent(installationId)}?${query}`,
+    { method: 'DELETE', headers: { authorization: `Bearer ${accessToken}` } }
+  )
+  if (!response.ok && response.status !== 404) throw new Error('Device unregister failed')
 }
 
 async function postRegistration(
@@ -72,7 +88,7 @@ async function postRegistration(
   if (!response.ok) throw new Error('Device registration failed')
 }
 
-async function getInstallationId(): Promise<string> {
+export async function getNativeInstallationId(): Promise<string> {
   const existing = await SecureStore.getItemAsync(installationKey)
   if (existing) return existing
   const value = globalThis.crypto.randomUUID()

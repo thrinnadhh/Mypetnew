@@ -2,6 +2,8 @@ package `in`.mypetnew.identity.domain
 
 import `in`.mypetnew.common.error.DomainException
 import java.security.SecureRandom
+import java.security.MessageDigest
+import java.nio.charset.StandardCharsets
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -47,20 +49,24 @@ class OtpService(
     private val provider: OtpProvider,
     private val clock: Clock = Clock.systemUTC(),
     private val ttl: Duration = Duration.ofMinutes(5),
+    private val resendCooldown: Duration = Duration.ofSeconds(30),
 ) {
     private data class Challenge(
         val id: UUID,
-        val mobile: String,
+        val mobileHash: String,
         val purpose: OtpPurpose,
         val deviceId: String,
-        val code: String,
+        val codeHash: ByteArray,
+        val salt: ByteArray,
         val expiresAt: Instant,
         var consumedAt: Instant? = null,
+        var attemptCount: Int = 0,
     )
 
     private val random = SecureRandom()
     private val challenges = mutableMapOf<UUID, Challenge>()
     private val requestWindows = mutableMapOf<String, MutableList<Instant>>()
+    private val lastRequests = mutableMapOf<String, Instant>()
 
     @Synchronized
     fun request(mobile: String, purpose: OtpPurpose, deviceId: String, ipAddress: String): OtpChallengeResponse {
@@ -69,13 +75,21 @@ class OtpService(
             throw DomainException("OTP_REQUEST_INVALID", "Unable to send a verification code")
         }
         val now = clock.instant()
-        enforceRateLimit("mobile:$mobile", now)
+        val mobileHash = hashText(mobile)
+        val resendKey = "$mobileHash:${purpose.name}:$deviceId"
+        val lastRequest = lastRequests[resendKey]
+        if (lastRequest != null && now.isBefore(lastRequest.plus(resendCooldown))) {
+            throw DomainException("OTP_RATE_LIMITED", "Too many attempts. Try again later.")
+        }
+        enforceRateLimit("mobile:$mobileHash", now)
         enforceRateLimit("device:$deviceId", now)
         enforceRateLimit("ip:$ipAddress", now)
         val id = UUID.randomUUID()
         val code = random.nextInt(1_000_000).toString().padStart(6, '0')
-        val challenge = Challenge(id, mobile, purpose, deviceId, code, now.plus(ttl))
+        val salt = ByteArray(32).also(random::nextBytes)
+        val challenge = Challenge(id, mobileHash, purpose, deviceId, hashCode(salt, code), salt, now.plus(ttl))
         challenges[id] = challenge
+        lastRequests[resendKey] = now
         provider.send(id, mobile, code, purpose)
         return OtpChallengeResponse(
             challengeId = id,
@@ -93,12 +107,14 @@ class OtpService(
         at: Instant = clock.instant(),
     ): VerifiedMobile {
         val challenge = challenges[challengeId] ?: invalidOtp()
+        challenge.attemptCount += 1
         if (
             challenge.consumedAt != null ||
-            challenge.mobile != mobile ||
+            challenge.attemptCount > MAX_VERIFY_ATTEMPTS ||
+            challenge.mobileHash != hashText(mobile) ||
             challenge.purpose != purpose ||
             code.length != 6 ||
-            challenge.code != code ||
+            !MessageDigest.isEqual(challenge.codeHash, hashCode(challenge.salt, code)) ||
             !at.isBefore(challenge.expiresAt)
         ) {
             invalidOtp()
@@ -122,8 +138,19 @@ class OtpService(
         }
     }
 
+    private fun hashText(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(StandardCharsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+
+    private fun hashCode(salt: ByteArray, code: String): ByteArray = MessageDigest.getInstance("SHA-256")
+        .digest(salt + code.toByteArray(StandardCharsets.UTF_8))
+
     private fun invalidOtp(): Nothing = throw DomainException(
         "OTP_INVALID",
         "The verification code is invalid or expired",
     )
+
+    companion object {
+        private const val MAX_VERIFY_ATTEMPTS = 5
+    }
 }

@@ -7,7 +7,7 @@ export default function CustomerLayout() {
       <Stack.Screen name="otp" options={{ title: 'Verify mobile' }} />
       <Stack.Screen name="cart" options={{ title: 'Your cart' }} />
       <Stack.Screen name="inbox" options={{ title: 'Notifications' }} />
+      <Stack.Screen name="privacy" options={{ title: 'Privacy Centre' }} />
     </Stack>
   )
 }
-

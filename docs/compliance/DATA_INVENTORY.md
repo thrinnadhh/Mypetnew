@@ -1,0 +1,72 @@
+# Personal-data inventory
+
+Status: source-derived inventory at commit worktree, 2026-08-15. Deployment inspection is still required. `UNKNOWN` is deliberate and blocks production evidence.
+
+Classification: `PUBLIC`, `INTERNAL`, `CONFIDENTIAL`, `RESTRICTED`. Authentication secrets, mobile numbers, FCM tokens, precise location, payment references and Customer-linked veterinary data are `RESTRICTED`.
+
+## PostgreSQL/Supabase application schema
+
+All listed tables are in the private `mypet` schema. Role apps have no Supabase Data API path. Source is the backend unless stated. Database, log and backup regions are `UNKNOWN` until deployment evidence is attached. TLS is required by the documented production JDBC URL; provider-side at-rest/backup encryption is `UNVERIFIED`.
+
+| Table / fields | Category, source and purpose | Basis / owner | Read / modify boundary | Processor / region | Retention and deletion | Exposure / class |
+|---|---|---|---|---|---|---|
+| `identity_account`: `id`, `mobile_e164`, `role`, `status`, `created_at`, `updated_at`, `deleted_at` | identity; OTP login and role authority | current contract/consent as applicable; final DPDP voluntary-use/consent analysis; Identity owner | self identity service; scoped Admin only; backend modifies | Supabase PostgreSQL / UNKNOWN | active account life; deletion replaces mobile with non-phone tombstone, status `DELETED`; pseudonymous row retained for lawful record links | mobile RESTRICTED; UUID/status CONFIDENTIAL; never log full mobile; backup suppression tombstone |
+| `otp_challenge`: all fields `id`, `mobile_hash`, `purpose`, `code_hash`, `expires_at`, `consumed_at`, `attempt_count`, `created_at` | authentication challenge | security/identity necessity | OTP service only | PostgreSQL target; production persistence adapter not implemented | target 10 minutes, hard maximum 24 hours; delete, never backup long-term | RESTRICTED; current production service absent; in-memory code hash only |
+| `user_session`: `id`, `account_id`, `refresh_token_hash`, `device_id`, `expires_at`, `revoked_at`, `created_at`, `rotated_from_session_id` | authentication/session/device | service security | identity service only; Customer can revoke current; deletion revokes all | Supabase / UNKNOWN | active plus 30-day token expiry; revoked lineage 365 days then delete unless incident hold | hashes/device RESTRICTED; no raw refresh token in DB/logs; backups must preserve revocation |
+| `merchant_staff`: `account_id`, `organization_id`, `outlet_id`, `permission`, `active` | staff authorization | employment/merchant contract | authorized Merchant/Admin IAM | Supabase / UNKNOWN | relationship plus contractual/audit need; deactivate then reviewed deletion | CONFIDENTIAL; no Customer client access |
+| `customer_cart`, `cart_line`: all fields (`id`, `owner_id`, `outlet_id`, `version`, `updated_at`; `cart_id`, `listing_id`, `quantity`) | commerce intent/purchase preference | requested cart service | owning Customer only; backend commands | Supabase / UNKNOWN | active 30 days; deletion immediately deletes lines/cart | CONFIDENTIAL; no analytics payload; owner IDs not logged |
+| `commerce_quote`, `quote_line`: all fields including `customer_id`, outlet, cart signature, fulfilment/payment method, all fee/total/currency/rule/expiry/time fields and listing/quantity/unit price | commerce/transaction and price transparency | checkout requested by Customer | owning Customer; fulfilling outlet only where needed; authorized support | Supabase; payment processor not integrated | expired/abandoned 30 days unless linked to order; delete/anonymise; successful quote follows order | customer link CONFIDENTIAL; amounts INTERNAL; no raw credentials |
+| `product_order`, `product_order_line`, `product_order_history`: every listed ID/reference, Customer/merchant/outlet/quote link, status, fulfilment/payment status/method, amount/currency/version/time, item snapshot, actor/role/reason/idempotency/trace | transaction history, fulfilment, disputes, consumer and financial records | contract and legal retention; final DPDP retention exception | Customer owns own order; assigned Merchant only; Captain endpoint not yet implemented; permissioned Admin | Supabase; Cashfree absent | `LEGAL_RETENTION`; exact tax/consumer period requires counsel; remove direct identifiers through deleted identity row | Customer/item history CONFIDENTIAL; payment reference would be RESTRICTED if added; reason must not contain PII |
+| `inventory_movement`: all fields including `actor_id`, source/idempotency/trace/time | security/audit of stock actor | legitimate security/merchant operation | outlet-scoped Merchant and audit Admin | Supabase | 365-day security floor; longer financial/inventory rule requires review | actor/trace CONFIDENTIAL; no content PII |
+| `pos_sale`, `pos_sale_line`: all sale/outlet/customer/cashier/amount/payment-declaration/idempotency/time and item fields | in-store transaction and optional loyalty association | Customer association consent/transaction; merchant legal records | relevant Merchant; associated Customer loyalty projection; authorized Admin | Supabase | `LEGAL_RETENTION`; direct Customer link pseudonymised on account deletion where feasible | Customer link/payment reference RESTRICTED; items CONFIDENTIAL; no credentials |
+| `loyalty_relationship`, `loyalty_source`, `loyalty_ledger`, `loyalty_reward`: all Customer/merchant/outlet/source/balance/delta/rule/amount/status/time fields | loyalty balance and qualification history | requested loyalty feature; optional participation | Customer and relevant merchant only; audit Admin | Supabase | active relationship; account deletion retains pseudonymous ledger only for reconciliation period, then anonymise/delete | CONFIDENTIAL; other merchants denied |
+| `device_registration`: every environment/app/install/platform/user/role/session/protected-token/fingerprint/permission/status/time field | notification delivery and device security | optional notification consent and security | owning authenticated user; notification worker | Supabase + Firebase; regions UNKNOWN | active until rotation/logout/denial/stale; raw encrypted token erased on permission denial, logout or deletion; stale target 90 days | protected token/installation/fingerprint RESTRICTED; AES-GCM server key; full token never logged |
+| `notification_item`: all source/recipient/event/template/route/resource/title/body/time fields | minimal inbox and push projection | requested transactional notification or optional purpose | recipient only; worker/support metadata | Supabase + Firebase | 90 days default; security/transaction notice may follow source record | recipient/content CONFIDENTIAL; lock-screen policy blocks OTP, contacts, diagnosis, prescription, coordinates |
+| `notification_attempt`: all notification/registration/channel/status/provider-code/reference/attempt/next/claim/time fields | delivery operations and abuse investigation | service security | worker and operations only | Supabase + Firebase | 365-day redacted security record; provider reference review | provider/device link RESTRICTED; safe codes only |
+| `audit_event`: all actor/role/action/target/reason/source/idempotency/trace/time fields | privileged action accountability and incident investigation | security/legal obligation | AUDIT permission; ordinary roles cannot modify | Supabase/log platform UNKNOWN | 365 days minimum internal target; longer legal hold case-by-case | CONFIDENTIAL/RESTRICTED when Customer-linked; reason must not duplicate content |
+| `outbox_event`, `inbox_event`, `dead_letter`: all aggregate/source/event/payload/status/attempt/claim/delivery/trace/time/error fields | reliable async processing | service operation/security | workers/operations | Supabase and downstream processor | delivered event 30 days; dead letter 90 days after resolution; 365 if security incident | payload is RESTRICTED unless schema-proven safe; current architecture still needs payload allowlisting |
+| `private_document`: all organization/outlet/purpose/object-key/type/size/checksum/time fields | merchant verification/evidence metadata | provider onboarding/legal evidence | authorized Admin + owning provider by purpose | Supabase private Storage / UNKNOWN | purpose schedule; deletion after verification/legal period | object key/checksum CONFIDENTIAL; referenced documents may be RESTRICTED; signed access only |
+| `customer_profile`: every account/display-name/email/adult-attestation/time field | identity/profile and adult eligibility | voluntary data; adult-only product rule | owning Customer; purpose-scoped support | Supabase | active account; name/email/attestation erased immediately on delete | email/name RESTRICTED; no DOB collected |
+| `privacy_consent`: every id/customer/purpose/notice/source/proof/grant/withdraw field | consent proof and withdrawal | legal/security accountability | owning Customer; privacy operations | Supabase | active history plus 3 years after withdrawal pending legal review; metadata only | CONFIDENTIAL; proof deliberately excludes IP/device fingerprint |
+| `privacy_rights_request`: every id/customer/type/status/details/rejection/timestamps field | rights/grievance workflow | legal readiness/current SPDI grievance | requester and privacy-authorized staff | Supabase | 3 years after closure pending limitation review; minimise free text | details RESTRICTED; no secrets requested; owner-scoped queries |
+| `account_deletion_request`, `deleted_identity_tombstone`: every request/customer/status/time/review/suppression/reason field | erasure audit and prevention of backup resurrection/re-login | legal/security accountability | privacy operations only | Supabase/backups | tombstone 365 days then review; legal hold only with recorded basis | CONFIDENTIAL; no original phone/email stored |
+| `security_incident`: every id/title/severity/status and detection/awareness/CERT-In/Board/user notification/report time field | dual regulatory clock | CERT-In; final DPDP readiness | incident team only | Supabase/security system / India location required for applicable logs | 365 days minimum; legal hold if investigation | CONFIDENTIAL; victim details must live in separate restricted case store, not title |
+
+Business tables `merchant_organization`, `provider_outlet`, `outlet_capability`, `outlet_service_pincode`, `catalog_listing`, `inventory_balance`, `inventory_reservation`, `idempotency_record` and public catalog fields do not intentionally contain Customer personal data. Free-form fields (`name`, `reason`, `payload`, `response_body`, `source_reference`) remain contamination risks and require schema/CI review.
+
+## Device/client stores
+
+| Location / fields | Purpose | Access | Retention / deletion | Class and evidence |
+|---|---|---|---|---|
+| Customer native SecureStore: access token, refresh token | authenticated API session | OS-protected app sandbox | cleared on logout; account deletion invalidates server sessions | RESTRICTED; `src/session.ts`; no AsyncStorage |
+| Role-app native SecureStore: installation UUID | idempotent device binding | app sandbox | may persist across logout; not sufficient for authentication; revoke server binding | RESTRICTED identifier; `mobile-notifications` |
+| FCM/APNs native token | push routing | OS, app, Firebase, backend | rotate/unregister/invalid-token cleanup; erase on deletion | RESTRICTED; encrypted at backend |
+| Customer in-memory form state: mobile, OTP, profile, grievance, deletion confirmation | complete user action | current UI process | clear on screen/process end; OTP code cleared after verification | RESTRICTED while resident; never logged |
+| Admin web | no implemented persistent auth/customer cache | browser runtime | N/A in current shell | INTERNAL; production authentication is still absent/blocking |
+
+## Non-production and transient stores
+
+| Store | Data | Rule |
+|---|---|---|
+| `InMemoryOtpProvider` (`test`/`development` profile only) | raw sandbox OTP by challenge ID | impossible in production because no bean for non-test/development; never log; process lifetime only |
+| In-memory Sprint 1 domain repositories (`test`/`development`) | synthetic Customer/order/loyalty/notification data | no production fallback; test fixtures only |
+| CI artifacts | test/coverage/build results | synthetic data only; no production dumps, tokens, screenshots or logs; repository secret/privacy scans run before upload |
+| Developer machines | local test H2/build data | production dumps prohibited; `.env*`, build, coverage and evidence-generated paths ignored |
+
+## Integrations and missing categories
+
+| Category | Actual repository finding |
+|---|---|
+| Supabase | backend-only PostgreSQL/private Storage adapters; service-role reference server-side only; actual project/region/backups/RLS/grants not accessible |
+| Firebase/FCM | server HTTP v1 adapter and role-app native registration; project/region/retention/subprocessors unverified |
+| Cashfree / payment | architecture decision only; no adapter, webhook or payment credential model exists |
+| Redis | architecture target only; no source adapter/config found |
+| OTP/SMS | provider interface plus development provider; production provider absent |
+| maps/location | no provider, coordinates, permission request or tracking persistence found |
+| analytics/advertising | no analytics SDK/event sink implementation found |
+| email/support chat | no provider implementation found; privacy grievance free text is stored in rights workflow |
+| veterinary | no booking, prescription, medical-note or result table/API exists |
+| addresses/favorites/recurring orders | not implemented in this Sprint 1 source |
+| backups/log platform/monitoring | actuator/metrics configuration exists; actual platform, region, access and retention unknown |
+
+Any introduction of an absent category requires inventory, purpose owner, retention and processor review before merge.

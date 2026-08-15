@@ -76,7 +76,7 @@ class ApplicationApiContractTest {
 
         val verified = mockMvc.post("/api/v1/auth/otp/verify") {
             contentType = MediaType.APPLICATION_JSON
-            content = """{"challengeId":"$challengeId","mobile":"+919876543210","purpose":"LOGIN","code":"$code"}"""
+            content = """{"challengeId":"$challengeId","mobile":"+919876543210","purpose":"LOGIN","code":"$code","adultEligibilityAttested":true}"""
         }.andExpect {
             status { isOk() }
             jsonPath("$.accessToken") { isNotEmpty() }

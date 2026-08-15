@@ -21,6 +21,9 @@ import `in`.mypetnew.pos.domain.PosService
 import `in`.mypetnew.provider.domain.ProviderService
 import `in`.mypetnew.provider.domain.DocumentStore
 import `in`.mypetnew.provider.domain.InMemoryPrivateDocumentStore
+import `in`.mypetnew.privacy.domain.InMemoryPrivacyRepository
+import `in`.mypetnew.privacy.domain.PrivacyRepository
+import `in`.mypetnew.privacy.domain.PrivacyService
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Profile
@@ -66,4 +69,15 @@ class DomainConfiguration {
         DeviceRegistrationService(persistence.getIfAvailable())
     @Bean
     fun notificationService(repository: NotificationRepository) = NotificationService(repository)
+
+    @Bean
+    @Profile("test", "development")
+    fun privacyRepository(): PrivacyRepository = InMemoryPrivacyRepository()
+
+    @Bean
+    fun privacyService(
+        repository: PrivacyRepository,
+        sessions: SessionStore,
+        devices: DeviceRegistrationService,
+    ) = PrivacyService(repository, sessions, devices)
 }

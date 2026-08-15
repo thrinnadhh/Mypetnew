@@ -52,6 +52,11 @@ jobs:
           const critical = Number(meta.critical || 0);
           const high = Number(meta.high || 0);
           const unexpected = [...urls].filter((url) => !allowed.has(url));
+          const exceptionExpiresAt = Date.parse('2026-09-11T00:00:00Z');
+          if (Date.now() >= exceptionExpiresAt && high > 0) {
+            console.error('The temporary Metro/image-size security exception expired on 2026-09-11 and must be re-evaluated.');
+            process.exit(1);
+          }
           if (critical > 0 || unexpected.length > 0 || (high > 0 && urls.size === 0)) {
             console.error(JSON.stringify({ critical, high, advisoryUrls: [...urls], unexpected }, null, 2));
             process.exit(1);
@@ -68,3 +73,5 @@ jobs:
         run: npm run lint
       - name: Test Customer app
         run: npm test -- --runInBand
+      - name: Export Android Customer bundle
+        run: npx expo export -p android --output-dir /tmp/customer-android-export

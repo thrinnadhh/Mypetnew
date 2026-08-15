@@ -5,7 +5,7 @@ import { validateServerRole, type OtpSessionResponse } from '@/auth/otp-auth';
 import { clearPersistedSession, loadPersistedSession, savePersistedSession } from '@/auth/session-storage';
 import type { CustomerAuthSession, CustomerAuthUser } from '@/auth/types';
 import { apiClient } from '@/services/api-client';
-import { clearPendingPayment } from '@/services/customer-payments';
+import { clearPendingPayment } from '@/services/payment-recovery';
 import { revokeDeviceRegistration } from '@/hooks/usePushNotifications';
 import { getOrCreateInstallationId } from '@/utils/installation-id';
 

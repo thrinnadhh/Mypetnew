@@ -159,14 +159,21 @@ class JdbcAppointmentPersistence(
                     .isPresent
                 if (!slotAvailable) slotUnavailable()
 
+                // Ignore the exact same customer's exact same idempotency attempt here.
+                // If a concurrent duplicate already committed, the insert below hits the
+                // customer/idempotency unique key and the catch block replays that result.
+                // Different customers/keys still observe the active slot as occupied.
                 val slotOccupied = jdbc.sql(
                     """
                     SELECT id FROM mypet.appointment
                     WHERE slot_id = :slot_id
                       AND status IN ('HOLD','BOOKED','CONFIRMED','CHECKED_IN','IN_SERVICE')
+                      AND NOT (customer_id = :customer_id AND idempotency_key = :idempotency_key)
                     LIMIT 1
                     """.trimIndent(),
                 ).param("slot_id", appointment.slotId)
+                    .param("customer_id", appointment.customerId)
+                    .param("idempotency_key", idempotencyKey)
                     .query(UUID::class.java)
                     .optional()
                     .isPresent

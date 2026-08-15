@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import {
   CFPaymentGatewayService,
@@ -16,6 +15,19 @@ import type {
 } from '../contracts/customer-payment';
 import { appConfig } from '../utils/app-config';
 import { apiClient } from './api-client';
+import {
+  clearPendingPayment,
+  loadPendingPayment,
+  rememberPendingPayment,
+  type PendingPaymentRecovery,
+} from './payment-recovery';
+
+export {
+  clearPendingPayment,
+  loadPendingPayment,
+  rememberPendingPayment,
+  type PendingPaymentRecovery,
+} from './payment-recovery';
 
 export interface CustomerPaymentView {
   paymentId: string;
@@ -31,14 +43,7 @@ export interface CustomerPaymentView {
   refundStatus?: CustomerRefundStatus | null;
 }
 
-export interface PendingPaymentRecovery {
-  paymentId: string;
-  orderId: string;
-}
-
 export type CashfreeCallbackSignal = 'VERIFY' | 'ERROR';
-
-const RECOVERY_KEY = 'mypet.customer.pending-payment.v1';
 
 export async function initiateOrderPayment(
   orderId: string,
@@ -140,35 +145,6 @@ export async function waitForPaymentOutcome(
     await clearPendingPayment(paymentId);
   }
   return latest;
-}
-
-export async function rememberPendingPayment(paymentId: string, orderId: string): Promise<void> {
-  if (!paymentId || !orderId) return;
-  await AsyncStorage.setItem(RECOVERY_KEY, JSON.stringify({ paymentId, orderId } satisfies PendingPaymentRecovery));
-}
-
-export async function loadPendingPayment(): Promise<PendingPaymentRecovery | null> {
-  const raw = await AsyncStorage.getItem(RECOVERY_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<PendingPaymentRecovery>;
-    if (typeof parsed.paymentId !== 'string' || typeof parsed.orderId !== 'string') {
-      await AsyncStorage.removeItem(RECOVERY_KEY);
-      return null;
-    }
-    return { paymentId: parsed.paymentId, orderId: parsed.orderId };
-  } catch {
-    await AsyncStorage.removeItem(RECOVERY_KEY);
-    return null;
-  }
-}
-
-export async function clearPendingPayment(expectedPaymentId?: string): Promise<void> {
-  if (expectedPaymentId) {
-    const current = await loadPendingPayment();
-    if (current && current.paymentId !== expectedPaymentId) return;
-  }
-  await AsyncStorage.removeItem(RECOVERY_KEY);
 }
 
 // These compatibility exports intentionally keep the already-restored Plan 8

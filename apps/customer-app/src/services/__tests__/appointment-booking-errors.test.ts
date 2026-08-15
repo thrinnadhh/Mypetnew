@@ -1,4 +1,7 @@
-import { fetchAvailableAppointmentSlots } from '../appointment-booking';
+import {
+  fetchAvailableAppointmentSlots,
+  holdAppointmentSlot,
+} from '../appointment-booking';
 
 const mockedFetch = jest.fn();
 
@@ -73,5 +76,43 @@ describe('appointment booking API failure handling', () => {
     await expect(
       fetchAvailableAppointmentSlots('44444444-4444-4444-8444-444444444444'),
     ).resolves.toEqual([]);
+  });
+
+  it('uses a fresh idempotency attempt when the deterministic replay is already terminal', async () => {
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    mockedFetch
+      .mockResolvedValueOnce(
+        jsonResponse({ appointmentId: 'old-appointment', status: 'CANCELLED' }, 201),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ appointmentId: 'new-appointment', status: 'HOLD' }, 201),
+      );
+
+    const appointmentId = await holdAppointmentSlot({
+      slot: {
+        id: 'slot-rebook',
+        providerId: 'provider-rebook',
+        offeringId: 'service-rebook',
+        serviceName: 'Rebookable service',
+        startTime: 'Tomorrow',
+        endTime: 'Later',
+        price: 500,
+      },
+      userId: 'customer-rebook',
+      petId: 'pet-rebook',
+      accessToken: 'token',
+    });
+
+    expect(appointmentId).toBe('new-appointment');
+    expect(mockedFetch).toHaveBeenCalledTimes(2);
+    expect(mockedFetch.mock.calls[0][1]?.headers).toMatchObject({
+      'Idempotency-Key': 'appointment-slot-rebook-pet-rebook',
+    });
+    expect(mockedFetch.mock.calls[1][1]?.headers).toMatchObject({
+      'Idempotency-Key': 'appointment-slot-rebook-pet-rebook-retry-loyw3v28',
+    });
+    expect(mockedFetch.mock.calls[1][1]?.body).toBe(mockedFetch.mock.calls[0][1]?.body);
+
+    nowSpy.mockRestore();
   });
 });

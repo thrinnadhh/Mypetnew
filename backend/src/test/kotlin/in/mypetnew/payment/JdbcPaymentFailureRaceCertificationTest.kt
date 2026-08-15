@@ -233,8 +233,9 @@ class JdbcPaymentFailureRaceCertificationTest {
 
         assertEquals(1, fixture.count("mypet.payment_refund"))
         assertEquals("REFUND_PENDING", fixture.orders.get(scenario.orderId).paymentStatus)
-        assertEquals(1, fixture.payments.processRefundBatch())
-        assertEquals(0, fixture.payments.processRefundBatch())
+        val refundWorker = PaymentService(fixture.persistence, fixture.gateway, Clock.systemUTC())
+        assertEquals(1, refundWorker.processRefundBatch())
+        assertEquals(0, refundWorker.processRefundBatch())
 
         assertEquals(1, fixture.gateway.createRefundCalls)
         assertEquals(1, fixture.count("mypet.payment_refund"))

@@ -29,8 +29,8 @@ require_env EXPO_PUBLIC_API_BASE_URL
 
 [[ "$CASHFREE_ENABLED" == "true" ]] || fail 'CASHFREE_ENABLED must be true for sandbox certification'
 [[ ${#CASHFREE_CLIENT_SECRET} -ge 16 ]] || fail 'CASHFREE_CLIENT_SECRET is too short'
-[[ "$CASHFREE_API_VERSION" == "2026-01-01" ]] || fail 'CASHFREE_API_VERSION must be 2026-01-01'
-[[ "$CASHFREE_WEBHOOK_VERSION" == "2026-01-01" ]] || fail 'CASHFREE_WEBHOOK_VERSION must be 2026-01-01'
+[[ "$CASHFREE_API_VERSION" == "2025-01-01" ]] || fail 'CASHFREE_API_VERSION must be 2025-01-01'
+[[ "$CASHFREE_WEBHOOK_VERSION" == "2025-01-01" ]] || fail 'CASHFREE_WEBHOOK_VERSION must be 2025-01-01'
 [[ "${CASHFREE_BASE_URL%/}" == "https://sandbox.cashfree.com/pg" ]] || fail 'CASHFREE_BASE_URL must target Cashfree sandbox'
 [[ "$DATABASE_URL" == jdbc:postgresql://* ]] || fail 'DATABASE_URL must use PostgreSQL for certification'
 [[ "$EXPO_PUBLIC_APP_ENV" == "staging" ]] || fail 'EXPO_PUBLIC_APP_ENV must be staging for sandbox certification'
@@ -58,6 +58,7 @@ expected_notify="${api_base}/api/v1/webhooks/cashfree/payments"
 pass 'sandbox environment contract is internally consistent'
 pass 'Cashfree credentials are present without being printed'
 pass 'Customer staging API and Cashfree webhook share the deployed backend origin'
+pass 'Cashfree REST and webhook versions are pinned to 2025-01-01'
 
 if [[ "${P5_PROBE_PUBLIC_ENDPOINT:-0}" == "1" ]]; then
   command -v curl >/dev/null 2>&1 || fail 'curl is required when P5_PROBE_PUBLIC_ENDPOINT=1'

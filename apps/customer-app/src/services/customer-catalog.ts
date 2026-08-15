@@ -66,6 +66,7 @@ export interface PublicCatalogQuery {
   brand?: string;
   petType?: string;
   lifeStage?: string;
+  commerceMode?: 'COMMERCE' | 'VIEW_ONLY';
   availability?: 'ANY' | 'IN_STOCK' | 'OUT_OF_STOCK';
   sort?: 'NAME' | 'PRICE_ASC' | 'PRICE_DESC' | 'NEWEST';
 }
@@ -74,6 +75,7 @@ export interface PublicOutletQuery {
   page?: number;
   pageSize?: number;
   capability?: string;
+  pincode?: string;
   q?: string;
 }
 
@@ -186,6 +188,7 @@ export async function fetchPublicOutlets(
   if (query.page !== undefined) params.append('page', String(query.page));
   if (query.pageSize !== undefined) params.append('pageSize', String(query.pageSize));
   params.append('capability', query.capability ?? 'PRODUCT_STORE');
+  if (query.pincode) params.append('pincode', query.pincode);
   if (query.q) params.append('q', query.q);
 
   const url = `/api/v1/public/outlets?${params.toString()}`;
@@ -227,6 +230,7 @@ export async function fetchCatalogPage(
   if (query.brand) params.append('brand', query.brand);
   if (query.petType) params.append('petType', query.petType);
   if (query.lifeStage) params.append('lifeStage', query.lifeStage);
+  if (query.commerceMode) params.append('commerceMode', query.commerceMode);
   if (query.availability) params.append('availability', query.availability);
   if (query.sort) params.append('sort', query.sort);
 
@@ -312,6 +316,7 @@ export async function fetchCommerceProducts(
     outletId: query.providerId,
     category: query.category,
     q: query.q,
+    commerceMode: 'COMMERCE',
     sort: query.onlyNewArrivals ? 'NEWEST' : query.sort,
   };
 

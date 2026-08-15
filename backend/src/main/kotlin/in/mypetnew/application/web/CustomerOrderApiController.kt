@@ -2,6 +2,7 @@ package `in`.mypetnew.application.web
 
 import `in`.mypetnew.catalog.domain.CatalogService
 import `in`.mypetnew.catalog.domain.InventoryService
+import `in`.mypetnew.commerce.domain.CustomerOrderQuery
 import `in`.mypetnew.commerce.domain.OrderService
 import `in`.mypetnew.commerce.domain.OrderStatus
 import `in`.mypetnew.commerce.domain.ProductOrder
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import java.time.Instant
 import java.util.UUID
@@ -46,13 +48,66 @@ data class CustomerOrderView(
     val statusHistory: List<CustomerOrderHistoryView>,
 )
 
+data class CustomerOrderOutletSummary(
+    val id: UUID,
+    val name: String,
+)
+
+data class CustomerOrderSummaryResponse(
+    val orderId: UUID,
+    val outlet: CustomerOrderOutletSummary,
+    val itemCount: Int,
+    val grandTotalPaise: Long,
+    val fulfilmentMode: String,
+    val paymentMethod: String,
+    val paymentStatus: String,
+    val status: OrderStatus,
+    val placedAt: Instant,
+    val lastUpdatedAt: Instant,
+)
+
 @RestController
 @RequestMapping("/api/v1/customer/orders")
 class CustomerOrderApiController(
     private val orders: OrderService,
+    private val orderQuery: CustomerOrderQuery,
     private val providers: ProviderService,
     private val catalog: CatalogService,
 ) {
+    @GetMapping
+    fun list(
+        authentication: Authentication,
+        @RequestParam(defaultValue = "0") page: Int,
+        @RequestParam(defaultValue = "20") pageSize: Int,
+        @RequestParam(required = false) status: OrderStatus?,
+    ): PageResponse<CustomerOrderSummaryResponse> {
+        val customer = authentication.domainPrincipal()
+        Authorizer.requireRole(customer, Role.CUSTOMER)
+        PaginationHelper.validate(page, pageSize)
+
+        val result = orderQuery.list(customer.actorId, status, page, pageSize)
+        return PageResponse(
+            items = result.items.map { summary ->
+                val outlet = providers.getOutlet(summary.outletId)
+                CustomerOrderSummaryResponse(
+                    orderId = summary.orderId,
+                    outlet = CustomerOrderOutletSummary(outlet.id, outlet.name),
+                    itemCount = summary.itemCount,
+                    grandTotalPaise = summary.grandTotalPaise,
+                    fulfilmentMode = summary.fulfilmentMode,
+                    paymentMethod = summary.paymentMethod,
+                    paymentStatus = summary.paymentStatus,
+                    status = summary.status,
+                    placedAt = summary.placedAt,
+                    lastUpdatedAt = summary.lastUpdatedAt,
+                )
+            },
+            page = page,
+            pageSize = pageSize,
+            hasNext = result.hasNext,
+        )
+    }
+
     @GetMapping("/{orderId}")
     fun get(authentication: Authentication, @PathVariable orderId: UUID): CustomerOrderView {
         val customer = authentication.domainPrincipal()

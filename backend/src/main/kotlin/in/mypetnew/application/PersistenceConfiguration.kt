@@ -6,10 +6,12 @@ import `in`.mypetnew.catalog.domain.InventoryPersistence
 import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.catalog.infrastructure.JdbcCatalogPersistence
 import `in`.mypetnew.catalog.infrastructure.JdbcInventoryPersistence
+import `in`.mypetnew.commerce.domain.CustomerOrderQuery
 import `in`.mypetnew.commerce.domain.OrderPersistence
 import `in`.mypetnew.commerce.domain.OrderService
 import `in`.mypetnew.commerce.domain.QuotePersistence
 import `in`.mypetnew.commerce.domain.QuoteService
+import `in`.mypetnew.commerce.infrastructure.JdbcCustomerOrderQuery
 import `in`.mypetnew.commerce.infrastructure.JdbcOrderPersistence
 import `in`.mypetnew.commerce.infrastructure.JdbcQuotePersistence
 import `in`.mypetnew.loyalty.domain.LoyaltyPersistence
@@ -64,6 +66,9 @@ class PersistenceConfiguration {
     @Bean
     fun orderPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): OrderPersistence =
         JdbcOrderPersistence(jdbc, transactions)
+
+    @Bean
+    fun customerOrderQuery(jdbc: JdbcTemplate): CustomerOrderQuery = JdbcCustomerOrderQuery(jdbc)
 
     @Bean
     fun productionOrderService(inventory: InventoryService, persistence: OrderPersistence): OrderService =

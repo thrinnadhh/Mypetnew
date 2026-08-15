@@ -11,7 +11,7 @@ import { radii, shadows, spacing, touchTarget, typography } from '@/design/token
 import { useOrders } from '@/hooks/use-orders';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
-import type { CustomerOrderRecord } from '@/services/customer-orders';
+import type { CustomerOrderSummaryRecord } from '@/services/customer-order-list';
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -30,7 +30,7 @@ function formattedOrderDate(value: string): string {
 function statusTone(status: string): 'success' | 'warning' | 'error' | 'neutral' {
   if (['DELIVERED', 'COMPLETED'].includes(status)) return 'success';
   if (['CANCELLED', 'REJECTED'].includes(status)) return 'error';
-  if (['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'ASSIGNED', 'PICKED_UP'].includes(status)) {
+  if (['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'PICKED_UP'].includes(status)) {
     return 'warning';
   }
   return 'neutral';
@@ -52,12 +52,14 @@ export default function OrdersScreen() {
     searchQuery,
     setSearchQuery,
     actionLoading,
+    loadingMore,
+    hasNext,
     reload,
+    loadMore,
     cancel,
-    reorder,
   } = useOrders();
 
-  const [selectedOrderForCancel, setSelectedOrderForCancel] = useState<CustomerOrderRecord | null>(null);
+  const [selectedOrderForCancel, setSelectedOrderForCancel] = useState<CustomerOrderSummaryRecord | null>(null);
   const [cancelReason, setCancelReason] = useState('');
 
   if (!user || !session) {
@@ -86,39 +88,15 @@ export default function OrdersScreen() {
     }
   };
 
-  const handleReorder = async (orderId: string) => {
-    try {
-      const result = await reorder(orderId);
-      if (result?.canReorder) {
-        Alert.alert('Reorder validated', 'All items are available at current prices. Continue to cart?', [
-          { text: 'Not now', style: 'cancel' },
-          { text: 'Go to cart', onPress: () => router.push('/cart' as never) },
-        ]);
-        return;
-      }
-
-      if (result) {
-        const unavailable = result.items
-          .filter((item) => !item.isAvailable)
-          .map((item) => `${item.offeringName}: ${item.message ?? 'Unavailable'}`)
-          .join('\n');
-        Alert.alert('Reorder unavailable', unavailable || 'One or more items are unavailable.');
-      }
-    } catch (error: unknown) {
-      Alert.alert(t('common.error'), errorMessage(error, 'Could not revalidate reorder.'));
-    }
-  };
-
   return (
     <ScreenShell
-      header={<AppBar title={t('ordersFoundation.title')} subtitle="Track deliveries, subscriptions, and past purchases" />}
+      header={<AppBar title={t('ordersFoundation.title')} subtitle="Track current and past purchases" />}
       testID="orders-screen"
     >
       <View style={styles.controls}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
           <FilterChip label="Active" selected={activeTab === 'active'} onPress={() => setActiveTab('active')} />
           <FilterChip label="Past orders" selected={activeTab === 'past'} onPress={() => setActiveTab('past')} />
-          <FilterChip label="Subscriptions" selected={activeTab === 'subscription'} onPress={() => setActiveTab('subscription')} />
         </ScrollView>
 
         <View style={[styles.searchBox, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
@@ -126,7 +104,7 @@ export default function OrdersScreen() {
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholder="Search item or store…"
+            placeholder="Search store or order ID…"
             placeholderTextColor={theme.textSecondary}
             style={[styles.searchInput, { color: theme.text }]}
             accessibilityLabel="Search orders"
@@ -171,7 +149,7 @@ export default function OrdersScreen() {
         <StateView
           kind="empty"
           title={searchQuery ? 'No matching orders' : t('ordersFoundation.emptyTitle')}
-          message={searchQuery ? 'Try another item or store name.' : t('ordersFoundation.emptyMessage')}
+          message={searchQuery ? 'Try another store name or order ID.' : t('ordersFoundation.emptyMessage')}
           actionLabel={searchQuery ? 'Clear search' : undefined}
           onAction={searchQuery ? () => setSearchQuery('') : undefined}
         />
@@ -181,7 +159,6 @@ export default function OrdersScreen() {
         <View style={styles.list}>
           {filteredOrders.map((order) => {
             const isCancellable = order.status === 'PLACED';
-            const isPast = ['DELIVERED', 'COMPLETED', 'CANCELLED', 'REJECTED'].includes(order.status);
             const tone = statusTone(order.status);
             const accentColor =
               tone === 'success'
@@ -209,7 +186,7 @@ export default function OrdersScreen() {
               >
                 <View style={styles.cardHeader}>
                   <View style={[styles.storeIcon, { backgroundColor: theme.primarySoft }]}>
-                    <AppIcon name={order.isSubscription ? 'history' : 'store'} size={23} color={theme.primary} />
+                    <AppIcon name="store" size={23} color={theme.primary} />
                   </View>
                   <View style={styles.flex}>
                     <ThemedText style={styles.storeName}>{order.providerName}</ThemedText>
@@ -221,18 +198,18 @@ export default function OrdersScreen() {
                 </View>
 
                 <View style={[styles.itemsPanel, { backgroundColor: theme.muted }]}>
-                  <ThemedText type="smallBold">{order.items.length} item{order.items.length === 1 ? '' : 's'}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={3}>
-                    {order.items.join(' · ')}
+                  <ThemedText type="smallBold">{order.itemCount} item{order.itemCount === 1 ? '' : 's'}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {order.fulfilmentMode.replaceAll('_', ' ')} · {order.paymentMethod.replaceAll('_', ' ')}
                   </ThemedText>
                 </View>
 
                 <View style={styles.amountRow}>
                   <View>
-                    <ThemedText type="small" themeColor="textSecondary">Total paid</ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">Order total</ThemedText>
                     <ThemedText style={[styles.amountText, { color: theme.primary }]}>{order.total}</ThemedText>
                   </View>
-                  {order.isSubscription ? <StatusBadge label="SUBSCRIPTION" tone="success" /> : null}
+                  <StatusBadge label={order.paymentStatus.replaceAll('_', ' ')} tone="neutral" />
                 </View>
 
                 <View style={styles.actionRow}>
@@ -244,12 +221,10 @@ export default function OrdersScreen() {
                     ]}
                     onPress={() => router.push(`/orders/${order.id}` as never)}
                     accessibilityRole="button"
-                    accessibilityLabel={isPast ? `View order ${order.id.slice(0, 8)}` : `Track order ${order.id.slice(0, 8)}`}
+                    accessibilityLabel={`View order ${order.id.slice(0, 8)}`}
                   >
-                    <AppIcon name={isPast ? 'chevron' : 'location'} size={18} color={theme.primary} />
-                    <ThemedText type="smallBold" style={{ color: theme.primary }}>
-                      {isPast ? 'View details' : 'Track order'}
-                    </ThemedText>
+                    <AppIcon name="chevron" size={18} color={theme.primary} />
+                    <ThemedText type="smallBold" style={{ color: theme.primary }}>View details</ThemedText>
                   </Pressable>
 
                   {isCancellable ? (
@@ -262,26 +237,14 @@ export default function OrdersScreen() {
                       <AppIcon name="close" size={20} color={theme.danger} />
                     </Pressable>
                   ) : null}
-
-                  {isPast ? (
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.reorderAction,
-                        { backgroundColor: theme.accentSoft },
-                        pressed && styles.pressed,
-                      ]}
-                      onPress={() => void handleReorder(order.id)}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Reorder from ${order.providerName}`}
-                    >
-                      <AppIcon name="cart" size={18} color={theme.accent} />
-                      <ThemedText type="smallBold" style={{ color: theme.accent }}>Reorder</ThemedText>
-                    </Pressable>
-                  ) : null}
                 </View>
               </View>
             );
           })}
+
+          {hasNext ? (
+            <PrimaryAction label="Load more orders" onPress={() => void loadMore()} loading={loadingMore} />
+          ) : null}
         </View>
       ) : null}
 
@@ -378,15 +341,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  reorderAction: {
-    minHeight: touchTarget,
-    borderRadius: radii.compact,
-    paddingHorizontal: spacing.x3,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.x2,
   },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(11,28,48,0.52)', justifyContent: 'center', padding: spacing.x4 },
   modalBox: { borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card, padding: spacing.x6, gap: spacing.x3 },

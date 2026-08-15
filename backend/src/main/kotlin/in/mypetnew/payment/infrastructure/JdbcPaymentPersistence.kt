@@ -81,7 +81,7 @@ class JdbcPaymentPersistence(
                 providerOrderReference,
                 paymentId.toString(),
                 now.jdbcTimestamp(),
-                requireNotNull(order.expiresAt).jdbcTimestamp(),
+                requireNotNull(order.paymentHoldExpiresAt).jdbcTimestamp(),
                 now.jdbcTimestamp(),
                 now.jdbcTimestamp(),
             )
@@ -561,7 +561,6 @@ class JdbcPaymentPersistence(
                     refund.id,
                 )
             }
-            // The Payment remains CAPTURED regardless of refund state.
             if (payment.status != PaymentStatus.CAPTURED) {
                 throw DomainException("REFUND_PAYMENT_STATE_INVALID", "Refund requires a captured payment")
             }
@@ -569,11 +568,6 @@ class JdbcPaymentPersistence(
         }
     }
 
-    /**
-     * Called by commerce persistence while ProductOrder is already locked in the
-     * surrounding transaction. It never locks ProductOrder again, preserving the
-     * global ProductOrder -> Payment -> Refund order.
-     */
     fun projectTerminalOrder(orderId: UUID, reason: String?, now: Instant): String? {
         val payment = lockPayment(PaymentReferenceType.PRODUCT_ORDER, orderId, PaymentProvider.CASHFREE) ?: return null
         return when (payment.status) {
@@ -871,8 +865,6 @@ class JdbcPaymentPersistence(
             )
             insertRefundHistory(refundId, null, RefundStatus.PENDING, "REFUND_REQUIRED", "refund-intent:${payment.id}", now)
         } catch (_: DuplicateKeyException) {
-            // Another transaction may have created the unique intent first. The
-            // owning ProductOrder lock ensures same-order callers serialize.
         }
         return lockRefundForPayment(payment.id) ?: throw DomainException("REFUND_CONFLICT", "Refund intent could not be recovered")
     }
@@ -978,7 +970,6 @@ class JdbcPaymentPersistence(
                 now.jdbcTimestamp(),
             )
         } catch (_: DuplicateKeyException) {
-            // Deterministic order-history command makes retry harmless.
         }
     }
 
@@ -1007,7 +998,6 @@ class JdbcPaymentPersistence(
                 now.jdbcTimestamp(),
             )
         } catch (_: DuplicateKeyException) {
-            // Immutable history is idempotent by payment/source identity.
         }
     }
 
@@ -1036,7 +1026,6 @@ class JdbcPaymentPersistence(
                 now.jdbcTimestamp(),
             )
         } catch (_: DuplicateKeyException) {
-            // Immutable history is idempotent by refund/source identity.
         }
     }
 

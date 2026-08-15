@@ -62,7 +62,7 @@ export function useOrders() {
 
   const filteredOrders = useMemo(() => {
     return orders.filter((order) => {
-      const isPast = ['DELIVERED', 'CANCELLED', 'REJECTED'].includes(order.status);
+      const isPast = ['DELIVERED', 'COMPLETED', 'CANCELLED', 'REJECTED'].includes(order.status);
 
       if (activeTab === 'past' && !isPast) return false;
       if (activeTab === 'active' && isPast) return false;

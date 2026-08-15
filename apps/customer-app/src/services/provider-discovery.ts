@@ -60,8 +60,9 @@ function toSummary(outlet: PublicOutletDto): ProviderSummary {
   };
 }
 
-async function fetchCapability(capability: string): Promise<PublicOutletDto[]> {
+async function fetchCapability(capability: string, pincode?: string): Promise<PublicOutletDto[]> {
   const query = new URLSearchParams({ capability, page: '0', pageSize: '100' });
+  if (pincode) query.set('pincode', pincode);
   const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/public/outlets?${query.toString()}`, {
     headers: { Accept: 'application/json' },
   });
@@ -70,15 +71,25 @@ async function fetchCapability(capability: string): Promise<PublicOutletDto[]> {
   return payload.items;
 }
 
-export async function fetchProviders(type: DiscoverableProviderType, market: LaunchMarket): Promise<ProviderSummary[]> {
+export async function fetchProviders(
+  type: DiscoverableProviderType,
+  market: LaunchMarket,
+  servicePinCodes: readonly string[] = [],
+): Promise<ProviderSummary[]> {
   if (appConfig.allowDemoMode) {
     return DEMO_PROVIDER_FIXTURES[type].map((provider) => ({ ...provider }));
   }
 
-  // Geo ranking is intentionally not simulated client-side. The market is kept
-  // in this contract for the future canonical discovery endpoint that owns it.
+  // The canonical public-outlet contract owns capability and PIN-code
+  // serviceability. Distance/ranking remains server work; do not fabricate it.
   void market;
-  const groups = await Promise.all(capabilitiesByType[type].map(fetchCapability));
+  const pincodes = [...new Set(servicePinCodes.filter((value) => /^[1-9][0-9]{5}$/.test(value)))];
+  const requests = capabilitiesByType[type].flatMap((capability) =>
+    pincodes.length > 0
+      ? pincodes.map((pincode) => fetchCapability(capability, pincode))
+      : [fetchCapability(capability)],
+  );
+  const groups = await Promise.all(requests);
   const unique = new Map<string, PublicOutletDto>();
   for (const outlet of groups.flat()) unique.set(outlet.id, outlet);
   return [...unique.values()]

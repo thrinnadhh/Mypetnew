@@ -2,6 +2,7 @@ package `in`.mypetnew.application.web
 
 import `in`.mypetnew.common.auth.Authorizer
 import `in`.mypetnew.common.auth.Role
+import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.payment.domain.Payment
 import `in`.mypetnew.payment.domain.PaymentService
 import org.springframework.security.core.Authentication
@@ -42,10 +43,11 @@ class CustomerPaymentApiController(private val payments: PaymentService) {
     fun initiate(
         authentication: Authentication,
         @RequestHeader("Idempotency-Key") idempotencyKey: String,
-        @RequestBody request: CustomerPaymentInitiationRequest,
+        @RequestBody raw: Map<String, Any?>,
     ): CustomerPaymentResponse {
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
+        val request = strictRequest(raw)
         return payments.initiate(
             customer.actorId,
             request.referenceType,
@@ -64,6 +66,22 @@ class CustomerPaymentApiController(private val payments: PaymentService) {
         Authorizer.requireRole(customer, Role.CUSTOMER)
         return payments.get(paymentId, customer.actorId).response()
     }
+
+    private fun strictRequest(raw: Map<String, Any?>): CustomerPaymentInitiationRequest {
+        val required = setOf("referenceType", "referenceId", "provider")
+        if (raw.keys != required) {
+            throw DomainException("PAYMENT_REQUEST_INVALID", "The payment request contains unsupported fields")
+        }
+        val referenceType = raw["referenceType"] as? String ?: invalidRequest()
+        val provider = raw["provider"] as? String ?: invalidRequest()
+        val referenceId = (raw["referenceId"] as? String)?.let {
+            runCatching { UUID.fromString(it) }.getOrNull()
+        } ?: invalidRequest()
+        return CustomerPaymentInitiationRequest(referenceType, referenceId, provider)
+    }
+
+    private fun invalidRequest(): Nothing =
+        throw DomainException("PAYMENT_REQUEST_INVALID", "The payment request is invalid")
 
     private fun Payment.response(): CustomerPaymentResponse = CustomerPaymentResponse(
         paymentId = id,

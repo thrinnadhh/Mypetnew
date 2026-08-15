@@ -169,25 +169,29 @@ export async function fetchAvailableAppointmentSlots(
   const services = serviceId ? discovered.filter((service) => service.id === serviceId) : discovered;
   const from = new Date();
   const to = new Date(from.getTime() + AVAILABILITY_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const slots: AppointmentSlotOption[] = [];
 
-  const slotGroups = await Promise.all(
-    services.map(async (service) => {
-      const query = new URLSearchParams({
-        from: from.toISOString(),
-        to: to.toISOString(),
-        page: '0',
-        pageSize: '100',
-      });
-      const response = await fetch(
-        `${appConfig.apiBaseUrl}/api/v1/public/services/${encodeURIComponent(service.id)}/availability?${query.toString()}`,
-        { headers: authHeaders(undefined) },
-      );
-      if (!response.ok) {
-        throw await apiError(response, 'Could not load appointment availability.');
-      }
+  // Fetch sequentially so the first real provider error is surfaced immediately.
+  // Parallel fan-out would continue consuming later responses after one service
+  // fails and can incorrectly collapse a backend outage into a no-slots state.
+  for (const service of services) {
+    const query = new URLSearchParams({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      page: '0',
+      pageSize: '100',
+    });
+    const response = await fetch(
+      `${appConfig.apiBaseUrl}/api/v1/public/services/${encodeURIComponent(service.id)}/availability?${query.toString()}`,
+      { headers: authHeaders(undefined) },
+    );
+    if (!response.ok) {
+      throw await apiError(response, 'Could not load appointment availability.');
+    }
 
-      const payload = (await response.json()) as PageResponse<PublicServiceSlotDto>;
-      return payload.items.map((slot): AppointmentSlotOption => ({
+    const payload = (await response.json()) as PageResponse<PublicServiceSlotDto>;
+    for (const slot of payload.items) {
+      slots.push({
         id: slot.slotId,
         providerId: service.providerId,
         offeringId: service.id,
@@ -206,11 +210,11 @@ export async function fetchAvailableAppointmentSlots(
         startsAt: slot.startsAt,
         endsAt: slot.endsAt,
         price: service.price,
-      }));
-    }),
-  );
+      });
+    }
+  }
 
-  return slotGroups.flat().sort((left, right) => (left.startsAt ?? '').localeCompare(right.startsAt ?? ''));
+  return slots.sort((left, right) => (left.startsAt ?? '').localeCompare(right.startsAt ?? ''));
 }
 
 async function createAppointmentHold(

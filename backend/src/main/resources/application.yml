@@ -16,6 +16,8 @@ spring:
     create-schemas: true
   jackson:
     default-property-inclusion: non_null
+    deserialization:
+      fail-on-unknown-properties: true
   threads:
     virtual:
       enabled: true
@@ -43,6 +45,20 @@ mypet:
       batch-size: ${NOTIFICATION_BATCH_SIZE:50}
       max-attempts: ${NOTIFICATION_MAX_ATTEMPTS:5}
       fixed-delay-millis: ${NOTIFICATION_FIXED_DELAY_MILLIS:1000}
+  cashfree:
+    enabled: ${CASHFREE_ENABLED:false}
+    client-id: ${CASHFREE_CLIENT_ID:}
+    client-secret: ${CASHFREE_CLIENT_SECRET:}
+    api-version: ${CASHFREE_API_VERSION:2026-01-01}
+    webhook-version: ${CASHFREE_WEBHOOK_VERSION:2026-01-01}
+    base-url: ${CASHFREE_BASE_URL:https://sandbox.cashfree.com/pg}
+    return-url: ${CASHFREE_RETURN_URL:}
+    notify-url: ${CASHFREE_NOTIFY_URL:}
+  payments:
+    webhook-worker-delay-ms: ${PAYMENT_WEBHOOK_WORKER_DELAY_MS:1000}
+    reconciliation-delay-ms: ${PAYMENT_RECONCILIATION_DELAY_MS:15000}
+    expiry-delay-ms: ${PAYMENT_EXPIRY_DELAY_MS:5000}
+    refund-delay-ms: ${PAYMENT_REFUND_DELAY_MS:5000}
 
 management:
   endpoints:

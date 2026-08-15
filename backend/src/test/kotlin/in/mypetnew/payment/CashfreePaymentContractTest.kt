@@ -34,6 +34,8 @@ class CashfreePaymentContractTest {
         apiVersion = "2026-01-01",
         webhookVersion = "2026-01-01",
         baseUrl = "https://sandbox.cashfree.com/pg",
+        returnUrl = "https://staging.example.com/payments/cashfree/return",
+        notifyUrl = "https://api-staging.example.com/api/v1/webhooks/cashfree/payments",
     )
     private val json = ObjectMapper()
 
@@ -47,7 +49,7 @@ class CashfreePaymentContractTest {
     }
 
     @Test
-    fun `create order sends deterministic server amount identity version and idempotency`() {
+    fun `create order sends deterministic server amount identity version idempotency and callback metadata`() {
         var observed: CashfreeHttpRequest? = null
         val transport = CashfreeTransport { request ->
             observed = request
@@ -73,6 +75,8 @@ class CashfreePaymentContractTest {
         assertEquals(command.providerIdempotencyKey, observed?.headers?.get("x-idempotency-key"))
         assertTrue(observed?.body.orEmpty().contains("\"order_amount\":135.00"))
         assertTrue(observed?.body.orEmpty().contains("\"customer_phone\":\"9876543210\""))
+        assertTrue(observed?.body.orEmpty().contains("\"return_url\":\"https://staging.example.com/payments/cashfree/return\""))
+        assertTrue(observed?.body.orEmpty().contains("\"notify_url\":\"https://api-staging.example.com/api/v1/webhooks/cashfree/payments\""))
         assertFalse(observed?.body.orEmpty().contains(secret))
     }
 
@@ -117,12 +121,47 @@ class CashfreePaymentContractTest {
     }
 
     @Test
-    fun `enabled provider configuration fails closed when secrets or versions are invalid`() {
+    fun `enabled provider configuration fails closed for unsupported version host or callback urls`() {
         assertThrows(IllegalArgumentException::class.java) {
             CashfreeProperties(enabled = true, clientId = "", clientSecret = secret)
         }
         assertThrows(IllegalArgumentException::class.java) {
-            CashfreeProperties(enabled = true, clientId = "id", clientSecret = secret, apiVersion = "2025-01-01")
+            CashfreeProperties(
+                enabled = true,
+                clientId = "id",
+                clientSecret = secret,
+                apiVersion = "2025-01-01",
+                returnUrl = properties.returnUrl,
+                notifyUrl = properties.notifyUrl,
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            CashfreeProperties(
+                enabled = true,
+                clientId = "id",
+                clientSecret = secret,
+                baseUrl = "https://payments.example.com/pg",
+                returnUrl = properties.returnUrl,
+                notifyUrl = properties.notifyUrl,
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            CashfreeProperties(
+                enabled = true,
+                clientId = "id",
+                clientSecret = secret,
+                returnUrl = "http://localhost:8080/payment-return",
+                notifyUrl = properties.notifyUrl,
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            CashfreeProperties(
+                enabled = true,
+                clientId = "id",
+                clientSecret = secret,
+                returnUrl = properties.returnUrl,
+                notifyUrl = "https://api-staging.example.com/wrong-webhook",
+            )
         }
         assertFalse(properties.toString().contains(secret))
     }

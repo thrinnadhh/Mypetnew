@@ -60,7 +60,7 @@ data class CustomerAppointmentCreateRequest(
     val serviceId: UUID,
     val petId: UUID,
     val slotId: UUID,
-    val paymentMethod: AppointmentPaymentMethod = AppointmentPaymentMethod.PAY_AT_PROVIDER,
+    val paymentMethod: AppointmentPaymentMethod? = null,
     val notes: String? = null,
 )
 
@@ -179,7 +179,7 @@ class CustomerAppointmentApiController(private val appointments: AppointmentServ
             request.serviceId,
             request.petId,
             request.slotId,
-            request.paymentMethod,
+            request.paymentMethod ?: AppointmentPaymentMethod.PAY_AT_PROVIDER,
             request.notes,
             idempotencyKey,
         ),

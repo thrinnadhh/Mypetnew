@@ -65,9 +65,11 @@ CREATE TABLE mypet.appointment (
     CHECK (ends_at > starts_at)
 );
 
-CREATE UNIQUE INDEX uq_appointment_active_slot
-    ON mypet.appointment(slot_id)
-    WHERE status IN ('HOLD','BOOKED','CONFIRMED','CHECKED_IN','IN_SERVICE');
+-- Slot exclusivity is enforced transactionally by locking the service_slot row and
+-- checking occupying appointment states before insert. Keep this ordinary index
+-- portable across PostgreSQL and the H2 PostgreSQL-mode migration contract suite.
+CREATE INDEX idx_appointment_slot_status
+    ON mypet.appointment(slot_id, status);
 
 CREATE INDEX idx_appointment_customer_list
     ON mypet.appointment(customer_id, starts_at DESC, id DESC);

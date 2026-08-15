@@ -20,6 +20,11 @@ describe('P3 canonical favourites contract', () => {
     expect(source).not.toContain('body: JSON.stringify({ targetType');
   });
 
+  it('migrates the prior guest storage key instead of orphaning saved preferences', () => {
+    expect(source).toContain("const LEGACY_STORAGE_KEY = 'mypet_favourites_v2_guest'");
+    expect(source).toContain('AsyncStorage.removeItem(LEGACY_STORAGE_KEY)');
+  });
+
   it('keeps outlet favourites local until an outlet-owned server contract exists', () => {
     expect(source).toContain("targetType === 'SHOP'");
     expect(source).toContain('Shop favourites are intentionally local');

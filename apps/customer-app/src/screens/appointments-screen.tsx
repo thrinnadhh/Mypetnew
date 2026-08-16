@@ -11,7 +11,7 @@ import { radii, shadows, spacing, touchTarget, typography } from '@/design/token
 import { useAppointments } from '@/hooks/use-appointments';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
-import type { CustomerAppointmentRecord } from '@/services/customer-history';
+import type { CustomerAppointmentRecord, HistoryAppointmentStatus } from '@/services/customer-history';
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -21,6 +21,12 @@ function appointmentIcon(record: CustomerAppointmentRecord): AppIconName {
   const value = `${record.serviceName} ${record.providerName}`.toLowerCase();
   if (value.includes('groom') || value.includes('spa')) return 'groom';
   return 'medical';
+}
+
+function appointmentStatusLabel(status: HistoryAppointmentStatus): string {
+  if (status === 'PENDING_PROVIDER') return 'WAITING FOR PROVIDER';
+  if (status === 'REJECTED') return 'PROVIDER DECLINED';
+  return status.replaceAll('_', ' ');
 }
 
 function formatAppointmentDate(value: string): string {
@@ -124,14 +130,14 @@ export default function AppointmentsScreen() {
 
   return (
     <ScreenShell
-      header={<AppBar title={t('routes.appointments')} subtitle="Manage upcoming vet and grooming visits" />}
+      header={<AppBar title={t('routes.appointments')} subtitle="Provider-confirmed vet and grooming visits" />}
       testID="appointments-screen"
     >
       <View style={styles.controls}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
           <FilterChip label="Upcoming" selected={activeTab === 'upcoming'} onPress={() => setActiveTab('upcoming')} />
           <FilterChip label="Past visits" selected={activeTab === 'past'} onPress={() => setActiveTab('past')} />
-          <FilterChip label="Cancelled" selected={activeTab === 'cancelled'} onPress={() => setActiveTab('cancelled')} />
+          <FilterChip label="Closed" selected={activeTab === 'cancelled'} onPress={() => setActiveTab('cancelled')} />
         </ScrollView>
 
         <View style={[styles.searchBox, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
@@ -193,12 +199,12 @@ export default function AppointmentsScreen() {
       {state === 'ready' && filteredAppointments.length > 0 ? (
         <View style={styles.list}>
           {filteredAppointments.map((appt) => {
-            const isUpcoming = ['SLOT_HELD', 'CONFIRMED'].includes(appt.status);
+            const isUpcoming = ['SLOT_HELD', 'PENDING_PROVIDER', 'CONFIRMED'].includes(appt.status);
             const isCompleted = appt.status === 'COMPLETED';
-            const isCancelled = ['CANCELLED', 'EXPIRED'].includes(appt.status);
+            const isClosed = ['CANCELLED', 'EXPIRED', 'REJECTED'].includes(appt.status);
             const accentColor = isCompleted
               ? theme.success
-              : isCancelled
+              : isClosed
                 ? theme.textSecondary
                 : appt.status === 'CONFIRMED'
                   ? theme.success
@@ -217,7 +223,7 @@ export default function AppointmentsScreen() {
                   },
                 ]}
                 accessible
-                accessibilityLabel={`${appt.serviceName} for ${appt.petName} at ${appt.providerName}. ${formatAppointmentDate(appt.slotStartsAt)}. Status ${appt.status}.`}
+                accessibilityLabel={`${appt.serviceName} for ${appt.petName} at ${appt.providerName}. ${formatAppointmentDate(appt.slotStartsAt)}. Status ${appointmentStatusLabel(appt.status)}.`}
               >
                 <View style={styles.cardHeader}>
                   <View style={[styles.serviceIcon, { backgroundColor: theme.primarySoft }]}>
@@ -228,13 +234,18 @@ export default function AppointmentsScreen() {
                     <ThemedText type="small" themeColor="textSecondary">
                       {appt.providerName} · {appt.petName}
                     </ThemedText>
+                    {appt.status === 'PENDING_PROVIDER' ? (
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Request sent. Waiting for the provider to accept this slot.
+                      </ThemedText>
+                    ) : null}
                   </View>
                   <StatusBadge
-                    label={appt.status.replaceAll('_', ' ')}
+                    label={appointmentStatusLabel(appt.status)}
                     tone={
                       appt.status === 'CONFIRMED' || appt.status === 'COMPLETED'
                         ? 'success'
-                        : appt.status === 'CANCELLED' || appt.status === 'EXPIRED'
+                        : appt.status === 'CANCELLED' || appt.status === 'EXPIRED' || appt.status === 'REJECTED'
                           ? 'error'
                           : 'warning'
                     }

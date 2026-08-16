@@ -15,6 +15,7 @@ import { useTranslation } from '@/i18n';
 import {
   fetchAvailableAppointmentSlots,
   holdAppointmentSlot,
+  type AppointmentPaymentMethod,
   type AppointmentServiceCapability,
   type AppointmentSlotOption,
 } from '@/services/appointment-booking';
@@ -63,6 +64,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
   const [slotState, setSlotState] = useState<LoadState>('ready');
   const [pets, setPets] = useState<CustomerPet[]>([]);
   const [selectedPetId, setSelectedPetId] = useState<string | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<AppointmentPaymentMethod>('ONLINE_PAYMENT');
   const [petsLoading, setPetsLoading] = useState(false);
   const [petName, setPetName] = useState('');
   const [petSpecies, setPetSpecies] = useState<'DOG' | 'CAT'>('DOG');
@@ -166,6 +168,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
         slot,
         userId: user.id,
         petId: selectedPetId,
+        paymentMethod,
         accessToken: session.accessToken,
       });
       const selectedPet = pets.find((pet) => pet.petId === selectedPetId);
@@ -179,6 +182,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
           slotStart: slot.startTime,
           slotEnd: slot.endTime,
           amount: String(slot.price),
+          paymentMethod,
         },
       } as never);
       setProvider(null);
@@ -191,7 +195,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
     } finally {
       setBookingSlotId(null);
     }
-  }, [chooseProvider, pets, preferredProviderId, preferredServiceId, provider, requireAuth, route, router, selectedPetId, session, user]);
+  }, [chooseProvider, paymentMethod, pets, preferredProviderId, preferredServiceId, provider, requireAuth, route, router, selectedPetId, session, user]);
 
   const close = () => {
     if (bookingSlotId) return;
@@ -283,6 +287,21 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
           </View>
         ) : null}
 
+        <View style={styles.paymentSection}>
+          <View style={styles.row}>
+            <FilterChip
+              label="Pay online"
+              selected={paymentMethod === 'ONLINE_PAYMENT'}
+              onPress={() => setPaymentMethod('ONLINE_PAYMENT')}
+            />
+            <FilterChip
+              label="Pay at provider"
+              selected={paymentMethod === 'PAY_AT_PROVIDER'}
+              onPress={() => setPaymentMethod('PAY_AT_PROVIDER')}
+            />
+          </View>
+        </View>
+
         {slotState === 'loading' ? <StateView kind="loading" title={t('states.loading')} /> : null}
         {slotState === 'offline' || slotState === 'error' ? (
           <StateView
@@ -303,7 +322,11 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
                 key={slot.id}
                 title={slot.serviceName}
                 subtitle={`${slot.startTime} – ${slot.endTime}`}
-                meta={bookingSlotId === slot.id ? 'Reserving slot…' : `₹${slot.price} · Tap to review & book`}
+                meta={
+                  bookingSlotId === slot.id
+                    ? 'Reserving slot…'
+                    : `₹${slot.price} · ${paymentMethod === 'ONLINE_PAYMENT' ? 'Pay online' : 'Pay at provider'} · Tap to review`
+                }
                 icon="calendar"
                 onPress={() => {
                   if (!bookingSlotId) void requestBooking(slot);
@@ -320,6 +343,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
 const styles = StyleSheet.create({
   list: { gap: spacing.x3 },
   petSection: { gap: spacing.x3, marginBottom: spacing.x3 },
+  paymentSection: { gap: spacing.x2, marginBottom: spacing.x3 },
   petForm: { gap: spacing.x3 },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x2 },
   input: { minHeight: touchTarget, borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x4 },

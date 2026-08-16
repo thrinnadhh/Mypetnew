@@ -22,8 +22,8 @@ export type MerchantAppointmentRequest = {
   startsAt: string;
   endsAt: string;
   status: MerchantAppointmentStatus;
-  paymentMethod: 'PAY_AT_PROVIDER';
-  paymentStatus: 'NOT_REQUIRED' | 'PENDING';
+  paymentMethod: 'PAY_AT_PROVIDER' | 'ONLINE_PAYMENT';
+  paymentStatus: 'NOT_REQUIRED' | 'PENDING' | 'PAID' | 'FAILED' | 'EXPIRED' | 'REFUND_PENDING' | 'REFUNDED' | 'REFUND_FAILED';
   pricePaise: number;
   currency: 'INR';
   notes?: string | null;

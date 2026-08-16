@@ -12,6 +12,8 @@ export type HistoryAppointmentStatus =
   | 'NO_SHOW'
   | 'EXPIRED';
 export type AppointmentTabCategory = 'upcoming' | 'past' | 'cancelled';
+export type AppointmentPaymentMethod = 'PAY_AT_PROVIDER' | 'ONLINE_PAYMENT';
+export type AppointmentPaymentStatus = 'NOT_REQUIRED' | 'PENDING' | 'PAID' | 'FAILED' | 'EXPIRED' | 'REFUND_PENDING' | 'REFUNDED' | 'REFUND_FAILED';
 
 export interface CustomerAppointmentRecord {
   id: string;
@@ -24,6 +26,8 @@ export interface CustomerAppointmentRecord {
   petId?: string;
   slotStartsAt: string;
   status: HistoryAppointmentStatus;
+  paymentMethod: AppointmentPaymentMethod;
+  paymentStatus: AppointmentPaymentStatus;
   hasReview: boolean;
   canReview: boolean;
   priceAmount?: number;
@@ -46,8 +50,8 @@ interface AppointmentDto {
   startsAt: string;
   endsAt: string;
   status: 'HOLD' | 'BOOKED' | 'CONFIRMED' | 'CHECKED_IN' | 'IN_SERVICE' | 'COMPLETED' | 'HOLD_EXPIRED' | 'REJECTED' | 'CANCELLED' | 'NO_SHOW';
-  paymentMethod: 'PAY_AT_PROVIDER';
-  paymentStatus: 'NOT_REQUIRED' | 'PENDING';
+  paymentMethod: AppointmentPaymentMethod;
+  paymentStatus: AppointmentPaymentStatus;
   pricePaise: number | string;
   currency: string;
   notes?: string | null;
@@ -97,8 +101,6 @@ function isNetworkFailure(error: unknown): boolean {
 function mapStatus(status: AppointmentDto['status']): HistoryAppointmentStatus {
   switch (status) {
     case 'HOLD': return 'SLOT_HELD';
-    // BOOKED is the canonical backend state for a customer-submitted request.
-    // It is not provider-confirmed until the Merchant explicitly accepts it.
     case 'BOOKED': return 'PENDING_PROVIDER';
     case 'CONFIRMED':
     case 'CHECKED_IN':
@@ -124,9 +126,9 @@ function mapAppointment(appointment: AppointmentDto): CustomerAppointmentRecord 
     petId: appointment.petId,
     slotStartsAt: appointment.startsAt,
     status: mapStatus(appointment.status),
+    paymentMethod: appointment.paymentMethod,
+    paymentStatus: appointment.paymentStatus,
     hasReview: false,
-    // Reviews are hidden until a canonical customer-owned review contract is
-    // implemented. This prevents a dead legacy /api/v1/reviews button.
     canReview: false,
     priceAmount: Number.isFinite(pricePaise) ? pricePaise / 100 : undefined,
   };

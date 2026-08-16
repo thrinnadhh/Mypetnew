@@ -122,7 +122,7 @@ class CustomerPaymentApiTest {
     }
 
     @Test
-    fun `payment API rejects client authority fields and unsupported references`() {
+    fun `payment API rejects client authority fields and fails closed when appointment payment backend is unavailable`() {
         val customer = login("+919844455553")
         val foreignIdentity = UUID.randomUUID()
         val arbitraryReference = UUID.randomUUID()
@@ -144,7 +144,7 @@ class CustomerPaymentApiTest {
             content = """{"referenceType":"APPOINTMENT","referenceId":"$arbitraryReference","provider":"CASHFREE"}"""
         }.andExpect {
             status { isBadRequest() }
-            jsonPath("$.code") { value("PAYMENT_REFERENCE_UNSUPPORTED") }
+            jsonPath("$.code") { value("PAYMENT_PROVIDER_UNAVAILABLE") }
         }
     }
 

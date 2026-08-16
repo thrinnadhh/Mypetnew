@@ -14,6 +14,7 @@ import { useTranslation } from '@/i18n';
 import {
   cancelAppointment,
   fetchAppointmentDetails,
+  type AppointmentPaymentStatus,
   type CustomerAppointmentRecord,
   type HistoryAppointmentStatus,
 } from '@/services/customer-history';
@@ -25,6 +26,28 @@ function statusLabel(status: HistoryAppointmentStatus): string {
     case 'SLOT_HELD': return 'SLOT HELD';
     default: return status.replaceAll('_', ' ');
   }
+}
+
+function paymentLabel(appt: CustomerAppointmentRecord): string {
+  if (appt.paymentMethod === 'PAY_AT_PROVIDER') return 'Pay at provider';
+  const labels: Record<AppointmentPaymentStatus, string> = {
+    NOT_REQUIRED: 'No online payment required',
+    PENDING: 'Online payment pending',
+    PAID: 'Paid online',
+    FAILED: 'Online payment failed',
+    EXPIRED: 'Online payment expired',
+    REFUND_PENDING: 'Refund in progress',
+    REFUNDED: 'Refund completed',
+    REFUND_FAILED: 'Refund needs support',
+  };
+  return labels[appt.paymentStatus];
+}
+
+function paymentTone(appt: CustomerAppointmentRecord): 'success' | 'warning' | 'error' | 'neutral' {
+  if (appt.paymentMethod === 'PAY_AT_PROVIDER') return 'neutral';
+  if (appt.paymentStatus === 'PAID' || appt.paymentStatus === 'REFUNDED') return 'success';
+  if (appt.paymentStatus === 'FAILED' || appt.paymentStatus === 'EXPIRED' || appt.paymentStatus === 'REFUND_FAILED') return 'error';
+  return 'warning';
 }
 
 export default function AppointmentDetailRoute() {
@@ -56,7 +79,12 @@ export default function AppointmentDetailRoute() {
     if (!appt || !session) return;
     try {
       await cancelAppointment(appt.id, 'Cancelled from appointment details', session.accessToken);
-      Alert.alert(t('common.success'), 'Appointment cancelled successfully.');
+      Alert.alert(
+        t('common.success'),
+        appt.paymentMethod === 'ONLINE_PAYMENT' && appt.paymentStatus === 'PAID'
+          ? 'Appointment cancelled. MyPet will start the refund workflow for the captured payment.'
+          : 'Appointment cancelled successfully.',
+      );
       router.back();
     } catch (err: any) {
       Alert.alert(t('common.error'), err.message || 'Could not cancel appointment.');
@@ -117,24 +145,18 @@ export default function AppointmentDetailRoute() {
             <View style={[styles.providerNotice, { backgroundColor: theme.muted }]}>
               <ThemedText style={styles.providerNoticeTitle}>Provider declined this request</ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
-                This slot is no longer reserved for this request. Choose another available slot to book again.
+                {appt.paymentMethod === 'ONLINE_PAYMENT' && ['PAID', 'REFUND_PENDING', 'REFUNDED', 'REFUND_FAILED'].includes(appt.paymentStatus)
+                  ? `The slot was released. Payment status: ${paymentLabel(appt)}.`
+                  : 'This slot is no longer reserved for this request. Choose another available slot to book again.'}
               </ThemedText>
             </View>
           ) : null}
 
-          <View
-            style={[
-              styles.card,
-              shadows.card,
-              { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-            ]}
-          >
+          <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
             <View style={styles.headerRow}>
               <View style={styles.flex}>
                 <ThemedText style={styles.providerName}>{appt.providerName}</ThemedText>
-                <ThemedText type="small" style={{ color: theme.primary, fontWeight: '700' }}>
-                  {appt.serviceName}
-                </ThemedText>
+                <ThemedText type="small" style={{ color: theme.primary, fontWeight: '700' }}>{appt.serviceName}</ThemedText>
               </View>
               <StatusBadge
                 label={statusLabel(appt.status)}
@@ -149,63 +171,28 @@ export default function AppointmentDetailRoute() {
             </View>
 
             <View style={[styles.divider, { backgroundColor: theme.border }]} />
-
+            <View style={styles.infoRow}><AppIcon name="paw" size={16} color={theme.primary} /><ThemedText style={styles.infoText}>Pet: {appt.petName}</ThemedText></View>
+            <View style={styles.infoRow}><AppIcon name="calendar" size={16} color={theme.primary} /><ThemedText style={styles.infoText}>Date & Time: {new Date(appt.slotStartsAt).toLocaleString()}</ThemedText></View>
+            {appt.address ? <View style={styles.infoRow}><AppIcon name="location" size={16} color={theme.primary} /><ThemedText style={styles.infoText}>Clinic: {appt.address}</ThemedText></View> : null}
+            {appt.priceAmount ? <View style={styles.infoRow}><AppIcon name="sparkle" size={16} color={theme.primary} /><ThemedText style={styles.infoText}>Fee: ₹{appt.priceAmount}</ThemedText></View> : null}
             <View style={styles.infoRow}>
-              <AppIcon name="paw" size={16} color={theme.primary} />
-              <ThemedText style={styles.infoText}>Pet: {appt.petName}</ThemedText>
-            </View>
-
-            <View style={styles.infoRow}>
-              <AppIcon name="calendar" size={16} color={theme.primary} />
-              <ThemedText style={styles.infoText}>
-                Date & Time: {new Date(appt.slotStartsAt).toLocaleString()}
-              </ThemedText>
-            </View>
-
-            {appt.address ? (
-              <View style={styles.infoRow}>
-                <AppIcon name="location" size={16} color={theme.primary} />
-                <ThemedText style={styles.infoText}>Clinic: {appt.address}</ThemedText>
+              <AppIcon name="sparkle" size={16} color={theme.primary} />
+              <View style={styles.paymentRow}>
+                <ThemedText style={styles.infoText}>Payment</ThemedText>
+                <StatusBadge label={paymentLabel(appt)} tone={paymentTone(appt)} />
               </View>
-            ) : null}
-
-            {appt.priceAmount ? (
-              <View style={styles.infoRow}>
-                <AppIcon name="sparkle" size={16} color={theme.primary} />
-                <ThemedText style={styles.infoText}>Fee: ₹{appt.priceAmount}</ThemedText>
-              </View>
-            ) : null}
+            </View>
           </View>
 
           <View style={styles.quickActions}>
-            {appt.address ? (
-              <Pressable style={[styles.actionBtn, { backgroundColor: theme.primarySoft }]} onPress={openDirections}>
-                <AppIcon name="location" size={16} color={theme.primary} />
-                <ThemedText style={[styles.actionBtnText, { color: theme.primary }]}>Directions</ThemedText>
-              </Pressable>
-            ) : null}
-
-            {appt.providerPhone ? (
-              <Pressable style={[styles.actionBtn, { backgroundColor: theme.primarySoft }]} onPress={callProvider}>
-                <AppIcon name="sparkle" size={16} color={theme.primary} />
-                <ThemedText style={[styles.actionBtnText, { color: theme.primary }]}>Call Clinic</ThemedText>
-              </Pressable>
-            ) : null}
+            {appt.address ? <Pressable style={[styles.actionBtn, { backgroundColor: theme.primarySoft }]} onPress={openDirections}><AppIcon name="location" size={16} color={theme.primary} /><ThemedText style={[styles.actionBtnText, { color: theme.primary }]}>Directions</ThemedText></Pressable> : null}
+            {appt.providerPhone ? <Pressable style={[styles.actionBtn, { backgroundColor: theme.primarySoft }]} onPress={callProvider}><AppIcon name="sparkle" size={16} color={theme.primary} /><ThemedText style={[styles.actionBtnText, { color: theme.primary }]}>Call Clinic</ThemedText></Pressable> : null}
           </View>
 
           {appt.prescriptionDocUrl ? (
-            <View
-              style={[
-                styles.card,
-                shadows.card,
-                { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-              ]}
-            >
+            <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
               <ThemedText style={styles.sectionTitle}>Medical Report & Prescription</ThemedText>
-              <Pressable style={styles.docRow} onPress={openPrescription}>
-                <AppIcon name="medical" size={20} color={theme.primary} />
-                <ThemedText style={styles.docText}>View Prescribed Medical Document</ThemedText>
-              </Pressable>
+              <Pressable style={styles.docRow} onPress={openPrescription}><AppIcon name="medical" size={20} color={theme.primary} /><ThemedText style={styles.docText}>View Prescribed Medical Document</ThemedText></Pressable>
             </View>
           ) : null}
 
@@ -233,27 +220,14 @@ const styles = StyleSheet.create({
   providerName: { ...typography.title },
   divider: { height: StyleSheet.hairlineWidth, marginVertical: spacing.x1 },
   infoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.x3 },
+  paymentRow: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.x2 },
   infoText: { ...typography.body },
   sectionTitle: { ...typography.label },
   docRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.x2, paddingVertical: spacing.x2 },
   docText: { ...typography.label, color: '#2563EB' },
   quickActions: { flexDirection: 'row', gap: spacing.x3 },
-  actionBtn: {
-    flex: 1,
-    height: 44,
-    borderRadius: radii.compact,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.x2,
-  },
+  actionBtn: { flex: 1, height: 44, borderRadius: radii.compact, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.x2 },
   actionBtnText: { ...typography.label, fontWeight: '700' },
   actions: { marginTop: spacing.x2 },
-  cancelBtn: {
-    height: 48,
-    borderWidth: 1,
-    borderRadius: radii.compact,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  cancelBtn: { height: 48, borderWidth: 1, borderRadius: radii.compact, alignItems: 'center', justifyContent: 'center' },
 });

@@ -21,7 +21,7 @@ class FlywaySchemaContractTest {
             .load()
 
         val result = flyway.migrate()
-        assertEquals(17, result.migrationsExecuted)
+        assertEquals(18, result.migrationsExecuted)
 
         DriverManager.getConnection(url, "sa", "").use { connection ->
             val tables = connection.prepareStatement(
@@ -66,7 +66,35 @@ class FlywaySchemaContractTest {
                 "service_slot",
                 "appointment",
                 "appointment_history",
+                "appointment_payment_refund",
             )), "tables=$tables")
+
+            val appointmentColumns = connection.prepareStatement(
+                """
+                select column_name from information_schema.columns
+                where lower(table_schema) = 'mypet' and lower(table_name) = 'appointment'
+                """.trimIndent(),
+            ).use { statement ->
+                statement.executeQuery().use { rows -> buildSet { while (rows.next()) add(rows.getString(1).lowercase()) } }
+            }
+            assertTrue(appointmentColumns.containsAll(setOf("payment_mode", "payment_state")), "appointmentColumns=$appointmentColumns")
+
+            val appointmentChecks = connection.prepareStatement(
+                """
+                select constraint_name from information_schema.table_constraints
+                where lower(table_schema) = 'mypet'
+                  and lower(table_name) = 'appointment'
+                  and upper(constraint_type) = 'CHECK'
+                """.trimIndent(),
+            ).use { statement ->
+                statement.executeQuery().use { rows -> buildSet { while (rows.next()) add(rows.getString(1).lowercase()) } }
+            }
+            assertTrue(
+                appointmentChecks.containsAll(
+                    setOf("ck_appointment_payment_mode_v2", "ck_appointment_payment_state_v2"),
+                ),
+                "appointmentChecks=$appointmentChecks",
+            )
 
             val organizationId = UUID.randomUUID()
             val outletId = UUID.randomUUID()

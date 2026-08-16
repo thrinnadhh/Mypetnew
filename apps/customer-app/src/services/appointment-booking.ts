@@ -6,6 +6,7 @@ const AVAILABILITY_WINDOW_DAYS = 14;
 const TERMINAL_REPLAY_STATUSES = new Set(['CANCELLED', 'HOLD_EXPIRED', 'REJECTED']);
 
 export type AppointmentServiceCapability = 'GROOMING' | 'VETERINARY';
+export type AppointmentPaymentMethod = 'PAY_AT_PROVIDER' | 'ONLINE_PAYMENT';
 
 export interface AppointmentServiceOption {
   id: string;
@@ -60,10 +61,12 @@ interface AppointmentResponse {
   status?: string;
 }
 
-interface HoldAppointmentInput {
+export interface HoldAppointmentInput {
   slot: AppointmentSlotOption;
   userId: string | null | undefined;
   petId: string;
+  /** Older callers remain Pay-at-Provider unless they explicitly opt into Cashfree. */
+  paymentMethod?: AppointmentPaymentMethod;
   accessToken: string | null | undefined;
 }
 
@@ -88,22 +91,20 @@ function paiseToRupees(value: number | string): number {
   return Number.isFinite(parsed) ? parsed / 100 : 0;
 }
 
-function formatSlotTime(
-  value: string | undefined,
-  options: Intl.DateTimeFormatOptions,
-): string {
+function formatSlotTime(value: string | undefined, options: Intl.DateTimeFormatOptions): string {
   if (!value) return 'Slot time unavailable';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Slot time unavailable';
   return date.toLocaleString('en-IN', options);
 }
 
-function appointmentAttemptKey(slotId: string, petId: string): string {
-  // A network retry for the same customer/pet/slot must replay the same server-side
-  // idempotency record instead of creating a second hold. If that record is already
-  // terminal, holdAppointmentSlot creates one fresh attempt key so the customer can
-  // legitimately rebook a still-future slot after cancellation/expiry/rejection.
-  return `appointment-${slotId}-${petId}`;
+function appointmentAttemptKey(slotId: string, petId: string, paymentMethod: AppointmentPaymentMethod): string {
+  // Preserve the released PAY_AT_PROVIDER retry key so older clients replay the
+  // same hold. ONLINE_PAYMENT needs a separate fingerprint/key because payment
+  // mode is part of the canonical appointment request.
+  return paymentMethod === 'PAY_AT_PROVIDER'
+    ? `appointment-${slotId}-${petId}`
+    : `appointment-${slotId}-${petId}-ONLINE_PAYMENT`;
 }
 
 async function apiError(response: Response, fallback: string): Promise<Error> {
@@ -171,23 +172,15 @@ export async function fetchAvailableAppointmentSlots(
   const to = new Date(from.getTime() + AVAILABILITY_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const slots: AppointmentSlotOption[] = [];
 
-  // Fetch sequentially so the first real provider error is surfaced immediately.
-  // Parallel fan-out would continue consuming later responses after one service
-  // fails and can incorrectly collapse a backend outage into a no-slots state.
   for (const service of services) {
     const query = new URLSearchParams({
-      from: from.toISOString(),
-      to: to.toISOString(),
-      page: '0',
-      pageSize: '100',
+      from: from.toISOString(), to: to.toISOString(), page: '0', pageSize: '100',
     });
     const response = await fetch(
       `${appConfig.apiBaseUrl}/api/v1/public/services/${encodeURIComponent(service.id)}/availability?${query.toString()}`,
       { headers: authHeaders(undefined) },
     );
-    if (!response.ok) {
-      throw await apiError(response, 'Could not load appointment availability.');
-    }
+    if (!response.ok) throw await apiError(response, 'Could not load appointment availability.');
 
     const payload = (await response.json()) as PageResponse<PublicServiceSlotDto>;
     for (const slot of payload.items) {
@@ -197,16 +190,9 @@ export async function fetchAvailableAppointmentSlots(
         offeringId: service.id,
         serviceName: service.name,
         startTime: formatSlotTime(slot.startsAt, {
-          weekday: 'short',
-          day: 'numeric',
-          month: 'short',
-          hour: '2-digit',
-          minute: '2-digit',
+          weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
         }),
-        endTime: formatSlotTime(slot.endsAt, {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
+        endTime: formatSlotTime(slot.endsAt, { hour: '2-digit', minute: '2-digit' }),
         startsAt: slot.startsAt,
         endsAt: slot.endsAt,
         price: service.price,
@@ -219,26 +205,22 @@ export async function fetchAvailableAppointmentSlots(
 
 async function createAppointmentHold(
   input: HoldAppointmentInput,
+  paymentMethod: AppointmentPaymentMethod,
   idempotencyKey: string,
 ): Promise<AppointmentResponse> {
   const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/customer/appointments`, {
     method: 'POST',
-    headers: {
-      ...jsonHeaders(input.accessToken),
-      'Idempotency-Key': idempotencyKey,
-    },
+    headers: { ...jsonHeaders(input.accessToken), 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({
       outletId: input.slot.providerId,
       serviceId: input.slot.offeringId,
       slotId: input.slot.id,
       petId: input.petId,
-      paymentMethod: 'PAY_AT_PROVIDER',
+      paymentMethod,
     }),
   });
 
-  if (!response.ok) {
-    throw await apiError(response, 'This slot was just taken. Please choose another.');
-  }
+  if (!response.ok) throw await apiError(response, 'This slot was just taken. Please choose another.');
   return (await response.json()) as AppointmentResponse;
 }
 
@@ -246,21 +228,17 @@ export async function holdAppointmentSlot(input: HoldAppointmentInput): Promise<
   resolveBookingUserId(input.userId);
   if (!input.petId) throw new Error('Select a pet before booking.');
   if (!input.accessToken && !appConfig.allowDemoMode) throw new Error('Please sign in before booking an appointment.');
+  if (appConfig.allowDemoMode && input.slot.id.startsWith('demo-slot-')) return `demo-appointment-${input.slot.id}`;
 
-  if (appConfig.allowDemoMode && input.slot.id.startsWith('demo-slot-')) {
-    return `demo-appointment-${input.slot.id}`;
-  }
-
-  const baseKey = appointmentAttemptKey(input.slot.id, input.petId);
-  let data = await createAppointmentHold(input, baseKey);
+  const paymentMethod = input.paymentMethod ?? 'PAY_AT_PROVIDER';
+  const baseKey = appointmentAttemptKey(input.slot.id, input.petId, paymentMethod);
+  let data = await createAppointmentHold(input, paymentMethod, baseKey);
   if (data.status && TERMINAL_REPLAY_STATUSES.has(data.status)) {
-    data = await createAppointmentHold(input, `${baseKey}-retry-${Date.now().toString(36)}`);
+    data = await createAppointmentHold(input, paymentMethod, `${baseKey}-retry-${Date.now().toString(36)}`);
   }
 
   const appointmentId = data.appointmentId ?? data.id;
-  if (!appointmentId) {
-    throw new Error('Appointment hold succeeded but no appointment ID was returned.');
-  }
+  if (!appointmentId) throw new Error('Appointment hold succeeded but no appointment ID was returned.');
   return appointmentId;
 }
 
@@ -275,8 +253,5 @@ export async function confirmAppointmentHold(
     `${appConfig.apiBaseUrl}/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}/confirm`,
     { method: 'POST', headers: authHeaders(accessToken) },
   );
-
-  if (!response.ok) {
-    throw await apiError(response, 'The appointment was not confirmed. Please retry.');
-  }
+  if (!response.ok) throw await apiError(response, 'The appointment was not confirmed. Please retry.');
 }

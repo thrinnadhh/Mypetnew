@@ -1,5 +1,7 @@
 package `in`.mypetnew.appointment
 
+import `in`.mypetnew.appointment.domain.AppointmentPaymentMethod
+import `in`.mypetnew.appointment.domain.AppointmentPaymentStatus
 import `in`.mypetnew.appointment.domain.AppointmentStatus
 import `in`.mypetnew.appointment.infrastructure.MerchantAppointmentQuery
 import `in`.mypetnew.common.auth.Principal
@@ -40,6 +42,8 @@ class MerchantAppointmentQueryTest {
                 status VARCHAR(32) NOT NULL,
                 payment_method VARCHAR(32) NOT NULL,
                 payment_status VARCHAR(32) NOT NULL,
+                payment_mode VARCHAR(32) NOT NULL,
+                payment_state VARCHAR(32) NOT NULL,
                 price_paise BIGINT NOT NULL,
                 notes VARCHAR(1000),
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -53,8 +57,16 @@ class MerchantAppointmentQueryTest {
     }
 
     @Test
-    fun `pending inbox is outlet scoped and status filtered`() {
-        val ownedPending = insert(ownedOutlet, AppointmentStatus.BOOKED, "Milo", "Full Spa", 129_900)
+    fun `pending inbox is outlet scoped status filtered and payment aware`() {
+        val ownedPending = insert(
+            ownedOutlet,
+            AppointmentStatus.BOOKED,
+            "Milo",
+            "Full Spa",
+            129_900,
+            AppointmentPaymentMethod.ONLINE_PAYMENT,
+            AppointmentPaymentStatus.PAID,
+        )
         insert(ownedOutlet, AppointmentStatus.CONFIRMED, "Luna", "Vet consult", 50_000)
         insert(foreignOutlet, AppointmentStatus.BOOKED, "Rocky", "Foreign Spa", 99_000)
 
@@ -70,6 +82,8 @@ class MerchantAppointmentQueryTest {
         assertEquals("Milo", page.items.single().petName)
         assertEquals("Full Spa", page.items.single().serviceName)
         assertEquals(129_900, page.items.single().pricePaise)
+        assertEquals(AppointmentPaymentMethod.ONLINE_PAYMENT, page.items.single().paymentMethod)
+        assertEquals(AppointmentPaymentStatus.PAID, page.items.single().paymentStatus)
         assertEquals(false, page.hasNext)
     }
 
@@ -108,6 +122,8 @@ class MerchantAppointmentQueryTest {
         petName: String,
         serviceName: String,
         pricePaise: Long,
+        paymentMethod: AppointmentPaymentMethod = AppointmentPaymentMethod.PAY_AT_PROVIDER,
+        paymentStatus: AppointmentPaymentStatus = AppointmentPaymentStatus.NOT_REQUIRED,
     ): UUID {
         val id = UUID.randomUUID()
         val createdAt = Instant.parse("2026-08-16T06:00:00Z").plusMillis((Math.random() * 1_000).toLong())
@@ -116,11 +132,11 @@ class MerchantAppointmentQueryTest {
             INSERT INTO mypet.appointment(
                 id, outlet_id, service_id, slot_id, pet_name, service_name,
                 starts_at, ends_at, status, payment_method, payment_status,
-                price_paise, notes, created_at, updated_at
+                payment_mode, payment_state, price_paise, notes, created_at, updated_at
             ) VALUES (
                 :id, :outlet_id, :service_id, :slot_id, :pet_name, :service_name,
                 :starts_at, :ends_at, :status, 'PAY_AT_PROVIDER', 'NOT_REQUIRED',
-                :price_paise, :notes, :created_at, :created_at
+                :payment_mode, :payment_state, :price_paise, :notes, :created_at, :created_at
             )
             """.trimIndent(),
         ).param("id", id)
@@ -132,6 +148,8 @@ class MerchantAppointmentQueryTest {
             .param("starts_at", createdAt.plusSeconds(3_600))
             .param("ends_at", createdAt.plusSeconds(5_400))
             .param("status", status.name)
+            .param("payment_mode", paymentMethod.name)
+            .param("payment_state", paymentStatus.name)
             .param("price_paise", pricePaise)
             .param("notes", "Handle gently")
             .param("created_at", createdAt)

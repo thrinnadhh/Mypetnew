@@ -5,6 +5,8 @@ import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.payment.domain.Payment
 import `in`.mypetnew.payment.domain.PaymentService
+import `in`.mypetnew.payment.infrastructure.JdbcAppointmentOnlinePaymentService
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -38,7 +40,10 @@ data class CustomerPaymentResponse(
 
 @RestController
 @RequestMapping("/api/v1/customer/payments")
-class CustomerPaymentApiController(private val payments: PaymentService) {
+class CustomerPaymentApiController(
+    private val payments: PaymentService,
+    private val appointmentPaymentProvider: ObjectProvider<JdbcAppointmentOnlinePaymentService>,
+) {
     @PostMapping
     fun initiate(
         authentication: Authentication,
@@ -48,13 +53,25 @@ class CustomerPaymentApiController(private val payments: PaymentService) {
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
         val request = strictRequest(raw)
-        return payments.initiate(
-            customer.actorId,
-            request.referenceType,
-            request.referenceId,
-            request.provider,
-            idempotencyKey,
-        ).response()
+        val payment = if (request.referenceType == "APPOINTMENT") {
+            val appointmentPayments = appointmentPaymentProvider.getIfAvailable()
+                ?: throw DomainException("PAYMENT_PROVIDER_UNAVAILABLE", "Appointment online payment is unavailable in this environment")
+            appointmentPayments.initiate(
+                customer.actorId,
+                request.referenceId,
+                request.provider,
+                idempotencyKey,
+            )
+        } else {
+            payments.initiate(
+                customer.actorId,
+                request.referenceType,
+                request.referenceId,
+                request.provider,
+                idempotencyKey,
+            )
+        }
+        return payment.response()
     }
 
     @GetMapping("/{paymentId}")
@@ -64,7 +81,8 @@ class CustomerPaymentApiController(private val payments: PaymentService) {
     ): CustomerPaymentResponse {
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
-        return payments.get(paymentId, customer.actorId).response()
+        val appointmentPayment = appointmentPaymentProvider.getIfAvailable()?.getOwnedOrNull(paymentId, customer.actorId)
+        return (appointmentPayment ?: payments.get(paymentId, customer.actorId)).response()
     }
 
     private fun strictRequest(raw: Map<String, Any?>): CustomerPaymentInitiationRequest {

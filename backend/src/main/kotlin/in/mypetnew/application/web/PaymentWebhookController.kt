@@ -28,14 +28,27 @@ class PaymentWebhookController(
         val verifier = verifiers.getIfAvailable()
             ?: throw DomainException("PAYMENT_PROVIDER_UNAVAILABLE", "Online payment webhook processing is unavailable")
         val event = verifier.verifyAndNormalize(rawBody, signature, timestamp, webhookVersion, deliveryIdentity)
-        val appointmentPayments = appointmentPaymentProvider.getIfAvailable()
-        if (appointmentPayments != null && appointmentPayments.isAppointmentProviderOrder(event.providerOrderReference)) {
+
+        // Provider-order namespaces are authoritative routing boundaries. Never
+        // let an appointment webhook fall through to the product-order payment
+        // inbox merely because the appointment adapter is unavailable.
+        if (event.providerOrderReference.startsWith(APPOINTMENT_PROVIDER_PREFIX)) {
+            val appointmentPayments = appointmentPaymentProvider.getIfAvailable()
+                ?: throw DomainException(
+                    "PAYMENT_PROVIDER_UNAVAILABLE",
+                    "Appointment payment webhook processing is unavailable",
+                )
             appointmentPayments.ingestWebhook(event)
         } else {
             payments.ingestWebhook(event)
         }
+
         // Duplicate verified deliveries are intentionally acknowledged. A first
         // delivery is acknowledged only after its durable write/projection commits.
         return ResponseEntity.ok(mapOf("accepted" to true))
+    }
+
+    companion object {
+        private const val APPOINTMENT_PROVIDER_PREFIX = "ma_"
     }
 }

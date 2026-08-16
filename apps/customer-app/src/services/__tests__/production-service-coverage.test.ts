@@ -360,7 +360,7 @@ describe('appointment history production paths', () => {
     });
     expect(appointments[0]).toMatchObject({
       providerName: 'Groomer Two', serviceName: 'Full Spa', priceAmount: 900,
-      status: 'CONFIRMED',
+      status: 'PENDING_PROVIDER',
     });
     expect(await AsyncStorage.getItem('@mypet_appointments_cache_v1_customer-1')).not.toBeNull();
     expect(mockedFetch.mock.calls[0][0]).toBe(

@@ -4,7 +4,7 @@ import { ActivityIndicator, useColorScheme, View } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
-import { AuthIntentProvider } from '@/context/AuthIntentContext';
+import { AuthIntentProvider, useAuthIntent } from '@/context/AuthIntentContext';
 import { CartProvider } from '@/context/CartContext';
 import { FavouritesProvider } from '@/context/FavouritesContext';
 import { LocaleProvider } from '@/context/LocaleContext';
@@ -15,8 +15,9 @@ import '@/i18n';
 function AppNavigator() {
   const scheme = useColorScheme();
   const { loading, session, user } = useAuth();
+  const { requireAuth } = useAuthIntent();
   const [fontsLoaded, fontError] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, Inter_800ExtraBold });
-  usePushNotifications(user?.id, session?.accessToken);
+  usePushNotifications(user?.id, session?.accessToken, requireAuth);
 
   if (loading || (!fontsLoaded && !fontError)) {
     return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" /></View>;

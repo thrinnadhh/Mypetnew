@@ -18,8 +18,8 @@ import java.util.UUID
 
 enum class ServiceCapability { GROOMING, VETERINARY }
 enum class AppointmentStatus { HOLD, BOOKED, CONFIRMED, CHECKED_IN, IN_SERVICE, COMPLETED, HOLD_EXPIRED, REJECTED, CANCELLED, NO_SHOW }
-enum class AppointmentPaymentMethod { PAY_AT_PROVIDER }
-enum class AppointmentPaymentStatus { NOT_REQUIRED, PENDING }
+enum class AppointmentPaymentMethod { PAY_AT_PROVIDER, ONLINE_PAYMENT }
+enum class AppointmentPaymentStatus { NOT_REQUIRED, PENDING, PAID, FAILED, EXPIRED, REFUND_PENDING, REFUNDED, REFUND_FAILED }
 
 data class ServiceOffering(
     val id: UUID,
@@ -132,8 +132,18 @@ class InMemoryAppointmentPersistence : AppointmentPersistence {
         if (current.status == AppointmentStatus.BOOKED || current.status == AppointmentStatus.CONFIRMED) return current
         if (current.status == AppointmentStatus.HOLD_EXPIRED) holdExpired()
         if (current.status == AppointmentStatus.HOLD && (current.holdExpiresAt == null || !current.holdExpiresAt.isAfter(now))) {
-            appointments[appointmentId] = current.copy(status = AppointmentStatus.HOLD_EXPIRED, updatedAt = now)
+            appointments[appointmentId] = current.copy(
+                status = AppointmentStatus.HOLD_EXPIRED,
+                paymentStatus = if (current.paymentMethod == AppointmentPaymentMethod.ONLINE_PAYMENT) AppointmentPaymentStatus.EXPIRED else current.paymentStatus,
+                updatedAt = now,
+            )
             holdExpired()
+        }
+        if (current.paymentMethod == AppointmentPaymentMethod.ONLINE_PAYMENT) {
+            throw DomainException(
+                "APPOINTMENT_PAYMENT_REQUIRED",
+                "Online appointment payment must be captured before provider confirmation can begin",
+            )
         }
         if (current.status != AppointmentStatus.HOLD) invalidState()
         return current.copy(status = AppointmentStatus.BOOKED, holdExpiresAt = null, updatedAt = now)
@@ -145,12 +155,20 @@ class InMemoryAppointmentPersistence : AppointmentPersistence {
         if (current.status == AppointmentStatus.CANCELLED) return current
         if (current.status == AppointmentStatus.HOLD_EXPIRED) holdExpired()
         if (current.status == AppointmentStatus.HOLD && (current.holdExpiresAt == null || !current.holdExpiresAt.isAfter(now))) {
-            appointments[appointmentId] = current.copy(status = AppointmentStatus.HOLD_EXPIRED, updatedAt = now)
+            appointments[appointmentId] = current.copy(
+                status = AppointmentStatus.HOLD_EXPIRED,
+                paymentStatus = if (current.paymentMethod == AppointmentPaymentMethod.ONLINE_PAYMENT) AppointmentPaymentStatus.EXPIRED else current.paymentStatus,
+                updatedAt = now,
+            )
             holdExpired()
         }
         if (current.status !in setOf(AppointmentStatus.HOLD, AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)) invalidState()
         return current.copy(
             status = AppointmentStatus.CANCELLED,
+            paymentStatus = if (
+                current.paymentMethod == AppointmentPaymentMethod.ONLINE_PAYMENT &&
+                current.paymentStatus == AppointmentPaymentStatus.PENDING
+            ) AppointmentPaymentStatus.EXPIRED else current.paymentStatus,
             notes = reason?.trim()?.takeIf { it.isNotEmpty() } ?: current.notes,
             holdExpiresAt = null,
             updatedAt = now,
@@ -191,7 +209,11 @@ class InMemoryAppointmentPersistence : AppointmentPersistence {
     private fun expireHolds(now: Instant) {
         appointments.replaceAll { _, value ->
             if (value.status == AppointmentStatus.HOLD && value.holdExpiresAt?.isAfter(now) == false) {
-                value.copy(status = AppointmentStatus.HOLD_EXPIRED, updatedAt = now)
+                value.copy(
+                    status = AppointmentStatus.HOLD_EXPIRED,
+                    paymentStatus = if (value.paymentMethod == AppointmentPaymentMethod.ONLINE_PAYMENT) AppointmentPaymentStatus.EXPIRED else value.paymentStatus,
+                    updatedAt = now,
+                )
             } else {
                 value
             }
@@ -313,7 +335,11 @@ class AppointmentService(
             slot.endsAt,
             AppointmentStatus.HOLD,
             paymentMethod,
-            AppointmentPaymentStatus.NOT_REQUIRED,
+            if (paymentMethod == AppointmentPaymentMethod.ONLINE_PAYMENT) {
+                AppointmentPaymentStatus.PENDING
+            } else {
+                AppointmentPaymentStatus.NOT_REQUIRED
+            },
             offering.pricePaise,
             cleanNotes,
             now.plus(holdDuration),

@@ -56,18 +56,19 @@ export default function MerchantAppointmentsScreen() {
       setRequests(await fetchPendingAppointmentRequests());
       setState('ready');
     } catch (error) {
-      if (error instanceof Error && /AUTHENTICATION_REQUIRED|SESSION_INVALID|REFRESH_TOKEN_INVALID/.test(error.message)) {
-        setState('unauthenticated');
-      } else {
-        setState('error');
-      }
+      const authFailure = error instanceof Error
+        && /AUTHENTICATION_REQUIRED|SESSION_INVALID|REFRESH_TOKEN_INVALID/.test(`${error.name} ${error.message}`);
+      setState(authFailure ? 'unauthenticated' : 'error');
     } finally {
       setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
-    void load();
+    const startup = setTimeout(() => {
+      void load();
+    }, 0);
+    return () => clearTimeout(startup);
   }, [load]);
 
   const decide = async (request: MerchantAppointmentRequest, decision: 'CONFIRMED' | 'REJECTED') => {

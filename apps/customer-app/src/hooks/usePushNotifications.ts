@@ -8,7 +8,6 @@ import * as Notifications from 'expo-notifications';
 import type { NotificationResponse } from 'expo-notifications';
 
 import type { AuthIntent } from '@/auth/auth-intent';
-import { useAuthIntent } from '@/context/AuthIntentContext';
 import { appConfig } from '@/utils/app-config';
 import { getOrCreateInstallationId } from '@/utils/installation-id';
 
@@ -173,12 +172,14 @@ export function notificationIntent(data: Record<string, unknown>): AuthIntent | 
   return null;
 }
 
+type RequireAuth = (intent: AuthIntent) => Promise<boolean>;
+
 export function usePushNotifications(
   userId?: string | null,
   accessToken?: string | null,
+  requireAuth?: RequireAuth,
 ) {
   const router = useRouter();
-  const { requireAuth } = useAuthIntent();
   const handledResponseId = useRef<string | null>(null);
   const expoGoNoticeShown = useRef(false);
   const registeredForUser = useRef<string | null>(null);
@@ -191,6 +192,7 @@ export function usePushNotifications(
 
   const handleNotificationResponse = useCallback(
     async (response: NotificationResponse) => {
+      if (!requireAuth) return;
       const responseId = response.notification.request.identifier;
       if (handledResponseId.current === responseId) return;
 

@@ -33,7 +33,7 @@ describe('T1 API Convention Normalization', () => {
     expect(capturedHeaders['Idempotency-Key']).toBe('key-abc-123');
   });
 
-  it('formats fetchCustomerLoyaltyBalance to canonical /api/v1/customer/loyalty/{organizationId} endpoint', async () => {
+  it('formats fetchCustomerLoyaltyBalance to canonical /api/v2/customer/loyalty/{organizationId} endpoint', async () => {
     let requestedUrl = '';
     let authHeader = '';
 
@@ -44,8 +44,16 @@ describe('T1 API Convention Normalization', () => {
         new Response(
           JSON.stringify({
             organizationId: 'org-uuid-123',
-            availableStars: 10,
-            rewards: 2,
+            availableStars: 0,
+            rewards: [
+              {
+                rewardId: 'reward-uuid-123',
+                valuePaise: 5000,
+                status: 'ISSUED',
+                issuedAt: '2026-08-15T00:00:00Z',
+                expiresAt: '2026-11-13T00:00:00Z',
+              },
+            ],
           }),
           { status: 200 },
         ),
@@ -53,10 +61,11 @@ describe('T1 API Convention Normalization', () => {
     });
 
     const result = await fetchCustomerLoyaltyBalance('org-uuid-123', 'session-xyz');
-    expect(requestedUrl).toContain('/api/v1/customer/loyalty/org-uuid-123');
+    expect(requestedUrl).toContain('/api/v2/customer/loyalty/org-uuid-123');
     expect(authHeader).toBe('Bearer session-xyz');
-    expect(result.availableStars).toBe(10);
-    expect(result.rewards).toBe(2);
+    expect(result.availableStars).toBe(0);
+    expect(result.rewards).toHaveLength(1);
+    expect(result.rewards[0]).toMatchObject({ valuePaise: 5000, status: 'ISSUED' });
   });
 
   it('preserves status, code, traceId, and fieldErrors on fetchCustomerLoyaltyBalance ApiError failure', async () => {

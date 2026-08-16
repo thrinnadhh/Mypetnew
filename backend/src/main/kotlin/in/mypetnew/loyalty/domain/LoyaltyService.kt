@@ -1,5 +1,6 @@
 package `in`.mypetnew.loyalty.domain
 
+import java.time.Clock
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
@@ -10,9 +11,18 @@ data class LoyaltyAward(
     val availableBalance: Int,
 )
 
+enum class LoyaltyRewardStatus {
+    ISSUED,
+    RESERVED,
+    REDEEMED,
+    REVOKED,
+    EXPIRED,
+}
+
 data class LoyaltyReward(
     val id: UUID,
     val amountPaise: Long,
+    val status: LoyaltyRewardStatus,
     val ruleVersion: String,
     val issuedAt: Instant,
     val expiresAt: Instant,
@@ -42,6 +52,7 @@ class LoyaltyService(
 private class InMemoryLoyaltyPersistence(
     private val minimumSpendPaise: Long = 10_000,
     private val rewardAmountPaise: Long = 5_000,
+    private val clock: Clock = Clock.systemUTC(),
 ) : LoyaltyPersistence {
     private data class Relationship(
         val sources: MutableSet<String> = mutableSetOf(),
@@ -69,10 +80,11 @@ private class InMemoryLoyaltyPersistence(
         relationship.availableStars += 1
         while (relationship.availableStars >= 10) {
             relationship.availableStars -= 10
-            val issuedAt = Instant.now()
+            val issuedAt = clock.instant()
             relationship.rewards += LoyaltyReward(
                 id = UUID.randomUUID(),
                 amountPaise = rewardAmountPaise,
+                status = LoyaltyRewardStatus.ISSUED,
                 ruleVersion = "s1-v1",
                 issuedAt = issuedAt,
                 expiresAt = issuedAt.plus(90, ChronoUnit.DAYS),
@@ -86,6 +98,14 @@ private class InMemoryLoyaltyPersistence(
         relationships[customerId to merchantId]?.availableStars ?: 0
 
     @Synchronized
-    override fun rewards(customerId: UUID, merchantId: UUID): List<LoyaltyReward> =
-        relationships[customerId to merchantId]?.rewards?.toList().orEmpty()
+    override fun rewards(customerId: UUID, merchantId: UUID): List<LoyaltyReward> {
+        val now = clock.instant()
+        return relationships[customerId to merchantId]?.rewards?.map { reward ->
+            if (reward.status == LoyaltyRewardStatus.ISSUED && !reward.expiresAt.isAfter(now)) {
+                reward.copy(status = LoyaltyRewardStatus.EXPIRED)
+            } else {
+                reward
+            }
+        }.orEmpty()
+    }
 }

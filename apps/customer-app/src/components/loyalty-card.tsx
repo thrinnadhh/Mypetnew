@@ -21,6 +21,10 @@ interface LoyaltyCardProps {
 
 const TARGET_STARS = 10;
 
+function formatPaise(valuePaise: number): string {
+  return `₹${(valuePaise / 100).toFixed(valuePaise % 100 === 0 ? 0 : 2)}`;
+}
+
 export function LoyaltyCard({ providerId, organizationId, accessToken }: LoyaltyCardProps) {
   const theme = useTheme();
   const { session } = useAuth();
@@ -65,6 +69,10 @@ export function LoyaltyCard({ providerId, organizationId, accessToken }: Loyalty
   const stars = useMemo(
     () => Array.from({ length: TARGET_STARS }, (_, index) => index < (balance?.availableStars ?? 0)),
     [balance?.availableStars],
+  );
+  const activeRewards = useMemo(
+    () => balance?.rewards.filter((reward) => reward.status === 'ISSUED' || reward.status === 'RESERVED') ?? [],
+    [balance?.rewards],
   );
 
   if (!effectiveAccessToken) return null;
@@ -117,9 +125,9 @@ export function LoyaltyCard({ providerId, organizationId, accessToken }: Loyalty
         <ThemedText type="small" themeColor="textSecondary">
           • Stars are merchant-specific and server-authoritative.
         </ThemedText>
-        {balance.rewards > 0 ? (
+        {activeRewards.length > 0 ? (
           <ThemedText type="small" style={{ color: theme.primary, fontWeight: '700' }}>
-            • Issued rewards: {balance.rewards}
+            • Available rewards: {activeRewards.map((reward) => formatPaise(reward.valuePaise)).join(', ')}
           </ThemedText>
         ) : null}
       </View>

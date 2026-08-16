@@ -38,15 +38,13 @@ export function useAppointments() {
 
   const filteredAppointments = useMemo(() => {
     return appointments.filter((appt) => {
-      // Tab filter
-      const isCancelled = appt.status === 'CANCELLED' || appt.status === 'EXPIRED';
+      const isClosed = appt.status === 'CANCELLED' || appt.status === 'EXPIRED' || appt.status === 'REJECTED';
       const isPast = appt.status === 'COMPLETED' || appt.status === 'NO_SHOW';
 
-      if (activeTab === 'cancelled' && !isCancelled) return false;
-      if (activeTab === 'past' && (!isPast || isCancelled)) return false;
-      if (activeTab === 'upcoming' && (isPast || isCancelled)) return false;
+      if (activeTab === 'cancelled' && !isClosed) return false;
+      if (activeTab === 'past' && (!isPast || isClosed)) return false;
+      if (activeTab === 'upcoming' && (isPast || isClosed)) return false;
 
-      // Search query filter
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
         const matchProvider = appt.providerName.toLowerCase().includes(query);

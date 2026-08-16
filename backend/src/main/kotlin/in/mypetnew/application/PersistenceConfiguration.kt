@@ -3,6 +3,7 @@ package `in`.mypetnew.application
 import `in`.mypetnew.appointment.domain.AppointmentPersistence
 import `in`.mypetnew.appointment.domain.AppointmentService
 import `in`.mypetnew.appointment.infrastructure.JdbcAppointmentPersistence
+import `in`.mypetnew.appointment.infrastructure.OnlineAwareJdbcAppointmentPersistence
 import `in`.mypetnew.catalog.domain.CatalogPersistence
 import `in`.mypetnew.catalog.domain.CatalogService
 import `in`.mypetnew.catalog.domain.InventoryPersistence
@@ -34,7 +35,9 @@ import `in`.mypetnew.loyalty.infrastructure.JdbcLoyaltyPersistence
 import `in`.mypetnew.payment.domain.PaymentGateway
 import `in`.mypetnew.payment.domain.PaymentPersistence
 import `in`.mypetnew.payment.domain.PaymentService
+import `in`.mypetnew.payment.domain.TerminalAppointmentPaymentProjection
 import `in`.mypetnew.payment.domain.TerminalOrderPaymentProjection
+import `in`.mypetnew.payment.infrastructure.JdbcAppointmentOnlinePaymentService
 import `in`.mypetnew.payment.infrastructure.JdbcPaymentPersistence
 import `in`.mypetnew.pos.domain.CustomerAssociationChallengeService
 import `in`.mypetnew.pos.domain.CustomerAssociationPersistence
@@ -93,8 +96,20 @@ class PersistenceConfiguration {
     ): JdbcPaymentPersistence = JdbcPaymentPersistence(jdbc, transactions, inventory)
 
     @Bean
+    fun appointmentOnlinePaymentService(
+        jdbc: JdbcTemplate,
+        transactions: TransactionTemplate,
+        gateway: PaymentGateway,
+    ): JdbcAppointmentOnlinePaymentService = JdbcAppointmentOnlinePaymentService(jdbc, transactions, gateway)
+
+    @Bean
     fun terminalOrderPaymentProjection(persistence: JdbcPaymentPersistence): TerminalOrderPaymentProjection =
         TerminalOrderPaymentProjection(persistence::projectTerminalOrder)
+
+    @Bean
+    fun terminalAppointmentPaymentProjection(
+        payments: JdbcAppointmentOnlinePaymentService,
+    ): TerminalAppointmentPaymentProjection = TerminalAppointmentPaymentProjection(payments::projectTerminalAppointment)
 
     @Bean
     fun orderPersistence(
@@ -137,8 +152,15 @@ class PersistenceConfiguration {
         CustomerDataService(persistence)
 
     @Bean
-    fun appointmentPersistence(jdbc: JdbcClient, transactions: TransactionTemplate): AppointmentPersistence =
-        JdbcAppointmentPersistence(jdbc, transactions)
+    fun appointmentPersistence(
+        jdbcClient: JdbcClient,
+        transactions: TransactionTemplate,
+        terminalPayments: TerminalAppointmentPaymentProjection,
+    ): AppointmentPersistence = OnlineAwareJdbcAppointmentPersistence(
+        JdbcAppointmentPersistence(jdbcClient, transactions),
+        jdbcClient,
+        terminalPayments,
+    )
 
     @Bean
     fun productionAppointmentService(

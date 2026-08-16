@@ -59,12 +59,22 @@ class AppointmentOnlinePaymentSourceContractTest {
     }
 
     @Test
-    fun `customer payment API never accepts client authored amount or identity`() {
+    fun `customer payment initiation request never accepts client authored amount or identity`() {
         val controller = source("src/main/kotlin/in/mypetnew/application/web/CustomerPaymentApiController.kt")
+        val requestStart = controller.indexOf("data class CustomerPaymentInitiationRequest(")
+        val responseStart = controller.indexOf("data class CustomerPaymentResponse(")
+        val requestDto = controller.substring(requestStart, responseStart)
 
+        assertTrue(requestStart >= 0)
+        assertTrue(responseStart > requestStart)
         assertTrue(controller.contains("setOf(\"referenceType\", \"referenceId\", \"provider\")"))
         assertTrue(controller.contains("request.referenceType == \"APPOINTMENT\""))
-        assertFalse(controller.contains("amountPaise: Long"))
-        assertFalse(controller.contains("customerId: UUID"))
+        assertTrue(requestDto.contains("referenceType: String"))
+        assertTrue(requestDto.contains("referenceId: UUID"))
+        assertTrue(requestDto.contains("provider: String"))
+        assertFalse(requestDto.contains("amountPaise"))
+        assertFalse(requestDto.contains("currency"))
+        assertFalse(requestDto.contains("customerId"))
+        assertFalse(requestDto.contains("userId"))
     }
 }

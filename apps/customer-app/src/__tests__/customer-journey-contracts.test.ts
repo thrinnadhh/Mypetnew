@@ -65,19 +65,22 @@ describe('MyPet customer journey contracts', () => {
     ]);
   });
 
-  it('uses canonical customer-owned holds and provider-confirmed Pay at Provider requests', () => {
+  it('uses customer-owned holds, online-or-provider payment choice and provider-confirmed requests', () => {
     const discovery = source('src/screens/appointment-discovery-screen.tsx');
     const payment = source('src/app/appointments/payment.tsx');
     const booking = source('src/services/appointment-booking.ts');
     const history = source('src/services/customer-history.ts');
     const appointmentList = source('src/screens/appointments-screen.tsx');
+    const payments = source('src/services/customer-payments.ts');
 
     expectAll(discovery, [
       'fetchAvailableAppointmentSlots',
       'fetchCustomerPets',
       'holdAppointmentSlot',
       "pathname: '/appointments/payment'",
-      'serviceId?: string',
+      "setPaymentMethod('ONLINE_PAYMENT')",
+      "setPaymentMethod('PAY_AT_PROVIDER')",
+      'paymentMethod,',
     ]);
     expect(discovery).not.toContain('confirmAppointmentHold(');
 
@@ -85,7 +88,8 @@ describe('MyPet customer journey contracts', () => {
       '/api/v1/public/services',
       '/api/v1/customer/appointments',
       "'Idempotency-Key'",
-      "paymentMethod: 'PAY_AT_PROVIDER'",
+      "type AppointmentPaymentMethod = 'PAY_AT_PROVIDER' | 'ONLINE_PAYMENT'",
+      'paymentMethod: input.paymentMethod',
       'petId: input.petId',
       '/confirm',
     ]);
@@ -96,24 +100,41 @@ describe('MyPet customer journey contracts', () => {
     expect(booking).not.toContain('payAtClinic');
 
     expectAll(payment, [
-      'WAITING FOR PROVIDER ACCEPTANCE',
       'Provider confirmation required',
-      'No online payment is created for this booking request.',
-      'confirmAppointmentHold(appointmentId, session.accessToken)',
+      'PAYMENT FIRST · PROVIDER ACCEPTANCE NEXT',
+      'Pay online & send request',
       'Send booking request · Pay at provider',
-      'Booking request sent',
+      'initiateAppointmentPayment(appointmentId)',
+      'openCashfreeOrder(payment)',
+      'waitForPaymentOutcome(payment.paymentId)',
+      'Payment successful · waiting for provider',
+      'refund workflow automatically',
+      'confirmAppointmentHold(appointmentId, session.accessToken)',
     ]);
     expect(payment).not.toContain('Appointment booked');
-    expect(payment).not.toContain('initiateAppointmentPayment');
-    expect(payment).not.toContain('openCashfreeOrder');
-    expect(payment).not.toContain('waitForReferencePaymentOutcome');
+
+    expectAll(payments, [
+      "referenceType: 'APPOINTMENT'",
+      'referenceId: appointmentId',
+      "provider: 'CASHFREE'",
+      'fetchPaymentStatus',
+      'waitForPaymentOutcome',
+    ]);
+    const appointmentInitiation = payments.slice(
+      payments.indexOf('export async function initiateAppointmentPayment'),
+      payments.indexOf('export async function fetchPaymentStatus'),
+    );
+    expect(appointmentInitiation).not.toContain('amountPaise');
+    expect(appointmentInitiation).not.toContain('currency:');
+    expect(appointmentInitiation).not.toContain('customerId');
+    expect(appointmentInitiation).not.toContain('userId');
 
     expect(history).toContain("case 'BOOKED': return 'PENDING_PROVIDER'");
     expect(history).toContain("case 'REJECTED': return 'REJECTED'");
     expect(appointmentList).toContain('WAITING FOR PROVIDER');
   });
 
-  it('supports safe demo appointment requests without creating a real payment', () => {
+  it('supports safe demo appointment requests without opening Cashfree', () => {
     const payment = source('src/app/appointments/payment.tsx');
 
     expectAll(payment, [
@@ -121,23 +142,23 @@ describe('MyPet customer journey contracts', () => {
       'confirmAppointmentHold(appointmentId, session.accessToken)',
       'Development fixture only. No real provider or payment action is created.',
     ]);
-    expect(payment).not.toContain('openCashfreeOrder');
+    expect(payment).toContain('const online = paymentMethod === \'ONLINE_PAYMENT\' && !demoAppointment');
   });
 
-  it('uses the canonical Plan 5 Cashfree product-payment contract without coupling it to appointments', () => {
+  it('uses one canonical Cashfree customer-payment API for products and appointments without client-authored money', () => {
     const client = source('src/services/customer-payments.ts');
     const contract = source('../../docs/architecture/P5_PAYMENT_CONTRACT.md');
 
     expectAll(client, [
       "'/api/v1/customer/payments'",
       "referenceType: 'PRODUCT_ORDER'",
+      "referenceType: 'APPOINTMENT'",
       "provider: 'CASHFREE'",
       "'Idempotency-Key': idempotencyKey",
       'fetchPaymentStatus',
       'waitForPaymentOutcome',
     ]);
     expect(client).not.toContain('/api/v1/payments/appointments');
-    expect(client).not.toContain('APPOINTMENT_PAYMENT');
     expect(client).not.toContain('normalizedPhone');
     expectAll(contract, [
       'CASHFREE_API_VERSION',
@@ -229,18 +250,12 @@ describe('MyPet customer journey contracts', () => {
     expect(profile).not.toContain('customerId=');
     expectAll(payments, [
       "referenceType: 'PRODUCT_ORDER'",
-      'referenceId: orderId',
+      "referenceType: 'APPOINTMENT'",
       "provider: 'CASHFREE'",
     ]);
-    const initiation = payments.slice(
-      payments.indexOf('const payment = await apiClient.post<CustomerPaymentView>'),
-      payments.indexOf('await rememberPendingPayment', payments.indexOf('const payment = await apiClient.post<CustomerPaymentView>')),
-    );
-    expect(initiation).not.toContain('normalizedPhone');
-    expect(initiation).not.toContain('customerPhone');
-    expect(initiation).not.toContain('userId');
-    expect(initiation).not.toContain('amountPaise');
-    expect(initiation).not.toContain('currency:');
+    expect(payments).not.toContain('normalizedPhone');
+    expect(payments).not.toContain('customerPhone');
+    expect(payments).not.toContain('userId:');
     expect(payments).toContain('amountPaise: number;');
     expect(payments).toContain("currency: 'INR';");
   });

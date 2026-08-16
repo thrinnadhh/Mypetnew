@@ -8,6 +8,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.http.HttpMethod
 import org.springframework.http.MediaType
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
@@ -52,15 +53,17 @@ class SecurityConfiguration {
             .logout { it.disable() }
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .authorizeHttpRequests {
-                it.requestMatchers(
-                    "/actuator/health/**",
-                    "/api/v1/public/**",
-                    "/api/v1/auth/otp/**",
-                    "/api/v1/auth/merchant/otp/verify",
-                    "/api/v1/auth/captain/otp/verify",
-                    "/api/v1/auth/sessions/refresh",
-                    "/api/v1/webhooks/cashfree/payments",
-                ).permitAll()
+                it.requestMatchers(HttpMethod.GET, "/api/v1/service-regions/active").permitAll()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/service-regions/launch-requests").permitAll()
+                    .requestMatchers(
+                        "/actuator/health/**",
+                        "/api/v1/public/**",
+                        "/api/v1/auth/otp/**",
+                        "/api/v1/auth/merchant/otp/verify",
+                        "/api/v1/auth/captain/otp/verify",
+                        "/api/v1/auth/sessions/refresh",
+                        "/api/v1/webhooks/cashfree/payments",
+                    ).permitAll()
                     .anyRequest().authenticated()
             }
             .exceptionHandling {

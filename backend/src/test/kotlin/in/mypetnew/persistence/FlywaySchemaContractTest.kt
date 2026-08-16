@@ -79,6 +79,23 @@ class FlywaySchemaContractTest {
             }
             assertTrue(appointmentColumns.containsAll(setOf("payment_mode", "payment_state")), "appointmentColumns=$appointmentColumns")
 
+            val appointmentChecks = connection.prepareStatement(
+                """
+                select constraint_name from information_schema.table_constraints
+                where lower(table_schema) = 'mypet'
+                  and lower(table_name) = 'appointment'
+                  and upper(constraint_type) = 'CHECK'
+                """.trimIndent(),
+            ).use { statement ->
+                statement.executeQuery().use { rows -> buildSet { while (rows.next()) add(rows.getString(1).lowercase()) } }
+            }
+            assertTrue(
+                appointmentChecks.containsAll(
+                    setOf("ck_appointment_payment_mode_v2", "ck_appointment_payment_state_v2"),
+                ),
+                "appointmentChecks=$appointmentChecks",
+            )
+
             val organizationId = UUID.randomUUID()
             val outletId = UUID.randomUUID()
             connection.prepareStatement(
@@ -96,11 +113,6 @@ class FlywaySchemaContractTest {
                 connection.prepareStatement(
                     "insert into mypet.inventory_balance(listing_id, on_hand, reserved, version) values (?, 0, 1, 0)",
                 ).use { it.setObject(1, listingId); it.executeUpdate() }
-            }
-            assertThrows(Exception::class.java) {
-                connection.prepareStatement(
-                    "update mypet.appointment set payment_mode = 'CLIENT_AUTHORED' where 1 = 0",
-                ).use { it.executeUpdate() }
             }
         }
     }

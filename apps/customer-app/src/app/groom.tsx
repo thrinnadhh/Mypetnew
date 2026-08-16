@@ -1,2 +1,13 @@
-import GroomingServicesScreen from './grooming/index';
-export default GroomingServicesScreen;
+import React from 'react';
+
+import AppointmentDiscoveryScreen from '@/screens/appointment-discovery-screen';
+
+export default function GroomingDiscoveryRoute() {
+  return (
+    <AppointmentDiscoveryScreen
+      providerType="GROOMER"
+      route="/groom"
+      titleKey="appointmentFoundation.groomTitle"
+    />
+  );
+}

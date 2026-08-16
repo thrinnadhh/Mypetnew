@@ -1,7 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { appConfig } from '@/utils/app-config';
 
-export type HistoryAppointmentStatus = 'SLOT_HELD' | 'PAID' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW' | 'EXPIRED';
+export type HistoryAppointmentStatus =
+  | 'SLOT_HELD'
+  | 'PENDING_PROVIDER'
+  | 'PAID'
+  | 'CONFIRMED'
+  | 'COMPLETED'
+  | 'REJECTED'
+  | 'CANCELLED'
+  | 'NO_SHOW'
+  | 'EXPIRED';
 export type AppointmentTabCategory = 'upcoming' | 'past' | 'cancelled';
 
 export interface CustomerAppointmentRecord {
@@ -88,14 +97,16 @@ function isNetworkFailure(error: unknown): boolean {
 function mapStatus(status: AppointmentDto['status']): HistoryAppointmentStatus {
   switch (status) {
     case 'HOLD': return 'SLOT_HELD';
-    case 'BOOKED':
+    // BOOKED is the canonical backend state for a customer-submitted request.
+    // It is not provider-confirmed until the Merchant explicitly accepts it.
+    case 'BOOKED': return 'PENDING_PROVIDER';
     case 'CONFIRMED':
     case 'CHECKED_IN':
     case 'IN_SERVICE': return 'CONFIRMED';
     case 'COMPLETED': return 'COMPLETED';
     case 'NO_SHOW': return 'NO_SHOW';
     case 'HOLD_EXPIRED': return 'EXPIRED';
-    case 'REJECTED':
+    case 'REJECTED': return 'REJECTED';
     case 'CANCELLED': return 'CANCELLED';
   }
 }

@@ -1,6 +1,6 @@
 import { Link } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Button, SafeAreaView, StyleSheet, Text } from "react-native";
+import { Button, SafeAreaView, StyleSheet, Text, View } from "react-native";
 import {
   hasRuntimeMerchantSession,
   logoutMerchant,
@@ -78,6 +78,11 @@ export default function MerchantEntryScreen() {
       {state === "authenticated" ? (
         <>
           <Text style={styles.body}>Merchant session active.</Text>
+          <View style={styles.primaryLinkBox}>
+            <Text style={styles.primaryLinkTitle}>New booking requests</Text>
+            <Text style={styles.primaryLinkBody}>Accept or reject grooming and veterinary requests before customers see Confirmed.</Text>
+            <Link href="/appointments" accessibilityRole="button" style={styles.primaryLink}>Open booking requests</Link>
+          </View>
           {message ? <Text accessibilityRole="alert" style={styles.body}>{message}</Text> : null}
           <Button
             title={signingOut ? "Signing out…" : "Sign out"}
@@ -108,4 +113,8 @@ const styles = StyleSheet.create({
   page: { flex: 1, padding: 24, justifyContent: "center", alignItems: "center", gap: 16, backgroundColor: "#fff" },
   title: { fontSize: 26, fontWeight: "700" },
   body: { fontSize: 16, color: "#4b5563", textAlign: "center" },
+  primaryLinkBox: { width: "100%", maxWidth: 520, gap: 8, padding: 18, borderRadius: 16, backgroundColor: "#f0fdf4", borderWidth: 1, borderColor: "#bbf7d0" },
+  primaryLinkTitle: { fontSize: 18, fontWeight: "800", color: "#14532d" },
+  primaryLinkBody: { fontSize: 14, lineHeight: 20, color: "#166534" },
+  primaryLink: { color: "#166534", fontWeight: "800", paddingVertical: 6 },
 });

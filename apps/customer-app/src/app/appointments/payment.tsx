@@ -44,14 +44,16 @@ export default function AppointmentPaymentScreen() {
     try {
       await confirmAppointmentHold(appointmentId, session.accessToken);
       Alert.alert(
-        demoAppointment ? 'Demo appointment confirmed' : 'Appointment booked',
-        `${serviceName} for ${petName} is booked at ${providerName}. Payment is due at the provider; no online charge was attempted.`,
+        demoAppointment ? 'Demo booking request sent' : 'Booking request sent',
+        demoAppointment
+          ? `${serviceName} for ${petName} is in demo provider-confirmation mode.`
+          : `${providerName} must accept ${serviceName} for ${petName} before the appointment becomes confirmed. Payment remains due at the provider; no online charge was attempted.`,
         [{ text: 'View appointments', onPress: () => router.replace(`/appointments?appointmentId=${appointmentId}` as never) }],
       );
     } catch (error) {
       Alert.alert(
-        'Confirmation failed',
-        error instanceof Error ? error.message : 'Could not confirm this appointment. Please retry.',
+        'Request failed',
+        error instanceof Error ? error.message : 'Could not send this booking request. Please retry.',
       );
     } finally {
       setConfirming(false);
@@ -60,34 +62,37 @@ export default function AppointmentPaymentScreen() {
 
   if (!user || !session) {
     return (
-      <ScreenShell scroll={false} header={<AppBar title="Confirm appointment" />}>
-        <StateView kind="unauthenticated" title="Sign in required" message="Sign in again to review this appointment." />
+      <ScreenShell scroll={false} header={<AppBar title="Send booking request" />}>
+        <StateView kind="unauthenticated" title="Sign in required" message="Sign in again to review this appointment request." />
       </ScreenShell>
     );
   }
 
   if (!appointmentId) {
     return (
-      <ScreenShell scroll={false} header={<AppBar title="Confirm appointment" />}>
+      <ScreenShell scroll={false} header={<AppBar title="Send booking request" />}>
         <StateView kind="error" title="Invalid appointment" message="The appointment hold is missing. Choose the slot again." />
       </ScreenShell>
     );
   }
 
   return (
-    <ScreenShell header={<AppBar title="Confirm appointment" subtitle="Review before booking" />}>
+    <ScreenShell header={<AppBar title="Send booking request" subtitle="Provider confirmation required" />}>
       <View style={styles.container}>
         <View style={[styles.notice, { backgroundColor: theme.primarySoft }]}>
-          <StatusBadge label={demoAppointment ? 'DEMO · PAY AT PROVIDER' : 'PAY AT PROVIDER'} tone="success" />
+          <StatusBadge
+            label={demoAppointment ? 'DEMO · PROVIDER CONFIRMATION' : 'WAITING FOR PROVIDER ACCEPTANCE'}
+            tone="warning"
+          />
           <ThemedText type="small" themeColor="textSecondary">
             {demoAppointment
-              ? 'Development fixture only. No real payment is created.'
-              : 'No online payment is created for this booking. Pay the provider according to the confirmed service fee.'}
+              ? 'Development fixture only. No real provider or payment action is created.'
+              : 'Sending this request reserves the selected slot for this booking. The appointment is confirmed only after the provider accepts it.'}
           </ThemedText>
         </View>
 
         <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-          <ThemedText style={styles.cardTitle}>Booking details</ThemedText>
+          <ThemedText style={styles.cardTitle}>Booking request</ThemedText>
           <ThemedText style={styles.serviceName}>{serviceName}</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">{providerName}</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">Pet: {petName}</ThemedText>
@@ -101,16 +106,16 @@ export default function AppointmentPaymentScreen() {
         <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
           <ThemedText style={styles.cardTitle}>Service fee</ThemedText>
           <View style={styles.row}>
-            <ThemedText themeColor="textSecondary">Pay at provider</ThemedText>
+            <ThemedText themeColor="textSecondary">Pay at provider after acceptance</ThemedText>
             <ThemedText style={[styles.totalValue, { color: theme.primary }]}>{money(amount)}</ThemedText>
           </View>
           <ThemedText type="small" themeColor="textSecondary">
-            The backend stores the authoritative price snapshot when the slot is held. This screen is a display summary only.
+            The backend stores the authoritative price snapshot when the slot is held. No online payment is created for this booking request.
           </ThemedText>
         </View>
 
         <PrimaryAction
-          label="Confirm booking · Pay at provider"
+          label="Send booking request · Pay at provider"
           loading={confirming}
           onPress={() => void handleConfirm()}
         />

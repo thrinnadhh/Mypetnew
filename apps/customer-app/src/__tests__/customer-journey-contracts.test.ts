@@ -65,10 +65,12 @@ describe('MyPet customer journey contracts', () => {
     ]);
   });
 
-  it('uses canonical customer-owned appointment holds and Pay at Provider confirmation', () => {
+  it('uses canonical customer-owned holds and provider-confirmed Pay at Provider requests', () => {
     const discovery = source('src/screens/appointment-discovery-screen.tsx');
     const payment = source('src/app/appointments/payment.tsx');
     const booking = source('src/services/appointment-booking.ts');
+    const history = source('src/services/customer-history.ts');
+    const appointmentList = source('src/screens/appointments-screen.tsx');
 
     expectAll(discovery, [
       'fetchAvailableAppointmentSlots',
@@ -94,23 +96,30 @@ describe('MyPet customer journey contracts', () => {
     expect(booking).not.toContain('payAtClinic');
 
     expectAll(payment, [
-      'PAY AT PROVIDER',
-      'No online payment is created for this booking.',
+      'WAITING FOR PROVIDER ACCEPTANCE',
+      'Provider confirmation required',
+      'No online payment is created for this booking request.',
       'confirmAppointmentHold(appointmentId, session.accessToken)',
-      'Confirm booking · Pay at provider',
+      'Send booking request · Pay at provider',
+      'Booking request sent',
     ]);
+    expect(payment).not.toContain('Appointment booked');
     expect(payment).not.toContain('initiateAppointmentPayment');
     expect(payment).not.toContain('openCashfreeOrder');
     expect(payment).not.toContain('waitForReferencePaymentOutcome');
+
+    expect(history).toContain("case 'BOOKED': return 'PENDING_PROVIDER'");
+    expect(history).toContain("case 'REJECTED': return 'REJECTED'");
+    expect(appointmentList).toContain('WAITING FOR PROVIDER');
   });
 
-  it('supports safe demo appointment confirmation without creating a real payment', () => {
+  it('supports safe demo appointment requests without creating a real payment', () => {
     const payment = source('src/app/appointments/payment.tsx');
 
     expectAll(payment, [
       "appointmentId.startsWith('demo-appointment-')",
       'confirmAppointmentHold(appointmentId, session.accessToken)',
-      'Development fixture only. No real payment is created.',
+      'Development fixture only. No real provider or payment action is created.',
     ]);
     expect(payment).not.toContain('openCashfreeOrder');
   });

@@ -6,6 +6,7 @@ const AVAILABILITY_WINDOW_DAYS = 14;
 const TERMINAL_REPLAY_STATUSES = new Set(['CANCELLED', 'HOLD_EXPIRED', 'REJECTED']);
 
 export type AppointmentServiceCapability = 'GROOMING' | 'VETERINARY';
+export type AppointmentPaymentMethod = 'PAY_AT_PROVIDER' | 'ONLINE_PAYMENT';
 
 export interface AppointmentServiceOption {
   id: string;
@@ -60,10 +61,11 @@ interface AppointmentResponse {
   status?: string;
 }
 
-interface HoldAppointmentInput {
+export interface HoldAppointmentInput {
   slot: AppointmentSlotOption;
   userId: string | null | undefined;
   petId: string;
+  paymentMethod: AppointmentPaymentMethod;
   accessToken: string | null | undefined;
 }
 
@@ -98,12 +100,11 @@ function formatSlotTime(
   return date.toLocaleString('en-IN', options);
 }
 
-function appointmentAttemptKey(slotId: string, petId: string): string {
-  // A network retry for the same customer/pet/slot must replay the same server-side
-  // idempotency record instead of creating a second hold. If that record is already
-  // terminal, holdAppointmentSlot creates one fresh attempt key so the customer can
-  // legitimately rebook a still-future slot after cancellation/expiry/rejection.
-  return `appointment-${slotId}-${petId}`;
+function appointmentAttemptKey(slotId: string, petId: string, paymentMethod: AppointmentPaymentMethod): string {
+  // Payment method is part of the canonical hold fingerprint, so it must also
+  // be part of the deterministic retry key. Switching payment mode creates a
+  // new explicit attempt rather than colliding with an earlier hold fingerprint.
+  return `appointment-${slotId}-${petId}-${paymentMethod}`;
 }
 
 async function apiError(response: Response, fallback: string): Promise<Error> {
@@ -171,9 +172,6 @@ export async function fetchAvailableAppointmentSlots(
   const to = new Date(from.getTime() + AVAILABILITY_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const slots: AppointmentSlotOption[] = [];
 
-  // Fetch sequentially so the first real provider error is surfaced immediately.
-  // Parallel fan-out would continue consuming later responses after one service
-  // fails and can incorrectly collapse a backend outage into a no-slots state.
   for (const service of services) {
     const query = new URLSearchParams({
       from: from.toISOString(),
@@ -203,10 +201,7 @@ export async function fetchAvailableAppointmentSlots(
           hour: '2-digit',
           minute: '2-digit',
         }),
-        endTime: formatSlotTime(slot.endsAt, {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
+        endTime: formatSlotTime(slot.endsAt, { hour: '2-digit', minute: '2-digit' }),
         startsAt: slot.startsAt,
         endsAt: slot.endsAt,
         price: service.price,
@@ -232,7 +227,7 @@ async function createAppointmentHold(
       serviceId: input.slot.offeringId,
       slotId: input.slot.id,
       petId: input.petId,
-      paymentMethod: 'PAY_AT_PROVIDER',
+      paymentMethod: input.paymentMethod,
     }),
   });
 
@@ -251,7 +246,7 @@ export async function holdAppointmentSlot(input: HoldAppointmentInput): Promise<
     return `demo-appointment-${input.slot.id}`;
   }
 
-  const baseKey = appointmentAttemptKey(input.slot.id, input.petId);
+  const baseKey = appointmentAttemptKey(input.slot.id, input.petId, input.paymentMethod);
   let data = await createAppointmentHold(input, baseKey);
   if (data.status && TERMINAL_REPLAY_STATUSES.has(data.status)) {
     data = await createAppointmentHold(input, `${baseKey}-retry-${Date.now().toString(36)}`);

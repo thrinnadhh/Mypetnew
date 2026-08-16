@@ -37,14 +37,6 @@ data class MerchantAppointmentRequestPage(
     val hasNext: Boolean,
 )
 
-/**
- * Read-side projection for the Merchant appointment inbox.
- *
- * Merchant authorization is derived exclusively from the authenticated principal's
- * server-owned outlet scopes. Customer identity/contact data is intentionally not
- * selected into this projection: a provider only receives the pet/service/slot facts
- * required to accept or reject the request.
- */
 @Component
 class MerchantAppointmentQuery(
     private val jdbc: JdbcClient,
@@ -64,7 +56,9 @@ class MerchantAppointmentQuery(
         val rows = jdbc.sql(
             """
             SELECT id, outlet_id, service_id, slot_id, pet_name, service_name,
-                   starts_at, ends_at, status, payment_method, payment_status,
+                   starts_at, ends_at, status,
+                   payment_mode AS payment_method,
+                   payment_state AS payment_status,
                    price_paise, notes, created_at, updated_at
             FROM mypet.appointment
             WHERE outlet_id IN (:outlet_ids)

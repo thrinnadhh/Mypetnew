@@ -8,6 +8,7 @@ import { ScreenShell } from '@/components/foundation/screen-shell';
 import { ThemedText } from '@/components/themed-text';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { useCart } from '@/context/CartContext';
+import { useLocation } from '@/context/LocationContext';
 import { radii, shadows, spacing, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
@@ -56,13 +57,13 @@ export function ShopCategoryNav() {
   );
 }
 
-function LiveStoreCards({ stores }: { stores: PublicOutletSummary[] }) {
+function LiveStoreCards({ stores, city }: { stores: PublicOutletSummary[]; city: string }) {
   const router = useRouter();
   const theme = useTheme();
 
   return (
     <View style={styles.section}>
-      <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Available Pet Stores</ThemedText>
+      <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Pet Stores Near You</ThemedText>
       <View style={styles.shopGrid}>
         {stores.map((store) => (
           <Pressable
@@ -86,14 +87,18 @@ function LiveStoreCards({ stores }: { stores: PublicOutletSummary[] }) {
                   {store.name}
                 </ThemedText>
                 <StatusBadge
-                  label={store.pickupEnabled ? 'Pickup Available' : 'Pickup Unavailable'}
-                  color={store.pickupEnabled ? theme.success : theme.textSecondary}
+                  label="Approved"
+                  color={theme.success}
                 />
               </View>
+              <ThemedText style={{ fontSize: 12, color: theme.textSecondary }} numberOfLines={1}>
+                {city} · Live merchant catalogue
+              </ThemedText>
               <View style={styles.rowBetween}>
-                <ThemedText style={{ fontSize: 12, color: theme.textSecondary }}>
-                  Product Store
-                </ThemedText>
+                <StatusBadge
+                  label={store.pickupEnabled ? 'Pickup Available' : 'Online Store'}
+                  color={store.pickupEnabled ? theme.success : theme.primary}
+                />
                 <ThemedText style={{ color: theme.primary, fontWeight: '800' }}>Explore →</ThemedText>
               </View>
             </View>
@@ -108,21 +113,33 @@ export default function CommerceDiscoveryScreen() {
   const router = useRouter();
   const theme = useTheme();
   const { t } = useTranslation();
+  const { activeCity } = useLocation();
   const { providerName, totalItemsCount, subtotalAmount } = useCart();
   const [stores, setStores] = useState<PublicOutletSummary[]>([]);
   const [state, setState] = useState<LoadState>('loading');
+  const pincodeKey = activeCity.pincodes.join(',');
 
   const load = useCallback(async () => {
     setState('loading');
     try {
-      const allStores = await fetchAllPublicOutlets({ capability: 'PRODUCT_STORE' });
-      setStores(allStores);
+      const pincodes = pincodeKey
+        .split(',')
+        .map((value) => value.trim())
+        .filter((value) => /^[1-9][0-9]{5}$/.test(value));
+      const groups = pincodes.length > 0
+        ? await Promise.all(
+            pincodes.map((pincode) => fetchAllPublicOutlets({ capability: 'PRODUCT_STORE', pincode })),
+          )
+        : [await fetchAllPublicOutlets({ capability: 'PRODUCT_STORE' })];
+      const unique = new Map<string, PublicOutletSummary>();
+      for (const store of groups.flat()) unique.set(store.id, store);
+      setStores([...unique.values()].sort((left, right) => left.name.localeCompare(right.name)));
       setState('ready');
     } catch (error) {
       setStores([]);
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, []);
+  }, [pincodeKey]);
 
   useEffect(() => {
     void load();
@@ -130,19 +147,19 @@ export default function CommerceDiscoveryScreen() {
 
   return (
     <ScreenShell
-      header={<AppBar title={t('commerceFoundation.title')} subtitle="Available Pet Stores" />}
+      header={<AppBar title={t('commerceFoundation.title')} subtitle={`Approved pet stores in ${activeCity.displayName}`} />}
       testID="commerce-discovery-screen"
     >
       <View style={styles.container}>
         <ShopCategoryNav />
         {state === 'loading' ? (
-          <StateView kind="loading" title="Finding active pet stores" />
+          <StateView kind="loading" title="Finding active pet stores" message="Checking approved merchants for your service PIN codes." />
         ) : null}
         {state === 'offline' || state === 'error' ? (
           <StateView
             kind={state}
             title={state === 'offline' ? 'You are offline' : 'Stores unavailable'}
-            message={state === 'offline' ? 'Reconnect to load live stores.' : 'Could not load active pet stores.'}
+            message={state === 'offline' ? 'Reconnect to load live stores.' : 'Could not load approved pet stores.'}
             actionLabel="Retry"
             onAction={() => void load()}
           />
@@ -150,11 +167,11 @@ export default function CommerceDiscoveryScreen() {
         {state === 'ready' && stores.length === 0 ? (
           <StateView
             kind="empty"
-            title="No active pet stores available"
-            message="No active pet stores are currently available."
+            title={`No approved pet stores in ${activeCity.displayName} yet`}
+            message="A merchant will appear here automatically after admin approval and when the outlet serves your selected PIN code."
           />
         ) : null}
-        {state === 'ready' && stores.length > 0 ? <LiveStoreCards stores={stores} /> : null}
+        {state === 'ready' && stores.length > 0 ? <LiveStoreCards stores={stores} city={activeCity.displayName} /> : null}
       </View>
 
       {totalItemsCount > 0 ? (

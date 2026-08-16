@@ -9,6 +9,7 @@ import { ThemedText } from '@/components/themed-text';
 import { BannerCarousel } from '@/components/ui/banner-carousel';
 import { ResilientRemoteImage } from '@/components/ui/resilient-remote-image';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { INITIAL_MARKET } from '@/config/markets';
 import { PROMO_BANNERS } from '@/constants/content';
 import { Radius, Shadows, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
@@ -19,6 +20,7 @@ import { type CommerceProduct } from '@/services/catalog-data';
 import { fetchBanners, fetchGuides, type GuideArticle, type PromoBanner } from '@/services/content';
 import { fetchCommerceProducts } from '@/services/customer-catalog';
 import { DEMO_MEDIA } from '@/services/demo-customer-data';
+import { fetchProviders, type ProviderSummary } from '@/services/provider-discovery';
 import { appConfig } from '@/utils/app-config';
 
 const CARD_WIDTH = 236;
@@ -54,6 +56,7 @@ interface DiscoveryCardItem {
 }
 
 const QUICK_ACTIONS: ShortcutItem[] = [
+  { id: 'stores', label: 'Pet Stores', icon: 'store', route: '/stores' },
   { id: 'favourites', label: 'Favourites', icon: 'heart', route: '/favourites' },
   { id: 'orders', label: 'Orders', icon: 'document', route: '/(tabs)/orders' },
   { id: 'new-arrivals', label: 'New Arrivals', icon: 'sparkle', route: '/category/new-arrivals' },
@@ -66,6 +69,7 @@ const HEALTH_ACTIONS: ShortcutItem[] = [
 ];
 
 const CATEGORIES: CategoryItem[] = [
+  { id: 'stores', label: 'Pet Stores', route: '/stores', image: DEMO_MEDIA.store },
   { id: 'food', label: 'Food & Nutrition', route: '/category/food', image: DEMO_MEDIA.food },
   { id: 'grooming', label: 'Grooming Services', route: '/groom', image: DEMO_MEDIA.grooming },
   { id: 'hospitals', label: 'Hospitals & Care', route: '/vet', image: DEMO_MEDIA.hospital },
@@ -196,6 +200,28 @@ const GUIDES: DiscoveryCardItem[] = [
   },
 ];
 
+function liveProviderCard(
+  provider: ProviderSummary,
+  type: 'store' | 'groomer' | 'vet',
+  city: string,
+): DiscoveryCardItem {
+  const image = type === 'store' ? DEMO_MEDIA.store : type === 'groomer' ? DEMO_MEDIA.grooming : DEMO_MEDIA.hospital;
+  const route = type === 'store'
+    ? `/shop/${provider.id}`
+    : type === 'groomer'
+      ? `/groomer/${provider.id}`
+      : `/vet/${provider.id}`;
+  return {
+    id: provider.id,
+    title: provider.name,
+    subtitle: provider.description || (type === 'store' ? 'Pet store' : type === 'groomer' ? 'Pet grooming' : 'Veterinary care'),
+    image,
+    meta: `${city} · Approved`,
+    metaIcon: 'location',
+    route,
+  };
+}
+
 function SectionHeading({ title, actionLabel, onAction }: { title: string; actionLabel?: string; onAction?: () => void }) {
   const theme = useTheme();
   return (
@@ -302,8 +328,10 @@ export default function HomeScreen() {
   const [activeFilter, setActiveFilter] = useState('All');
   const [banners, setBanners] = useState<PromoBanner[]>(PROMO_BANNERS);
   const [guideItems, setGuideItems] = useState<DiscoveryCardItem[]>(GUIDES);
-
   const [liveFoodProducts, setLiveFoodProducts] = useState<CommerceProduct[]>([]);
+  const [liveStores, setLiveStores] = useState<ProviderSummary[]>([]);
+  const [liveGroomers, setLiveGroomers] = useState<ProviderSummary[]>([]);
+  const [liveVets, setLiveVets] = useState<ProviderSummary[]>([]);
 
   useEffect(() => {
     void fetchBanners()
@@ -329,13 +357,45 @@ export default function HomeScreen() {
         })));
       })
       .catch(() => setGuideItems(GUIDES));
-
-    if (!appConfig.allowDemoMode) {
-      void fetchCommerceProducts({ category: 'food' })
-        .then((items) => setLiveFoodProducts(items.slice(0, 6)))
-        .catch(() => setLiveFoodProducts([]));
-    }
   }, []);
+
+  const pincodeKey = activeCity.pincodes.join(',');
+  useEffect(() => {
+    if (appConfig.allowDemoMode) return;
+    const pincodes = pincodeKey.split(',').filter(Boolean);
+    void Promise.all([
+      fetchProviders('PET_STORE', INITIAL_MARKET, pincodes),
+      fetchProviders('GROOMER', INITIAL_MARKET, pincodes),
+      fetchProviders('VET_HOSPITAL', INITIAL_MARKET, pincodes),
+      fetchCommerceProducts({ category: 'food' }),
+    ])
+      .then(([stores, groomers, vets, products]) => {
+        setLiveStores(stores);
+        setLiveGroomers(groomers);
+        setLiveVets(vets);
+        const serviceableStoreIds = new Set(stores.map((store) => store.id));
+        setLiveFoodProducts(products.filter((product) => serviceableStoreIds.has(product.providerId)).slice(0, 6));
+      })
+      .catch(() => {
+        setLiveStores([]);
+        setLiveGroomers([]);
+        setLiveVets([]);
+        setLiveFoodProducts([]);
+      });
+  }, [pincodeKey]);
+
+  const liveStoreCards = useMemo(
+    () => liveStores.map((provider) => liveProviderCard(provider, 'store', activeCity.displayName)),
+    [activeCity.displayName, liveStores],
+  );
+  const liveGroomerCards = useMemo(
+    () => liveGroomers.map((provider) => liveProviderCard(provider, 'groomer', activeCity.displayName)),
+    [activeCity.displayName, liveGroomers],
+  );
+  const liveVetCards = useMemo(
+    () => liveVets.map((provider) => liveProviderCard(provider, 'vet', activeCity.displayName)),
+    [activeCity.displayName, liveVets],
+  );
 
   const firstName = useMemo(() => {
     if (typeof user?.displayName === 'string' && user.displayName) {
@@ -432,7 +492,7 @@ export default function HomeScreen() {
 
         <View style={styles.section}>
           <ThemedText style={[styles.mindTitle, { color: theme.text }]}>What&apos;s on your pet&apos;s mind? ✨</ThemedText>
-          <ThemedText style={[styles.mindSubtitle, { color: theme.textSecondary }]}>Choose from premium foods, grooming, hospitals and more</ThemedText>
+          <ThemedText style={[styles.mindSubtitle, { color: theme.textSecondary }]}>Choose from pet stores, grooming, hospitals and more</ThemedText>
 
           <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
             {CATEGORIES.map((category) => (
@@ -443,7 +503,8 @@ export default function HomeScreen() {
               >
                 <View style={[styles.categoryImageWrap, { backgroundColor: theme.muted }]}>
                   <ResilientRemoteImage
-                    uri={appConfig.allowDemoMode ? category.image : undefined}
+                    uri={category.image}
+                    fallbackUri={DEMO_MEDIA.store}
                     style={styles.categoryImage}
                   />
                 </View>
@@ -454,7 +515,7 @@ export default function HomeScreen() {
 
           {appConfig.allowDemoMode ? (
             <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-              {['All', 'Dry Food', 'Wet Food', 'Puppy', 'Adult', 'Senior'].map((filter) => {
+              {FILTERS.map((filter) => {
                 const active = activeFilter === filter;
                 return (
                   <Pressable
@@ -471,59 +532,70 @@ export default function HomeScreen() {
         </View>
 
         {!appConfig.allowDemoMode ? (
-          liveFoodProducts.length > 0 ? (
-            <View style={styles.section}>
-              <SectionHeading
-                title="Food & Nutrition Products"
-                actionLabel="View all"
-                onAction={() => router.push('/category/food' as never)}
-              />
-              <ScrollView
-                horizontal
-                nestedScrollEnabled
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.horizontalCards}
-              >
-                {liveFoodProducts.map((product) => (
-                  <Pressable
-                    key={product.id}
-                    onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(product.id)}` as never)}
-                    style={({ pressed }) => [
-                      styles.discoveryCard,
-                      { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <View style={styles.cardImageWrap}>
-                      <ResilientRemoteImage uri={product.imageUrl} style={styles.cardImage} />
-                    </View>
-                    <View style={styles.cardBody}>
-                      {product.brand ? (
-                        <ThemedText style={{ fontSize: 11, color: theme.textSecondary }} numberOfLines={1}>
-                          {product.brand}
-                        </ThemedText>
-                      ) : null}
-                      <ThemedText style={[styles.cardTitle, { color: theme.text }]} numberOfLines={1}>
-                        {product.name}
-                      </ThemedText>
-                      <ThemedText style={{ fontSize: 12, color: theme.textSecondary }} numberOfLines={1}>
-                        {product.providerName}
-                      </ThemedText>
-                      <View style={styles.metaRow}>
-                        <ThemedText style={{ fontWeight: '800', color: theme.primary, fontSize: 14 }}>
-                          ₹{product.price}
-                        </ThemedText>
-                        <StatusBadge
-                          label={product.pickupEnabled ? 'Pickup Available' : 'Pickup Unavailable'}
-                          color={product.pickupEnabled ? theme.success : theme.textSecondary}
-                        />
+          <>
+            {liveStoreCards.length > 0 ? (
+              <HorizontalCardSection title="Pet Stores Near You 🛍️" items={liveStoreCards} actionLabel="View stores" onAction={() => router.push('/stores' as never)} />
+            ) : null}
+            {liveGroomerCards.length > 0 ? (
+              <HorizontalCardSection title="Grooming Near You ✂️" items={liveGroomerCards} actionLabel="View groomers" onAction={() => router.push('/groom' as never)} />
+            ) : null}
+            {liveVetCards.length > 0 ? (
+              <HorizontalCardSection title="Veterinary Care Near You 🏥" items={liveVetCards} actionLabel="View hospitals" onAction={() => router.push('/vet' as never)} />
+            ) : null}
+            {liveFoodProducts.length > 0 ? (
+              <View style={styles.section}>
+                <SectionHeading
+                  title="Food & Nutrition Products"
+                  actionLabel="View all"
+                  onAction={() => router.push('/category/food' as never)}
+                />
+                <ScrollView
+                  horizontal
+                  nestedScrollEnabled
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.horizontalCards}
+                >
+                  {liveFoodProducts.map((product) => (
+                    <Pressable
+                      key={product.id}
+                      onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(product.id)}` as never)}
+                      style={({ pressed }) => [
+                        styles.discoveryCard,
+                        { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <View style={styles.cardImageWrap}>
+                        <ResilientRemoteImage uri={product.imageUrl} fallbackUri={DEMO_MEDIA.food} style={styles.cardImage} />
                       </View>
-                    </View>
-                  </Pressable>
-                ))}
-              </ScrollView>
-            </View>
-          ) : null
+                      <View style={styles.cardBody}>
+                        {product.brand ? (
+                          <ThemedText style={{ fontSize: 11, color: theme.textSecondary }} numberOfLines={1}>
+                            {product.brand}
+                          </ThemedText>
+                        ) : null}
+                        <ThemedText style={[styles.cardTitle, { color: theme.text }]} numberOfLines={1}>
+                          {product.name}
+                        </ThemedText>
+                        <ThemedText style={{ fontSize: 12, color: theme.textSecondary }} numberOfLines={1}>
+                          {product.providerName}
+                        </ThemedText>
+                        <View style={styles.metaRow}>
+                          <ThemedText style={{ fontWeight: '800', color: theme.primary, fontSize: 14 }}>
+                            ₹{product.price}
+                          </ThemedText>
+                          <StatusBadge
+                            label={product.pickupEnabled ? 'Pickup Available' : 'Online Store'}
+                            color={product.pickupEnabled ? theme.success : theme.primary}
+                          />
+                        </View>
+                      </View>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+            ) : null}
+          </>
         ) : (
           <>
             <HorizontalCardSection title="Food & Nutrition Nearby 🏆" items={FOOD_AND_NUTRITION} actionLabel="View all" onAction={() => router.push('/category/food' as never)} />

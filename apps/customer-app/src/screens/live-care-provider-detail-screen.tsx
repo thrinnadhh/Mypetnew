@@ -135,7 +135,7 @@ export default function LiveCareProviderDetailScreen({ kind }: { kind: CareKind 
           <View style={styles.section}>
             <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Published services</ThemedText>
             <ThemedText style={[styles.sectionSubtitle, { color: theme.textSecondary }]}>
-              Prices and services below come from the provider's current merchant catalogue.
+              Prices and services below come from the current merchant catalogue for this provider.
             </ThemedText>
 
             {services.length === 0 ? (

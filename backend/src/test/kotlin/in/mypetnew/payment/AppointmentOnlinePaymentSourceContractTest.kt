@@ -36,7 +36,9 @@ class AppointmentOnlinePaymentSourceContractTest {
 
         assertTrue(service.contains("APPOINTMENT_PROVIDER_PREFIX = \"ma_\""))
         assertTrue(service.contains("appointment_payment_refund"))
-        assertTrue(webhook.contains("isAppointmentProviderOrder"))
+        assertTrue(webhook.contains("APPOINTMENT_PROVIDER_PREFIX = \"ma_\""))
+        assertTrue(webhook.contains("providerOrderReference.startsWith(APPOINTMENT_PROVIDER_PREFIX)"))
+        assertTrue(webhook.contains("Appointment payment webhook processing is unavailable"))
         assertTrue(workers.contains("appointmentPayments.processRefundBatch()"))
         assertTrue(workers.contains("appointmentPayments.reconcileTerminalRefunds()"))
         assertTrue(migration.contains("CREATE TABLE mypet.appointment_payment_refund"))

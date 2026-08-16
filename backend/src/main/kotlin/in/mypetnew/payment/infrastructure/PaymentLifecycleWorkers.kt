@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component
 @Profile("!test & !development")
 class PaymentLifecycleWorkers(
     private val payments: PaymentService,
+    private val appointmentPayments: JdbcAppointmentOnlinePaymentService,
     private val orders: OrderService,
 ) {
     @Scheduled(fixedDelayString = "\${mypet.payments.webhook-worker-delay-ms:1000}")
@@ -23,6 +24,7 @@ class PaymentLifecycleWorkers(
     @Scheduled(fixedDelayString = "\${mypet.payments.reconciliation-delay-ms:15000}")
     fun reconcilePayments() {
         payments.reconcilePaymentBatch()
+        appointmentPayments.reconcilePaymentBatch()
     }
 
     @Scheduled(fixedDelayString = "\${mypet.payments.expiry-delay-ms:5000}")
@@ -40,10 +42,13 @@ class PaymentLifecycleWorkers(
                 )
             }
         }
+        appointmentPayments.expirePendingBatch()
     }
 
     @Scheduled(fixedDelayString = "\${mypet.payments.refund-delay-ms:5000}")
     fun processRefunds() {
         payments.processRefundBatch()
+        appointmentPayments.reconcileTerminalRefunds()
+        appointmentPayments.processRefundBatch()
     }
 }

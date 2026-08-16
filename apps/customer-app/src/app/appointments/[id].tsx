@@ -15,7 +15,17 @@ import {
   cancelAppointment,
   fetchAppointmentDetails,
   type CustomerAppointmentRecord,
+  type HistoryAppointmentStatus,
 } from '@/services/customer-history';
+
+function statusLabel(status: HistoryAppointmentStatus): string {
+  switch (status) {
+    case 'PENDING_PROVIDER': return 'WAITING FOR PROVIDER';
+    case 'REJECTED': return 'PROVIDER DECLINED';
+    case 'SLOT_HELD': return 'SLOT HELD';
+    default: return status.replaceAll('_', ' ');
+  }
+}
 
 export default function AppointmentDetailRoute() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -94,7 +104,24 @@ export default function AppointmentDetailRoute() {
         />
       ) : (
         <View style={styles.container}>
-          {/* Main Appointment Card */}
+          {appt.status === 'PENDING_PROVIDER' ? (
+            <View style={[styles.providerNotice, { backgroundColor: theme.primarySoft }]}>
+              <ThemedText style={styles.providerNoticeTitle}>Waiting for provider confirmation</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Your request reached {appt.providerName}. This appointment becomes Confirmed only after the provider accepts it.
+              </ThemedText>
+            </View>
+          ) : null}
+
+          {appt.status === 'REJECTED' ? (
+            <View style={[styles.providerNotice, { backgroundColor: theme.muted }]}>
+              <ThemedText style={styles.providerNoticeTitle}>Provider declined this request</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                This slot is no longer reserved for this request. Choose another available slot to book again.
+              </ThemedText>
+            </View>
+          ) : null}
+
           <View
             style={[
               styles.card,
@@ -110,20 +137,19 @@ export default function AppointmentDetailRoute() {
                 </ThemedText>
               </View>
               <StatusBadge
-                label={appt.status}
+                label={statusLabel(appt.status)}
                 tone={
                   appt.status === 'CONFIRMED' || appt.status === 'COMPLETED'
                     ? 'success'
-                    : appt.status === 'CANCELLED'
-                    ? 'error'
-                    : 'warning'
+                    : appt.status === 'CANCELLED' || appt.status === 'REJECTED' || appt.status === 'EXPIRED'
+                      ? 'error'
+                      : 'warning'
                 }
               />
             </View>
 
             <View style={[styles.divider, { backgroundColor: theme.border }]} />
 
-            {/* Info Items */}
             <View style={styles.infoRow}>
               <AppIcon name="paw" size={16} color={theme.primary} />
               <ThemedText style={styles.infoText}>Pet: {appt.petName}</ThemedText>
@@ -151,7 +177,6 @@ export default function AppointmentDetailRoute() {
             ) : null}
           </View>
 
-          {/* Quick Actions */}
           <View style={styles.quickActions}>
             {appt.address ? (
               <Pressable style={[styles.actionBtn, { backgroundColor: theme.primarySoft }]} onPress={openDirections}>
@@ -168,7 +193,6 @@ export default function AppointmentDetailRoute() {
             ) : null}
           </View>
 
-          {/* Prescription Document if present */}
           {appt.prescriptionDocUrl ? (
             <View
               style={[
@@ -185,8 +209,7 @@ export default function AppointmentDetailRoute() {
             </View>
           ) : null}
 
-          {/* Cancel Action */}
-          {['SLOT_HELD', 'CONFIRMED'].includes(appt.status) ? (
+          {['SLOT_HELD', 'PENDING_PROVIDER', 'CONFIRMED'].includes(appt.status) ? (
             <View style={styles.actions}>
               <Pressable style={[styles.cancelBtn, { borderColor: theme.danger }]} onPress={() => void handleCancel()}>
                 <ThemedText style={{ color: theme.danger, fontWeight: '700' }}>Cancel Appointment</ThemedText>
@@ -203,6 +226,8 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   backBtn: { padding: spacing.x2 },
   container: { padding: spacing.x4, gap: spacing.x4 },
+  providerNotice: { borderRadius: radii.compact, padding: spacing.x3, gap: spacing.x1 },
+  providerNoticeTitle: { ...typography.label, fontWeight: '800' },
   card: { borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card, padding: spacing.x4, gap: spacing.x3 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   providerName: { ...typography.title },

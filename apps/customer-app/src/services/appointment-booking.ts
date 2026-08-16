@@ -91,10 +91,7 @@ function paiseToRupees(value: number | string): number {
   return Number.isFinite(parsed) ? parsed / 100 : 0;
 }
 
-function formatSlotTime(
-  value: string | undefined,
-  options: Intl.DateTimeFormatOptions,
-): string {
+function formatSlotTime(value: string | undefined, options: Intl.DateTimeFormatOptions): string {
   if (!value) return 'Slot time unavailable';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Slot time unavailable';
@@ -102,7 +99,12 @@ function formatSlotTime(
 }
 
 function appointmentAttemptKey(slotId: string, petId: string, paymentMethod: AppointmentPaymentMethod): string {
-  return `appointment-${slotId}-${petId}-${paymentMethod}`;
+  // Preserve the released PAY_AT_PROVIDER retry key so older clients replay the
+  // same hold. ONLINE_PAYMENT needs a separate fingerprint/key because payment
+  // mode is part of the canonical appointment request.
+  return paymentMethod === 'PAY_AT_PROVIDER'
+    ? `appointment-${slotId}-${petId}`
+    : `appointment-${slotId}-${petId}-ONLINE_PAYMENT`;
 }
 
 async function apiError(response: Response, fallback: string): Promise<Error> {
@@ -172,10 +174,7 @@ export async function fetchAvailableAppointmentSlots(
 
   for (const service of services) {
     const query = new URLSearchParams({
-      from: from.toISOString(),
-      to: to.toISOString(),
-      page: '0',
-      pageSize: '100',
+      from: from.toISOString(), to: to.toISOString(), page: '0', pageSize: '100',
     });
     const response = await fetch(
       `${appConfig.apiBaseUrl}/api/v1/public/services/${encodeURIComponent(service.id)}/availability?${query.toString()}`,
@@ -191,11 +190,7 @@ export async function fetchAvailableAppointmentSlots(
         offeringId: service.id,
         serviceName: service.name,
         startTime: formatSlotTime(slot.startsAt, {
-          weekday: 'short',
-          day: 'numeric',
-          month: 'short',
-          hour: '2-digit',
-          minute: '2-digit',
+          weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
         }),
         endTime: formatSlotTime(slot.endsAt, { hour: '2-digit', minute: '2-digit' }),
         startsAt: slot.startsAt,
@@ -215,10 +210,7 @@ async function createAppointmentHold(
 ): Promise<AppointmentResponse> {
   const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/customer/appointments`, {
     method: 'POST',
-    headers: {
-      ...jsonHeaders(input.accessToken),
-      'Idempotency-Key': idempotencyKey,
-    },
+    headers: { ...jsonHeaders(input.accessToken), 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({
       outletId: input.slot.providerId,
       serviceId: input.slot.offeringId,
@@ -236,10 +228,7 @@ export async function holdAppointmentSlot(input: HoldAppointmentInput): Promise<
   resolveBookingUserId(input.userId);
   if (!input.petId) throw new Error('Select a pet before booking.');
   if (!input.accessToken && !appConfig.allowDemoMode) throw new Error('Please sign in before booking an appointment.');
-
-  if (appConfig.allowDemoMode && input.slot.id.startsWith('demo-slot-')) {
-    return `demo-appointment-${input.slot.id}`;
-  }
+  if (appConfig.allowDemoMode && input.slot.id.startsWith('demo-slot-')) return `demo-appointment-${input.slot.id}`;
 
   const paymentMethod = input.paymentMethod ?? 'PAY_AT_PROVIDER';
   const baseKey = appointmentAttemptKey(input.slot.id, input.petId, paymentMethod);
@@ -264,6 +253,5 @@ export async function confirmAppointmentHold(
     `${appConfig.apiBaseUrl}/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}/confirm`,
     { method: 'POST', headers: authHeaders(accessToken) },
   );
-
   if (!response.ok) throw await apiError(response, 'The appointment was not confirmed. Please retry.');
 }

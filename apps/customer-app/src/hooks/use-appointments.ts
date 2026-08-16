@@ -12,6 +12,8 @@ import { isOfflineError } from '@/services/customer-profile';
 
 export type AppointmentsStateKind = 'idle' | 'loading' | 'ready' | 'error' | 'offline';
 
+const PROVIDER_DECISION_REFRESH_MS = 15_000;
+
 export function useAppointments() {
   const { user, session } = useAuth();
   const [appointments, setAppointments] = useState<CustomerAppointmentRecord[]>([]);
@@ -32,9 +34,33 @@ export function useAppointments() {
     }
   }, [session, user]);
 
+  const refreshProviderDecision = useCallback(async () => {
+    if (!user || !session) return;
+    try {
+      const data = await fetchCustomerAppointments(user.id, session.accessToken);
+      setAppointments(data);
+      setState('ready');
+    } catch (error) {
+      // Background provider-decision polling must never replace usable appointment
+      // state with a transient error. The normal retry/reload path remains visible
+      // if the user explicitly refreshes while offline or the API is unavailable.
+      if (!isOfflineError(error)) return;
+    }
+  }, [session, user]);
+
   useEffect(() => {
     if (user && session) void load();
   }, [load, session, user]);
+
+  const hasPendingProviderDecision = appointments.some((appointment) => appointment.status === 'PENDING_PROVIDER');
+
+  useEffect(() => {
+    if (!hasPendingProviderDecision || !user || !session) return undefined;
+    const timer = setInterval(() => {
+      void refreshProviderDecision();
+    }, PROVIDER_DECISION_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [hasPendingProviderDecision, refreshProviderDecision, session, user]);
 
   const filteredAppointments = useMemo(() => {
     return appointments.filter((appt) => {

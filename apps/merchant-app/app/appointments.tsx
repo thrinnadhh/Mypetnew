@@ -22,6 +22,8 @@ import { hasRuntimeMerchantSession } from '../src/auth/session';
 
 type LoadState = 'loading' | 'ready' | 'error' | 'unauthenticated';
 
+const BOOKING_REQUEST_REFRESH_MS = 15_000;
+
 function money(paise: number): string {
   return `₹${(paise / 100).toFixed(2)}`;
 }
@@ -64,12 +66,30 @@ export default function MerchantAppointmentsScreen() {
     }
   }, []);
 
+  const refreshSilently = useCallback(async () => {
+    if (!hasRuntimeMerchantSession()) return;
+    try {
+      setRequests(await fetchPendingAppointmentRequests());
+    } catch {
+      // Keep the last known inbox during transient background failures. Explicit
+      // pull-to-refresh/retry still surfaces canonical API errors to the merchant.
+    }
+  }, []);
+
   useEffect(() => {
     const startup = setTimeout(() => {
       void load();
     }, 0);
     return () => clearTimeout(startup);
   }, [load]);
+
+  useEffect(() => {
+    if (state !== 'ready') return undefined;
+    const timer = setInterval(() => {
+      void refreshSilently();
+    }, BOOKING_REQUEST_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [refreshSilently, state]);
 
   const decide = async (request: MerchantAppointmentRequest, decision: 'CONFIRMED' | 'REJECTED') => {
     if (actingId) return;

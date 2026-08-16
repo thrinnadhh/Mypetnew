@@ -21,7 +21,7 @@ export {
 
 export interface CustomerPaymentView {
   paymentId: string;
-  referenceType: 'PRODUCT_ORDER';
+  referenceType: 'PRODUCT_ORDER' | 'APPOINTMENT';
   referenceId: string;
   provider: 'CASHFREE';
   providerOrderId: string;
@@ -52,6 +52,21 @@ export async function initiateOrderPayment(
   return payment;
 }
 
+export async function initiateAppointmentPayment(
+  appointmentId: string,
+  idempotencyKey = Crypto.randomUUID(),
+): Promise<CustomerPaymentView> {
+  return apiClient.post<CustomerPaymentView>(
+    '/api/v1/customer/payments',
+    {
+      referenceType: 'APPOINTMENT',
+      referenceId: appointmentId,
+      provider: 'CASHFREE',
+    },
+    { 'Idempotency-Key': idempotencyKey },
+  );
+}
+
 export async function fetchPaymentStatus(paymentId: string): Promise<CustomerPaymentView> {
   return apiClient.get<CustomerPaymentView>(
     `/api/v1/customer/payments/${encodeURIComponent(paymentId)}`,
@@ -62,12 +77,6 @@ export async function fetchPaymentStatus(paymentId: string): Promise<CustomerPay
  * The Cashfree native callback is never payment truth. Both callback paths only
  * return a local signal so the caller can show "Verifying payment…" and poll
  * the canonical backend.
- *
- * The native SDK is loaded lazily at the moment checkout is launched. Merely
- * importing payment/auth services therefore does not initialize native payment
- * bindings in Jest, cold-start auth, or non-payment screens. A literal require
- * keeps the dependency discoverable by Metro while deferring native module load
- * until the user actually starts Cashfree checkout.
  */
 export async function openCashfreeOrder(payment: CustomerPaymentView): Promise<CashfreeCallbackSignal> {
   if (!payment.paymentSessionId || !payment.providerOrderId) {
@@ -81,6 +90,12 @@ export async function openCashfreeOrder(payment: CustomerPaymentView): Promise<C
   });
 }
 
+async function resumePayment(payment: CustomerPaymentView): Promise<CustomerPaymentView> {
+  return payment.referenceType === 'APPOINTMENT'
+    ? initiateAppointmentPayment(payment.referenceId)
+    : initiateOrderPayment(payment.referenceId);
+}
+
 export async function waitForPaymentOutcome(
   paymentId: string,
   attempts = 30,
@@ -88,17 +103,14 @@ export async function waitForPaymentOutcome(
 ): Promise<CustomerPaymentView> {
   let latest = await fetchPaymentStatus(paymentId);
 
-  // A Create Order HTTP timeout can leave MyPet with the durable Payment and
-  // deterministic provider identity but without the provider session response.
-  // Resume through the canonical initiation API: the backend maps a new client
-  // command key to the same Payment/provider order and never creates a second
-  // canonical Payment. If the retry returns the missing session, launch it and
-  // still rely only on the backend afterwards.
+  // A Create Order HTTP timeout can leave a durable Payment/provider identity
+  // without the provider session response. Re-enter canonical initiation with a
+  // new command key; the backend binds it to the same payment reference.
   if (
     (latest.status === 'PENDING' || latest.status === 'AUTHORIZED') &&
     !latest.paymentSessionId
   ) {
-    const resumed = await initiateOrderPayment(latest.referenceId);
+    const resumed = await resumePayment(latest);
     if (resumed.paymentId !== paymentId) {
       throw new Error('Payment recovery returned an inconsistent server payment.');
     }
@@ -123,21 +135,12 @@ export async function waitForPaymentOutcome(
   return latest;
 }
 
-// These compatibility exports intentionally keep the already-restored Plan 8
-// screen compiling while the Plan 5 backend rejects APPOINTMENT references.
-// They never perform network or provider I/O and therefore cannot accidentally
-// revive the old client-authored appointment payment contract.
-export async function initiateAppointmentPayment(
-  _userId?: string,
-  _appointmentId?: string,
-  _amount?: number,
-  _customer?: unknown,
-): Promise<CustomerPaymentView> {
-  throw new Error('Appointment online payment is not available until Plan 8.');
-}
-
+/**
+ * Legacy compatibility helper. A reference alone is not enough to prove payment
+ * success, so callers must first initiate a canonical payment and use its ID.
+ */
 export async function waitForReferencePaymentOutcome(
   _referenceId: string,
 ): Promise<{ status: 'SUCCESS' | 'PENDING' | 'FAILED'; transactionId: string }> {
-  throw new Error('Appointment online payment is not available until Plan 8.');
+  throw new Error('Use the canonical payment ID to verify appointment payment status.');
 }

@@ -28,16 +28,25 @@ function money(paise: number): string {
   return `₹${(paise / 100).toFixed(2)}`;
 }
 
+function paymentLabel(request: MerchantAppointmentRequest): string {
+  if (request.paymentMethod === 'PAY_AT_PROVIDER') return 'Pay at provider';
+  switch (request.paymentStatus) {
+    case 'PAID': return 'Paid online';
+    case 'REFUND_PENDING': return 'Paid · refund pending';
+    case 'REFUNDED': return 'Refunded';
+    case 'REFUND_FAILED': return 'Refund needs attention';
+    case 'FAILED': return 'Online payment failed';
+    case 'EXPIRED': return 'Online payment expired';
+    default: return 'Online payment pending';
+  }
+}
+
 function schedule(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? 'Time unavailable'
     : new Intl.DateTimeFormat('en-IN', {
-        weekday: 'short',
-        day: 'numeric',
-        month: 'short',
-        hour: 'numeric',
-        minute: '2-digit',
+        weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
       }).format(date);
 }
 
@@ -71,23 +80,18 @@ export default function MerchantAppointmentsScreen() {
     try {
       setRequests(await fetchPendingAppointmentRequests());
     } catch {
-      // Keep the last known inbox during transient background failures. Explicit
-      // pull-to-refresh/retry still surfaces canonical API errors to the merchant.
+      // Preserve the last usable inbox during transient background failures.
     }
   }, []);
 
   useEffect(() => {
-    const startup = setTimeout(() => {
-      void load();
-    }, 0);
+    const startup = setTimeout(() => void load(), 0);
     return () => clearTimeout(startup);
   }, [load]);
 
   useEffect(() => {
     if (state !== 'ready') return undefined;
-    const timer = setInterval(() => {
-      void refreshSilently();
-    }, BOOKING_REQUEST_REFRESH_MS);
+    const timer = setInterval(() => void refreshSilently(), BOOKING_REQUEST_REFRESH_MS);
     return () => clearInterval(timer);
   }, [refreshSilently, state]);
 
@@ -101,7 +105,9 @@ export default function MerchantAppointmentsScreen() {
         decision === 'CONFIRMED' ? 'Booking accepted' : 'Booking declined',
         decision === 'CONFIRMED'
           ? `${request.serviceName} for ${request.petName} is now confirmed for the customer.`
-          : `${request.serviceName} for ${request.petName} was declined and is no longer pending.`,
+          : request.paymentMethod === 'ONLINE_PAYMENT' && request.paymentStatus === 'PAID'
+            ? `${request.serviceName} for ${request.petName} was declined. MyPet will start the online-payment refund workflow.`
+            : `${request.serviceName} for ${request.petName} was declined and is no longer pending.`,
       );
     } catch (error) {
       Alert.alert(
@@ -169,15 +175,11 @@ export default function MerchantAppointmentsScreen() {
                     <Text style={styles.service}>{request.serviceName}</Text>
                     <Text style={styles.pet}>Pet: {request.petName}</Text>
                   </View>
-                  <View style={styles.pendingPill}>
-                    <Text style={styles.pendingText}>NEW REQUEST</Text>
-                  </View>
+                  <View style={styles.pendingPill}><Text style={styles.pendingText}>NEW REQUEST</Text></View>
                 </View>
-
                 <Text style={styles.schedule}>{schedule(request.startsAt)}</Text>
-                <Text style={styles.fee}>{money(request.pricePaise)} · Pay at provider</Text>
+                <Text style={styles.fee}>{money(request.pricePaise)} · {paymentLabel(request)}</Text>
                 {request.notes ? <Text style={styles.notes}>Customer note: {request.notes}</Text> : null}
-
                 <View style={styles.actions}>
                   <Pressable
                     accessibilityRole="button"
@@ -185,18 +187,14 @@ export default function MerchantAppointmentsScreen() {
                     disabled={Boolean(actingId)}
                     onPress={() => void decide(request, 'REJECTED')}
                     style={({ pressed }) => [styles.rejectButton, (pressed || Boolean(actingId)) && styles.disabled]}
-                  >
-                    <Text style={styles.rejectText}>{busy ? 'Updating…' : 'Reject'}</Text>
-                  </Pressable>
+                  ><Text style={styles.rejectText}>{busy ? 'Updating…' : 'Reject'}</Text></Pressable>
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`Accept ${request.serviceName} for ${request.petName}`}
                     disabled={Boolean(actingId)}
                     onPress={() => void decide(request, 'CONFIRMED')}
                     style={({ pressed }) => [styles.acceptButton, (pressed || Boolean(actingId)) && styles.disabled]}
-                  >
-                    <Text style={styles.acceptText}>{busy ? 'Updating…' : 'Accept booking'}</Text>
-                  </Pressable>
+                  ><Text style={styles.acceptText}>{busy ? 'Updating…' : 'Accept booking'}</Text></Pressable>
                 </View>
               </View>
             );

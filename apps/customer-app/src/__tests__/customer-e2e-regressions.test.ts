@@ -37,9 +37,12 @@ describe('customer end-to-end regression contracts', () => {
     expect(payments).not.toMatch(/customerPhone|normalizedPhone|userId:/);
   });
 
-  it('uses owned pets, idempotent server-priced slot holds and Pay at Provider confirmation', () => {
+  it('uses owned pets, idempotent server-priced slot holds and provider-confirmed Pay at Provider requests', () => {
     const discovery = source('src/screens/appointment-discovery-screen.tsx');
     const payment = source('src/app/appointments/payment.tsx');
+    const history = source('src/services/customer-history.ts');
+    const list = source('src/screens/appointments-screen.tsx');
+    const detail = source('src/app/appointments/[id].tsx');
     const service = source('src/services/appointment-booking.ts');
     const payments = source('src/services/customer-payments.ts');
 
@@ -49,10 +52,17 @@ describe('customer end-to-end regression contracts', () => {
     expect(discovery).toMatch(/\/appointments\/payment/);
     expect(discovery).not.toMatch(/confirmAppointmentHold\(appointmentId/);
 
-    expect(payment).toMatch(/Confirm booking · Pay at provider/);
+    expect(payment).toMatch(/Send booking request · Pay at provider/);
+    expect(payment).toMatch(/Provider confirmation required/);
+    expect(payment).toMatch(/Booking request sent/);
     expect(payment).toMatch(/confirmAppointmentHold\(appointmentId, session\.accessToken\)/);
-    expect(payment).toMatch(/No online payment is created for this booking/);
-    expect(payment).not.toMatch(/initiateAppointmentPayment|openCashfreeOrder|waitForReferencePaymentOutcome/);
+    expect(payment).toMatch(/No online payment is created for this booking request/);
+    expect(payment).not.toMatch(/Appointment booked|initiateAppointmentPayment|openCashfreeOrder|waitForReferencePaymentOutcome/);
+
+    expect(history).toMatch(/case 'BOOKED': return 'PENDING_PROVIDER'/);
+    expect(history).toMatch(/case 'REJECTED': return 'REJECTED'/);
+    expect(list).toMatch(/WAITING FOR PROVIDER/);
+    expect(detail).toMatch(/Waiting for provider confirmation/);
 
     expect(service).toMatch(/\/api\/v1\/public\/services/);
     expect(service).toMatch(/\/api\/v1\/customer\/appointments/);

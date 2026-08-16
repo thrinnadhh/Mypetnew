@@ -117,17 +117,20 @@ describe('customer end-to-end regression contracts', () => {
     expect(subscriptions).toMatch(/replaceCart/);
   });
 
-  it('keeps Sprint-1 loyalty merchant-scoped and does not expose legacy global wallet actions', () => {
+  it('keeps loyalty merchant-scoped and uses the canonical reward read projection without legacy global wallet actions', () => {
     const wallet = source('src/app/wallet/index.tsx');
     const loyaltyCard = source('src/components/loyalty-card.tsx');
     const loyalty = source('src/services/loyalty.ts');
     const search = source('src/screens/search-screen.tsx');
     expect(loyaltyCard).toMatch(/fetchCustomerLoyaltyBalance/);
     expect(loyaltyCard).toMatch(/fetchPublicOutlet/);
+    expect(loyaltyCard).toMatch(/Available rewards/);
+    expect(loyaltyCard).toMatch(/valuePaise/);
     expect(loyaltyCard).not.toMatch(/claimWelcomeStar|fetchLoyaltyProgress/);
     expect(wallet).toMatch(/Loyalty belongs to each merchant/);
     expect(wallet).not.toMatch(/fetchCustomerWallet|fetchActivePromotions|SAVE50/);
-    expect(loyalty).toMatch(/\/api\/v1\/customer\/loyalty\//);
+    expect(loyalty).toMatch(/\/api\/v2\/customer\/loyalty\//);
+    expect(loyalty).toMatch(/rewards: CustomerLoyaltyRewardResponse\[\]/);
     expect(search).not.toMatch(/Puppy Nutrition/);
     expect(search).not.toMatch(/Simulate voice|Listening\.\.\. Speak now/);
   });

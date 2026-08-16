@@ -37,7 +37,7 @@ describe('customer end-to-end regression contracts', () => {
     expect(payments).not.toMatch(/customerPhone|normalizedPhone|userId:/);
   });
 
-  it('uses owned pets, idempotent server-priced slot holds and provider-confirmed Pay at Provider requests', () => {
+  it('uses owned pets, payment-aware idempotent holds and provider-confirmed online or provider payment requests', () => {
     const discovery = source('src/screens/appointment-discovery-screen.tsx');
     const payment = source('src/app/appointments/payment.tsx');
     const history = source('src/services/customer-history.ts');
@@ -50,29 +50,42 @@ describe('customer end-to-end regression contracts', () => {
     expect(discovery).toMatch(/createCustomerPet/);
     expect(discovery).toMatch(/holdAppointmentSlot/);
     expect(discovery).toMatch(/\/appointments\/payment/);
+    expect(discovery).toMatch(/Pay online/);
+    expect(discovery).toMatch(/Pay at provider/);
     expect(discovery).not.toMatch(/confirmAppointmentHold\(appointmentId/);
 
-    expect(payment).toMatch(/Send booking request · Pay at provider/);
     expect(payment).toMatch(/Provider confirmation required/);
-    expect(payment).toMatch(/Booking request sent/);
+    expect(payment).toMatch(/Pay online & send request/);
+    expect(payment).toMatch(/Send booking request · Pay at provider/);
+    expect(payment).toMatch(/initiateAppointmentPayment\(appointmentId\)/);
+    expect(payment).toMatch(/openCashfreeOrder\(payment\)/);
+    expect(payment).toMatch(/waitForPaymentOutcome\(payment\.paymentId\)/);
+    expect(payment).toMatch(/Payment successful · waiting for provider/);
+    expect(payment).toMatch(/refund workflow automatically/);
     expect(payment).toMatch(/confirmAppointmentHold\(appointmentId, session\.accessToken\)/);
-    expect(payment).toMatch(/No online payment is created for this booking request/);
-    expect(payment).not.toMatch(/Appointment booked|initiateAppointmentPayment|openCashfreeOrder|waitForReferencePaymentOutcome/);
+    expect(payment).not.toMatch(/Appointment booked/);
 
     expect(history).toMatch(/case 'BOOKED': return 'PENDING_PROVIDER'/);
     expect(history).toMatch(/case 'REJECTED': return 'REJECTED'/);
+    expect(history).toMatch(/paymentMethod: appointment\.paymentMethod/);
+    expect(history).toMatch(/paymentStatus: appointment\.paymentStatus/);
     expect(list).toMatch(/WAITING FOR PROVIDER/);
     expect(detail).toMatch(/Waiting for provider confirmation/);
 
     expect(service).toMatch(/\/api\/v1\/public\/services/);
     expect(service).toMatch(/\/api\/v1\/customer\/appointments/);
     expect(service).toMatch(/'Idempotency-Key'/);
-    expect(service).toMatch(/paymentMethod: 'PAY_AT_PROVIDER'/);
+    expect(service).toMatch(/paymentMethod: input\.paymentMethod/);
     expect(service).toMatch(/petId: input\.petId/);
     expect(service).not.toMatch(/customerId: resolveBookingUserId|priceAmount: input\.slot\.price|payAtClinic/);
     expect(service).not.toMatch(/\/api\/v1\/catalog\/offerings|\/api\/v1\/appointments\/hold/);
 
-    expect(payments).not.toMatch(/APPOINTMENT_PAYMENT/);
+    const appointmentPayment = payments.slice(
+      payments.indexOf('export async function initiateAppointmentPayment'),
+      payments.indexOf('export async function fetchPaymentStatus'),
+    );
+    expect(appointmentPayment).toMatch(/referenceType: 'APPOINTMENT'/);
+    expect(appointmentPayment).not.toMatch(/amountPaise|customerId|userId|currency:/);
   });
 
   it('does not retain the obsolete mock appointment modal or timer hook', () => {

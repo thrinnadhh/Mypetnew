@@ -21,7 +21,7 @@ class FlywaySchemaContractTest {
             .load()
 
         val result = flyway.migrate()
-        assertEquals(17, result.migrationsExecuted)
+        assertEquals(18, result.migrationsExecuted)
 
         DriverManager.getConnection(url, "sa", "").use { connection ->
             val tables = connection.prepareStatement(
@@ -66,7 +66,18 @@ class FlywaySchemaContractTest {
                 "service_slot",
                 "appointment",
                 "appointment_history",
+                "appointment_payment_refund",
             )), "tables=$tables")
+
+            val appointmentColumns = connection.prepareStatement(
+                """
+                select column_name from information_schema.columns
+                where lower(table_schema) = 'mypet' and lower(table_name) = 'appointment'
+                """.trimIndent(),
+            ).use { statement ->
+                statement.executeQuery().use { rows -> buildSet { while (rows.next()) add(rows.getString(1).lowercase()) } }
+            }
+            assertTrue(appointmentColumns.containsAll(setOf("payment_mode", "payment_state")), "appointmentColumns=$appointmentColumns")
 
             val organizationId = UUID.randomUUID()
             val outletId = UUID.randomUUID()
@@ -85,6 +96,11 @@ class FlywaySchemaContractTest {
                 connection.prepareStatement(
                     "insert into mypet.inventory_balance(listing_id, on_hand, reserved, version) values (?, 0, 1, 0)",
                 ).use { it.setObject(1, listingId); it.executeUpdate() }
+            }
+            assertThrows(Exception::class.java) {
+                connection.prepareStatement(
+                    "update mypet.appointment set payment_mode = 'CLIENT_AUTHORED' where 1 = 0",
+                ).use { it.executeUpdate() }
             }
         }
     }

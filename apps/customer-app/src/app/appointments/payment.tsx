@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import { AppBar, PrimaryAction, StateView, StatusBadge } from '@/components/foundation/primitives';
@@ -10,9 +10,13 @@ import { radii, shadows, spacing, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { confirmAppointmentHold, type AppointmentPaymentMethod } from '@/services/appointment-booking';
 import {
+  fetchPaymentStatus,
   initiateAppointmentPayment,
+  loadPendingAppointmentPayment,
   openCashfreeOrder,
   waitForPaymentOutcome,
+  type CustomerPaymentView,
+  type PendingAppointmentPaymentRecovery,
 } from '@/services/customer-payments';
 import { appConfig } from '@/utils/app-config';
 
@@ -31,6 +35,7 @@ export default function AppointmentPaymentScreen() {
   const { user, session } = useAuth();
   const [confirming, setConfirming] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [pendingRecovery, setPendingRecovery] = useState<PendingAppointmentPaymentRecovery | null>(null);
 
   const appointmentId = single(params.appointmentId);
   const serviceName = single(params.serviceName) || 'Pet care appointment';
@@ -47,6 +52,22 @@ export default function AppointmentPaymentScreen() {
   }, [params.amount]);
   const demoAppointment = appConfig.allowDemoMode && appointmentId.startsWith('demo-appointment-');
   const online = paymentMethod === 'ONLINE_PAYMENT' && !demoAppointment;
+
+  useEffect(() => {
+    if (!session || !appointmentId || !online) {
+      setPendingRecovery(null);
+      return;
+    }
+
+    let active = true;
+    void loadPendingAppointmentPayment().then((recovery) => {
+      if (!active) return;
+      setPendingRecovery(recovery?.appointmentId === appointmentId ? recovery : null);
+    });
+    return () => {
+      active = false;
+    };
+  }, [appointmentId, online, session]);
 
   const goToAppointments = () => router.replace(`/appointments?appointmentId=${appointmentId}` as never);
 
@@ -72,40 +93,71 @@ export default function AppointmentPaymentScreen() {
     }
   };
 
+  const finishOnlinePayment = async (payment: CustomerPaymentView) => {
+    const verified = await waitForPaymentOutcome(payment.paymentId);
+    if (verified.status === 'CAPTURED') {
+      setPendingRecovery(null);
+      Alert.alert(
+        'Payment successful · waiting for provider',
+        `${money(verified.amountPaise / 100)} was verified by MyPet. ${providerName} must still accept the booking request before the appointment becomes Confirmed. If the provider declines, MyPet starts the refund workflow automatically.`,
+        [{ text: 'View appointments', onPress: goToAppointments }],
+      );
+      return;
+    }
+    if (verified.status === 'FAILED' || verified.status === 'EXPIRED') {
+      setPendingRecovery(null);
+      Alert.alert(
+        'Payment not completed',
+        'The appointment was not sent to the provider as a confirmed payment request. Choose an available slot and try again.',
+      );
+      return;
+    }
+    setPendingRecovery({ paymentId: payment.paymentId, appointmentId });
+    Alert.alert(
+      'Still verifying payment',
+      'MyPet has not received a final Cashfree result yet. Do not pay again. Use Resume payment on this screen to continue verification.',
+    );
+  };
+
+  const verifyOnlinePayment = async (payment: CustomerPaymentView, launchProvider: boolean) => {
+    if (payment.referenceType !== 'APPOINTMENT' || payment.referenceId !== appointmentId) {
+      throw new Error('The pending payment does not belong to this appointment.');
+    }
+
+    setVerifying(true);
+    try {
+      if (
+        launchProvider
+        && (payment.status === 'PENDING' || payment.status === 'AUTHORIZED')
+        && payment.paymentSessionId
+      ) {
+        await openCashfreeOrder(payment).catch(() => 'ERROR' as const);
+      }
+      await finishOnlinePayment(payment);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
   const handleOnlinePayment = async () => {
     if (!appointmentId) return;
     setConfirming(true);
     try {
+      if (pendingRecovery) {
+        const pending = await fetchPaymentStatus(pendingRecovery.paymentId);
+        await verifyOnlinePayment(pending, true);
+        return;
+      }
+
       const payment = await initiateAppointmentPayment(appointmentId);
-      await openCashfreeOrder(payment).catch(() => 'ERROR' as const);
-      setVerifying(true);
-      const verified = await waitForPaymentOutcome(payment.paymentId);
-      if (verified.status === 'CAPTURED') {
-        Alert.alert(
-          'Payment successful · waiting for provider',
-          `${money(verified.amountPaise / 100)} was verified by MyPet. ${providerName} must still accept the booking request before the appointment becomes Confirmed. If the provider declines, MyPet starts the refund workflow automatically.`,
-          [{ text: 'View appointments', onPress: goToAppointments }],
-        );
-        return;
-      }
-      if (verified.status === 'FAILED' || verified.status === 'EXPIRED') {
-        Alert.alert(
-          'Payment not completed',
-          'The appointment was not sent to the provider as a confirmed payment request. Choose an available slot and try again.',
-        );
-        return;
-      }
-      Alert.alert(
-        'Still verifying payment',
-        'MyPet has not received a final Cashfree result yet. Do not pay again. Retry verification from this screen after a moment.',
-      );
+      setPendingRecovery({ paymentId: payment.paymentId, appointmentId });
+      await verifyOnlinePayment(payment, true);
     } catch (error) {
       Alert.alert(
-        'Payment could not be completed',
+        pendingRecovery ? 'Could not resume payment' : 'Payment could not be completed',
         error instanceof Error ? error.message : 'Could not start or verify the appointment payment.',
       );
     } finally {
-      setVerifying(false);
       setConfirming(false);
     }
   };
@@ -126,9 +178,30 @@ export default function AppointmentPaymentScreen() {
     );
   }
 
+  if (verifying) {
+    return (
+      <ScreenShell scroll={false} header={<AppBar title="Verifying payment" />}>
+        <StateView
+          kind="loading"
+          title="Verifying payment…"
+          message="Do not pay again based on the Cashfree screen. MyPet is checking the canonical backend payment state."
+        />
+      </ScreenShell>
+    );
+  }
+
   return (
     <ScreenShell header={<AppBar title={online ? 'Pay & send request' : 'Send booking request'} subtitle="Provider confirmation required" />}>
       <View style={styles.container}>
+        {pendingRecovery ? (
+          <View style={[styles.notice, { backgroundColor: theme.primarySoft }]}>
+            <StatusBadge label="PAYMENT VERIFICATION PENDING" tone="warning" />
+            <ThemedText type="small" themeColor="textSecondary">
+              This appointment already has a Cashfree payment in progress. Resume it instead of creating another payment.
+            </ThemedText>
+          </View>
+        ) : null}
+
         <View style={[styles.notice, { backgroundColor: theme.primarySoft }]}>
           <StatusBadge
             label={
@@ -175,7 +248,15 @@ export default function AppointmentPaymentScreen() {
         </View>
 
         <PrimaryAction
-          label={verifying ? 'Verifying payment…' : online ? 'Pay online & send request' : 'Send booking request · Pay at provider'}
+          label={
+            confirming
+              ? pendingRecovery ? 'Resuming payment…' : 'Starting payment…'
+              : pendingRecovery
+                ? 'Resume payment'
+                : online
+                  ? 'Pay online & send request'
+                  : 'Send booking request · Pay at provider'
+          }
           loading={confirming}
           onPress={() => void (online ? handleOnlinePayment() : handlePayAtProvider())}
         />

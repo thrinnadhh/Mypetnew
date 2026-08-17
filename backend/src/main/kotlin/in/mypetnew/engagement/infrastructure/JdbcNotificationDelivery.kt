@@ -13,6 +13,7 @@ import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
@@ -423,6 +424,12 @@ data class NotificationWorkerProperties(val batchSize: Int = 50, val maxAttempts
 
 @Configuration
 @Profile("!test & !development")
+@ConditionalOnProperty(
+    prefix = "mypet.notifications.delivery",
+    name = ["enabled"],
+    havingValue = "true",
+    matchIfMissing = true,
+)
 @EnableScheduling
 @EnableConfigurationProperties(NotificationWorkerProperties::class)
 class NotificationWorkerConfiguration {
@@ -436,6 +443,12 @@ class NotificationWorkerConfiguration {
 
 @Component
 @Profile("!test & !development")
+@ConditionalOnProperty(
+    prefix = "mypet.notifications.delivery",
+    name = ["enabled"],
+    havingValue = "true",
+    matchIfMissing = true,
+)
 class NotificationDeliveryScheduler(
     private val worker: NotificationDeliveryWorker,
     private val properties: NotificationWorkerProperties,

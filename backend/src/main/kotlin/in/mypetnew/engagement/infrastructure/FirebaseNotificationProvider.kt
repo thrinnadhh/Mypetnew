@@ -9,6 +9,7 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
@@ -108,6 +109,16 @@ data class FirebaseProperties(val projectId: String, val environment: String) {
 @Configuration
 @Profile("!test & !development")
 @EnableConfigurationProperties(FirebaseProperties::class)
+class FirebasePropertiesConfiguration
+
+@Configuration
+@Profile("!test & !development")
+@ConditionalOnProperty(
+    prefix = "mypet.notifications.delivery",
+    name = ["enabled"],
+    havingValue = "true",
+    matchIfMissing = true,
+)
 class FirebaseNotificationConfiguration {
     @Bean fun fcmAccessTokenProvider(): FcmAccessTokenProvider = GoogleApplicationDefaultAccessTokenProvider.create()
     @Bean fun fcmTransport(): FcmTransport = JavaFcmTransport()

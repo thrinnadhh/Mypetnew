@@ -38,6 +38,8 @@ mypet:
     project-id: ${FIREBASE_PROJECT_ID:}
     environment: ${MYPET_ENVIRONMENT:}
   notifications:
+    delivery:
+      enabled: ${NOTIFICATION_DELIVERY_ENABLED:true}
     device-token-encryption-key: ${MYPET_DEVICE_TOKEN_KEY:}
     worker:
       batch-size: ${NOTIFICATION_BATCH_SIZE:50}

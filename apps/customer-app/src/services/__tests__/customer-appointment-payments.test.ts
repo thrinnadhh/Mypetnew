@@ -1,7 +1,9 @@
 import { apiClient } from '../api-client';
 import {
+  clearPendingAppointmentPayment,
   fetchPaymentStatus,
   initiateAppointmentPayment,
+  loadPendingAppointmentPayment,
   waitForPaymentOutcome,
   waitForReferencePaymentOutcome,
 } from '../customer-payments';
@@ -33,11 +35,12 @@ const pendingPayment = {
 };
 
 describe('customer appointment Cashfree client', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.clearAllMocks();
+    await clearPendingAppointmentPayment();
   });
 
-  it('initiates an APPOINTMENT payment without client-authored amount or identity', async () => {
+  it('initiates an APPOINTMENT payment without client-authored amount or identity and persists recovery', async () => {
     mockedApiClient.post.mockResolvedValueOnce(pendingPayment);
 
     await expect(initiateAppointmentPayment('appointment/1', 'appointment-payment-key')).resolves.toEqual(pendingPayment);
@@ -53,6 +56,10 @@ describe('customer appointment Cashfree client', () => {
     );
     const body = mockedApiClient.post.mock.calls[0][1];
     expect(JSON.stringify(body)).not.toMatch(/amountPaise|currency|customerId|userId|phone|email/);
+    await expect(loadPendingAppointmentPayment()).resolves.toEqual({
+      paymentId: 'payment-1',
+      appointmentId: 'appointment/1',
+    });
   });
 
   it('loads canonical backend payment state by payment ID', async () => {
@@ -62,7 +69,10 @@ describe('customer appointment Cashfree client', () => {
     expect(mockedApiClient.get).toHaveBeenCalledWith('/api/v1/customer/payments/payment%2F1');
   });
 
-  it('polls backend state until the appointment payment becomes captured', async () => {
+  it('polls backend state until the appointment payment becomes captured and clears recovery', async () => {
+    mockedApiClient.post.mockResolvedValueOnce(pendingPayment);
+    await initiateAppointmentPayment('appointment/1', 'appointment-payment-key');
+
     mockedApiClient.get
       .mockResolvedValueOnce(pendingPayment)
       .mockResolvedValueOnce({ ...pendingPayment, status: 'CAPTURED' as const });
@@ -72,6 +82,7 @@ describe('customer appointment Cashfree client', () => {
       status: 'CAPTURED',
     });
     expect(mockedApiClient.get).toHaveBeenCalledTimes(2);
+    await expect(loadPendingAppointmentPayment()).resolves.toBeNull();
   });
 
   it('keeps reference-only payment success checks fail closed', async () => {

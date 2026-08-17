@@ -4,7 +4,7 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, TextInput,
 import { AppIcon } from '@/components/app-icon';
 import { ThemedText } from '@/components/themed-text';
 import { useLocation } from '@/context/LocationContext';
-import { radii, spacing, typography } from '@/design/tokens';
+import { radii, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 
 export function LocationModal() {
@@ -218,10 +218,10 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { ...typography.headline, fontSize: 18 },
   subtitle: { ...typography.body, fontSize: 13, color: '#666666' },
-  closeBtn: { padding: 8 },
+  closeBtn: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
   currentLocationButton: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: spacing.x3, borderWidth: 1, borderRadius: radii.compact, padding: spacing.x3 },
-  searchBar: { flexDirection: 'row', alignItems: 'center', gap: spacing.x2, borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x3, height: 44 },
-  searchInput: { flex: 1, height: 44, ...typography.body },
+  searchBar: { flexDirection: 'row', alignItems: 'center', gap: spacing.x2, borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x3, height: touchTarget },
+  searchInput: { flex: 1, height: touchTarget, ...typography.body },
   cityList: { flexGrow: 0 },
   cityListContent: { gap: spacing.x3, paddingVertical: spacing.x2 },
   sectionHeading: { ...typography.label, fontSize: 12, color: '#888888', textTransform: 'uppercase' },
@@ -231,8 +231,8 @@ const styles = StyleSheet.create({
   citySub: { ...typography.caption, color: '#777777' },
   unsupportedBox: { padding: spacing.x4, borderRadius: radii.compact, gap: spacing.x3, alignItems: 'center' },
   unsupportedText: { ...typography.body, fontSize: 13, textAlign: 'center' },
-  notifyBtn: { paddingHorizontal: spacing.x4, paddingVertical: spacing.x2, borderRadius: radii.compact },
-  input: { borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x3, height: 44, ...typography.body },
+  notifyBtn: { minHeight: touchTarget, paddingHorizontal: spacing.x4, paddingVertical: spacing.x2, borderRadius: radii.compact, alignItems: 'center', justifyContent: 'center' },
+  input: { borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x3, height: touchTarget, ...typography.body },
   btnRow: { flexDirection: 'row', gap: spacing.x3, justifyContent: 'flex-end' },
-  modalBtn: { paddingHorizontal: spacing.x4, paddingVertical: spacing.x2, borderRadius: radii.compact, minWidth: 80, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  modalBtn: { paddingHorizontal: spacing.x4, paddingVertical: spacing.x2, borderRadius: radii.compact, minWidth: 80, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
 });

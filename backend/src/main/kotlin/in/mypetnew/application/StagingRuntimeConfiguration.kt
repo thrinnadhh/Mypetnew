@@ -56,17 +56,16 @@ internal fun validateStagingRuntime(settings: StagingRuntimeSettings) {
         "MYPET_ENVIRONMENT must be staging when SPRING_PROFILES_ACTIVE=staging"
     }
 
-    require(settings.cashfreeEnabled) {
-        "CASHFREE_ENABLED must be true in staging; use development for fake/offline payment testing"
-    }
     require(settings.cashfreeBaseUrl.trimEnd('/') == CASHFREE_SANDBOX_BASE_URL) {
         "Staging must use the Cashfree sandbox endpoint"
     }
 
-    requirePublicHttps("CASHFREE_RETURN_URL", settings.cashfreeReturnUrl)
-    val notify = requirePublicHttps("CASHFREE_NOTIFY_URL", settings.cashfreeNotifyUrl)
-    require(notify.path == CASHFREE_WEBHOOK_PATH && notify.query == null && notify.fragment == null) {
-        "CASHFREE_NOTIFY_URL must end at $CASHFREE_WEBHOOK_PATH without query or fragment"
+    if (settings.cashfreeEnabled) {
+        requirePublicHttps("CASHFREE_RETURN_URL", settings.cashfreeReturnUrl)
+        val notify = requirePublicHttps("CASHFREE_NOTIFY_URL", settings.cashfreeNotifyUrl)
+        require(notify.path == CASHFREE_WEBHOOK_PATH && notify.query == null && notify.fragment == null) {
+            "CASHFREE_NOTIFY_URL must end at $CASHFREE_WEBHOOK_PATH without query or fragment"
+        }
     }
 }
 

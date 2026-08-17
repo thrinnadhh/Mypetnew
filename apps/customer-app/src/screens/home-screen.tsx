@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
 import { AppIcon, type AppIconName } from '@/components/app-icon';
 import { LocationModal, NotifyCityModal } from '@/components/location-modal';
@@ -25,6 +25,8 @@ import { appConfig } from '@/utils/app-config';
 
 const CARD_WIDTH = 236;
 const CARD_GAP = 12;
+
+type LiveDiscoveryState = 'loading' | 'ready' | 'empty' | 'error';
 
 interface ShortcutItem {
   id: string;
@@ -332,6 +334,8 @@ export default function HomeScreen() {
   const [liveStores, setLiveStores] = useState<ProviderSummary[]>([]);
   const [liveGroomers, setLiveGroomers] = useState<ProviderSummary[]>([]);
   const [liveVets, setLiveVets] = useState<ProviderSummary[]>([]);
+  const [liveDiscoveryState, setLiveDiscoveryState] = useState<LiveDiscoveryState>('loading');
+  const [discoveryReloadKey, setDiscoveryReloadKey] = useState(0);
 
   useEffect(() => {
     void fetchBanners()
@@ -363,6 +367,7 @@ export default function HomeScreen() {
   useEffect(() => {
     if (appConfig.allowDemoMode) return;
     const pincodes = pincodeKey.split(',').filter(Boolean);
+    setLiveDiscoveryState('loading');
     void Promise.all([
       fetchProviders('PET_STORE', INITIAL_MARKET, pincodes),
       fetchProviders('GROOMER', INITIAL_MARKET, pincodes),
@@ -374,15 +379,22 @@ export default function HomeScreen() {
         setLiveGroomers(groomers);
         setLiveVets(vets);
         const serviceableStoreIds = new Set(stores.map((store) => store.id));
-        setLiveFoodProducts(products.filter((product) => serviceableStoreIds.has(product.providerId)).slice(0, 6));
+        const serviceableProducts = products.filter((product) => serviceableStoreIds.has(product.providerId)).slice(0, 6);
+        setLiveFoodProducts(serviceableProducts);
+        setLiveDiscoveryState(
+          stores.length > 0 || groomers.length > 0 || vets.length > 0 || serviceableProducts.length > 0
+            ? 'ready'
+            : 'empty',
+        );
       })
       .catch(() => {
         setLiveStores([]);
         setLiveGroomers([]);
         setLiveVets([]);
         setLiveFoodProducts([]);
+        setLiveDiscoveryState('error');
       });
-  }, [pincodeKey]);
+  }, [discoveryReloadKey, pincodeKey]);
 
   const liveStoreCards = useMemo(
     () => liveStores.map((provider) => liveProviderCard(provider, 'store', activeCity.displayName)),
@@ -533,6 +545,56 @@ export default function HomeScreen() {
 
         {!appConfig.allowDemoMode ? (
           <>
+            {liveDiscoveryState === 'loading' ? (
+              <View
+                accessibilityLiveRegion="polite"
+                style={[styles.discoveryStateCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
+              >
+                <ActivityIndicator color={theme.primary} />
+                <View style={styles.discoveryStateCopy}>
+                  <ThemedText style={[styles.discoveryStateTitle, { color: theme.text }]}>Finding nearby pet care</ThemedText>
+                  <ThemedText style={[styles.discoveryStateBody, { color: theme.textSecondary }]}>Checking stores, groomers and veterinary providers for {activeCity.displayName}.</ThemedText>
+                </View>
+              </View>
+            ) : null}
+            {liveDiscoveryState === 'error' ? (
+              <View
+                accessibilityLiveRegion="polite"
+                style={[styles.discoveryStateCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
+              >
+                <AppIcon name="warning" color={theme.warning} size={22} />
+                <View style={styles.discoveryStateCopy}>
+                  <ThemedText style={[styles.discoveryStateTitle, { color: theme.text }]}>Nearby services could not load</ThemedText>
+                  <ThemedText style={[styles.discoveryStateBody, { color: theme.textSecondary }]}>Check your connection and retry. Your selected location has not been changed.</ThemedText>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setDiscoveryReloadKey((value) => value + 1)}
+                    style={({ pressed }) => [styles.discoveryStateAction, { backgroundColor: theme.primary }, pressed && styles.pressed]}
+                  >
+                    <ThemedText style={styles.discoveryStateActionText}>Retry</ThemedText>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+            {liveDiscoveryState === 'empty' ? (
+              <View
+                accessibilityLiveRegion="polite"
+                style={[styles.discoveryStateCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
+              >
+                <AppIcon name="location" color={theme.primary} size={22} />
+                <View style={styles.discoveryStateCopy}>
+                  <ThemedText style={[styles.discoveryStateTitle, { color: theme.text }]}>No serviceable providers found here yet</ThemedText>
+                  <ThemedText style={[styles.discoveryStateBody, { color: theme.textSecondary }]}>Try another supported location to discover stores, grooming and veterinary care.</ThemedText>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={openLocationModal}
+                    style={({ pressed }) => [styles.discoveryStateAction, { backgroundColor: theme.primary }, pressed && styles.pressed]}
+                  >
+                    <ThemedText style={styles.discoveryStateActionText}>Change location</ThemedText>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
             {liveStoreCards.length > 0 ? (
               <HorizontalCardSection title="Pet Stores Near You 🛍️" items={liveStoreCards} actionLabel="View stores" onAction={() => router.push('/stores' as never)} />
             ) : null}
@@ -654,6 +716,12 @@ const styles = StyleSheet.create({
   filterRow: { gap: 8, paddingRight: Spacing.three },
   filterChip: { minHeight: 30, borderRadius: 999, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' },
   filterText: { fontSize: 11, lineHeight: 15, fontWeight: '700' },
+  discoveryStateCard: { minHeight: 96, borderWidth: 1, borderRadius: Radius.xl, padding: Spacing.three, flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.two },
+  discoveryStateCopy: { flex: 1, gap: 5 },
+  discoveryStateTitle: { fontSize: 15, lineHeight: 20, fontWeight: '800' },
+  discoveryStateBody: { fontSize: 12, lineHeight: 17 },
+  discoveryStateAction: { alignSelf: 'flex-start', minHeight: 48, borderRadius: Radius.lg, paddingHorizontal: Spacing.three, marginTop: 4, alignItems: 'center', justifyContent: 'center' },
+  discoveryStateActionText: { color: '#FFFFFF', fontSize: 13, lineHeight: 17, fontWeight: '800' },
   horizontalCards: { gap: CARD_GAP, paddingRight: Spacing.three, paddingBottom: 2 },
   discoveryCard: { width: CARD_WIDTH, borderWidth: 1, borderRadius: 12, overflow: 'hidden', ...Shadows.card },
   cardImageWrap: { height: 130, position: 'relative', overflow: 'hidden' },

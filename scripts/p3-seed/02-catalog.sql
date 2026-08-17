@@ -1,0 +1,13 @@
+-- P3 staging fixtures: public catalog and authoritative inventory. Run after 01.
+BEGIN;
+INSERT INTO mypet.catalog_listing(id,organization_id,outlet_id,barcode_type,normalized_barcode,name,listing_kind,commerce_mode,mrp_paise,selling_price_paise,category,brand,description,pet_type,life_stage,pack_label,sku,active) VALUES
+(md5('mypet:p3:listing:dog-food')::uuid,md5('mypet:p3:store-org')::uuid,md5('mypet:p3:store-outlet')::uuid,'INTERNAL','P3-DOG-FOOD-2KG','Staging Adult Dog Food 2 kg','PRODUCT','COMMERCE',99900,89900,'dog-food','MyPet Test','Persistent staging product fixture.','DOG','ADULT','2 kg','P3-DOG-FOOD-2KG',true),
+(md5('mypet:p3:listing:dog-treats')::uuid,md5('mypet:p3:store-org')::uuid,md5('mypet:p3:store-outlet')::uuid,'INTERNAL','P3-DOG-TREATS-200G','Staging Dog Training Treats 200 g','PRODUCT','COMMERCE',29900,24900,'treats','MyPet Test','Persistent staging cart fixture.','DOG','ALL','200 g','P3-DOG-TREATS-200G',true),
+(md5('mypet:p3:listing:cat-litter')::uuid,md5('mypet:p3:store-org')::uuid,md5('mypet:p3:store-outlet')::uuid,'INTERNAL','P3-CAT-LITTER-5KG','Staging Cat Litter 5 kg','PRODUCT','COMMERCE',59900,49900,'cat-litter','MyPet Test','Persistent staging cat-product fixture.','CAT','ALL','5 kg','P3-CAT-LITTER-5KG',true),
+(md5('mypet:p3:listing:puppy-shampoo')::uuid,md5('mypet:p3:store-org')::uuid,md5('mypet:p3:store-outlet')::uuid,'INTERNAL','P3-PUPPY-SHAMPOO','Staging Puppy Shampoo 200 ml','PRODUCT','COMMERCE',39900,34900,'grooming-supplies','MyPet Test','Persistent staging product-detail fixture.','DOG','PUPPY','200 ml','P3-PUPPY-SHAMPOO',true),
+(md5('mypet:p3:listing:medicine')::uuid,md5('mypet:p3:store-org')::uuid,md5('mypet:p3:store-outlet')::uuid,'INTERNAL','P3-MEDICINE-VIEW','Staging Medicine Catalogue Item','MEDICINE','VIEW_ONLY',45000,45000,'medicine','MyPet Test','View-only medicine fixture.','DOG','ALL','1 pack','P3-MEDICINE-VIEW',true)
+ON CONFLICT(id) DO UPDATE SET name=excluded.name,listing_kind=excluded.listing_kind,commerce_mode=excluded.commerce_mode,mrp_paise=excluded.mrp_paise,selling_price_paise=excluded.selling_price_paise,category=excluded.category,brand=excluded.brand,description=excluded.description,pet_type=excluded.pet_type,life_stage=excluded.life_stage,pack_label=excluded.pack_label,sku=excluded.sku,active=true,updated_at=now();
+INSERT INTO mypet.inventory_balance(listing_id,on_hand,reserved) VALUES
+(md5('mypet:p3:listing:dog-food')::uuid,30,0),(md5('mypet:p3:listing:dog-treats')::uuid,50,0),(md5('mypet:p3:listing:cat-litter')::uuid,25,0),(md5('mypet:p3:listing:puppy-shampoo')::uuid,20,0),(md5('mypet:p3:listing:medicine')::uuid,0,0)
+ON CONFLICT(listing_id) DO UPDATE SET on_hand=excluded.on_hand,reserved=0,version=mypet.inventory_balance.version+1,updated_at=now();
+COMMIT;

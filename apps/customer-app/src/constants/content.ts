@@ -1,3 +1,5 @@
+import { appConfig } from '@/utils/app-config';
+
 export type GuideCategory = 'puppy-kitten' | 'skin' | 'ticks-odor';
 
 export interface GuideArticle {
@@ -29,13 +31,15 @@ export interface PromoBanner {
   endsAt?: string | null;
 }
 
-export const PROMO_BANNERS: PromoBanner[] = [
+const DEMO_PROMO_BANNERS: PromoBanner[] = [
   { id: 'b1', title: 'Free delivery today', subtitle: 'On orders above ₹499 from nearby stores', accent: '#F97316', durationSec: 5, targetType: 'CATEGORY', targetValue: 'food' },
   { id: 'b2', title: 'Grooming week', subtitle: 'Book a spa slot and get 10% off', accent: '#2563EB', durationSec: 4, targetType: 'ROUTE', targetValue: '/groom' },
   { id: 'b3', title: 'Vet checkup drive', subtitle: 'Annual wellness packages from ₹799', accent: '#14B8A6', durationSec: 3, targetType: 'ROUTE', targetValue: '/vet' },
   { id: 'b4', title: 'New puppy guide', subtitle: 'Read age-wise care tips in Guides', accent: '#B45309', durationSec: 2, targetType: 'ROUTE', targetValue: '/guides' },
   { id: 'b5', title: 'Tick season alert', subtitle: 'Prevention tips for monsoon months', accent: '#B91C1C', durationSec: 1, targetType: 'CATEGORY', targetValue: 'treats' },
 ];
+
+export const PROMO_BANNERS: PromoBanner[] = appConfig.allowDemoMode ? DEMO_PROMO_BANNERS : [];
 
 export const GUIDE_CATEGORIES: { id: GuideCategory; label: string; description: string }[] = [
   { id: 'puppy-kitten', label: '1–2 months', description: 'Feeding, sleep, and first vet visits for new pets' },

@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { AppIcon } from '@/components/app-icon';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
+import { touchTarget } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 
 export function ScreenHeader({
@@ -69,9 +70,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   backButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: touchTarget,
+    height: touchTarget,
+    borderRadius: touchTarget / 2,
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',

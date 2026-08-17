@@ -25,4 +25,36 @@ describe('customer route destination regressions', () => {
     expect(existsSync(join(process.cwd(), orderDetailRoute))).toBe(true);
     expect(checkout).toMatch(/router\.replace\(`\/orders\/\$\{orderId\}`/);
   });
+
+  it('keeps the polished grooming catalogue as the primary route while preserving deep-linked slot booking', () => {
+    const groomRoute = source('src/app/groom.tsx');
+    const groomingCatalogue = source('src/app/grooming/index.tsx');
+    const providerDetail = source('src/screens/live-care-provider-detail-screen.tsx');
+
+    expect(groomRoute).toContain('GroomingServicesScreen');
+    expect(groomRoute).toContain('AppointmentDiscoveryScreen');
+    expect(groomRoute).toContain('providerId');
+    expect(groomingCatalogue).toContain('/groom?providerId=');
+    expect(providerDetail).toContain("const bookingRoute = kind === 'groomer' ? '/groom' : '/vet'");
+  });
+
+  it('keeps product details resilient, navigable and variant-stock aware', () => {
+    const productDetail = source('src/app/commerce/product-detail.tsx');
+    const screenHeader = source('src/components/ui/screen-header.tsx');
+
+    expect(productDetail).toContain('ResilientRemoteImage');
+    expect(productDetail).toContain('variantOutOfStock');
+    expect(productDetail).toContain('selectedVariant.id');
+    expect(productDetail).toContain('onBack={() => router.back()}');
+    expect(screenHeader).toContain('accessibilityLabel={backLabel}');
+  });
+
+  it('keeps the appointment booking hub connected to veterinary, grooming and history destinations', () => {
+    const bookingHub = source('src/app/appointments/book.tsx');
+
+    expect(bookingHub).toContain("router.push('/vet'");
+    expect(bookingHub).toContain("router.push('/groom'");
+    expect(bookingHub).toContain("router.replace('/appointments'");
+    expect(bookingHub).toContain('onBack={() => router.back()}');
+  });
 });

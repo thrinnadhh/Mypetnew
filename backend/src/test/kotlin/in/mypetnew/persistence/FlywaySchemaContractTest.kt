@@ -21,7 +21,7 @@ class FlywaySchemaContractTest {
             .load()
 
         val result = flyway.migrate()
-        assertEquals(18, result.migrationsExecuted)
+        assertEquals(19, result.migrationsExecuted)
 
         DriverManager.getConnection(url, "sa", "").use { connection ->
             val tables = connection.prepareStatement(
@@ -67,7 +67,30 @@ class FlywaySchemaContractTest {
                 "appointment",
                 "appointment_history",
                 "appointment_payment_refund",
+                "service_region",
+                "service_region_pincode",
+                "service_region_launch_request",
             )), "tables=$tables")
+
+            val serviceRegionCount = connection.prepareStatement(
+                "select count(*) from mypet.service_region where city_identity = 'tirupati' and status = 'ACTIVE'",
+            ).use { statement ->
+                statement.executeQuery().use { rows -> rows.next(); rows.getInt(1) }
+            }
+            assertEquals(1, serviceRegionCount)
+
+            val tirupatiPincodes = connection.prepareStatement(
+                """
+                select p.pincode
+                from mypet.service_region_pincode p
+                join mypet.service_region r on r.id = p.service_region_id
+                where r.city_identity = 'tirupati' and p.active = true
+                order by p.pincode
+                """.trimIndent(),
+            ).use { statement ->
+                statement.executeQuery().use { rows -> buildList { while (rows.next()) add(rows.getString(1)) } }
+            }
+            assertEquals(listOf("517501", "517502", "517507"), tirupatiPincodes)
 
             val appointmentColumns = connection.prepareStatement(
                 """

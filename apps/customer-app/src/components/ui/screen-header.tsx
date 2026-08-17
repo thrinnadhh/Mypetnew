@@ -1,6 +1,7 @@
 import React, { type ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
+import { AppIcon } from '@/components/app-icon';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -10,16 +11,35 @@ export function ScreenHeader({
   subtitle,
   eyebrow,
   trailing,
+  onBack,
+  backLabel = 'Back',
 }: {
   title: string;
   subtitle?: string;
   eyebrow?: string;
   trailing?: ReactNode;
+  onBack?: () => void;
+  backLabel?: string;
 }) {
   const theme = useTheme();
 
   return (
     <View style={[styles.header, { borderBottomColor: theme.border, backgroundColor: theme.background }]}>
+      {onBack ? (
+        <Pressable
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel={backLabel}
+          hitSlop={8}
+          style={({ pressed }) => [
+            styles.backButton,
+            { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+            pressed && styles.pressed,
+          ]}
+        >
+          <AppIcon name="chevron" color={theme.text} size={20} style={styles.backIcon} />
+        </Pressable>
+      ) : null}
       <View style={styles.copy}>
         {eyebrow ? (
           <ThemedText type="small" themeColor="textSecondary" style={styles.eyebrow}>
@@ -48,6 +68,16 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.three,
     borderBottomWidth: 1,
   },
+  backButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backIcon: { transform: [{ rotate: '180deg' }] },
+  pressed: { opacity: 0.72 },
   copy: { flex: 1, gap: 4 },
   eyebrow: {
     fontWeight: '800',

@@ -81,7 +81,14 @@ export default function LiveCareProviderDetailScreen({ kind }: { kind: CareKind 
 
   return (
     <ScreenShell
-      header={<ScreenHeader title={provider?.name ?? `${careLabel} provider`} subtitle={subtitle} />}
+      header={(
+        <ScreenHeader
+          title={provider?.name ?? `${careLabel} provider`}
+          subtitle={subtitle}
+          onBack={() => router.back()}
+          backLabel={`Back from ${careLabel.toLowerCase()} provider`}
+        />
+      )}
       footer={state === 'ready' && provider && services.length > 0 ? (
         <View style={[styles.footer, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
           <PrimaryButton

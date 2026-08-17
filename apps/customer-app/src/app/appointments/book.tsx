@@ -2,8 +2,9 @@ import { useRouter } from 'expo-router';
 import React from 'react';
 import { View } from 'react-native';
 
-import { AppBar, EntityCard } from '@/components/foundation/primitives';
+import { EntityCard } from '@/components/foundation/primitives';
 import { ScreenShell } from '@/components/foundation/screen-shell';
+import { ScreenHeader } from '@/components/ui/screen-header';
 import { spacing } from '@/design/tokens';
 
 export default function AppointmentBookingScreen() {
@@ -11,7 +12,13 @@ export default function AppointmentBookingScreen() {
 
   return (
     <ScreenShell
-      header={<AppBar title="Book an appointment" subtitle="Choose veterinary care or grooming" />}
+      header={(
+        <ScreenHeader
+          title="Book an appointment"
+          subtitle="Choose veterinary care or grooming"
+          onBack={() => router.back()}
+        />
+      )}
       testID="appointment-booking-screen"
     >
       <View style={{ gap: spacing.x3 }}>
@@ -24,8 +31,8 @@ export default function AppointmentBookingScreen() {
         />
         <EntityCard
           title="Grooming"
-          subtitle="Find approved groomers, choose the service your pet needs and reserve an available slot."
-          meta="Browse grooming appointments →"
+          subtitle="Browse live grooming services first, then choose the provider and slot that fits your pet."
+          meta="Browse grooming services →"
           icon="groom"
           onPress={() => router.push('/groom' as never)}
         />

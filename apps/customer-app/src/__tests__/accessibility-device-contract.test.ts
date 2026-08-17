@@ -8,7 +8,12 @@ function source(path: string): string {
 describe('customer accessibility and device contract', () => {
   it('retains at least 48 px interactive targets', () => {
     const tokens = source('src/design/tokens.ts');
+    const screenHeader = source('src/components/ui/screen-header.tsx');
+
     expect(tokens).toMatch(/touchTarget\s*=\s*48/);
+    expect(screenHeader).toContain("import { touchTarget } from '@/design/tokens'");
+    expect(screenHeader).toMatch(/width:\s*touchTarget/);
+    expect(screenHeader).toMatch(/height:\s*touchTarget/);
   });
 
   it('supports bounded responsive screens and pull to refresh', () => {

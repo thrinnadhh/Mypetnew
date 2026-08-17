@@ -13,6 +13,19 @@ class StagingRuntimeConfigurationTest {
     }
 
     @Test
+    fun `staging can boot before Cashfree certification while retaining sandbox endpoint`() {
+        assertDoesNotThrow {
+            validateStagingRuntime(
+                validSettings().copy(
+                    cashfreeEnabled = false,
+                    cashfreeReturnUrl = "",
+                    cashfreeNotifyUrl = "",
+                ),
+            )
+        }
+    }
+
+    @Test
     fun `staging cannot be combined with local or test profiles`() {
         listOf("development", "test", "device").forEach { incompatible ->
             assertThrows(IllegalArgumentException::class.java) {
@@ -22,27 +35,39 @@ class StagingRuntimeConfigurationTest {
     }
 
     @Test
-    fun `staging refuses disabled Cashfree because that would silently remove real payment coverage`() {
+    fun `staging refuses production Cashfree endpoint even before enablement`() {
         assertThrows(IllegalArgumentException::class.java) {
-            validateStagingRuntime(validSettings().copy(cashfreeEnabled = false))
+            validateStagingRuntime(
+                validSettings().copy(
+                    cashfreeEnabled = false,
+                    cashfreeBaseUrl = "https://api.cashfree.com/pg",
+                    cashfreeReturnUrl = "",
+                    cashfreeNotifyUrl = "",
+                ),
+            )
         }
     }
 
     @Test
-    fun `staging refuses production Cashfree endpoint`() {
-        assertThrows(IllegalArgumentException::class.java) {
-            validateStagingRuntime(validSettings().copy(cashfreeBaseUrl = "https://api.cashfree.com/pg"))
-        }
-    }
-
-    @Test
-    fun `staging refuses placeholder infrastructure and callback hosts`() {
+    fun `enabled Cashfree refuses placeholder and non-public callback hosts`() {
         val invalid = listOf(
-            validSettings().copy(datasourceUrl = "jdbc:postgresql://db.example.supabase.co:5432/postgres"),
-            validSettings().copy(supabaseUrl = "https://replace.supabase.co"),
             validSettings().copy(cashfreeReturnUrl = "https://staging.example.com/payments/cashfree/return"),
             validSettings().copy(cashfreeNotifyUrl = "http://127.0.0.1:8080/api/v1/webhooks/cashfree/payments"),
             validSettings().copy(cashfreeNotifyUrl = "https://api-staging.mypet.test/wrong-webhook"),
+        )
+
+        invalid.forEach { settings ->
+            assertThrows(IllegalArgumentException::class.java) {
+                validateStagingRuntime(settings)
+            }
+        }
+    }
+
+    @Test
+    fun `staging refuses placeholder persistent infrastructure`() {
+        val invalid = listOf(
+            validSettings().copy(datasourceUrl = "jdbc:postgresql://db.example.supabase.co:5432/postgres"),
+            validSettings().copy(supabaseUrl = "https://replace.supabase.co"),
         )
 
         invalid.forEach { settings ->

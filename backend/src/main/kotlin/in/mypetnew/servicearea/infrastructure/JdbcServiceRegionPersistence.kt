@@ -42,7 +42,7 @@ class JdbcServiceRegionPersistence(
                 """.trimIndent(),
                 String::class.java,
                 id,
-            ),
+            ).filterNotNull(),
             featureFlags = ServiceRegionFeatureFlags(
                 allowProducts = rs.getBoolean("allow_products"),
                 allowGrooming = rs.getBoolean("allow_grooming"),

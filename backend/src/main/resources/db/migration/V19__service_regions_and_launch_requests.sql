@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS mypet.service_region (
 
 CREATE TABLE IF NOT EXISTS mypet.service_region_pincode (
     service_region_id UUID NOT NULL REFERENCES mypet.service_region(id) ON DELETE CASCADE,
-    pincode VARCHAR(6) NOT NULL CHECK (pincode ~ '^[0-9]{6}$'),
+    pincode VARCHAR(6) NOT NULL CHECK (CHAR_LENGTH(pincode) = 6),
     active BOOLEAN NOT NULL DEFAULT TRUE,
     PRIMARY KEY (service_region_id, pincode)
 );
@@ -77,21 +77,10 @@ VALUES (
     TRUE,
     TRUE,
     TRUE
-)
-ON CONFLICT (id) DO UPDATE SET
-    city_identity = EXCLUDED.city_identity,
-    display_name = EXCLUDED.display_name,
-    state_name = EXCLUDED.state_name,
-    country_name = EXCLUDED.country_name,
-    center_latitude = EXCLUDED.center_latitude,
-    center_longitude = EXCLUDED.center_longitude,
-    radius_km = EXCLUDED.radius_km,
-    status = EXCLUDED.status,
-    updated_at = CURRENT_TIMESTAMP;
+);
 
 INSERT INTO mypet.service_region_pincode (service_region_id, pincode, active)
 VALUES
     ('81111111-1111-1111-1111-111111111111', '517501', TRUE),
     ('81111111-1111-1111-1111-111111111111', '517502', TRUE),
-    ('81111111-1111-1111-1111-111111111111', '517507', TRUE)
-ON CONFLICT (service_region_id, pincode) DO UPDATE SET active = EXCLUDED.active;
+    ('81111111-1111-1111-1111-111111111111', '517507', TRUE);

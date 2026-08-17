@@ -184,6 +184,13 @@ describe('structured API errors', () => {
 describe('mobile configuration gates', () => {
   const originalEnv = { ...process.env };
   const originalDev = (globalThis as { __DEV__?: boolean }).__DEV__;
+  const mobileConfigEnvKeys = [
+    'EXPO_PUBLIC_APP_ENV',
+    'EXPO_PUBLIC_API_BASE_URL',
+    'EXPO_PUBLIC_SUPABASE_URL',
+    'EXPO_PUBLIC_SUPABASE_ANON_KEY',
+    'EXPO_PUBLIC_ALLOW_DEMO_MODE',
+  ] as const;
 
   afterEach(() => {
     process.env = { ...originalEnv };
@@ -203,6 +210,9 @@ describe('mobile configuration gates', () => {
   }) {
     jest.resetModules();
     process.env = { ...originalEnv };
+    for (const key of mobileConfigEnvKeys) {
+      delete process.env[key];
+    }
     for (const [key, value] of Object.entries(input.env ?? {})) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

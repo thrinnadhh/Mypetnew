@@ -48,7 +48,11 @@ export default function ProductDetailScreen() {
     try {
       const nextProduct = await fetchCommerceProduct(id);
       setProduct(nextProduct);
-      setSelectedVariant(nextProduct.variants.find((variant) => variant.inStock) ?? nextProduct.variants[0] ?? null);
+      setSelectedVariant(
+        nextProduct.variants.find((variant) => variant.inStock && variant.stockCount > 0)
+          ?? nextProduct.variants[0]
+          ?? null,
+      );
       setState('ready');
     } catch (error) {
       setProduct(null);
@@ -266,7 +270,9 @@ export default function ProductDetailScreen() {
         <AppIcon name="store" color={theme.primary} size={24} />
         <View style={styles.sellerCopy}>
           <ThemedText style={styles.sellerName}>{product.providerName}</ThemedText>
-          {product.sellerInfo?.address ? <ThemedText type="small" themeColor="textSecondary">{product.sellerInfo.address}</ThemedText> : null}
+          {product.sellerInfo?.address ? (
+            <ThemedText type="small" themeColor="textSecondary">{product.sellerInfo.address}</ThemedText>
+          ) : null}
           <ThemedText type="small" style={{ color: product.pickupEnabled ? theme.success : theme.textSecondary, fontWeight: '700' }}>
             {product.pickupEnabled ? 'Store pickup available' : 'Pickup unavailable'}
           </ThemedText>

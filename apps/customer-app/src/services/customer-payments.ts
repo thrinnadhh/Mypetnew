@@ -6,12 +6,24 @@ import type {
 } from '../contracts/customer-payment';
 import { apiClient } from './api-client';
 import {
+  clearPendingAppointmentPayment,
+  loadPendingAppointmentPayment,
+  rememberPendingAppointmentPayment,
+  type PendingAppointmentPaymentRecovery,
+} from './appointment-payment-recovery';
+import {
   clearPendingPayment,
   loadPendingPayment,
   rememberPendingPayment,
   type PendingPaymentRecovery,
 } from './payment-recovery';
 
+export {
+  clearPendingAppointmentPayment,
+  loadPendingAppointmentPayment,
+  rememberPendingAppointmentPayment,
+  type PendingAppointmentPaymentRecovery,
+} from './appointment-payment-recovery';
 export {
   clearPendingPayment,
   loadPendingPayment,
@@ -56,7 +68,7 @@ export async function initiateAppointmentPayment(
   appointmentId: string,
   idempotencyKey = Crypto.randomUUID(),
 ): Promise<CustomerPaymentView> {
-  return apiClient.post<CustomerPaymentView>(
+  const payment = await apiClient.post<CustomerPaymentView>(
     '/api/v1/customer/payments',
     {
       referenceType: 'APPOINTMENT',
@@ -65,6 +77,8 @@ export async function initiateAppointmentPayment(
     },
     { 'Idempotency-Key': idempotencyKey },
   );
+  await rememberPendingAppointmentPayment(payment.paymentId, appointmentId);
+  return payment;
 }
 
 export async function fetchPaymentStatus(paymentId: string): Promise<CustomerPaymentView> {
@@ -130,7 +144,10 @@ export async function waitForPaymentOutcome(
     latest = await fetchPaymentStatus(paymentId);
   }
   if (latest.status === 'CAPTURED' || latest.status === 'FAILED' || latest.status === 'EXPIRED') {
-    await clearPendingPayment(paymentId);
+    await Promise.all([
+      clearPendingPayment(paymentId),
+      clearPendingAppointmentPayment(paymentId),
+    ]);
   }
   return latest;
 }

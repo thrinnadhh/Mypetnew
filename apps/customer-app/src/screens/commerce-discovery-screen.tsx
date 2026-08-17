@@ -21,14 +21,15 @@ import { isOfflineError } from '@/services/customer-profile';
 type LoadState = 'loading' | 'ready' | 'offline' | 'error';
 
 const COMMERCE_CATEGORIES = [
-  { id: 'food', title: 'Food', icon: 'food' },
-  { id: 'furniture', title: 'Furniture', icon: 'home' },
-  { id: 'toys', title: 'Toys', icon: 'sparkle' },
-  { id: 'travel', title: 'Travel', icon: 'location' },
-  { id: 'treats', title: 'Treats', icon: 'paw' },
-  { id: 'waste', title: 'Waste', icon: 'warning' },
-  { id: 'new-arrivals', title: 'New', icon: 'sparkle' },
-];
+  { id: 'all', title: 'All Products', icon: 'store', route: '/products' },
+  { id: 'food', title: 'Food', icon: 'food', route: '/category/food' },
+  { id: 'furniture', title: 'Furniture', icon: 'home', route: '/category/furniture' },
+  { id: 'toys', title: 'Toys', icon: 'sparkle', route: '/category/toys' },
+  { id: 'travel', title: 'Travel', icon: 'location', route: '/category/travel' },
+  { id: 'treats', title: 'Treats', icon: 'paw', route: '/category/treats' },
+  { id: 'waste', title: 'Waste', icon: 'warning', route: '/category/waste' },
+  { id: 'new-arrivals', title: 'New', icon: 'sparkle', route: '/category/new-arrivals' },
+] as const;
 
 export function ShopCategoryNav() {
   const router = useRouter();
@@ -41,7 +42,7 @@ export function ShopCategoryNav() {
         {COMMERCE_CATEGORIES.map((category) => (
           <Pressable
             key={category.id}
-            onPress={() => router.push(`/category/${category.id}` as never)}
+            onPress={() => router.push(category.route as never)}
             style={({ pressed }) => [styles.catItem, pressed && styles.pressed]}
           >
             <View style={[styles.catIconBox, { backgroundColor: theme.primarySoft, borderColor: theme.primary }]}>

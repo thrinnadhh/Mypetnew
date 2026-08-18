@@ -15,7 +15,7 @@ import { ResilientRemoteImage } from '@/components/ui/resilient-remote-image';
 import { type PromoBanner } from '@/constants/content';
 import { Radius, Shadows, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { DEMO_BANNER_IMAGES, DEMO_MEDIA } from '@/services/demo-customer-data';
+import { DEMO_MEDIA } from '@/services/demo-customer-data';
 
 export function BannerCarousel({
   banners = [],
@@ -125,7 +125,7 @@ export function BannerCarousel({
               accessibilityLabel={`${item.title}. ${item.subtitle}`}
             >
               <ResilientRemoteImage
-                uri={item.imageUrl || DEMO_BANNER_IMAGES[itemIndex % DEMO_BANNER_IMAGES.length]}
+                uri={item.imageUrl}
                 fallbackUri={DEMO_MEDIA.store}
                 style={StyleSheet.absoluteFill}
                 contentFit="cover"

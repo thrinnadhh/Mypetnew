@@ -179,29 +179,27 @@ export async function fetchProviderPage(
   }
 
   // Veterinary discovery is an OR over clinic/hospital capabilities while the
-  // public API intentionally accepts one exact capability per request. Fetch the
-  // bounded source pages needed for this composite page, then dedupe and slice the
-  // deterministically sorted union. An outlet advertising both capabilities is
-  // therefore returned once and cannot shift later pages through duplicate rows.
-  const groups = await Promise.all(capabilities.map(async (capability) => {
-    const items: PublicOutletDto[] = [];
-    let sourceHasNext = true;
-    for (let sourcePage = 0; sourcePage <= page && sourceHasNext; sourcePage += 1) {
-      const response = await fetchCapabilityPage(capability, pincode, sourcePage, pageSize, options.q);
-      items.push(...response.items);
-      sourceHasNext = response.hasNext;
-    }
-    return { items, hasNext: sourceHasNext };
-  }));
-
-  const merged = mergeUniqueOutlets(groups.flatMap((group) => group.items));
-  const start = page * pageSize;
-  const items = merged.slice(start, start + pageSize).map(toSummary);
+  // public API intentionally accepts one exact capability per request. Pair the
+  // same bounded source page from each capability and give each stream half of
+  // the requested budget. This visits every backend row exactly once as pages
+  // advance; cross-capability duplicates are removed here and again by the UI
+  // across pages, without re-slicing a growing union that could shift boundaries.
+  const sourcePageSize = Math.max(1, Math.floor(pageSize / capabilities.length));
+  const groups = await Promise.all(
+    capabilities.map((capability) => fetchCapabilityPage(
+      capability,
+      pincode,
+      page,
+      sourcePageSize,
+      options.q,
+    )),
+  );
+  const items = mergeUniqueOutlets(groups.flatMap((group) => group.items)).map(toSummary);
   return {
     items,
     page,
     pageSize,
-    hasNext: merged.length > start + items.length || groups.some((group) => group.hasNext),
+    hasNext: groups.some((group) => group.hasNext),
   };
 }
 

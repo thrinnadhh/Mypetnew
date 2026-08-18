@@ -9,6 +9,7 @@ describe('home live-content contract', () => {
   it('keeps promotional fixtures behind explicit demo mode', () => {
     const content = source('src/constants/content.ts');
     const home = source('src/screens/home-screen.tsx');
+    const carousel = source('src/components/ui/banner-carousel.tsx');
 
     expect(content).toContain("import { appConfig } from '@/utils/app-config'");
     expect(content).toMatch(/const DEMO_PROMO_BANNERS: PromoBanner\[\]/);
@@ -16,5 +17,8 @@ describe('home live-content contract', () => {
     expect(home).toMatch(/useState<PromoBanner\[\]>\(PROMO_BANNERS\)/);
     expect(home).toMatch(/setBanners\(items\.length > 0 \? items : PROMO_BANNERS\)/);
     expect(home).toMatch(/catch\(\(\) => setBanners\(PROMO_BANNERS\)\)/);
+    expect(carousel).toMatch(/banners = \[\]/);
+    expect(carousel).toMatch(/const safeBanners = useMemo\(\(\) => banners, \[banners\]\)/);
+    expect(carousel).not.toContain('banners.length > 0 ? banners : PROMO_BANNERS');
   });
 });

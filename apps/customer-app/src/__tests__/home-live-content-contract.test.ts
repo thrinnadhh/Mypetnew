@@ -31,6 +31,14 @@ describe('home live-content contract', () => {
     expect(home).toMatch(/catch\(\(\) => setGuideItems\(appConfig\.allowDemoMode \? GUIDES : \[\]\)\)/);
   });
 
+  it('prevents demo media URLs from rendering as live provider or guide imagery', () => {
+    const image = source('src/components/ui/resilient-remote-image.tsx');
+
+    expect(image).toMatch(/const DEMO_MEDIA_URIS = new Set<string>\(Object\.values\(DEMO_MEDIA\)\)/);
+    expect(image).toMatch(/!appConfig\.allowDemoMode && DEMO_MEDIA_URIS\.has\(candidate\)/);
+    expect(image).toMatch(/return undefined/);
+  });
+
   it('uses the canonical touch target for Home navigation controls', () => {
     const home = source('src/screens/home-screen.tsx');
 

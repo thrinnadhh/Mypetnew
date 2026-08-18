@@ -39,7 +39,7 @@ describe('P9 grooming discovery contract', () => {
     expect(discovery).toContain('requireValidServicePincode');
     expect(discovery).toContain('PROVIDER_DISCOVERY_PAGE_SIZE = 20');
     expect(discovery).toContain('mergeUniqueProviders');
-    expect(discovery).toContain('byId.set(item.id, item)');
+    expect(discovery).toContain('unique.set(provider.id, provider)');
   });
 
   it('fails closed on feature availability and invalid location without issuing discovery calls first', () => {

@@ -1,2 +1,5 @@
-import CommerceDiscoveryScreen from '@/screens/commerce-discovery-screen';
-export default CommerceDiscoveryScreen;
+import { Redirect } from 'expo-router';
+
+export default function LegacyShopDiscoveryRedirect() {
+  return <Redirect href="/stores" />;
+}

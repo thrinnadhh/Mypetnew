@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
 import { StateView } from '@/components/foundation/primitives';
@@ -24,6 +25,7 @@ function money(value: number): string {
 export default function CartScreen() {
   const router = useRouter();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { selectedPincode } = useLocation();
   const {
     items,
@@ -126,7 +128,13 @@ export default function CartScreen() {
       )}
       footer={
         items.length > 0 ? (
-          <View style={[styles.checkoutBox, shadows.raised, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+          <View
+            style={[
+              styles.checkoutBox,
+              shadows.raised,
+              { backgroundColor: theme.backgroundElement, borderColor: theme.border, paddingBottom: Math.max(spacing.x4, insets.bottom + spacing.x2) },
+            ]}
+          >
             {cartNotice ? (
               <ThemedText type="small" style={{ color: theme.warning }} accessibilityLiveRegion="polite">
                 {cartNotice}

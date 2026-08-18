@@ -49,6 +49,7 @@ export function PrimaryButton({
       ]}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{ disabled: Boolean(isDisabled), busy: Boolean(loading) }}
     >
       {loading ? (
         <ActivityIndicator color={textColor} />

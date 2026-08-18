@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -41,28 +41,40 @@ export default function CartScreen() {
   const [checkingCart, setCheckingCart] = useState(false);
   const [cartNotice, setCartNotice] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const checkoutGeneration = useRef(0);
+
+  useEffect(() => () => {
+    checkoutGeneration.current += 1;
+  }, []);
 
   const goBack = useCallback(() => {
+    if (checkingCart) return;
     if (router.canGoBack()) {
       router.back();
       return;
     }
     router.replace('/products' as never);
-  }, [router]);
+  }, [checkingCart, router]);
 
   const continueShopping = useCallback(() => {
+    if (checkingCart) return;
     router.push('/products' as never);
-  }, [router]);
+  }, [checkingCart, router]);
 
   const handleCheckoutProceed = useCallback(async () => {
     if (checkingCart || items.length === 0) return;
+    const generation = checkoutGeneration.current + 1;
+    checkoutGeneration.current = generation;
     setCheckingCart(true);
     setCartNotice(null);
     setRefreshError(null);
 
     try {
       const result = await revalidateCartItemsAgainstCatalog(items, selectedPincode);
+      if (checkoutGeneration.current !== generation) return;
+
       await replaceCart(result.items);
+      if (checkoutGeneration.current !== generation) return;
 
       if (result.materialChanged) {
         const changes = [
@@ -70,12 +82,17 @@ export default function CartScreen() {
           result.priceChangedCount > 0 ? `${result.priceChangedCount} price update${result.priceChangedCount === 1 ? '' : 's'}` : null,
           result.quantityChangedCount > 0 ? `${result.quantityChangedCount} quantity adjustment${result.quantityChangedCount === 1 ? '' : 's'}` : null,
         ].filter(Boolean).join(', ');
-        setCartNotice(`Cart refreshed: ${changes}. Review the current item subtotal before continuing.`);
+        setCartNotice(
+          result.items.length === 0
+            ? `Cart refreshed: ${changes}. No purchasable items remain.`
+            : `Cart refreshed: ${changes}. Review the current item subtotal before continuing.`,
+        );
         return;
       }
 
       router.push('/checkout' as never);
     } catch (error) {
+      if (checkoutGeneration.current !== generation) return;
       const message = isOfflineError(error)
         ? 'You are offline. Reconnect to refresh current price, stock, and serviceability before checkout.'
         : error instanceof Error
@@ -83,7 +100,7 @@ export default function CartScreen() {
           : 'Could not refresh the cart. Your existing cart was kept unchanged.';
       setRefreshError(message);
     } finally {
-      setCheckingCart(false);
+      if (checkoutGeneration.current === generation) setCheckingCart(false);
     }
   }, [checkingCart, items, replaceCart, router, selectedPincode]);
 
@@ -111,14 +128,17 @@ export default function CartScreen() {
             items.length > 0 ? (
               <Pressable
                 onPress={() => {
+                  if (checkingCart) return;
                   Alert.alert('Clear cart?', 'Remove every item from this cart?', [
                     { text: 'Cancel', style: 'cancel' },
                     { text: 'Clear Cart', style: 'destructive', onPress: () => { void clearCart(); } },
                   ]);
                 }}
+                disabled={checkingCart}
                 accessibilityRole="button"
                 accessibilityLabel="Clear cart"
-                style={({ pressed }) => [styles.headerAction, pressed && styles.pressed]}
+                accessibilityState={{ disabled: checkingCart }}
+                style={({ pressed }) => [styles.headerAction, checkingCart && styles.disabled, pressed && !checkingCart && styles.pressed]}
               >
                 <ThemedText style={{ color: theme.danger, fontWeight: '700', fontSize: 13 }}>Clear Cart</ThemedText>
               </Pressable>
@@ -158,7 +178,7 @@ export default function CartScreen() {
               Delivery, platform fee, tax, discounts and the final payable amount are calculated by the authoritative checkout quote.
             </ThemedText>
             <View style={styles.footerActions}>
-              <PrimaryButton label="Continue shopping" variant="secondary" onPress={continueShopping} style={styles.footerButton} />
+              <PrimaryButton label="Continue shopping" variant="secondary" disabled={checkingCart} onPress={continueShopping} style={styles.footerButton} />
               <PrimaryButton
                 label="Proceed to Checkout →"
                 loading={checkingCart}
@@ -176,7 +196,7 @@ export default function CartScreen() {
         <StateView
           kind="empty"
           title="Your cart is empty"
-          message="Browse live products from verified local stores to start a single-store cart."
+          message={cartNotice ?? 'Browse live products from verified local stores to start a single-store cart.'}
           actionLabel="Browse products"
           onAction={() => router.replace('/products' as never)}
         />
@@ -217,9 +237,11 @@ export default function CartScreen() {
                 <View style={styles.actionCol}>
                   <Pressable
                     onPress={() => removeFromCart(item.product.id, item.selectedVariant?.id)}
+                    disabled={checkingCart}
                     accessibilityRole="button"
                     accessibilityLabel={`Remove ${item.product.name} from cart`}
-                    style={({ pressed }) => [styles.removeButton, pressed && styles.pressed]}
+                    accessibilityState={{ disabled: checkingCart }}
+                    style={({ pressed }) => [styles.removeButton, checkingCart && styles.disabled, pressed && !checkingCart && styles.pressed]}
                   >
                     <AppIcon name="close" color={theme.textSecondary} size={18} />
                   </Pressable>
@@ -232,20 +254,22 @@ export default function CartScreen() {
                   >
                     <Pressable
                       onPress={() => updateQuantity(item.product.id, item.selectedVariant?.id, item.quantity - 1)}
+                      disabled={checkingCart}
                       accessibilityRole="button"
                       accessibilityLabel={`Decrease ${item.product.name} quantity`}
-                      style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
+                      accessibilityState={{ disabled: checkingCart }}
+                      style={({ pressed }) => [styles.stepBtn, checkingCart && styles.disabled, pressed && !checkingCart && styles.pressed]}
                     >
                       <ThemedText style={{ color: theme.primary, fontWeight: '800', fontSize: 18 }}>−</ThemedText>
                     </Pressable>
                     <ThemedText style={[styles.quantity, { color: theme.primary }]}>{item.quantity}</ThemedText>
                     <Pressable
                       onPress={() => updateQuantity(item.product.id, item.selectedVariant?.id, item.quantity + 1)}
-                      disabled={atKnownMax}
+                      disabled={atKnownMax || checkingCart}
                       accessibilityRole="button"
                       accessibilityLabel={`Increase ${item.product.name} quantity`}
-                      accessibilityState={{ disabled: atKnownMax }}
-                      style={({ pressed }) => [styles.stepBtn, atKnownMax && styles.disabled, pressed && !atKnownMax && styles.pressed]}
+                      accessibilityState={{ disabled: atKnownMax || checkingCart }}
+                      style={({ pressed }) => [styles.stepBtn, (atKnownMax || checkingCart) && styles.disabled, pressed && !atKnownMax && !checkingCart && styles.pressed]}
                     >
                       <ThemedText style={{ color: theme.primary, fontWeight: '800', fontSize: 18 }}>+</ThemedText>
                     </Pressable>

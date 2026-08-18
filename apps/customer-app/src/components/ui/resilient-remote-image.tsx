@@ -44,7 +44,7 @@ export function ResilientRemoteImage({
   if (failed || !sourceUri) {
     return (
       <View style={[style, styles.placeholder, { backgroundColor: theme.muted }]}>
-        <AppIcon name="store" color={theme.textSecondary} size={28} />
+        <AppIcon name="paw" color={theme.textSecondary} size={28} />
       </View>
     );
   }

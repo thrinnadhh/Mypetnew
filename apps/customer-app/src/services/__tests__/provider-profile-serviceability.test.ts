@@ -10,18 +10,20 @@ jest.mock('@/utils/app-config', () => ({
 const mockedFetch = jest.fn();
 const providerId = '11111111-1111-4111-8111-111111111111';
 
-function response(capabilities: string[]): Response {
-  const body = {
-    id: providerId,
-    organizationId: 'org-1',
-    name: 'Live Paws',
-    capabilities,
-    pickupEnabled: false,
-  };
+function response(capabilities: string[], status = 200): Response {
+  const body = status >= 200 && status < 300
+    ? {
+        id: providerId,
+        organizationId: 'org-1',
+        name: 'Live Paws',
+        capabilities,
+        pickupEnabled: false,
+      }
+    : { code: 'NOT_FOUND', message: 'Provider unavailable' };
   return {
-    ok: true,
-    status: 200,
-    statusText: '',
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: status === 404 ? 'Not Found' : '',
     headers: { get: () => null },
     text: jest.fn().mockResolvedValue(JSON.stringify(body)),
   } as unknown as Response;
@@ -51,8 +53,10 @@ describe('provider profile serviceability', () => {
     expect(url).toContain('capability=GROOMING');
   });
 
-  it('validates veterinary OR capability after the PIN-scoped public read', async () => {
-    mockedFetch.mockResolvedValueOnce(response(['VETERINARY_HOSPITAL']));
+  it('lets the backend validate both veterinary capabilities until one exact capability succeeds', async () => {
+    mockedFetch
+      .mockResolvedValueOnce(response([], 404))
+      .mockResolvedValueOnce(response(['VETERINARY_HOSPITAL']));
 
     await expect(fetchProviderProfile(providerId, {
       kind: 'vet',
@@ -62,12 +66,16 @@ describe('provider profile serviceability', () => {
       capabilities: ['VETERINARY_HOSPITAL'],
     });
 
-    const url = String(mockedFetch.mock.calls[0][0]);
-    expect(url).toContain('pincode=517507');
-    expect(url).not.toContain('capability=');
+    expect(mockedFetch).toHaveBeenCalledTimes(2);
+    const firstUrl = String(mockedFetch.mock.calls[0][0]);
+    const secondUrl = String(mockedFetch.mock.calls[1][0]);
+    expect(firstUrl).toContain('pincode=517507');
+    expect(firstUrl).toContain('capability=VETERINARY_CLINIC');
+    expect(secondUrl).toContain('pincode=517507');
+    expect(secondUrl).toContain('capability=VETERINARY_HOSPITAL');
   });
 
-  it('rejects a wrong-capability provider even if the public detail itself succeeds', async () => {
+  it('rejects a wrong-capability provider even if a malformed public response itself succeeds', async () => {
     mockedFetch.mockResolvedValueOnce(response(['PRODUCT_STORE']));
 
     await expect(fetchProviderProfile(providerId, {
@@ -81,6 +89,14 @@ describe('provider profile serviceability', () => {
       kind: 'groomer',
       pincode: '',
     })).rejects.toThrow('six-digit service PIN');
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
+
+  it('does not claim serviceability for legacy non-UUID provider identifiers', async () => {
+    await expect(fetchProviderProfile('legacy-provider', {
+      kind: 'groomer',
+      pincode: '517501',
+    })).rejects.toThrow('PROVIDER_SERVICEABILITY_UNVERIFIABLE');
     expect(mockedFetch).not.toHaveBeenCalled();
   });
 });

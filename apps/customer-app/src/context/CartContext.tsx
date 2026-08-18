@@ -182,8 +182,35 @@ export function mergeSameProviderCartItems(
 }
 
 export function sanitizeCartItemsForRevalidation(currentItems: CartItem[]): { items: CartItem[]; valid: boolean } {
-  const sanitized = sanitizeStoredCartItems(currentItems);
-  return { items: sanitized.items, valid: !sanitized.changed && sanitized.items.length === currentItems.length };
+  let valid = true;
+  const items = currentItems.flatMap((item) => {
+    if (!isCommerceEligible(item.product)) {
+      valid = false;
+      return [];
+    }
+
+    const maxStock = stockForCartLine(item.product, item.selectedVariant);
+    if (
+      !item.product.inStock ||
+      (item.selectedVariant && !item.selectedVariant.inStock) ||
+      !Number.isFinite(item.quantity) ||
+      item.quantity <= 0 ||
+      maxStock <= 0
+    ) {
+      valid = false;
+      return [];
+    }
+
+    const canonicalUnitPrice = item.selectedVariant?.price ?? item.product.price;
+    if (item.quantity > maxStock) {
+      valid = false;
+      return [{ ...item, quantity: maxStock, unitPrice: canonicalUnitPrice }];
+    }
+
+    return [{ ...item, unitPrice: canonicalUnitPrice }];
+  });
+
+  return { items, valid };
 }
 
 export function CartProvider({ children }: { children: React.ReactNode }) {

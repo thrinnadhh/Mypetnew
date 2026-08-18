@@ -4,6 +4,7 @@ export type ProviderProfileKind = 'store' | 'groomer' | 'vet';
 
 export interface ProviderProfile {
   providerId: string;
+  organizationId?: string;
   providerType: string;
   fulfillmentType: string;
   name: string;
@@ -81,6 +82,7 @@ function requireValidServicePincode(pincode: string | undefined): string {
 function mapPublicOutlet(value: PublicOutletDto): ProviderProfile {
   return {
     providerId: value.id,
+    organizationId: value.organizationId,
     providerType: providerTypeFor(value.capabilities),
     fulfillmentType: value.pickupEnabled ? 'PICKUP' : 'APPOINTMENT',
     name: value.name,

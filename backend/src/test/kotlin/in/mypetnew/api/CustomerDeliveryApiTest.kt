@@ -126,7 +126,17 @@ class CustomerDeliveryApiTest {
             content = """{"outletId":"${outlet.id}","addressId":"${addressB.id}","lines":[{"listingId":"$productId","quantity":1}]}"""
         }.andExpect {
             status { isNotFound() }
-            jsonPath("$.code") { value("RESOURCE_NOT_FOUND") }
+            jsonPath("$.code") { value("ADDRESS_NOT_FOUND") }
+        }
+
+        customerData.deleteAddress(customerA.accountId, addressA.id)
+        mockMvc.post("/api/v1/customer/quotes/delivery") {
+            header("Authorization", "Bearer ${customerA.accessToken}")
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"outletId":"${outlet.id}","addressId":"${addressA.id}","lines":[{"listingId":"$productId","quantity":1}]}"""
+        }.andExpect {
+            status { isNotFound() }
+            jsonPath("$.code") { value("ADDRESS_NOT_FOUND") }
         }
     }
 

@@ -6,15 +6,16 @@ function source(path: string): string {
 }
 
 describe('location selector touch-target contract', () => {
-  it('uses the canonical touch target for interactive location controls', () => {
+  it('uses the canonical minimum touch target for interactive location controls', () => {
     const modal = source('src/components/location-modal.tsx');
 
     expect(modal).toContain("import { radii, spacing, touchTarget, typography } from '@/design/tokens'");
     expect(modal).toMatch(/closeBtn:\s*\{[^}]*minWidth:\s*touchTarget[^}]*minHeight:\s*touchTarget/);
-    expect(modal).toMatch(/searchBar:\s*\{[^}]*height:\s*touchTarget/);
-    expect(modal).toMatch(/searchInput:\s*\{[^}]*height:\s*touchTarget/);
+    expect(modal).toMatch(/searchBar:\s*\{[^}]*minHeight:\s*touchTarget/);
+    expect(modal).toMatch(/searchInput:\s*\{[^}]*minHeight:\s*touchTarget/);
+    expect(modal).toMatch(/pinChip:\s*\{[^}]*minHeight:\s*touchTarget/);
     expect(modal).toMatch(/notifyBtn:\s*\{[^}]*minHeight:\s*touchTarget/);
-    expect(modal).toMatch(/input:\s*\{[^}]*height:\s*touchTarget/);
+    expect(modal).toMatch(/input:\s*\{[^}]*minHeight:\s*touchTarget/);
     expect(modal).toMatch(/modalBtn:\s*\{[^}]*minHeight:\s*touchTarget/);
   });
 });

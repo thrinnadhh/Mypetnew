@@ -5,8 +5,13 @@ import { CategoryTemplate } from '@/components/commerce/CategoryTemplate';
 import { AppBar, StateView } from '@/components/foundation/primitives';
 import { ScreenShell } from '@/components/foundation/screen-shell';
 import type { CommerceProduct } from '@/services/catalog-data';
-import { fetchCommerceProducts } from '@/services/customer-catalog';
+import {
+  fetchAllCatalogItems,
+  fetchCommerceProducts,
+  mapListingToCommerceProduct,
+} from '@/services/customer-catalog';
 import { isOfflineError } from '@/services/customer-profile';
+import { appConfig } from '@/utils/app-config';
 
 const CATEGORY_NAMES: Record<string, string> = {
   food: 'Food & Nutrition',
@@ -21,6 +26,7 @@ const CATEGORY_NAMES: Record<string, string> = {
   grooming: 'Grooming Services & Kits',
   hospitals: 'Hospitals & Vet Services',
   vaccinations: 'Vaccinations & Deworming',
+  medicines: 'Medicines',
 };
 
 type LoadState = 'loading' | 'ready' | 'offline' | 'error';
@@ -35,6 +41,7 @@ export default function CategoryScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const catKey = (id ?? 'food').toLowerCase();
   const title = CATEGORY_NAMES[catKey] ?? (catKey.charAt(0).toUpperCase() + catKey.slice(1));
+  const isMedicineDiscovery = catKey === 'medicines';
 
   const [products, setProducts] = useState<CommerceProduct[]>([]);
   const [state, setState] = useState<LoadState>('loading');
@@ -42,17 +49,30 @@ export default function CategoryScreen() {
   const load = useCallback(async () => {
     setState('loading');
     try {
-      const result = await fetchCommerceProducts({
-        category: queryCategory(catKey),
-        onlyNewArrivals: catKey === 'new-arrivals',
-      });
-      setProducts(result);
+      if (isMedicineDiscovery) {
+        if (appConfig.allowDemoMode) {
+          setProducts([]);
+        } else {
+          const medicines = await fetchAllCatalogItems({
+            kind: 'MEDICINE',
+            commerceMode: 'VIEW_ONLY',
+            sort: 'NAME',
+          });
+          setProducts(medicines.map((listing) => mapListingToCommerceProduct(listing)));
+        }
+      } else {
+        const result = await fetchCommerceProducts({
+          category: queryCategory(catKey),
+          onlyNewArrivals: catKey === 'new-arrivals',
+        });
+        setProducts(result);
+      }
       setState('ready');
     } catch (error) {
       setProducts([]);
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, [catKey]);
+  }, [catKey, isMedicineDiscovery]);
 
   useEffect(() => {
     void load();
@@ -61,7 +81,15 @@ export default function CategoryScreen() {
   if (state === 'loading') {
     return (
       <ScreenShell scroll={false} header={<AppBar title={title} />}>
-        <StateView kind="loading" title="Loading live products" message="Checking current stock and prices from verified local stores…" />
+        <StateView
+          kind="loading"
+          title={isMedicineDiscovery ? 'Loading medicine listings' : 'Loading live products'}
+          message={
+            isMedicineDiscovery
+              ? 'Checking view-only medicine listings from verified local providers…'
+              : 'Checking current stock and prices from verified local stores…'
+          }
+        />
       </ScreenShell>
     );
   }
@@ -72,7 +100,13 @@ export default function CategoryScreen() {
         <StateView
           kind={state}
           title={state === 'offline' ? 'You are offline' : 'Catalog unavailable'}
-          message={state === 'offline' ? 'Reconnect to load current inventory and prices.' : 'The live catalog could not be loaded.'}
+          message={
+            state === 'offline'
+              ? 'Reconnect to load current listings.'
+              : isMedicineDiscovery
+                ? 'Medicine discovery could not be loaded.'
+                : 'The live catalog could not be loaded.'
+          }
           actionLabel="Retry"
           onAction={() => void load()}
         />
@@ -80,5 +114,15 @@ export default function CategoryScreen() {
     );
   }
 
-  return <CategoryTemplate title={title} subtitle="Live stock from verified local stores" products={products} />;
+  return (
+    <CategoryTemplate
+      title={title}
+      subtitle={
+        isMedicineDiscovery
+          ? 'Discovery only · medicines cannot be added to cart or purchased in MyPet'
+          : 'Live stock from verified local stores'
+      }
+      products={products}
+    />
+  );
 }

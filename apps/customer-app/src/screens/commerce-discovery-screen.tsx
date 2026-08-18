@@ -28,6 +28,7 @@ const COMMERCE_CATEGORIES = [
   { id: 'travel', title: 'Travel', icon: 'location', route: '/category/travel' },
   { id: 'treats', title: 'Treats', icon: 'paw', route: '/category/treats' },
   { id: 'waste', title: 'Waste', icon: 'warning', route: '/category/waste' },
+  { id: 'medicines', title: 'Medicines', icon: 'medical', route: '/category/medicines' },
   { id: 'new-arrivals', title: 'New', icon: 'sparkle', route: '/category/new-arrivals' },
 ] as const;
 
@@ -44,6 +45,8 @@ export function ShopCategoryNav() {
             key={category.id}
             onPress={() => router.push(category.route as never)}
             style={({ pressed }) => [styles.catItem, pressed && styles.pressed]}
+            accessibilityRole="button"
+            accessibilityLabel={category.id === 'medicines' ? 'Medicines, discovery only' : category.title}
           >
             <View style={[styles.catIconBox, { backgroundColor: theme.primarySoft, borderColor: theme.primary }]}>
               <AppIcon name={category.icon as never} color={theme.primary} size={22} />

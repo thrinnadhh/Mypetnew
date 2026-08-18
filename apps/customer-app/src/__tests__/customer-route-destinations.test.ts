@@ -39,14 +39,17 @@ describe('customer route destination regressions', () => {
     expect(providerDetail).toContain('onBack={() => router.back()}');
   });
 
-  it('keeps product details resilient, navigable and variant-stock aware', () => {
+  it('keeps product details resilient, serviceable, navigable and variant-stock aware', () => {
     const productDetail = source('src/app/commerce/product-detail.tsx');
     const screenHeader = source('src/components/ui/screen-header.tsx');
 
     expect(productDetail).toContain('ResilientRemoteImage');
     expect(productDetail).toContain('variantOutOfStock');
     expect(productDetail).toContain('selectedVariant.id');
-    expect(productDetail).toContain('onBack={() => router.back()}');
+    expect(productDetail).toContain('fetchServiceableCommerceProduct(id, selectedPincode)');
+    expect(productDetail).toContain('router.canGoBack()');
+    expect(productDetail).toContain("router.replace('/products'");
+    expect(productDetail).toContain('onBack={goBack}');
     expect(screenHeader).toContain('accessibilityLabel={backLabel}');
   });
 

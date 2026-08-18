@@ -85,9 +85,14 @@ class CustomerOrderDetailSecurityApiTest {
             jsonPath("$.items[0].unitPricePaise") { value(12_345) }
             jsonPath("$.items[0].lineTotalPaise") { value(24_690) }
             jsonPath("$.pricing.itemSubtotalPaise") { value(quote.pricing.itemSubtotalPaise) }
+            jsonPath("$.pricing.itemDiscountPaise") { value(quote.pricing.itemDiscountPaise) }
+            jsonPath("$.pricing.couponDiscountPaise") { value(quote.pricing.couponDiscountPaise) }
+            jsonPath("$.pricing.loyaltyRewardPaise") { value(quote.pricing.loyaltyRewardPaise) }
+            jsonPath("$.pricing.taxPaise") { value(quote.pricing.taxPaise) }
             jsonPath("$.pricing.platformFeePaise") { value(quote.pricing.platformFeePaise) }
             jsonPath("$.pricing.deliveryFeePaise") { value(quote.pricing.deliveryFeePaise) }
             jsonPath("$.pricing.grandTotalPaise") { value(quote.pricing.grandTotalPaise) }
+            jsonPath("$.pricing.merchantCommissionPaise") { doesNotExist() }
             jsonPath("$.paymentMethod") { value("PAY_ON_FULFILMENT") }
             jsonPath("$.paymentStatus") { value("PENDING_EXTERNAL_COLLECTION") }
             jsonPath("$.fulfilmentMode") { value("STORE_PICKUP") }

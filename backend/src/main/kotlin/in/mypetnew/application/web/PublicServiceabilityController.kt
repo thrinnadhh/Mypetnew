@@ -48,11 +48,20 @@ class PublicServiceabilityController(
             }
 
             ServiceabilityMode.DELIVERY -> {
-                val available = ProviderCapability.PRODUCT_STORE in outlet.capabilities && pincode in outlet.servicePinCodes
+                val productStore = ProviderCapability.PRODUCT_STORE in outlet.capabilities
+                val pinSupported = pincode in outlet.servicePinCodes
+                val dispatchOriginConfigured = outlet.latitude != null && outlet.longitude != null
+                val available = productStore && pinSupported && dispatchOriginConfigured
+                val reason = when {
+                    !productStore -> "DELIVERY_NOT_ENABLED"
+                    !pinSupported -> "PIN_NOT_SERVICEABLE"
+                    !dispatchOriginConfigured -> "DELIVERY_ORIGIN_UNAVAILABLE"
+                    else -> "SERVICEABLE"
+                }
                 ServiceabilityResponse(
                     serviceable = available,
                     fulfilmentMode = mode.fulfilmentMode(),
-                    reasonCode = if (available) "SERVICEABLE" else "PIN_NOT_SERVICEABLE",
+                    reasonCode = reason,
                 )
             }
         }

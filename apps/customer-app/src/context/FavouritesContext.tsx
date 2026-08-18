@@ -200,7 +200,14 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
           serverProducts = [saved, ...serverProducts];
           serverIds.add(product.targetId);
         } catch (migrationError) {
-          if (migrationError instanceof ApiError && migrationError.status === 404) continue;
+          // A guest-saved identity must remain removable even if the listing
+          // is now deleted, inactive or otherwise unavailable to the server.
+          // Keep it account-local and retry on a later reload instead of
+          // silently discarding the user's saved state.
+          if (migrationError instanceof ApiError && migrationError.status === 404) {
+            retryableLocalProducts.push(product);
+            continue;
+          }
           retryableLocalProducts.push(product);
         }
       }

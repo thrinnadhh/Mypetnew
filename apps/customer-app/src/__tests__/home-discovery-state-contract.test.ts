@@ -22,8 +22,9 @@ describe('home live-discovery state contract', () => {
   it('keeps discovery-state actions accessible and at the canonical minimum target height', () => {
     const home = source('src/screens/home-screen.tsx');
 
+    expect(home).toContain("import { touchTarget } from '@/design/tokens'");
     expect(home).toContain('accessibilityLiveRegion="polite"');
     expect(home).toContain('accessibilityRole="button"');
-    expect(home).toMatch(/discoveryStateAction:\s*\{[^}]*minHeight:\s*48/);
+    expect(home).toMatch(/discoveryStateAction:\s*\{[^}]*minHeight:\s*touchTarget/);
   });
 });

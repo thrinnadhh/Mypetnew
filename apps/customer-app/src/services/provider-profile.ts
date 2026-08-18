@@ -1,4 +1,6 @@
-import { appConfig } from '@/utils/app-config';
+import { apiClient } from '@/services/api-client';
+
+export type ProviderProfileKind = 'store' | 'groomer' | 'vet';
 
 export interface ProviderProfile {
   providerId: string;
@@ -6,14 +8,26 @@ export interface ProviderProfile {
   fulfillmentType: string;
   name: string;
   description: string | null;
-  city: string;
-  ratingAvg: number;
-  ratingCount: number;
-  status: string;
+  capabilities: string[];
+  pickupEnabled: boolean;
+  city?: string;
+  ratingAvg?: number;
+  ratingCount?: number;
+  status?: string;
 }
 
-interface LegacyProviderProfileDto extends Omit<ProviderProfile, 'ratingAvg'> {
-  ratingAvg: number | string;
+interface LegacyProviderProfileDto {
+  providerId: string;
+  providerType: string;
+  fulfillmentType: string;
+  name: string;
+  description: string | null;
+  city?: string;
+  ratingAvg?: number | string;
+  ratingCount?: number;
+  status?: string;
+  capabilities?: string[];
+  pickupEnabled?: boolean;
 }
 
 interface PublicOutletDto {
@@ -24,9 +38,7 @@ interface PublicOutletDto {
   pickupEnabled: boolean;
 }
 
-function isPublicOutlet(value: LegacyProviderProfileDto | PublicOutletDto): value is PublicOutletDto {
-  return 'id' in value && 'capabilities' in value;
-}
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function providerTypeFor(capabilities: string[]): string {
   if (capabilities.includes('VETERINARY_HOSPITAL')) return 'VET_HOSPITAL';
@@ -50,41 +62,89 @@ function descriptionFor(capabilities: string[]): string | null {
   return labels.length > 0 ? labels.join(' · ') : null;
 }
 
-function profilePath(providerId: string): string {
-  // Production outlet identifiers are UUIDs and use the canonical MyPetNew
-  // public-outlet contract. Preserve the old encoded path only for historical
-  // non-UUID identifiers used by legacy fixtures/deep links.
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuid.test(providerId)
-    ? `/api/v1/public/outlets/${encodeURIComponent(providerId)}`
-    : `/api/v1/providers/${encodeURIComponent(providerId)}`;
+function requiredCapabilities(kind: ProviderProfileKind): readonly string[] {
+  switch (kind) {
+    case 'store': return ['PRODUCT_STORE'];
+    case 'groomer': return ['GROOMING'];
+    case 'vet': return ['VETERINARY_CLINIC', 'VETERINARY_HOSPITAL'];
+  }
 }
 
-export async function fetchProviderProfile(providerId: string): Promise<ProviderProfile> {
-  const response = await fetch(
-    `${appConfig.apiBaseUrl}${profilePath(providerId)}`,
-    { headers: { Accept: 'application/json' } },
-  );
-  if (!response.ok) throw new Error(`PROVIDER_PROFILE_${response.status}`);
-
-  const value = await response.json() as LegacyProviderProfileDto | PublicOutletDto;
-  if (!isPublicOutlet(value)) {
-    return {
-      ...value,
-      ratingAvg: Number(value.ratingAvg ?? 0),
-      ratingCount: Number(value.ratingCount ?? 0),
-    };
+function requireValidServicePincode(pincode: string | undefined): string {
+  const normalized = pincode?.trim() ?? '';
+  if (!/^[1-9][0-9]{5}$/.test(normalized)) {
+    throw new Error('A valid active six-digit service PIN is required for provider details.');
   }
+  return normalized;
+}
 
+function mapPublicOutlet(value: PublicOutletDto): ProviderProfile {
   return {
     providerId: value.id,
     providerType: providerTypeFor(value.capabilities),
     fulfillmentType: value.pickupEnabled ? 'PICKUP' : 'APPOINTMENT',
     name: value.name,
     description: descriptionFor(value.capabilities),
-    city: '',
-    ratingAvg: 0,
-    ratingCount: 0,
+    capabilities: [...value.capabilities],
+    pickupEnabled: value.pickupEnabled,
     status: 'ACTIVE',
   };
+}
+
+function mapLegacyProvider(value: LegacyProviderProfileDto): ProviderProfile {
+  return {
+    providerId: value.providerId,
+    providerType: value.providerType,
+    fulfillmentType: value.fulfillmentType,
+    name: value.name,
+    description: value.description,
+    capabilities: value.capabilities ?? [],
+    pickupEnabled: value.pickupEnabled ?? value.fulfillmentType === 'PICKUP',
+    city: value.city?.trim() || undefined,
+    ratingAvg: value.ratingAvg == null ? undefined : Number(value.ratingAvg),
+    ratingCount: value.ratingCount == null ? undefined : Number(value.ratingCount),
+    status: value.status,
+  };
+}
+
+export async function fetchProviderProfile(
+  providerId: string,
+  options: { kind?: ProviderProfileKind; pincode?: string } = {},
+): Promise<ProviderProfile> {
+  if (!UUID_PATTERN.test(providerId)) {
+    const legacy = await apiClient.get<LegacyProviderProfileDto>(
+      `/api/v1/providers/${encodeURIComponent(providerId)}`,
+    );
+    const mapped = mapLegacyProvider(legacy);
+    if (options.kind) {
+      const expected = requiredCapabilities(options.kind);
+      const matches = mapped.capabilities.length > 0
+        ? expected.some((capability) => mapped.capabilities.includes(capability))
+        : (
+            (options.kind === 'store' && mapped.providerType === 'PET_STORE')
+            || (options.kind === 'groomer' && mapped.providerType === 'GROOMER')
+            || (options.kind === 'vet' && (mapped.providerType === 'VET_HOSPITAL' || mapped.providerType === 'VET_CLINIC'))
+          );
+      if (!matches) throw new Error('PROVIDER_CAPABILITY_MISMATCH');
+    }
+    return mapped;
+  }
+
+  const params = new URLSearchParams();
+  if (options.pincode !== undefined) params.set('pincode', requireValidServicePincode(options.pincode));
+  if (options.kind && options.kind !== 'vet') {
+    params.set('capability', requiredCapabilities(options.kind)[0]);
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  const value = await apiClient.get<PublicOutletDto>(
+    `/api/v1/public/outlets/${encodeURIComponent(providerId)}${suffix}`,
+  );
+
+  if (options.kind) {
+    const expected = requiredCapabilities(options.kind);
+    if (!expected.some((capability) => value.capabilities.includes(capability))) {
+      throw new Error('PROVIDER_CAPABILITY_MISMATCH');
+    }
+  }
+  return mapPublicOutlet(value);
 }

@@ -202,6 +202,8 @@ describe('P5 product detail + cart contract', () => {
       expect(detail).toContain("router.replace('/products'");
       expect(detail).toContain('useSafeAreaInsets');
       expect(detail).toContain('insets.bottom');
+      expect(detail).toContain('favouritePending');
+      expect(detail).toContain('busy: favouritePending');
       expect(detail).not.toContain('SAMPLE_PRODUCTS');
     });
 

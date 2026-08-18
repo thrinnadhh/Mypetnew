@@ -18,7 +18,7 @@ describe('P7 checkout transaction safety', () => {
     expect(checkout).toContain('deliveryAvailable ? (');
   });
 
-  it('prevents stale quote responses and state changes from reusing an old quote', () => {
+  it('prevents stale quote responses, account switches and state changes from reusing an old quote', () => {
     const checkout = source('src/app/checkout/index.tsx');
     const safety = source('src/services/checkout-safety.ts');
 
@@ -26,6 +26,8 @@ describe('P7 checkout transaction safety', () => {
     expect(checkout).toContain('requestGeneration !== quoteGenerationRef.current');
     expect(checkout).toContain('quote.requestKey === quoteRequestKey');
     expect(checkout).toContain('isQuoteExpired(quote.expiresAt)');
+    expect(checkout).toContain("customerId: user?.id ?? ''");
+    expect(safety).toContain('input.customerId');
     expect(safety).toContain('input.selectedAddressId ??');
     expect(safety).toContain('input.selectedPincode');
     expect(safety).toContain('line.offeringId');

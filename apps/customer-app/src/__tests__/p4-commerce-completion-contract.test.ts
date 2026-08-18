@@ -127,7 +127,7 @@ describe('P4 commerce completion contract', () => {
   });
 
   it('requires backend service PIN filters for outlets, catalog pages and listing detail', () => {
-    const backend = source('../../../backend/src/main/kotlin/in/mypetnew/application/web/PublicCatalogController.kt');
+    const backend = source('../../backend/src/main/kotlin/in/mypetnew/application/web/PublicCatalogController.kt');
 
     expect(backend).toContain('normalizeOptionalPincode');
     expect(backend).toContain('@RequestParam(required = false) pincode: String?');

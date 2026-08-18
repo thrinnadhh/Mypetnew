@@ -53,6 +53,7 @@ export default function ProductDetailScreen() {
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const [state, setState] = useState<LoadState>('loading');
   const [galleryIndex, setGalleryIndex] = useState(0);
+  const [favouritePending, setFavouritePending] = useState(false);
   const requestGeneration = useRef(0);
 
   const goBack = useCallback(() => {
@@ -208,6 +209,16 @@ export default function ProductDetailScreen() {
         ? 'Out of stock'
         : 'Unavailable';
 
+  const handleFavourite = async () => {
+    if (favouritePending) return;
+    setFavouritePending(true);
+    try {
+      await toggleFavourite('PRODUCT', product.id);
+    } finally {
+      setFavouritePending(false);
+    }
+  };
+
   return (
     <ScreenShell
       header={<ScreenHeader title={product.brand || 'Product'} subtitle={product.name} onBack={goBack} />}
@@ -277,15 +288,17 @@ export default function ProductDetailScreen() {
           accessibilityLabel={`${product.name} product image ${galleryImages.length > 1 ? `${galleryIndex + 1} of ${galleryImages.length}` : ''}`.trim()}
         />
         <Pressable
-          onPress={() => { void toggleFavourite('PRODUCT', product.id); }}
+          onPress={() => { void handleFavourite(); }}
+          disabled={favouritePending}
           style={({ pressed }) => [
             styles.favouriteButton,
             { backgroundColor: theme.backgroundElement },
-            pressed && styles.pressed,
+            favouritePending && styles.disabled,
+            pressed && !favouritePending && styles.pressed,
           ]}
           accessibilityRole="button"
           accessibilityLabel={favourite ? 'Remove from favourites' : 'Add to favourites'}
-          accessibilityState={{ selected: favourite }}
+          accessibilityState={{ selected: favourite, disabled: favouritePending, busy: favouritePending }}
         >
           <AppIcon name="heart" color={favourite ? theme.danger : theme.textSecondary} size={22} />
         </Pressable>

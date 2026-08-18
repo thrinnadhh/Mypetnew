@@ -186,6 +186,8 @@ describe('P5 product detail + cart contract', () => {
       expect(detail).toContain('label="View Cart"');
       expect(detail).toContain('router.canGoBack()');
       expect(detail).toContain("router.replace('/products'");
+      expect(detail).toContain('useSafeAreaInsets');
+      expect(detail).toContain('insets.bottom');
       expect(detail).not.toContain('SAMPLE_PRODUCTS');
     });
 
@@ -198,7 +200,17 @@ describe('P5 product detail + cart contract', () => {
       expect(cart).toContain("router.push('/checkout'");
       expect(cart).toContain('ResilientRemoteImage');
       expect(cart).toContain('accessibilityValue={{ min: 1, max: maxStock, now: item.quantity }}');
+      expect(cart).toContain('useSafeAreaInsets');
+      expect(cart).toContain('insets.bottom');
       expect(cart).not.toMatch(/const\s+deliveryFee|const\s+grandTotal|Delivery Fee|Total Amount/);
+    });
+
+    it('uses synchronous cart state and ordered writes for rapid cart mutations', () => {
+      const cartContext = source('src/context/CartContext.tsx');
+      expect(cartContext).toContain('itemsRef.current');
+      expect(cartContext).toContain('writeQueueRef.current');
+      expect(cartContext).toContain("'Replace Cart Items?'");
+      expect(cartContext).toContain("'Choose your cart'");
     });
 
     it('keeps server quote/order paths authoritative for price, stock and medicine commerce rules', () => {

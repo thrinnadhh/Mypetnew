@@ -225,8 +225,14 @@ export default function GroomerSlotDiscoveryScreen() {
         throw new Error('SLOT_CONTEXT_MISMATCH');
       }
 
+      // Revalidate the selected PIN after availability too. This closes the
+      // serviceability race where the provider stops serving a PIN while the
+      // service/slot requests are in flight.
+      const verifiedProvider = await fetchProviderProfile(providerId, { kind: 'groomer', pincode: selectedPincode });
+      if (requestGeneration.current !== generation) return;
+
       const availableDateKeys = [...new Set(currentSlots.map((slot) => dateKey(slot.startsAt)).filter(Boolean) as string[])];
-      setProvider(currentProvider);
+      setProvider(verifiedProvider);
       setService(currentService);
       setSlots(currentSlots);
       setSelectedDate((current) => current && availableDateKeys.includes(current) ? current : availableDateKeys[0] ?? null);
@@ -343,6 +349,10 @@ export default function GroomerSlotDiscoveryScreen() {
       if (handoffGeneration.current !== generation) return;
       const latest = await fetchAvailableAppointmentSlots(providerId, serviceId, 'GROOMING');
       if (handoffGeneration.current !== generation) return;
+      // Serviceability is independently mutable from slot availability, so
+      // verify the exact selected PIN once more at the P12 authority boundary.
+      await fetchProviderProfile(providerId, { kind: 'groomer', pincode: selectedPincode });
+      if (handoffGeneration.current !== generation) return;
       const current = latest.find((slot) => slot.id === chosen.id);
       if (!current || !sameCanonicalSlot(chosen, current)) {
         setSlots(latest);
@@ -367,7 +377,24 @@ export default function GroomerSlotDiscoveryScreen() {
       } as never);
     } catch (error) {
       if (handoffGeneration.current !== generation) return;
-      setFreshnessFailure(isOfflineError(error) ? 'offline' : 'error');
+      if (error instanceof Error && error.name === 'SERVICE_NOT_AVAILABLE') {
+        setService(null);
+        setSlots([]);
+        setSelectedDate(null);
+        setSelectedSlot(null);
+        setSlotStale(false);
+        setState('service_unavailable');
+      } else if ((error instanceof ApiError && error.status === 404) || (error instanceof Error && error.name === 'RESOURCE_NOT_FOUND')) {
+        setProvider(null);
+        setService(null);
+        setSlots([]);
+        setSelectedDate(null);
+        setSelectedSlot(null);
+        setSlotStale(false);
+        setState('unavailable');
+      } else {
+        setFreshnessFailure(isOfflineError(error) ? 'offline' : 'error');
+      }
     } finally {
       if (handoffGeneration.current === generation) {
         handoffInFlight.current = false;

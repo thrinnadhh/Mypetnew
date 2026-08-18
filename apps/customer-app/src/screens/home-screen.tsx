@@ -440,7 +440,6 @@ export default function HomeScreen() {
 
           <View style={styles.profileSummary}>
             <View style={styles.profileCopy}>
-              <View style={styles.premiumPill}><ThemedText style={styles.premiumText}>Premium</ThemedText></View>
               <ThemedText style={[styles.profileName, { color: theme.textSecondary }]} numberOfLines={1}>{firstName}</ThemedText>
             </View>
             <View style={[styles.avatar, { borderColor: theme.warning, backgroundColor: theme.primarySoft }]}>
@@ -685,9 +684,7 @@ const styles = StyleSheet.create({
   locationSubtitle: { maxWidth: 190, fontSize: 11, lineHeight: 15 },
   profileSummary: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   profileCopy: { alignItems: 'flex-end', maxWidth: 88 },
-  premiumPill: { borderRadius: 999, backgroundColor: '#FDBA2D', paddingHorizontal: 6, paddingVertical: 2 },
-  premiumText: { color: '#4A2C00', fontSize: 9, lineHeight: 11, fontWeight: '900' },
-  profileName: { marginTop: 2, fontSize: 10, lineHeight: 13 },
+  profileName: { fontSize: 10, lineHeight: 13 },
   avatar: { width: 39, height: 39, borderRadius: 20, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   searchField: { height: 48, borderWidth: 1, borderRadius: 13, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 10, ...Shadows.card },
   searchInput: { flex: 1, height: 46, fontSize: 14, paddingVertical: 0 },

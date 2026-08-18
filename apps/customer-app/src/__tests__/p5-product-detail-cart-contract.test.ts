@@ -197,6 +197,8 @@ describe('P5 product detail + cart contract', () => {
       expect(detail).toContain('disabled={unavailable}');
       expect(detail).toContain('disabled={atKnownMax}');
       expect(detail).toContain('accessibilityValue={{ min: 1, max: maxStock, now: quantity }}');
+      expect(detail).toContain('adjustQuantity(product.id, selectedVariant.id, -1)');
+      expect(detail).toContain('adjustQuantity(product.id, selectedVariant.id, 1)');
       expect(detail).toContain('label="View Cart"');
       expect(detail).toContain('router.canGoBack()');
       expect(detail).toContain("router.replace('/products'");
@@ -216,6 +218,9 @@ describe('P5 product detail + cart contract', () => {
       expect(cart).toContain("router.push('/checkout'");
       expect(cart).toContain('ResilientRemoteImage');
       expect(cart).toContain('accessibilityValue={{ min: 1, max: maxStock, now: item.quantity }}');
+      expect(cart).toContain('adjustQuantity(item.product.id, item.selectedVariant?.id, -1)');
+      expect(cart).toContain('adjustQuantity(item.product.id, item.selectedVariant?.id, 1)');
+      expect(cart).toContain('cart stock snapshot');
       expect(cart).toContain('useSafeAreaInsets');
       expect(cart).toContain('insets.bottom');
       expect(cart).not.toMatch(/const\s+deliveryFee|const\s+grandTotal|Delivery Fee|Total Amount/);
@@ -227,6 +232,8 @@ describe('P5 product detail + cart contract', () => {
       expect(cartContext).toContain('itemsRef.current');
       expect(cartContext).toContain('writeQueueRef.current');
       expect(cartContext).toContain('await writeQueueRef.current');
+      expect(cartContext).toContain('const adjustQuantity = useCallback');
+      expect(cartContext).toContain('item.quantity + normalizedDelta');
       expect(cartContext).toContain("'Replace Cart Items?'");
       expect(cartContext).toContain("'Choose your cart'");
       expect(cart).toContain('checkoutGeneration');

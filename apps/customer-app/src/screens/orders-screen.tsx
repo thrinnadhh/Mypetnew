@@ -158,10 +158,12 @@ export default function OrdersScreen() {
                     borderLeftColor: accentColor,
                   },
                 ]}
-                accessible
-                accessibilityLabel={`Order ${order.id.slice(0, 8)} from ${order.providerName}. ${order.status.replaceAll('_', ' ')}. ${fulfilmentLabel(order.fulfilmentMode)}. ${paymentMethodLabel(order.paymentMethod)}. Total ${order.total}.`}
               >
-                <View style={styles.cardHeader}>
+                <View
+                  style={styles.cardHeader}
+                  accessible
+                  accessibilityLabel={`Order ${order.id.slice(0, 8)} from ${order.providerName}. ${order.status.replaceAll('_', ' ')}. ${fulfilmentLabel(order.fulfilmentMode)}. ${paymentMethodLabel(order.paymentMethod)}. Total ${order.total}.`}
+                >
                   <View style={[styles.storeIcon, { backgroundColor: theme.primarySoft }]}>
                     <AppIcon name="store" size={23} color={theme.primary} />
                   </View>

@@ -97,7 +97,7 @@ describe('P6 search, favourites and provider discovery contract', () => {
     expect(favourites).toContain("const AMBIGUOUS_LEGACY_STORAGE_KEY = 'mypet_favourites_v3_local'");
     expect(favourites).toContain('accountStorageKey(accountId)');
     expect(favourites).toContain('loadAccountLocal(accountAtStart)');
-    expect(favourites).toContain('loadGuestLocal(false)');
+    expect(favourites).toContain('loadGuestLocal(true)');
     expect(favourites).toContain('parseStored(LEGACY_GUEST_STORAGE_KEY)');
     expect(favourites).not.toContain('parseStored(AMBIGUOUS_LEGACY_STORAGE_KEY)');
     expect(favourites).toContain('apiClient.getAuthEpoch()');

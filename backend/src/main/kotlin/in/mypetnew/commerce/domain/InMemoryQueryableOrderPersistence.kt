@@ -9,6 +9,7 @@ class InMemoryQueryableOrderPersistence : OrderPersistence, CustomerOrderQuery {
 
     private val monitor = Any()
     private val orders = mutableMapOf<UUID, ProductOrder>()
+    private val lineSnapshots = mutableMapOf<UUID, List<OrderLineSnapshot>>()
     private val checkoutKeys = mutableMapOf<Pair<UUID, String>, Pair<String, UUID>>()
     private val reservations = mutableMapOf<Pair<UUID, UUID>, Pair<Int, String>>()
 
@@ -29,6 +30,7 @@ class InMemoryQueryableOrderPersistence : OrderPersistence, CustomerOrderQuery {
         val key = order.customerId to idempotencyKey
         if (checkoutKeys.containsKey(key)) throw CheckoutIdempotencyRace()
         orders[order.id] = order.copy(history = listOf(initialHistory))
+        lineSnapshots[order.id] = lines.toList()
         checkoutKeys[key] = requestFingerprint to order.id
     }
 
@@ -59,6 +61,7 @@ class InMemoryQueryableOrderPersistence : OrderPersistence, CustomerOrderQuery {
     override fun deleteOrder(orderId: UUID) {
         synchronized(monitor) {
             orders.remove(orderId)
+            lineSnapshots.remove(orderId)
             reservations.keys.removeIf { it.first == orderId }
             checkoutKeys.entries.removeIf { it.value.second == orderId }
         }
@@ -73,28 +76,70 @@ class InMemoryQueryableOrderPersistence : OrderPersistence, CustomerOrderQuery {
         status: OrderStatus?,
         page: Int,
         pageSize: Int,
+        category: CustomerOrderCategory?,
+        cursor: CustomerOrderCursor?,
     ): CustomerOrderSummaryPage = synchronized(monitor) {
         validatePagination(page, pageSize)
+        if (status != null && category != null) {
+            throw DomainException("ORDER_FILTER_INVALID", "Choose either an order status or category filter")
+        }
+        val allowedStatuses = category?.let(::statuses)
         val ordered = orders.values
             .asSequence()
             .filter { it.customerId == customerId }
             .filter { status == null || it.status == status }
+            .filter { allowedStatuses == null || it.status in allowedStatuses }
             .map { it.toSummary() }
             .sortedWith(
                 compareByDescending<CustomerOrderSummary> { it.placedAt }
                     .thenByDescending { it.orderId.toString() },
             )
+            .filter { summary ->
+                cursor == null || summary.placedAt < cursor.placedAt ||
+                    (summary.placedAt == cursor.placedAt && summary.orderId.toString() < cursor.orderId.toString())
+            }
             .toList()
 
-        val offset = page.toLong() * pageSize.toLong()
+        val offset = if (cursor == null) page.toLong() * pageSize.toLong() else 0L
         if (offset >= ordered.size.toLong()) {
             return@synchronized CustomerOrderSummaryPage(emptyList(), false)
         }
-        val from = offset.toInt()
-        val candidates = ordered.drop(from).take(pageSize + 1)
+        val candidates = ordered.drop(offset.toInt()).take(pageSize + 1)
+        val items = candidates.take(pageSize)
         CustomerOrderSummaryPage(
-            items = candidates.take(pageSize),
+            items = items,
             hasNext = candidates.size > pageSize,
+            nextCursor = if (candidates.size > pageSize && items.isNotEmpty()) {
+                items.last().let { CustomerOrderCursor(it.placedAt, it.orderId) }
+            } else {
+                null
+            },
+        )
+    }
+
+    override fun detail(customerId: UUID, orderId: UUID): CustomerOrderDetailSnapshot? = synchronized(monitor) {
+        val order = orders[orderId]?.takeIf { it.customerId == customerId } ?: return@synchronized null
+        CustomerOrderDetailSnapshot(
+            orderId = order.id,
+            orderNumber = order.orderNumber,
+            outletId = order.outletId,
+            quoteId = order.quoteId,
+            items = lineSnapshots[order.id].orEmpty().map { line ->
+                CustomerOrderLineSnapshot(
+                    listingId = line.listingId,
+                    listingName = line.listingName,
+                    quantity = line.quantity,
+                    unitPricePaise = line.unitPricePaise,
+                )
+            },
+            grandTotalPaise = order.grandTotalPaise,
+            platformFeePaise = order.platformFeePaise,
+            paymentMethod = order.paymentMethod,
+            paymentStatus = order.paymentStatus,
+            fulfilmentMode = order.fulfilmentMode,
+            status = order.status,
+            placedAt = order.history.firstOrNull()?.occurredAt,
+            statusHistory = order.history,
         )
     }
 
@@ -112,6 +157,21 @@ class InMemoryQueryableOrderPersistence : OrderPersistence, CustomerOrderQuery {
             status = status,
             placedAt = placedAt,
             lastUpdatedAt = lastUpdatedAt,
+        )
+    }
+
+    private fun statuses(category: CustomerOrderCategory): Set<OrderStatus> = when (category) {
+        CustomerOrderCategory.ACTIVE -> setOf(
+            OrderStatus.PLACED,
+            OrderStatus.ACCEPTED,
+            OrderStatus.PREPARING,
+            OrderStatus.READY_FOR_PICKUP,
+            OrderStatus.PICKED_UP,
+        )
+        CustomerOrderCategory.PAST -> setOf(
+            OrderStatus.DELIVERED,
+            OrderStatus.REJECTED,
+            OrderStatus.CANCELLED,
         )
     }
 

@@ -33,7 +33,7 @@ export default function CartScreen() {
     subtotalAmount,
     totalItemsCount,
     loading,
-    updateQuantity,
+    adjustQuantity,
     removeFromCart,
     clearCart,
     replaceCart,
@@ -230,7 +230,7 @@ export default function CartScreen() {
                     {money(item.unitPrice * item.quantity)}
                   </ThemedText>
                   <ThemedText type="small" themeColor="textSecondary">
-                    {money(item.unitPrice)} each · latest known stock {maxStock}
+                    {money(item.unitPrice)} each · cart stock snapshot {maxStock}
                   </ThemedText>
                 </View>
 
@@ -253,7 +253,7 @@ export default function CartScreen() {
                     accessibilityValue={{ min: 1, max: maxStock, now: item.quantity }}
                   >
                     <Pressable
-                      onPress={() => updateQuantity(item.product.id, item.selectedVariant?.id, item.quantity - 1)}
+                      onPress={() => adjustQuantity(item.product.id, item.selectedVariant?.id, -1)}
                       disabled={checkingCart}
                       accessibilityRole="button"
                       accessibilityLabel={`Decrease ${item.product.name} quantity`}
@@ -264,7 +264,7 @@ export default function CartScreen() {
                     </Pressable>
                     <ThemedText style={[styles.quantity, { color: theme.primary }]}>{item.quantity}</ThemedText>
                     <Pressable
-                      onPress={() => updateQuantity(item.product.id, item.selectedVariant?.id, item.quantity + 1)}
+                      onPress={() => adjustQuantity(item.product.id, item.selectedVariant?.id, 1)}
                       disabled={atKnownMax || checkingCart}
                       accessibilityRole="button"
                       accessibilityLabel={`Increase ${item.product.name} quantity`}

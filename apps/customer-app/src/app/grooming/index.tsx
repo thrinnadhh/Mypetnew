@@ -39,6 +39,7 @@ export default function GroomingDiscoveryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<RefreshError>(null);
   const requestGeneration = useRef(0);
+  const firstPageLoadingRef = useRef(false);
   const loadingMoreRef = useRef(false);
 
   const goBack = useCallback(() => {
@@ -52,12 +53,14 @@ export default function GroomingDiscoveryScreen() {
   const loadFirstPage = useCallback(async (mode: 'initial' | 'refresh' = 'initial') => {
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
+    firstPageLoadingRef.current = true;
     loadingMoreRef.current = false;
     setLoadingMore(false);
     setLoadMoreError(null);
     setRefreshError(null);
 
     if (!activeCity.featureFlags.allowGrooming) {
+      firstPageLoadingRef.current = false;
       setProviders([]);
       setHasNext(false);
       setNextPage(1);
@@ -66,6 +69,7 @@ export default function GroomingDiscoveryScreen() {
       return;
     }
     if (!SERVICE_PIN_PATTERN.test(selectedPincode)) {
+      firstPageLoadingRef.current = false;
       setProviders([]);
       setHasNext(false);
       setNextPage(1);
@@ -106,7 +110,10 @@ export default function GroomingDiscoveryScreen() {
         setState(failure);
       }
     } finally {
-      if (requestGeneration.current === generation) setRefreshing(false);
+      if (requestGeneration.current === generation) {
+        firstPageLoadingRef.current = false;
+        setRefreshing(false);
+      }
     }
   }, [activeCity.featureFlags.allowGrooming, selectedPincode]);
 
@@ -114,6 +121,7 @@ export default function GroomingDiscoveryScreen() {
     void loadFirstPage('initial');
     return () => {
       requestGeneration.current += 1;
+      firstPageLoadingRef.current = false;
       loadingMoreRef.current = false;
     };
   }, [loadFirstPage]);
@@ -122,6 +130,7 @@ export default function GroomingDiscoveryScreen() {
     if (
       state !== 'ready'
       || refreshing
+      || firstPageLoadingRef.current
       || !hasNext
       || loadingMoreRef.current
       || !SERVICE_PIN_PATTERN.test(selectedPincode)

@@ -37,6 +37,8 @@ describe('home live-content contract', () => {
     expect(image).toMatch(/const DEMO_MEDIA_URIS = new Set<string>\(Object\.values\(DEMO_MEDIA\)\)/);
     expect(image).toMatch(/!appConfig\.allowDemoMode && DEMO_MEDIA_URIS\.has\(candidate\)/);
     expect(image).toMatch(/return undefined/);
+    expect(image).toContain('<AppIcon name="paw"');
+    expect(image).not.toContain('<AppIcon name="store"');
   });
 
   it('uses the canonical touch target for Home navigation controls', () => {

@@ -14,6 +14,7 @@ import { PROMO_BANNERS } from '@/constants/content';
 import { Radius, Shadows, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { useLocation } from '@/context/LocationContext';
+import { touchTarget } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
 import { type CommerceProduct } from '@/services/catalog-data';
@@ -230,7 +231,7 @@ function SectionHeading({ title, actionLabel, onAction }: { title: string; actio
     <View style={styles.sectionHeading}>
       <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>{title}</ThemedText>
       {actionLabel && onAction ? (
-        <Pressable onPress={onAction} hitSlop={8}>
+        <Pressable accessibilityRole="button" onPress={onAction} style={styles.sectionActionTarget}>
           <ThemedText style={[styles.sectionAction, { color: theme.cta }]}>{actionLabel}</ThemedText>
         </Pressable>
       ) : null}
@@ -463,7 +464,12 @@ export default function HomeScreen() {
             }}
           />
           <View style={[styles.searchDivider, { backgroundColor: theme.border }]} />
-          <Pressable onPress={() => router.push({ pathname: '/search', params: { mic: 'true' } } as never)} hitSlop={8}>
+          <Pressable
+            accessibilityLabel="Open voice search"
+            accessibilityRole="button"
+            onPress={() => router.push({ pathname: '/search', params: { mic: 'true' } } as never)}
+            style={styles.searchAccessory}
+          >
             <AppIcon name="sparkle" color={theme.primary} size={19} />
           </Pressable>
         </View>
@@ -677,8 +683,8 @@ const styles = StyleSheet.create({
   contentContainer: { paddingHorizontal: Spacing.three, paddingBottom: 112, gap: 14 },
   flexOne: { flex: 1 },
   pressed: { opacity: 0.86 },
-  topRow: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
-  locationSummary: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  topRow: { minHeight: touchTarget, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  locationSummary: { flex: 1, minHeight: touchTarget, flexDirection: 'row', alignItems: 'center', gap: 8 },
   locationTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   locationTitle: { fontSize: 14, lineHeight: 18, fontWeight: '800' },
   locationSubtitle: { maxWidth: 190, fontSize: 11, lineHeight: 15 },
@@ -686,11 +692,12 @@ const styles = StyleSheet.create({
   profileCopy: { alignItems: 'flex-end', maxWidth: 88 },
   profileName: { fontSize: 10, lineHeight: 13 },
   avatar: { width: 39, height: 39, borderRadius: 20, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  searchField: { height: 48, borderWidth: 1, borderRadius: 13, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 10, ...Shadows.card },
-  searchInput: { flex: 1, height: 46, fontSize: 14, paddingVertical: 0 },
+  searchField: { height: touchTarget, borderWidth: 1, borderRadius: 13, paddingLeft: 13, flexDirection: 'row', alignItems: 'center', gap: 10, ...Shadows.card },
+  searchInput: { flex: 1, height: touchTarget, fontSize: 14, paddingVertical: 0 },
   searchDivider: { width: 1, height: 20 },
+  searchAccessory: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
   quickActions: { minHeight: 68, borderWidth: 1, borderRadius: Radius.xl, flexDirection: 'row', alignItems: 'center', paddingVertical: 6, ...Shadows.card },
-  quickAction: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 7 },
+  quickAction: { flex: 1, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 7 },
   quickDivider: { width: 1, height: 32 },
   quickLabel: { fontSize: 10, lineHeight: 13, fontWeight: '700' },
   healthPanel: { borderRadius: Radius.xl, borderWidth: 1, padding: 10, gap: 9 },
@@ -702,6 +709,7 @@ const styles = StyleSheet.create({
   section: { gap: 10, marginTop: 3 },
   sectionHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   sectionTitle: { flex: 1, fontSize: 18, lineHeight: 23, fontWeight: '800' },
+  sectionActionTarget: { minHeight: touchTarget, minWidth: touchTarget, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   sectionAction: { fontSize: 12, lineHeight: 16, fontWeight: '800' },
   mindTitle: { fontSize: 18, lineHeight: 23, fontWeight: '800' },
   mindSubtitle: { marginTop: -8, fontSize: 11, lineHeight: 15 },
@@ -711,13 +719,13 @@ const styles = StyleSheet.create({
   categoryImage: { width: '100%', height: '100%' },
   categoryLabel: { minHeight: 29, textAlign: 'center', fontSize: 10, lineHeight: 14, fontWeight: '600' },
   filterRow: { gap: 8, paddingRight: Spacing.three },
-  filterChip: { minHeight: 30, borderRadius: 999, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' },
+  filterChip: { minHeight: touchTarget, borderRadius: 999, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' },
   filterText: { fontSize: 11, lineHeight: 15, fontWeight: '700' },
   discoveryStateCard: { minHeight: 96, borderWidth: 1, borderRadius: Radius.xl, padding: Spacing.three, flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.two },
   discoveryStateCopy: { flex: 1, gap: 5 },
   discoveryStateTitle: { fontSize: 15, lineHeight: 20, fontWeight: '800' },
   discoveryStateBody: { fontSize: 12, lineHeight: 17 },
-  discoveryStateAction: { alignSelf: 'flex-start', minHeight: 48, borderRadius: Radius.lg, paddingHorizontal: Spacing.three, marginTop: 4, alignItems: 'center', justifyContent: 'center' },
+  discoveryStateAction: { alignSelf: 'flex-start', minHeight: touchTarget, borderRadius: Radius.lg, paddingHorizontal: Spacing.three, marginTop: 4, alignItems: 'center', justifyContent: 'center' },
   discoveryStateActionText: { color: '#FFFFFF', fontSize: 13, lineHeight: 17, fontWeight: '800' },
   horizontalCards: { gap: CARD_GAP, paddingRight: Spacing.three, paddingBottom: 2 },
   discoveryCard: { width: CARD_WIDTH, borderWidth: 1, borderRadius: 12, overflow: 'hidden', ...Shadows.card },

@@ -88,7 +88,7 @@ describe('P6 search, favourites and provider discovery contract', () => {
     expect(genericDetail).toContain('router.replace(`/vet/');
   });
 
-  it('isolates local favourites by account and protects async results across auth changes', () => {
+  it('isolates local favourites by account and protects queued mutations across auth changes', () => {
     const favourites = source('src/context/FavouritesContext.tsx');
 
     expect(favourites).toContain("const GUEST_STORAGE_KEY = 'mypet_favourites_v4_guest'");
@@ -102,7 +102,10 @@ describe('P6 search, favourites and provider discovery contract', () => {
     expect(favourites).not.toContain('parseStored(AMBIGUOUS_LEGACY_STORAGE_KEY)');
     expect(favourites).toContain('apiClient.getAuthEpoch()');
     expect(favourites).toContain('loadGenerationRef');
-    expect(favourites).toContain('mutationQueuesRef');
+    expect(favourites).toContain('mutationQueueRef');
+    expect(favourites).toContain('const accountAtInvocation = accountId;');
+    expect(favourites).toContain('const authEpochAtInvocation = apiClient.getAuthEpoch();');
+    expect(favourites).toContain('if (!stillSameAccount()) return currentlyFavourite;');
     expect(favourites).toContain('if (migrationError instanceof ApiError && migrationError.status === 404) continue');
     expect(favourites).toContain('retryableLocalProducts.push(product)');
     expect(favourites).toContain('saveStored(GUEST_STORAGE_KEY, [])');

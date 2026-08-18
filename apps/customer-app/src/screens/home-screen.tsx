@@ -329,7 +329,7 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
   const [banners, setBanners] = useState<PromoBanner[]>(PROMO_BANNERS);
-  const [guideItems, setGuideItems] = useState<DiscoveryCardItem[]>(GUIDES);
+  const [guideItems, setGuideItems] = useState<DiscoveryCardItem[]>(appConfig.allowDemoMode ? GUIDES : []);
   const [liveFoodProducts, setLiveFoodProducts] = useState<CommerceProduct[]>([]);
   const [liveStores, setLiveStores] = useState<ProviderSummary[]>([]);
   const [liveGroomers, setLiveGroomers] = useState<ProviderSummary[]>([]);
@@ -360,7 +360,7 @@ export default function HomeScreen() {
           companyName: article.companyName,
         })));
       })
-      .catch(() => setGuideItems(GUIDES));
+      .catch(() => setGuideItems(appConfig.allowDemoMode ? GUIDES : []));
   }, []);
 
   const pincodeKey = activeCity.pincodes.join(',');

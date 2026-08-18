@@ -30,4 +30,16 @@ describe('home live-content contract', () => {
     expect(home).toMatch(/useState<DiscoveryCardItem\[\]>\(appConfig\.allowDemoMode \? GUIDES : \[\]\)/);
     expect(home).toMatch(/catch\(\(\) => setGuideItems\(appConfig\.allowDemoMode \? GUIDES : \[\]\)\)/);
   });
+
+  it('uses the canonical touch target for Home navigation controls', () => {
+    const home = source('src/screens/home-screen.tsx');
+
+    expect(home).toContain("import { touchTarget } from '@/design/tokens'");
+    expect(home).toContain('accessibilityLabel="Open voice search"');
+    expect(home).toContain('style={styles.searchAccessory}');
+    expect(home).toMatch(/searchAccessory:\s*\{[^}]*width:\s*touchTarget[^}]*height:\s*touchTarget/s);
+    expect(home).toContain('style={styles.sectionActionTarget}');
+    expect(home).toMatch(/sectionActionTarget:\s*\{[^}]*minHeight:\s*touchTarget[^}]*minWidth:\s*touchTarget/s);
+    expect(home).toMatch(/filterChip:\s*\{[^}]*minHeight:\s*touchTarget/s);
+  });
 });

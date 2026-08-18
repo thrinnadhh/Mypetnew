@@ -32,6 +32,7 @@ describe('P6 search, favourites and provider discovery contract', () => {
     expect(service).toContain("VET_HOSPITAL: ['VETERINARY_CLINIC', 'VETERINARY_HOSPITAL']");
     expect(service).toContain("if (normalizedQuery) query.set('q', normalizedQuery)");
     expect(service).toContain('mergeUniqueOutlets');
+    expect(service).toContain('sourcePageSize');
     expect(service).not.toContain('distanceKm: 0');
     expect(service).not.toContain('rating: 0');
     expect(service).not.toContain('ratingCount: 0');
@@ -45,6 +46,17 @@ describe('P6 search, favourites and provider discovery contract', () => {
     expect(discovery).not.toContain('activeCity.pincodes');
   });
 
+  it('validates direct provider handoffs even when the target is beyond page zero', () => {
+    const discovery = source('src/screens/appointment-discovery-screen.tsx');
+
+    expect(discovery).toContain('preferredProviderId && !firstPageItems.some');
+    expect(discovery).toContain('fetchProviderProfile(preferredProviderId');
+    expect(discovery).toContain('kind: providerKind');
+    expect(discovery).toContain('pincode: selectedPincode');
+    expect(discovery).toContain("throw new Error('PROVIDER_IDENTITY_UNAVAILABLE')");
+    expect(discovery).toContain('mergeUniqueProviders(firstPageItems');
+  });
+
   it('fails provider deep links closed on PIN, activity and capability mismatches', () => {
     const profileService = source('src/services/provider-profile.ts');
     const careDetail = source('src/screens/live-care-provider-detail-screen.tsx');
@@ -55,7 +67,10 @@ describe('P6 search, favourites and provider discovery contract', () => {
     expect(profileService).toContain("case 'groomer': return ['GROOMING']");
     expect(profileService).toContain("case 'vet': return ['VETERINARY_CLINIC', 'VETERINARY_HOSPITAL']");
     expect(profileService).toContain("throw new Error('PROVIDER_CAPABILITY_MISMATCH')");
-    expect(profileService).toContain("params.set('pincode', requireValidServicePincode(options.pincode))");
+    expect(profileService).toContain('fetchPublicOutlet(providerId, pincode, capability)');
+    expect(profileService).toContain('error instanceof ApiError && error.status === 404');
+    expect(profileService).toContain("throw new Error('PROVIDER_SERVICEABILITY_UNVERIFIABLE')");
+    expect(profileService).toContain('organizationId: value.organizationId');
     expect(profileService).not.toContain('ratingAvg: 0');
     expect(profileService).not.toContain('ratingCount: 0');
 
@@ -78,9 +93,13 @@ describe('P6 search, favourites and provider discovery contract', () => {
 
     expect(favourites).toContain("const GUEST_STORAGE_KEY = 'mypet_favourites_v4_guest'");
     expect(favourites).toContain("const ACCOUNT_STORAGE_PREFIX = 'mypet_favourites_v4_account:'");
+    expect(favourites).toContain("const LEGACY_GUEST_STORAGE_KEY = 'mypet_favourites_v2_guest'");
+    expect(favourites).toContain("const AMBIGUOUS_LEGACY_STORAGE_KEY = 'mypet_favourites_v3_local'");
     expect(favourites).toContain('accountStorageKey(accountId)');
     expect(favourites).toContain('loadAccountLocal(accountAtStart)');
     expect(favourites).toContain('loadGuestLocal(false)');
+    expect(favourites).toContain('parseStored(LEGACY_GUEST_STORAGE_KEY)');
+    expect(favourites).not.toContain('parseStored(AMBIGUOUS_LEGACY_STORAGE_KEY)');
     expect(favourites).toContain('apiClient.getAuthEpoch()');
     expect(favourites).toContain('loadGenerationRef');
     expect(favourites).toContain('mutationQueuesRef');
@@ -101,6 +120,7 @@ describe('P6 search, favourites and provider discovery contract', () => {
     expect(screen).toContain("product.kind === 'PRODUCT' && product.commerceMode === 'COMMERCE'");
     expect(screen).toContain('operationalFailures');
     expect(screen).toContain('ResilientRemoteImage');
+    expect(screen).toContain('await retryFavourites();\n      return;');
     expect(screen).not.toContain('shop.rating');
     expect(screen).not.toContain('shop.deliveryEta');
     expect(screen).not.toContain('shop.address');

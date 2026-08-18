@@ -10,7 +10,7 @@ import { ResilientRemoteImage } from '@/components/ui/resilient-remote-image';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { useCart } from '@/context/CartContext';
-import { useFavourites, type FavouriteItem } from '@/context/FavouritesContext';
+import { useFavourites } from '@/context/FavouritesContext';
 import { useLocation } from '@/context/LocationContext';
 import { radii, shadows, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
@@ -169,7 +169,10 @@ export default function FavouritesScreen() {
   const cardWidth = width >= 780 ? '48.8%' : '100%';
 
   const retry = useCallback(async () => {
-    if (favouritesError) await retryFavourites();
+    if (favouritesError) {
+      await retryFavourites();
+      return;
+    }
     await loadFavouriteEntities();
   }, [favouritesError, loadFavouriteEntities, retryFavourites]);
 

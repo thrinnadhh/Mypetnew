@@ -134,7 +134,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
   const [error, setError] = useState<string | null>(null);
   const favouritesRef = useRef<FavouriteItem[]>([]);
   const loadGenerationRef = useRef(0);
-  const mutationQueuesRef = useRef(new Map<string, Promise<boolean>>());
+  const mutationQueueRef = useRef<Promise<boolean>>(Promise.resolve(false));
 
   const replaceFavourites = useCallback((items: FavouriteItem[]) => {
     const next = normalizeLocal(items);
@@ -233,19 +233,22 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
   const performToggle = useCallback(async (
     targetType: 'PRODUCT' | 'SHOP',
     targetId: string,
+    accountAtStart: string | null,
+    authEpoch: number,
   ): Promise<boolean> => {
     const currentItems = favouritesRef.current;
     const currentlyFavourite = currentItems.some(
       (favourite) => favourite.targetType === targetType && favourite.targetId === targetId,
     );
-    const accountAtStart = accountId;
-    const authEpoch = apiClient.getAuthEpoch();
     const stillSameAccount = () => apiClient.getAuthEpoch() === authEpoch;
+
+    if (!stillSameAccount()) return currentlyFavourite;
 
     try {
       if (targetType === 'SHOP') {
         const storageKey = accountAtStart ? accountStorageKey(accountAtStart) : GUEST_STORAGE_KEY;
         const local = await parseStored(storageKey);
+        if (!stillSameAccount()) return currentlyFavourite;
         const nextLocal = currentlyFavourite
           ? withoutTarget(local, 'SHOP', targetId)
           : normalizeLocal([
@@ -266,6 +269,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
 
       if (!accountAtStart) {
         const local = await loadGuestLocal(true);
+        if (!stillSameAccount()) return currentlyFavourite;
         const nextLocal = currentlyFavourite
           ? withoutTarget(local, 'PRODUCT', targetId)
           : normalizeLocal([
@@ -282,6 +286,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
         await apiClient.delete(`/api/v1/customer/favourites/${encodeURIComponent(targetId)}`);
         if (!stillSameAccount()) return currentlyFavourite;
         const accountLocal = await loadAccountLocal(accountAtStart);
+        if (!stillSameAccount()) return currentlyFavourite;
         await saveAccountLocal(accountAtStart, withoutTarget(accountLocal, 'PRODUCT', targetId));
         if (!stillSameAccount()) return currentlyFavourite;
         replaceFavourites(withoutTarget(favouritesRef.current, 'PRODUCT', targetId));
@@ -291,32 +296,37 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
       const saved = await putProduct(targetId);
       if (!stillSameAccount()) return currentlyFavourite;
       const accountLocal = await loadAccountLocal(accountAtStart);
+      if (!stillSameAccount()) return currentlyFavourite;
       await saveAccountLocal(accountAtStart, withoutTarget(accountLocal, 'PRODUCT', targetId));
       if (!stillSameAccount()) return currentlyFavourite;
       replaceFavourites([saved, ...favouritesRef.current]);
       return true;
     } catch (mutationError) {
+      if (!stillSameAccount()) return currentlyFavourite;
       const message = mutationError instanceof Error ? mutationError.message : 'Could not update favourite.';
       Alert.alert('Favourite not updated', message);
       return currentlyFavourite;
     }
-  }, [accountId, replaceFavourites]);
+  }, [replaceFavourites]);
 
   const toggleFavourite = useCallback((
     targetType: 'PRODUCT' | 'SHOP',
     targetId: string,
   ): Promise<boolean> => {
-    const key = `${targetType}:${targetId}`;
-    const previous = mutationQueuesRef.current.get(key) ?? Promise.resolve(false);
+    const accountAtInvocation = accountId;
+    const authEpochAtInvocation = apiClient.getAuthEpoch();
+    const previous = mutationQueueRef.current;
     const next = previous
       .catch(() => false)
-      .then(() => performToggle(targetType, targetId));
-    mutationQueuesRef.current.set(key, next);
-    void next.finally(() => {
-      if (mutationQueuesRef.current.get(key) === next) mutationQueuesRef.current.delete(key);
-    });
+      .then(() => performToggle(
+        targetType,
+        targetId,
+        accountAtInvocation,
+        authEpochAtInvocation,
+      ));
+    mutationQueueRef.current = next;
     return next;
-  }, [performToggle]);
+  }, [accountId, performToggle]);
 
   return (
     <FavouritesContext.Provider value={{ favourites, loading, error, retry: reload, isFavourite, toggleFavourite }}>

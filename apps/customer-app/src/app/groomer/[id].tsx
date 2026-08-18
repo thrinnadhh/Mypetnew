@@ -1,7 +1,7 @@
 import React from 'react';
 
-import LiveCareProviderDetailScreen from '@/screens/live-care-provider-detail-screen';
+import GroomerDetailScreen from '@/screens/groomer-detail-screen';
 
 export default function GroomerProfileScreen() {
-  return <LiveCareProviderDetailScreen kind="groomer" />;
+  return <GroomerDetailScreen />;
 }

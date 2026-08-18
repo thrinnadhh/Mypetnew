@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { AppIcon } from '@/components/app-icon';
@@ -30,7 +30,7 @@ function single(value: string | string[] | undefined): string | undefined {
 export default function LiveCareProviderDetailScreen({ kind }: { kind: CareKind }) {
   const router = useRouter();
   const theme = useTheme();
-  const { activeCity } = useLocation();
+  const { activeCity, selectedPincode } = useLocation();
   const params = useLocalSearchParams<{ id?: string | string[]; slug?: string | string[] }>();
   const providerId = single(params.id) ?? single(params.slug);
   const capability: AppointmentServiceCapability = kind === 'groomer' ? 'GROOMING' : 'VETERINARY';
@@ -38,38 +38,61 @@ export default function LiveCareProviderDetailScreen({ kind }: { kind: CareKind 
   const [provider, setProvider] = useState<ProviderProfile | null>(null);
   const [services, setServices] = useState<AppointmentServiceOption[]>([]);
   const [state, setState] = useState<LoadState>('loading');
+  const requestGeneration = useRef(0);
 
   const load = useCallback(async () => {
-    if (!providerId) {
+    const generation = requestGeneration.current + 1;
+    requestGeneration.current = generation;
+    if (!providerId || !/^[1-9][0-9]{5}$/.test(selectedPincode)) {
+      setProvider(null);
+      setServices([]);
       setState('error');
       return;
     }
     setState('loading');
+    setProvider(null);
+    setServices([]);
     try {
-      const [profile, publishedServices] = await Promise.all([
-        fetchProviderProfile(providerId),
-        fetchAppointmentServices({ providerId, capability }),
-      ]);
+      // Validate the canonical ACTIVE + service-PIN + expected-capability provider
+      // boundary before loading any appointment catalogue for a deep link.
+      const profile = await fetchProviderProfile(providerId, { kind, pincode: selectedPincode });
+      if (requestGeneration.current !== generation) return;
+      const publishedServices = await fetchAppointmentServices({ providerId, capability });
+      if (requestGeneration.current !== generation) return;
       setProvider(profile);
       setServices(publishedServices.sort((left, right) => left.name.localeCompare(right.name)));
       setState('ready');
     } catch (error) {
+      if (requestGeneration.current !== generation) return;
       setProvider(null);
       setServices([]);
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, [capability, providerId]);
+  }, [capability, kind, providerId, selectedPincode]);
 
   useEffect(() => {
     void load();
+    return () => {
+      requestGeneration.current += 1;
+    };
   }, [load]);
 
   const careLabel = kind === 'groomer' ? 'Grooming' : 'Veterinary';
   const iconName = kind === 'groomer' ? 'groom' : 'medical';
   const subtitle = useMemo(
-    () => `Admin-approved ${careLabel.toLowerCase()} provider in ${activeCity.displayName}`,
-    [activeCity.displayName, careLabel],
+    () => /^[1-9][0-9]{5}$/.test(selectedPincode)
+      ? `${careLabel} provider serving PIN ${selectedPincode} in ${activeCity.displayName}`
+      : 'Live serviceability unavailable',
+    [activeCity.displayName, careLabel, selectedPincode],
   );
+
+  const goBack = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace(bookingRoute as never);
+  }, [bookingRoute, router]);
 
   const openBooking = (serviceId?: string) => {
     if (!providerId) return;
@@ -85,7 +108,7 @@ export default function LiveCareProviderDetailScreen({ kind }: { kind: CareKind 
         <ScreenHeader
           title={provider?.name ?? `${careLabel} provider`}
           subtitle={subtitle}
-          onBack={() => router.back()}
+          onBack={goBack}
           backLabel={`Back from ${careLabel.toLowerCase()} provider`}
         />
       )}
@@ -110,7 +133,7 @@ export default function LiveCareProviderDetailScreen({ kind }: { kind: CareKind 
           title={state === 'offline' ? 'You are offline' : `${careLabel} provider unavailable`}
           message={state === 'offline'
             ? 'Reconnect to load the current provider and services.'
-            : 'This provider is not currently available to customers.'}
+            : `This provider is not an active ${careLabel.toLowerCase()} provider serving PIN ${selectedPincode || 'the selected service area'}.`}
           actionLabel="Retry"
           onAction={() => void load()}
         />
@@ -127,13 +150,13 @@ export default function LiveCareProviderDetailScreen({ kind }: { kind: CareKind 
                 <ThemedText style={[styles.providerName, { color: theme.text }]} numberOfLines={2}>
                   {provider.name}
                 </ThemedText>
-                <StatusBadge label="Approved" color={theme.success} />
+                <StatusBadge label="Active provider" color={theme.success} />
               </View>
               <ThemedText style={[styles.description, { color: theme.textSecondary }]}>
                 {provider.description || `${careLabel} services from an active MyPet provider.`}
               </ThemedText>
               <View style={styles.badgeRow}>
-                <StatusBadge label={activeCity.displayName} color={theme.primary} />
+                <StatusBadge label={`PIN ${selectedPincode}`} color={theme.primary} />
                 <StatusBadge label="Live booking" color={theme.success} />
               </View>
             </View>
@@ -149,7 +172,7 @@ export default function LiveCareProviderDetailScreen({ kind }: { kind: CareKind 
               <StateView
                 kind="empty"
                 title="No services published yet"
-                message={`The approved ${careLabel.toLowerCase()} provider is visible, but the merchant has not published bookable services yet.`}
+                message={`The active ${careLabel.toLowerCase()} provider is visible, but the merchant has not published bookable services yet.`}
               />
             ) : (
               <View style={styles.serviceList}>
@@ -188,7 +211,7 @@ export default function LiveCareProviderDetailScreen({ kind }: { kind: CareKind 
             <View style={styles.lifecycleCopy}>
               <ThemedText style={[styles.lifecycleTitle, { color: theme.text }]}>Live marketplace profile</ThemedText>
               <ThemedText style={[styles.description, { color: theme.textSecondary }]}>
-                Provider visibility follows admin approval. Merchant service updates are read from the backend and do not require a customer-app release.
+                Provider visibility follows the active public backend state and selected service PIN. Merchant service updates are read from the backend and do not require a customer-app release.
               </ThemedText>
             </View>
           </View>

@@ -21,11 +21,12 @@ import { type CommerceProduct } from '@/services/catalog-data';
 import { fetchBanners, fetchGuides, type GuideArticle, type PromoBanner } from '@/services/content';
 import { fetchCommerceProducts } from '@/services/customer-catalog';
 import { DEMO_MEDIA } from '@/services/demo-customer-data';
-import { fetchProviders, type ProviderSummary } from '@/services/provider-discovery';
+import { fetchProviderPage, type ProviderSummary } from '@/services/provider-discovery';
 import { appConfig } from '@/utils/app-config';
 
 const CARD_WIDTH = 236;
 const CARD_GAP = 12;
+const HOME_PROVIDER_PREVIEW_SIZE = 6;
 
 type LiveDiscoveryState = 'loading' | 'ready' | 'empty' | 'error';
 
@@ -206,9 +207,8 @@ const GUIDES: DiscoveryCardItem[] = [
 function liveProviderCard(
   provider: ProviderSummary,
   type: 'store' | 'groomer' | 'vet',
-  city: string,
+  pincode: string,
 ): DiscoveryCardItem {
-  const image = type === 'store' ? DEMO_MEDIA.store : type === 'groomer' ? DEMO_MEDIA.grooming : DEMO_MEDIA.hospital;
   const route = type === 'store'
     ? `/shop/${provider.id}`
     : type === 'groomer'
@@ -218,8 +218,8 @@ function liveProviderCard(
     id: provider.id,
     title: provider.name,
     subtitle: provider.description || (type === 'store' ? 'Pet store' : type === 'groomer' ? 'Pet grooming' : 'Veterinary care'),
-    image,
-    meta: `${city} · Approved`,
+    image: '',
+    meta: `Serves PIN ${pincode}`,
     metaIcon: 'location',
     route,
   };
@@ -246,6 +246,8 @@ function DiscoveryCard({ item }: { item: DiscoveryCardItem }) {
   return (
     <Pressable
       onPress={() => router.push(item.route as never)}
+      accessibilityRole="button"
+      accessibilityLabel={`${item.title}. ${item.subtitle}. ${item.meta}`}
       style={({ pressed }) => [
         styles.discoveryCard,
         { backgroundColor: theme.backgroundElement, borderColor: theme.border },
@@ -257,6 +259,7 @@ function DiscoveryCard({ item }: { item: DiscoveryCardItem }) {
           uri={item.image}
           fallbackUri={item.fallbackImage ?? DEMO_MEDIA.store}
           style={styles.cardImage}
+          accessibilityLabel={item.title}
         />
         {item.rating ? (
           <View style={styles.ratingBadge}>
@@ -326,7 +329,7 @@ export default function HomeScreen() {
   const theme = useTheme();
   const { user } = useAuth();
   const { t } = useTranslation();
-  const { activeCity, openLocationModal } = useLocation();
+  const { activeCity, selectedPincode, openLocationModal } = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
   const [banners, setBanners] = useState<PromoBanner[]>(PROMO_BANNERS);
@@ -364,18 +367,33 @@ export default function HomeScreen() {
       .catch(() => setGuideItems(appConfig.allowDemoMode ? GUIDES : []));
   }, []);
 
-  const pincodeKey = activeCity.pincodes.join(',');
   useEffect(() => {
     if (appConfig.allowDemoMode) return;
-    const pincodes = pincodeKey.split(',').filter(Boolean);
+    let active = true;
+    setLiveStores([]);
+    setLiveGroomers([]);
+    setLiveVets([]);
+    setLiveFoodProducts([]);
+
+    if (!/^[1-9][0-9]{5}$/.test(selectedPincode)) {
+      setLiveDiscoveryState('error');
+      return () => {
+        active = false;
+      };
+    }
+
     setLiveDiscoveryState('loading');
     void Promise.all([
-      fetchProviders('PET_STORE', INITIAL_MARKET, pincodes),
-      fetchProviders('GROOMER', INITIAL_MARKET, pincodes),
-      fetchProviders('VET_HOSPITAL', INITIAL_MARKET, pincodes),
+      fetchProviderPage('PET_STORE', INITIAL_MARKET, selectedPincode, { page: 0, pageSize: HOME_PROVIDER_PREVIEW_SIZE }),
+      fetchProviderPage('GROOMER', INITIAL_MARKET, selectedPincode, { page: 0, pageSize: HOME_PROVIDER_PREVIEW_SIZE }),
+      fetchProviderPage('VET_HOSPITAL', INITIAL_MARKET, selectedPincode, { page: 0, pageSize: HOME_PROVIDER_PREVIEW_SIZE }),
       fetchCommerceProducts({ category: 'food' }),
     ])
-      .then(([stores, groomers, vets, products]) => {
+      .then(([storePage, groomerPage, vetPage, products]) => {
+        if (!active) return;
+        const stores = storePage.items;
+        const groomers = groomerPage.items;
+        const vets = vetPage.items;
         setLiveStores(stores);
         setLiveGroomers(groomers);
         setLiveVets(vets);
@@ -389,25 +407,30 @@ export default function HomeScreen() {
         );
       })
       .catch(() => {
+        if (!active) return;
         setLiveStores([]);
         setLiveGroomers([]);
         setLiveVets([]);
         setLiveFoodProducts([]);
         setLiveDiscoveryState('error');
       });
-  }, [discoveryReloadKey, pincodeKey]);
+
+    return () => {
+      active = false;
+    };
+  }, [discoveryReloadKey, selectedPincode]);
 
   const liveStoreCards = useMemo(
-    () => liveStores.map((provider) => liveProviderCard(provider, 'store', activeCity.displayName)),
-    [activeCity.displayName, liveStores],
+    () => liveStores.map((provider) => liveProviderCard(provider, 'store', selectedPincode)),
+    [liveStores, selectedPincode],
   );
   const liveGroomerCards = useMemo(
-    () => liveGroomers.map((provider) => liveProviderCard(provider, 'groomer', activeCity.displayName)),
-    [activeCity.displayName, liveGroomers],
+    () => liveGroomers.map((provider) => liveProviderCard(provider, 'groomer', selectedPincode)),
+    [liveGroomers, selectedPincode],
   );
   const liveVetCards = useMemo(
-    () => liveVets.map((provider) => liveProviderCard(provider, 'vet', activeCity.displayName)),
-    [activeCity.displayName, liveVets],
+    () => liveVets.map((provider) => liveProviderCard(provider, 'vet', selectedPincode)),
+    [liveVets, selectedPincode],
   );
 
   const firstName = useMemo(() => {
@@ -458,6 +481,7 @@ export default function HomeScreen() {
             placeholderTextColor={theme.textSecondary}
             style={[styles.searchInput, { color: theme.text }]}
             returnKeyType="search"
+            accessibilityLabel="Search products"
             onSubmitEditing={() => {
               const value = searchQuery.trim();
               if (value) router.push({ pathname: '/search', params: { q: value } } as never);
@@ -480,7 +504,7 @@ export default function HomeScreen() {
           {QUICK_ACTIONS.map((action, index) => (
             <React.Fragment key={action.id}>
               {index > 0 ? <View style={[styles.quickDivider, { backgroundColor: theme.border }]} /> : null}
-              <Pressable onPress={() => router.push(action.route as never)} style={({ pressed }) => [styles.quickAction, pressed && styles.pressed]}>
+              <Pressable onPress={() => router.push(action.route as never)} style={({ pressed }) => [styles.quickAction, pressed && styles.pressed]} accessibilityRole="button" accessibilityLabel={action.label}>
                 <AppIcon name={action.icon} color={theme.primary} size={21} />
                 <ThemedText style={[styles.quickLabel, { color: theme.text }]}>{action.label}</ThemedText>
               </Pressable>
@@ -499,6 +523,8 @@ export default function HomeScreen() {
                 key={action.id}
                 onPress={() => router.push(action.route as never)}
                 style={({ pressed }) => [styles.healthCard, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}
+                accessibilityRole="button"
+                accessibilityLabel={action.label}
               >
                 <AppIcon name={action.icon} color={theme.primary} size={22} />
                 <ThemedText style={[styles.healthLabel, { color: theme.text }]} numberOfLines={2}>{action.label}</ThemedText>
@@ -517,6 +543,8 @@ export default function HomeScreen() {
                 key={category.id}
                 onPress={() => router.push(category.route as never)}
                 style={({ pressed }) => [styles.categoryItem, pressed && styles.pressed]}
+                accessibilityRole="button"
+                accessibilityLabel={category.label}
               >
                 <View style={[styles.categoryImageWrap, { backgroundColor: theme.muted }]}>
                   <ResilientRemoteImage
@@ -539,6 +567,9 @@ export default function HomeScreen() {
                     key={filter}
                     onPress={() => setActiveFilter(filter)}
                     style={[styles.filterChip, { backgroundColor: active ? theme.primary : theme.muted }]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={filter}
                   >
                     <ThemedText style={[styles.filterText, { color: active ? '#FFFFFF' : theme.textSecondary }]}>{filter}</ThemedText>
                   </Pressable>
@@ -558,7 +589,7 @@ export default function HomeScreen() {
                 <ActivityIndicator color={theme.primary} />
                 <View style={styles.discoveryStateCopy}>
                   <ThemedText style={[styles.discoveryStateTitle, { color: theme.text }]}>Finding nearby pet care</ThemedText>
-                  <ThemedText style={[styles.discoveryStateBody, { color: theme.textSecondary }]}>Checking stores, groomers and veterinary providers for {activeCity.displayName}.</ThemedText>
+                  <ThemedText style={[styles.discoveryStateBody, { color: theme.textSecondary }]}>Checking active stores, groomers and veterinary providers serving PIN {selectedPincode}.</ThemedText>
                 </View>
               </View>
             ) : null}
@@ -570,9 +601,10 @@ export default function HomeScreen() {
                 <AppIcon name="warning" color={theme.warning} size={22} />
                 <View style={styles.discoveryStateCopy}>
                   <ThemedText style={[styles.discoveryStateTitle, { color: theme.text }]}>Nearby services could not load</ThemedText>
-                  <ThemedText style={[styles.discoveryStateBody, { color: theme.textSecondary }]}>Check your connection and retry. Your selected location has not been changed.</ThemedText>
+                  <ThemedText style={[styles.discoveryStateBody, { color: theme.textSecondary }]}>Select a valid live service PIN, check your connection, and retry. No demo providers are substituted.</ThemedText>
                   <Pressable
                     accessibilityRole="button"
+                    accessibilityLabel="Retry nearby provider discovery"
                     onPress={() => setDiscoveryReloadKey((value) => value + 1)}
                     style={({ pressed }) => [styles.discoveryStateAction, { backgroundColor: theme.primary }, pressed && styles.pressed]}
                   >
@@ -589,9 +621,10 @@ export default function HomeScreen() {
                 <AppIcon name="location" color={theme.primary} size={22} />
                 <View style={styles.discoveryStateCopy}>
                   <ThemedText style={[styles.discoveryStateTitle, { color: theme.text }]}>No serviceable providers found here yet</ThemedText>
-                  <ThemedText style={[styles.discoveryStateBody, { color: theme.textSecondary }]}>Try another supported location to discover stores, grooming and veterinary care.</ThemedText>
+                  <ThemedText style={[styles.discoveryStateBody, { color: theme.textSecondary }]}>No active provider in this preview currently serves PIN {selectedPincode}. Try another supported location.</ThemedText>
                   <Pressable
                     accessibilityRole="button"
+                    accessibilityLabel="Change service location"
                     onPress={openLocationModal}
                     style={({ pressed }) => [styles.discoveryStateAction, { backgroundColor: theme.primary }, pressed && styles.pressed]}
                   >
@@ -626,6 +659,8 @@ export default function HomeScreen() {
                     <Pressable
                       key={product.id}
                       onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(product.id)}` as never)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${product.name}. ₹${product.price}.`}
                       style={({ pressed }) => [
                         styles.discoveryCard,
                         { backgroundColor: theme.backgroundElement, borderColor: theme.border },
@@ -633,7 +668,7 @@ export default function HomeScreen() {
                       ]}
                     >
                       <View style={styles.cardImageWrap}>
-                        <ResilientRemoteImage uri={product.imageUrl} fallbackUri={DEMO_MEDIA.food} style={styles.cardImage} />
+                        <ResilientRemoteImage uri={product.imageUrl} fallbackUri={DEMO_MEDIA.food} style={styles.cardImage} accessibilityLabel={product.name} />
                       </View>
                       <View style={styles.cardBody}>
                         {product.brand ? (

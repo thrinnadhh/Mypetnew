@@ -150,8 +150,9 @@ export default function PrivacyCentreScreen() {
         label="Delete my account"
         disabled={busy || deleteConfirmation !== 'DELETE'}
         onPress={() => void run(async () => {
+          const deletedAccountId = session.accountId;
           await deleteCustomerAccount();
-          await clearLocalFavourites().catch((error) => {
+          await clearLocalFavourites(deletedAccountId).catch((error) => {
             console.warn('Local favourite cleanup failed after account deletion:', error);
           });
           await signOut();

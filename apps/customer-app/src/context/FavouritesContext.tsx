@@ -1,9 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 
 import { useAuth } from '@/context/AuthContext';
-import { appConfig } from '@/utils/app-config';
+import { ApiError, apiClient } from '@/services/api-client';
 
 export interface FavouriteItem {
   id?: string;
@@ -22,37 +22,26 @@ interface FavouritePage {
 interface FavouritesContextType {
   favourites: FavouriteItem[];
   loading: boolean;
+  error: string | null;
+  retry: () => Promise<void>;
   isFavourite: (targetType: 'PRODUCT' | 'SHOP', targetId: string) => boolean;
   toggleFavourite: (targetType: 'PRODUCT' | 'SHOP', targetId: string) => Promise<boolean>;
 }
 
-class FavouriteRequestError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = 'FavouriteRequestError';
-  }
-}
-
 const FavouritesContext = createContext<FavouritesContextType | null>(null);
-const STORAGE_KEY = 'mypet_favourites_v3_local';
-const LEGACY_STORAGE_KEY = 'mypet_favourites_v2_guest';
 
-function authHeaders(accessToken: string): Record<string, string> {
-  return {
-    Accept: 'application/json',
-    Authorization: `Bearer ${accessToken}`,
-  };
+const GUEST_STORAGE_KEY = 'mypet_favourites_v4_guest';
+const ACCOUNT_STORAGE_PREFIX = 'mypet_favourites_v4_account:';
+const LEGACY_GUEST_STORAGE_KEY = 'mypet_favourites_v2_guest';
+const AMBIGUOUS_LEGACY_STORAGE_KEY = 'mypet_favourites_v3_local';
+const FAVOURITE_PAGE_SIZE = 50;
+
+function accountStorageKey(accountId: string): string {
+  return `${ACCOUNT_STORAGE_PREFIX}${accountId}`;
 }
 
-async function serverError(response: Response): Promise<FavouriteRequestError> {
-  const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null;
-  return new FavouriteRequestError(
-    body?.message || body?.error || `Favourite request failed (${response.status})`,
-    response.status,
-  );
+function favouriteOwnerKey(accountId: string | null): string {
+  return accountId ? `account:${accountId}` : 'guest';
 }
 
 function normalizeLocal(items: FavouriteItem[]): FavouriteItem[] {
@@ -75,38 +64,45 @@ async function parseStored(key: string): Promise<FavouriteItem[]> {
   }
 }
 
-async function loadLocal(): Promise<FavouriteItem[]> {
-  const current = await parseStored(STORAGE_KEY);
-  const legacy = await parseStored(LEGACY_STORAGE_KEY);
-  if (legacy.length === 0) return current;
+async function saveStored(key: string, items: FavouriteItem[]): Promise<void> {
+  await AsyncStorage.setItem(key, JSON.stringify(normalizeLocal(items)));
+}
 
-  const merged = normalizeLocal([...current, ...legacy]);
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-  await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
+async function loadGuestLocal(migrateLegacy: boolean): Promise<FavouriteItem[]> {
+  const current = await parseStored(GUEST_STORAGE_KEY);
+  if (!migrateLegacy) return current;
+
+  // v2 was explicitly guest-owned and is safe to migrate. v3 was shared by
+  // guest and authenticated sessions, so its ownership cannot be proven after
+  // upgrade. Never surface or migrate v3 into a later account; remove it to
+  // fail closed against cross-account preference leakage.
+  const legacyGuest = await parseStored(LEGACY_GUEST_STORAGE_KEY);
+  const merged = normalizeLocal([...current, ...legacyGuest]);
+  if (legacyGuest.length > 0) await saveStored(GUEST_STORAGE_KEY, merged);
+  await AsyncStorage.multiRemove([LEGACY_GUEST_STORAGE_KEY, AMBIGUOUS_LEGACY_STORAGE_KEY]);
   return merged;
 }
 
-async function saveLocal(items: FavouriteItem[]): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeLocal(items)));
+async function loadAccountLocal(accountId: string): Promise<FavouriteItem[]> {
+  return parseStored(accountStorageKey(accountId));
 }
 
-export async function clearLocalFavourites(): Promise<void> {
-  await AsyncStorage.multiRemove([STORAGE_KEY, LEGACY_STORAGE_KEY]);
+async function saveAccountLocal(accountId: string, items: FavouriteItem[]): Promise<void> {
+  await saveStored(accountStorageKey(accountId), items);
 }
 
-async function removeLocalProduct(listingId: string): Promise<void> {
-  const local = await loadLocal();
-  await saveLocal(local.filter((item) => !(item.targetType === 'PRODUCT' && item.targetId === listingId)));
+export async function clearLocalFavourites(accountId?: string): Promise<void> {
+  const keys = [GUEST_STORAGE_KEY, LEGACY_GUEST_STORAGE_KEY, AMBIGUOUS_LEGACY_STORAGE_KEY];
+  if (accountId) keys.push(accountStorageKey(accountId));
+  await AsyncStorage.multiRemove(keys);
 }
 
-async function fetchAllServerProducts(accessToken: string): Promise<FavouriteItem[]> {
+async function fetchAllServerProducts(): Promise<FavouriteItem[]> {
   const result: FavouriteItem[] = [];
   for (let page = 0; page < 100; page += 1) {
-    const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/customer/favourites?page=${page}&pageSize=100`, {
-      headers: authHeaders(accessToken),
-    });
-    if (!response.ok) throw await serverError(response);
-    const body = (await response.json()) as FavouritePage;
+    const body = await apiClient.get<FavouritePage>(
+      `/api/v1/customer/favourites?page=${page}&pageSize=${FAVOURITE_PAGE_SIZE}`,
+    );
     result.push(
       ...body.items.map((item) => ({
         targetType: 'PRODUCT' as const,
@@ -114,139 +110,280 @@ async function fetchAllServerProducts(accessToken: string): Promise<FavouriteIte
         createdAt: item.createdAt,
       })),
     );
-    if (!body.hasNext) return result;
+    if (!body.hasNext) return normalizeLocal(result);
   }
   throw new Error('Favourite pagination exceeded the supported client bound.');
 }
 
-async function putProduct(accessToken: string, listingId: string): Promise<FavouriteItem> {
-  const response = await fetch(
-    `${appConfig.apiBaseUrl}/api/v1/customer/favourites/${encodeURIComponent(listingId)}`,
-    { method: 'PUT', headers: authHeaders(accessToken) },
+async function putProduct(listingId: string): Promise<FavouriteItem> {
+  const body = await apiClient.put<{ listingId: string; createdAt: string }>(
+    `/api/v1/customer/favourites/${encodeURIComponent(listingId)}`,
   );
-  if (!response.ok) throw await serverError(response);
-  const body = (await response.json()) as { listingId: string; createdAt: string };
   return { targetType: 'PRODUCT', targetId: body.listingId, createdAt: body.createdAt };
+}
+
+function withoutTarget(
+  items: readonly FavouriteItem[],
+  targetType: 'PRODUCT' | 'SHOP',
+  targetId: string,
+): FavouriteItem[] {
+  return items.filter((item) => !(item.targetType === targetType && item.targetId === targetId));
+}
+
+async function discardStaleGuestAddition(
+  targetType: 'PRODUCT' | 'SHOP',
+  targetId: string,
+): Promise<void> {
+  const guest = await loadGuestLocal(false);
+  await saveStored(GUEST_STORAGE_KEY, withoutTarget(guest, targetType, targetId));
 }
 
 export function FavouritesProvider({ children }: { children: React.ReactNode }) {
   const { session } = useAuth();
+  const accountId = session?.accountId ?? null;
+  const currentOwnerKey = favouriteOwnerKey(accountId);
   const [favourites, setFavourites] = useState<FavouriteItem[]>([]);
+  const [resolvedOwnerKey, setResolvedOwnerKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const favouritesRef = useRef<FavouriteItem[]>([]);
+  const resolvedOwnerKeyRef = useRef<string | null>(null);
+  const loadGenerationRef = useRef(0);
+  const mutationQueueRef = useRef<Promise<boolean>>(Promise.resolve(false));
+
+  const replaceFavourites = useCallback((items: FavouriteItem[], ownerKey: string) => {
+    const next = normalizeLocal(items);
+    favouritesRef.current = next;
+    resolvedOwnerKeyRef.current = ownerKey;
+    setFavourites(next);
+    setResolvedOwnerKey(ownerKey);
+  }, []);
+
+  const reload = useCallback(async () => {
+    const generation = loadGenerationRef.current + 1;
+    loadGenerationRef.current = generation;
+    const authEpoch = apiClient.getAuthEpoch();
+    const accountAtStart = accountId;
+    const ownerAtStart = favouriteOwnerKey(accountAtStart);
+    setLoading(true);
+    setError(null);
+
+    const isCurrent = () => (
+      loadGenerationRef.current === generation
+      && apiClient.getAuthEpoch() === authEpoch
+    );
+
+    try {
+      if (!accountAtStart) {
+        const guest = await loadGuestLocal(true);
+        if (isCurrent()) replaceFavourites(guest, ownerAtStart);
+        return;
+      }
+
+      // The explicit v4 guest bucket and the older explicitly guest-owned v2
+      // bucket may migrate into the account restoring/signing in now. The
+      // ownership-ambiguous v3 bucket is quarantined and discarded by
+      // loadGuestLocal(true). Account-local shop state remains account-keyed.
+      const [accountLocal, guestLocal, serverInitial] = await Promise.all([
+        loadAccountLocal(accountAtStart),
+        loadGuestLocal(true),
+        fetchAllServerProducts(),
+      ]);
+      if (!isCurrent()) return;
+
+      let serverProducts = serverInitial;
+      const serverIds = new Set(serverProducts.map((item) => item.targetId));
+      const localProducts = normalizeLocal([...accountLocal, ...guestLocal])
+        .filter((item) => item.targetType === 'PRODUCT');
+      const localShops = normalizeLocal([...accountLocal, ...guestLocal])
+        .filter((item) => item.targetType === 'SHOP');
+      const retryableLocalProducts: FavouriteItem[] = [];
+
+      for (const product of localProducts) {
+        if (!isCurrent()) return;
+        if (serverIds.has(product.targetId)) continue;
+        try {
+          const saved = await putProduct(product.targetId);
+          if (!isCurrent()) return;
+          serverProducts = [saved, ...serverProducts];
+          serverIds.add(product.targetId);
+        } catch (migrationError) {
+          // A guest-saved identity must remain removable even if the listing
+          // is now deleted, inactive or otherwise unavailable to the server.
+          // Keep it account-local and retry on a later reload instead of
+          // silently discarding the user's saved state.
+          if (migrationError instanceof ApiError && migrationError.status === 404) {
+            retryableLocalProducts.push(product);
+            continue;
+          }
+          retryableLocalProducts.push(product);
+        }
+      }
+
+      if (!isCurrent()) return;
+      const accountLocalNext = normalizeLocal([...localShops, ...retryableLocalProducts]);
+      await Promise.all([
+        saveAccountLocal(accountAtStart, accountLocalNext),
+        saveStored(GUEST_STORAGE_KEY, []),
+      ]);
+      if (!isCurrent()) return;
+      replaceFavourites([...serverProducts, ...accountLocalNext], ownerAtStart);
+    } catch (loadError) {
+      if (!isCurrent()) return;
+      console.warn('Failed to load favourites', loadError);
+      const safeLocal = accountAtStart
+        ? await loadAccountLocal(accountAtStart)
+        : await loadGuestLocal(true);
+      if (!isCurrent()) return;
+      replaceFavourites(safeLocal, ownerAtStart);
+      setError(loadError instanceof Error ? loadError.message : 'Could not load favourites.');
+    } finally {
+      if (isCurrent()) setLoading(false);
+    }
+  }, [accountId, replaceFavourites]);
 
   useEffect(() => {
-    let active = true;
-
-    const loadFavourites = async () => {
-      setLoading(true);
-      try {
-        const local = await loadLocal();
-        if (!session?.accessToken) {
-          if (active) setFavourites(local);
-          return;
-        }
-
-        let serverProducts = await fetchAllServerProducts(session.accessToken);
-        const localProducts = local.filter((item) => item.targetType === 'PRODUCT');
-        const localShops = local.filter((item) => item.targetType === 'SHOP');
-        const serverIds = new Set(serverProducts.map((item) => item.targetId));
-        const retryableLocalProducts: FavouriteItem[] = [];
-
-        for (const product of localProducts) {
-          if (serverIds.has(product.targetId)) continue;
-          try {
-            const saved = await putProduct(session.accessToken, product.targetId);
-            serverProducts = [saved, ...serverProducts];
-            serverIds.add(product.targetId);
-          } catch (error) {
-            if (error instanceof FavouriteRequestError && error.status === 404) continue;
-            retryableLocalProducts.push(product);
-          }
-        }
-
-        await saveLocal([...localShops, ...retryableLocalProducts]);
-        if (active) {
-          setFavourites(normalizeLocal([...serverProducts, ...localShops, ...retryableLocalProducts]));
-        }
-      } catch (error) {
-        console.warn('Failed to load favourites', error);
-        const local = await loadLocal();
-        if (active) setFavourites(local);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-
-    void loadFavourites();
+    void reload();
     return () => {
-      active = false;
+      loadGenerationRef.current += 1;
     };
-  }, [session?.accessToken]);
+  }, [reload, session?.accessToken]);
+
+  const visibleFavourites = resolvedOwnerKey === currentOwnerKey ? favourites : [];
+  const visibleLoading = loading || resolvedOwnerKey !== currentOwnerKey;
+  const visibleError = resolvedOwnerKey === currentOwnerKey ? error : null;
 
   const isFavourite = useCallback(
     (targetType: 'PRODUCT' | 'SHOP', targetId: string): boolean =>
-      favourites.some((favourite) => favourite.targetType === targetType && favourite.targetId === targetId),
-    [favourites],
+      visibleFavourites.some((favourite) => favourite.targetType === targetType && favourite.targetId === targetId),
+    [visibleFavourites],
   );
 
-  const toggleFavourite = useCallback(
-    async (targetType: 'PRODUCT' | 'SHOP', targetId: string): Promise<boolean> => {
-      const currentlyFavourite = favourites.some(
-        (favourite) => favourite.targetType === targetType && favourite.targetId === targetId,
-      );
+  const performToggle = useCallback(async (
+    targetType: 'PRODUCT' | 'SHOP',
+    targetId: string,
+    accountAtStart: string | null,
+    ownerAtStart: string,
+    authEpoch: number,
+  ): Promise<boolean> => {
+    const currentItems = resolvedOwnerKeyRef.current === ownerAtStart ? favouritesRef.current : [];
+    const currentlyFavourite = currentItems.some(
+      (favourite) => favourite.targetType === targetType && favourite.targetId === targetId,
+    );
+    const stillSameAccount = () => (
+      apiClient.getAuthEpoch() === authEpoch
+      && resolvedOwnerKeyRef.current === ownerAtStart
+    );
 
-      try {
-        if (targetType === 'SHOP') {
-          const local = await loadLocal();
-          const nextLocal = currentlyFavourite
-            ? local.filter((item) => !(item.targetType === 'SHOP' && item.targetId === targetId))
-            : [{ targetType: 'SHOP' as const, targetId, createdAt: new Date().toISOString() }, ...local];
-          await saveLocal(nextLocal);
-          setFavourites((current) =>
-            currentlyFavourite
-              ? current.filter((item) => !(item.targetType === 'SHOP' && item.targetId === targetId))
-              : normalizeLocal([{ targetType: 'SHOP', targetId, createdAt: new Date().toISOString() }, ...current]),
-          );
-          return !currentlyFavourite;
+    if (!stillSameAccount()) return currentlyFavourite;
+
+    try {
+      if (targetType === 'SHOP') {
+        const storageKey = accountAtStart ? accountStorageKey(accountAtStart) : GUEST_STORAGE_KEY;
+        const local = await parseStored(storageKey);
+        if (!stillSameAccount()) return currentlyFavourite;
+        const nextLocal = currentlyFavourite
+          ? withoutTarget(local, 'SHOP', targetId)
+          : normalizeLocal([
+              { targetType: 'SHOP', targetId, createdAt: new Date().toISOString() },
+              ...local,
+            ]);
+        await saveStored(storageKey, nextLocal);
+        if (!stillSameAccount()) {
+          if (!accountAtStart && !currentlyFavourite) {
+            await discardStaleGuestAddition('SHOP', targetId);
+          }
+          return currentlyFavourite;
         }
-
-        if (!session?.accessToken) {
-          const next = currentlyFavourite
-            ? favourites.filter((item) => !(item.targetType === 'PRODUCT' && item.targetId === targetId))
-            : [{ targetType: 'PRODUCT' as const, targetId, createdAt: new Date().toISOString() }, ...favourites];
-          await saveLocal(next);
-          setFavourites(normalizeLocal(next));
-          return !currentlyFavourite;
-        }
-
-        if (currentlyFavourite) {
-          const response = await fetch(
-            `${appConfig.apiBaseUrl}/api/v1/customer/favourites/${encodeURIComponent(targetId)}`,
-            { method: 'DELETE', headers: authHeaders(session.accessToken) },
-          );
-          if (!response.ok) throw await serverError(response);
-          await removeLocalProduct(targetId);
-          setFavourites((current) =>
-            current.filter((item) => !(item.targetType === 'PRODUCT' && item.targetId === targetId)),
-          );
-          return false;
-        }
-
-        const saved = await putProduct(session.accessToken, targetId);
-        await removeLocalProduct(targetId);
-        setFavourites((current) => normalizeLocal([saved, ...current]));
-        return true;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Could not update favourite.';
-        Alert.alert('Favourite not updated', message);
-        return currentlyFavourite;
+        const next = currentlyFavourite
+          ? withoutTarget(favouritesRef.current, 'SHOP', targetId)
+          : normalizeLocal([
+              { targetType: 'SHOP', targetId, createdAt: new Date().toISOString() },
+              ...favouritesRef.current,
+            ]);
+        replaceFavourites(next, ownerAtStart);
+        return !currentlyFavourite;
       }
-    },
-    [favourites, session],
-  );
+
+      if (!accountAtStart) {
+        const local = await loadGuestLocal(true);
+        if (!stillSameAccount()) return currentlyFavourite;
+        const nextLocal = currentlyFavourite
+          ? withoutTarget(local, 'PRODUCT', targetId)
+          : normalizeLocal([
+              { targetType: 'PRODUCT', targetId, createdAt: new Date().toISOString() },
+              ...local,
+            ]);
+        await saveStored(GUEST_STORAGE_KEY, nextLocal);
+        if (!stillSameAccount()) {
+          if (!currentlyFavourite) {
+            await discardStaleGuestAddition('PRODUCT', targetId);
+          }
+          return currentlyFavourite;
+        }
+        replaceFavourites(nextLocal, ownerAtStart);
+        return !currentlyFavourite;
+      }
+
+      if (currentlyFavourite) {
+        await apiClient.delete(`/api/v1/customer/favourites/${encodeURIComponent(targetId)}`);
+        if (!stillSameAccount()) return currentlyFavourite;
+        const accountLocal = await loadAccountLocal(accountAtStart);
+        if (!stillSameAccount()) return currentlyFavourite;
+        await saveAccountLocal(accountAtStart, withoutTarget(accountLocal, 'PRODUCT', targetId));
+        if (!stillSameAccount()) return currentlyFavourite;
+        replaceFavourites(withoutTarget(favouritesRef.current, 'PRODUCT', targetId), ownerAtStart);
+        return false;
+      }
+
+      const saved = await putProduct(targetId);
+      if (!stillSameAccount()) return currentlyFavourite;
+      const accountLocal = await loadAccountLocal(accountAtStart);
+      if (!stillSameAccount()) return currentlyFavourite;
+      await saveAccountLocal(accountAtStart, withoutTarget(accountLocal, 'PRODUCT', targetId));
+      if (!stillSameAccount()) return currentlyFavourite;
+      replaceFavourites([saved, ...favouritesRef.current], ownerAtStart);
+      return true;
+    } catch (mutationError) {
+      if (!stillSameAccount()) return currentlyFavourite;
+      const message = mutationError instanceof Error ? mutationError.message : 'Could not update favourite.';
+      Alert.alert('Favourite not updated', message);
+      return currentlyFavourite;
+    }
+  }, [replaceFavourites]);
+
+  const toggleFavourite = useCallback((
+    targetType: 'PRODUCT' | 'SHOP',
+    targetId: string,
+  ): Promise<boolean> => {
+    const accountAtInvocation = accountId;
+    const ownerAtInvocation = favouriteOwnerKey(accountAtInvocation);
+    const authEpochAtInvocation = apiClient.getAuthEpoch();
+    if (resolvedOwnerKeyRef.current !== ownerAtInvocation) return Promise.resolve(false);
+
+    const previous = mutationQueueRef.current;
+    const next = previous
+      .catch(() => false)
+      .then(() => performToggle(
+        targetType,
+        targetId,
+        accountAtInvocation,
+        ownerAtInvocation,
+        authEpochAtInvocation,
+      ));
+    mutationQueueRef.current = next;
+    return next;
+  }, [accountId, performToggle]);
 
   return (
-    <FavouritesContext.Provider value={{ favourites, loading, isFavourite, toggleFavourite }}>
+    <FavouritesContext.Provider value={{
+      favourites: visibleFavourites,
+      loading: visibleLoading,
+      error: visibleError,
+      retry: reload,
+      isFavourite,
+      toggleFavourite,
+    }}>
       {children}
     </FavouritesContext.Provider>
   );

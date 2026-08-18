@@ -159,10 +159,10 @@ describe('customer service foundations', () => {
             pickupEnabled: false,
           }],
           page: 0,
-          pageSize: 100,
+          pageSize: 20,
           hasNext: false,
         } }))
-        .mockResolvedValueOnce(response({ body: { items: [], page: 0, pageSize: 100, hasNext: false } }))
+        .mockResolvedValueOnce(response({ body: { items: [], page: 0, pageSize: 20, hasNext: false } }))
         .mockResolvedValueOnce(response({ body: {
           providerId: 'provider/1',
           providerType: 'VET_HOSPITAL',
@@ -182,17 +182,20 @@ describe('customer service foundations', () => {
         latitude: 13.6288,
         longitude: 79.4192,
         discoveryRadiusKm: 10,
-      });
+      }, '517501');
       expect(providers[0]).toEqual({
         id: 'provider-1',
+        organizationId: 'org-1',
         name: 'Happy Paws',
         description: 'Veterinary clinic',
-        distanceKm: 0,
-        rating: 0,
-        ratingCount: 0,
+        capabilities: ['VETERINARY_CLINIC'],
+        pickupEnabled: false,
       });
+      expect(providers[0]).not.toHaveProperty('rating');
+      expect(providers[0]).not.toHaveProperty('distanceKm');
       expect(mockedFetch.mock.calls[0][0]).toContain('/api/v1/public/outlets?');
       expect(mockedFetch.mock.calls[0][0]).toContain('capability=VETERINARY_CLINIC');
+      expect(mockedFetch.mock.calls[0][0]).toContain('pincode=517501');
       expect(mockedFetch.mock.calls[1][0]).toContain('capability=VETERINARY_HOSPITAL');
 
       await expect(fetchProviderProfile('provider/1')).resolves.toMatchObject({
@@ -200,7 +203,7 @@ describe('customer service foundations', () => {
         ratingCount: 42,
       });
       expect(mockedFetch.mock.calls[2][0]).toBe(
-        'https://api.mypet.test//api/v1/providers/provider%2F1',
+        'https://api.mypet.test/api/v1/providers/provider%2F1',
       );
     });
 
@@ -214,8 +217,8 @@ describe('customer service foundations', () => {
       await expect(fetchProviders('PET_STORE', {
         id: 'tirupati-ap', city: 'Tirupati', state: 'Andhra Pradesh',
         latitude: 13.6288, longitude: 79.4192, discoveryRadiusKm: 10,
-      })).rejects.toThrow('PROVIDER_DISCOVERY_404');
-      await expect(fetchProviderProfile('provider-1')).rejects.toThrow('PROVIDER_PROFILE_403');
+      }, '517501')).rejects.toMatchObject({ status: 404 });
+      await expect(fetchProviderProfile('provider-1')).rejects.toMatchObject({ status: 403 });
     });
   });
 

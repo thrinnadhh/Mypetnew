@@ -32,7 +32,8 @@ const FavouritesContext = createContext<FavouritesContextType | null>(null);
 
 const GUEST_STORAGE_KEY = 'mypet_favourites_v4_guest';
 const ACCOUNT_STORAGE_PREFIX = 'mypet_favourites_v4_account:';
-const LEGACY_STORAGE_KEYS = ['mypet_favourites_v3_local', 'mypet_favourites_v2_guest'] as const;
+const LEGACY_GUEST_STORAGE_KEY = 'mypet_favourites_v2_guest';
+const AMBIGUOUS_LEGACY_STORAGE_KEY = 'mypet_favourites_v3_local';
 const FAVOURITE_PAGE_SIZE = 50;
 
 function accountStorageKey(accountId: string): string {
@@ -67,13 +68,14 @@ async function loadGuestLocal(migrateLegacy: boolean): Promise<FavouriteItem[]> 
   const current = await parseStored(GUEST_STORAGE_KEY);
   if (!migrateLegacy) return current;
 
-  const legacyGroups = await Promise.all(LEGACY_STORAGE_KEYS.map((key) => parseStored(key)));
-  const legacy = legacyGroups.flat();
-  if (legacy.length === 0) return current;
-
-  const merged = normalizeLocal([...current, ...legacy]);
-  await saveStored(GUEST_STORAGE_KEY, merged);
-  await AsyncStorage.multiRemove([...LEGACY_STORAGE_KEYS]);
+  // v2 was explicitly guest-owned and is safe to migrate. v3 was shared by
+  // guest and authenticated sessions, so its ownership cannot be proven after
+  // upgrade. Never surface or migrate v3 into a later account; remove it to
+  // fail closed against cross-account preference leakage.
+  const legacyGuest = await parseStored(LEGACY_GUEST_STORAGE_KEY);
+  const merged = normalizeLocal([...current, ...legacyGuest]);
+  if (legacyGuest.length > 0) await saveStored(GUEST_STORAGE_KEY, merged);
+  await AsyncStorage.multiRemove([LEGACY_GUEST_STORAGE_KEY, AMBIGUOUS_LEGACY_STORAGE_KEY]);
   return merged;
 }
 
@@ -86,7 +88,7 @@ async function saveAccountLocal(accountId: string, items: FavouriteItem[]): Prom
 }
 
 export async function clearLocalFavourites(accountId?: string): Promise<void> {
-  const keys = [GUEST_STORAGE_KEY, ...LEGACY_STORAGE_KEYS];
+  const keys = [GUEST_STORAGE_KEY, LEGACY_GUEST_STORAGE_KEY, AMBIGUOUS_LEGACY_STORAGE_KEY];
   if (accountId) keys.push(accountStorageKey(accountId));
   await AsyncStorage.multiRemove(keys);
 }
@@ -151,7 +153,6 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
     const isCurrent = () => (
       loadGenerationRef.current === generation
       && apiClient.getAuthEpoch() === authEpoch
-      && accountAtStart === accountId
     );
 
     try {
@@ -161,9 +162,8 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
         return;
       }
 
-      // Legacy v2/v3 local data predates account scoping and therefore cannot be
-      // safely attributed to a restored authenticated account. Only the explicit
-      // v4 guest bucket may migrate into the account that is signing in now.
+      // Only the explicit v4 guest bucket may migrate into the account that is
+      // signing in now. Account-local shop state stays keyed to that account.
       const [accountLocal, guestLocal, serverInitial] = await Promise.all([
         loadAccountLocal(accountAtStart),
         loadGuestLocal(false),
@@ -238,7 +238,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
     );
     const accountAtStart = accountId;
     const authEpoch = apiClient.getAuthEpoch();
-    const stillSameAccount = () => accountAtStart === accountId && apiClient.getAuthEpoch() === authEpoch;
+    const stillSameAccount = () => apiClient.getAuthEpoch() === authEpoch;
 
     try {
       if (targetType === 'SHOP') {

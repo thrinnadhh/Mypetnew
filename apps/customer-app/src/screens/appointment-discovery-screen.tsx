@@ -33,6 +33,7 @@ import {
   type DiscoverableProviderType,
   type ProviderSummary,
 } from '@/services/provider-discovery';
+import { fetchProviderProfile, type ProviderProfileKind } from '@/services/provider-profile';
 
 interface Props {
   providerType: DiscoverableProviderType;
@@ -57,6 +58,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
   const { requireAuth } = useAuthIntent();
   const { activeCity, selectedPincode } = useLocation();
   const serviceCapability: AppointmentServiceCapability = providerType === 'GROOMER' ? 'GROOMING' : 'VETERINARY';
+  const providerKind: ProviderProfileKind = providerType === 'GROOMER' ? 'groomer' : 'vet';
   const careEnabled = providerType === 'GROOMER'
     ? activeCity.featureFlags.allowGrooming
     : activeCity.featureFlags.allowVet;
@@ -107,7 +109,28 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
         pageSize: PROVIDER_DISCOVERY_PAGE_SIZE,
       });
       if (providerRequestGeneration.current !== generation) return;
-      setProviders(response.items);
+
+      let firstPageItems = response.items;
+      if (preferredProviderId && !firstPageItems.some((item) => item.id === preferredProviderId)) {
+        const directProvider = await fetchProviderProfile(preferredProviderId, {
+          kind: providerKind,
+          pincode: selectedPincode,
+        });
+        if (providerRequestGeneration.current !== generation) return;
+        if (!directProvider.organizationId) {
+          throw new Error('PROVIDER_IDENTITY_UNAVAILABLE');
+        }
+        firstPageItems = mergeUniqueProviders(firstPageItems, [{
+          id: directProvider.providerId,
+          organizationId: directProvider.organizationId,
+          name: directProvider.name,
+          description: directProvider.description ?? '',
+          capabilities: directProvider.capabilities,
+          pickupEnabled: directProvider.pickupEnabled,
+        }]);
+      }
+
+      setProviders(firstPageItems);
       setHasNext(response.hasNext);
       setNextPage(response.page + 1);
       setState('ready');
@@ -117,7 +140,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
       setHasNext(false);
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, [careEnabled, providerType, selectedPincode]);
+  }, [careEnabled, preferredProviderId, providerKind, providerType, selectedPincode]);
 
   useEffect(() => {
     void loadProviders();

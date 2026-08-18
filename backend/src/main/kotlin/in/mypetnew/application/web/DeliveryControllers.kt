@@ -81,7 +81,14 @@ class CustomerDeliveryApiController(
     ): Quote {
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
-        val address = customerData.getAddress(customer.actorId, request.addressId)
+        val address = try {
+            customerData.getAddress(customer.actorId, request.addressId)
+        } catch (error: DomainException) {
+            if (error.code == "RESOURCE_NOT_FOUND") {
+                throw DomainException("ADDRESS_NOT_FOUND", "The selected delivery address is unavailable")
+            }
+            throw error
+        }
         val outlet = providers.getOutlet(request.outletId)
         if (
             outlet.status != ProviderStatus.ACTIVE ||

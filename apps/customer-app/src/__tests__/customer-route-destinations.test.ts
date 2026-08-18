@@ -26,15 +26,20 @@ describe('customer route destination regressions', () => {
     expect(checkout).toMatch(/router\.replace\(`\/orders\/\$\{orderId\}`/);
   });
 
-  it('keeps the polished grooming catalogue as the primary route while preserving deep-linked slot booking', () => {
+  it('keeps grooming provider discovery canonical while preserving parameterized later-phase booking compatibility', () => {
     const groomRoute = source('src/app/groom.tsx');
-    const groomingCatalogue = source('src/app/grooming/index.tsx');
+    const groomingDiscovery = source('src/app/grooming/index.tsx');
     const providerDetail = source('src/screens/live-care-provider-detail-screen.tsx');
 
-    expect(groomRoute).toContain('GroomingServicesScreen');
+    expect(groomRoute).toContain('Redirect href="/grooming"');
     expect(groomRoute).toContain('AppointmentDiscoveryScreen');
-    expect(groomRoute).toContain('providerId');
-    expect(groomingCatalogue).toContain('/groom?providerId=');
+    expect(groomRoute).toContain('providerId || serviceId');
+    expect(groomingDiscovery).toContain("fetchProviderPage('GROOMER'");
+    expect(groomingDiscovery).toContain('/groomer/');
+    expect(groomingDiscovery).not.toContain('fetchAppointmentServices');
+    expect(groomingDiscovery).not.toContain('fetchAvailableAppointmentSlots');
+    expect(groomingDiscovery).not.toContain('Choose live slot');
+    expect(groomingDiscovery).not.toContain('Pay at provider');
     expect(providerDetail).toContain("const bookingRoute = kind === 'groomer' ? '/groom' : '/vet'");
     expect(providerDetail).toContain('router.canGoBack()');
     expect(providerDetail).toContain('router.replace(bookingRoute');

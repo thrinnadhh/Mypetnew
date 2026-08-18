@@ -23,8 +23,9 @@ describe('customer end-to-end regression contracts', () => {
     expect(product).toMatch(/fetchServiceableCommerceProduct/);
     expect(shop).toMatch(/fetchProductCatalogPage/);
     expect(shop).toMatch(/fetchServiceableProductStore/);
-    expect(favourites).toMatch(/fetchCommerceProduct/);
-    expect(favourites).toMatch(/fetchShopProfile/);
+    expect(favourites).toMatch(/fetchServiceableCommerceProduct/);
+    expect(favourites).toMatch(/fetchServiceableProductStore/);
+    expect(favourites).toMatch(/selectedPincode/);
     expect(discovery).toMatch(/fetchPublicOutlets/);
     expect(discovery).toMatch(/pincode: selectedPincode/);
     expect(catalog).toMatch(/CUSTOMER_CATALOG_PAGE_SIZE = 20/);
@@ -176,10 +177,13 @@ describe('customer end-to-end regression contracts', () => {
     expect(orders).toMatch(/error instanceof OrderHttpError/);
   });
 
-  it('checks server responses for favourites and push registration', () => {
+  it('uses the canonical authenticated API client for favourites and push registration', () => {
     const favourites = source('src/context/FavouritesContext.tsx');
     const notifications = source('src/hooks/usePushNotifications.ts');
-    expect(favourites).toMatch(/if \(!response\.ok\) throw await serverError/);
+    expect(favourites).toMatch(/apiClient\.get/);
+    expect(favourites).toMatch(/apiClient\.put/);
+    expect(favourites).toMatch(/apiClient\.delete/);
+    expect(favourites).toMatch(/apiClient\.getAuthEpoch/);
     expect(notifications).toMatch(/if \(!response\.ok\) throw await responseError/);
     expect(notifications).not.toContain('/api/v1/notifications/push-tokens');
     expect(notifications).not.toContain('getExpoPushTokenAsync');

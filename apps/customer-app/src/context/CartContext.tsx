@@ -23,6 +23,7 @@ interface CartContextType {
   addToCart: (product: CommerceProduct, variant?: ProductVariant, qty?: number) => boolean;
   removeFromCart: (productId: string, variantId?: string) => void;
   updateQuantity: (productId: string, variantId: string | undefined, qty: number) => void;
+  adjustQuantity: (productId: string, variantId: string | undefined, delta: number) => void;
   clearCart: () => Promise<void>;
   replaceCart: (nextItems: CartItem[]) => Promise<void>;
   revalidateCart: () => boolean;
@@ -468,6 +469,26 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     void persistCart(next).catch((error) => console.warn('Failed to save quantity', error));
   }, [applyCart, persistCart, removeFromCart]);
 
+  const adjustQuantity = useCallback((productId: string, variantId: string | undefined, delta: number) => {
+    const normalizedDelta = Number.isFinite(delta) ? Math.trunc(delta) : 0;
+    if (normalizedDelta === 0) return;
+
+    let updated = false;
+    const next = itemsRef.current.flatMap((item) => {
+      if (updated || !matchesCartLine(item, productId, variantId)) return [item];
+      updated = true;
+      const requested = item.quantity + normalizedDelta;
+      if (requested <= 0) return [];
+
+      const maxStock = stockForCartLine(item.product, item.selectedVariant);
+      const quantity = clampCartQuantity(requested, maxStock);
+      return quantity > 0 ? [{ ...item, quantity }] : [];
+    });
+    if (!updated) return;
+    applyCart(next);
+    void persistCart(next).catch((error) => console.warn('Failed to adjust quantity', error));
+  }, [applyCart, persistCart]);
+
   const revalidateCart = useCallback((): boolean => {
     const current = itemsRef.current;
     const { items: next, valid } = sanitizeCartItemsForRevalidation(current);
@@ -491,6 +512,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         addToCart,
         removeFromCart,
         updateQuantity,
+        adjustQuantity,
         clearCart,
         replaceCart,
         revalidateCart,

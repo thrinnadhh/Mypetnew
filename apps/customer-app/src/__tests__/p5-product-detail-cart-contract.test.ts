@@ -91,6 +91,12 @@ describe('P5 product detail + cart contract', () => {
       expect(result.changed).toBe(true);
     });
 
+    it('drops non-finite persisted quantities instead of restoring a ghost row', () => {
+      const result = sanitizeStoredCartItems([line(product(), Number.NaN)]);
+      expect(result.changed).toBe(true);
+      expect(result.items).toEqual([]);
+    });
+
     it('fails closed on an illegally persisted second merchant', () => {
       const second = product({
         id: '44444444-4444-4444-8444-444444444444',
@@ -143,6 +149,14 @@ describe('P5 product detail + cart contract', () => {
       expect(result.items[0].unitPrice).toBe(125);
       expect(result.items[0].quantity).toBe(2);
       expect(mockedFetchProduct).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111', '517501');
+    });
+
+    it('normalizes a non-finite in-memory quantity before checkout handoff', async () => {
+      mockedFetchProduct.mockResolvedValue(product());
+      const result = await revalidateCartItemsAgainstCatalog([line(product(), Number.NaN)], '517501');
+      expect(result.materialChanged).toBe(true);
+      expect(result.quantityChangedCount).toBe(1);
+      expect(result.items[0].quantity).toBe(1);
     });
 
     it('removes a listing that became VIEW_ONLY instead of allowing checkout handoff', async () => {
@@ -205,12 +219,17 @@ describe('P5 product detail + cart contract', () => {
       expect(cart).not.toMatch(/const\s+deliveryFee|const\s+grandTotal|Delivery Fee|Total Amount/);
     });
 
-    it('uses synchronous cart state and ordered writes for rapid cart mutations', () => {
+    it('guards rapid cart mutations, identity transitions and checkout revalidation races', () => {
       const cartContext = source('src/context/CartContext.tsx');
+      const cart = source('src/app/cart/index.tsx');
       expect(cartContext).toContain('itemsRef.current');
       expect(cartContext).toContain('writeQueueRef.current');
+      expect(cartContext).toContain('await writeQueueRef.current');
       expect(cartContext).toContain("'Replace Cart Items?'");
       expect(cartContext).toContain("'Choose your cart'");
+      expect(cart).toContain('checkoutGeneration');
+      expect(cart).toContain('disabled={checkingCart}');
+      expect(cart).toContain('checkoutGeneration.current !== generation');
     });
 
     it('keeps server quote/order paths authoritative for price, stock and medicine commerce rules', () => {

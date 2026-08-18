@@ -276,7 +276,7 @@ describe('T2B2 Contract Corrections', () => {
   });
 
   describe('fetchAllCatalogItems Multi-page Catalog Search Pagination', () => {
-    it('aggregates across page 0 (hasNext=true) and page 1 (hasNext=false) for live search', async () => {
+    it('aggregates across page 0 (hasNext=true) and page 1 (hasNext=false) for legacy callers', async () => {
       const page0: PageResponse<PublicListingSummary> = {
         items: [
           {
@@ -339,7 +339,7 @@ describe('T2B2 Contract Corrections', () => {
   });
 
   describe('fetchAllPublicOutlets Multi-page Pagination', () => {
-    it('aggregates across page 0 (hasNext=true) and page 1 (hasNext=false)', async () => {
+    it('aggregates across page 0 (hasNext=true) and page 1 (hasNext=false) for legacy callers', async () => {
       const page0: PageResponse<PublicOutletSummary> = {
         items: [
           {
@@ -397,8 +397,9 @@ describe('T2B2 Contract Corrections', () => {
       const providerProfileTemplate = source('src/components/commerce/ProviderProfileTemplate.tsx');
       const resilientImage = source('src/components/ui/resilient-remote-image.tsx');
 
-      expect(categoryTemplate).toMatch(/if \(!appConfig\.allowDemoMode\)\s*{\s*return undefined;/);
-      expect(providerProfileTemplate).toMatch(/if \(!appConfig\.allowDemoMode\)\s*{\s*return undefined;/);
+      const failClosedDemoGuard = /if \(!appConfig\.allowDemoMode\)\s*(?:\{\s*)?return undefined;/;
+      expect(categoryTemplate).toMatch(failClosedDemoGuard);
+      expect(providerProfileTemplate).toMatch(failClosedDemoGuard);
       expect(resilientImage).toMatch(/effectiveFallback = appConfig\.allowDemoMode/);
     });
 

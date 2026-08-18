@@ -9,11 +9,15 @@ describe('customer accessibility and device contract', () => {
   it('retains at least 48 px interactive targets', () => {
     const tokens = source('src/design/tokens.ts');
     const screenHeader = source('src/components/ui/screen-header.tsx');
+    const primaryButton = source('src/components/ui/primary-button.tsx');
 
     expect(tokens).toMatch(/touchTarget\s*=\s*48/);
     expect(screenHeader).toContain("import { touchTarget } from '@/design/tokens'");
     expect(screenHeader).toMatch(/width:\s*touchTarget/);
     expect(screenHeader).toMatch(/height:\s*touchTarget/);
+    expect(primaryButton).toContain("import { touchTarget } from '@/design/tokens'");
+    expect(primaryButton).toMatch(/minimumTouchTarget:\s*\{[\s\S]*minHeight:\s*touchTarget/);
+    expect(primaryButton).toMatch(/style,[\s\n]*styles\.minimumTouchTarget/);
   });
 
   it('supports bounded responsive screens and pull to refresh', () => {

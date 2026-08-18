@@ -7,15 +7,16 @@ import { AppIcon } from '@/components/app-icon';
 import { StateView } from '@/components/foundation/primitives';
 import { ThemedText } from '@/components/themed-text';
 import { PrimaryButton } from '@/components/ui/primary-button';
+import { useLocation } from '@/context/LocationContext';
 import { radii, shadows, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
+import type { CommerceProduct } from '@/services/catalog-data';
 import { isOfflineError } from '@/services/customer-profile';
 import {
   CUSTOMER_CATALOG_PAGE_SIZE,
   fetchProductCatalogPage,
   mergeUniqueProducts,
 } from '@/services/paginated-catalog';
-import type { CommerceProduct } from '@/services/catalog-data';
 
 const RECENT_SEARCHES_KEY = 'mypet_recent_searches_v1';
 const POPULAR_SEARCHES = ['Adult Dog Food', 'Cat Treats', 'Chew Toys', 'Grooming Shampoo'];
@@ -25,6 +26,7 @@ type SearchState = 'idle' | 'loading' | 'ready' | 'offline' | 'error';
 export default function UniversalSearchScreen() {
   const router = useRouter();
   const theme = useTheme();
+  const { selectedPincode } = useLocation();
   const params = useLocalSearchParams<{ q?: string | string[] }>();
   const initialParam = Array.isArray(params.q) ? params.q[0] : params.q;
 
@@ -108,6 +110,7 @@ export default function UniversalSearchScreen() {
       const response = await fetchProductCatalogPage({
         q: normalizedQuery,
         sort: 'NAME',
+        pincode: selectedPincode,
         page: 0,
         pageSize: CUSTOMER_CATALOG_PAGE_SIZE,
       });
@@ -124,7 +127,7 @@ export default function UniversalSearchScreen() {
       setErrorMessage(error instanceof Error ? error.message : 'Search is unavailable.');
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, [debouncedQuery, saveRecentSearch]);
+  }, [debouncedQuery, saveRecentSearch, selectedPincode]);
 
   useEffect(() => {
     void loadFirstPage();
@@ -141,6 +144,7 @@ export default function UniversalSearchScreen() {
       const response = await fetchProductCatalogPage({
         q: debouncedQuery,
         sort: 'NAME',
+        pincode: selectedPincode,
         page: nextPage,
         pageSize: CUSTOMER_CATALOG_PAGE_SIZE,
       });
@@ -161,7 +165,7 @@ export default function UniversalSearchScreen() {
         setLoadingMore(false);
       }
     }
-  }, [debouncedQuery, hasNext, nextPage]);
+  }, [debouncedQuery, hasNext, nextPage, selectedPincode]);
 
   const submitSearch = useCallback(() => {
     const clean = query.trim();
@@ -201,12 +205,12 @@ export default function UniversalSearchScreen() {
             value={query}
             onChangeText={setQuery}
             onSubmitEditing={submitSearch}
-            placeholder="Search products..."
+            placeholder={`Search products serving ${selectedPincode}...`}
             placeholderTextColor={theme.textSecondary}
             style={[styles.searchInput, { color: theme.text }]}
             autoFocus={!initialParam}
             returnKeyType="search"
-            accessibilityLabel="Search products"
+            accessibilityLabel={`Search products serving PIN ${selectedPincode}`}
           />
           {query.length > 0 ? (
             <Pressable
@@ -230,7 +234,7 @@ export default function UniversalSearchScreen() {
         <StateView
           kind={state}
           title={state === 'offline' ? 'You are offline' : 'Search unavailable'}
-          message={errorMessage ?? 'Could not search products right now.'}
+          message={errorMessage ?? `Could not search products serving PIN ${selectedPincode}.`}
           actionLabel="Retry"
           onAction={() => void loadFirstPage()}
         />
@@ -287,7 +291,7 @@ export default function UniversalSearchScreen() {
           <AppIcon name="search" color={theme.textSecondary} size={40} />
           <ThemedText style={{ fontWeight: '700', fontSize: 16, marginTop: 12 }}>No matching products</ThemedText>
           <ThemedText style={{ color: theme.textSecondary, fontSize: 13, marginTop: 4 }}>
-            Try another product name, brand, or category.
+            No matching public products currently serve PIN {selectedPincode}.
           </ThemedText>
         </View>
       ) : (

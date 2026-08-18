@@ -66,6 +66,8 @@ describe('P9 grooming discovery contract', () => {
     expect(screen).toContain('requestGeneration.current = generation');
     expect(screen).toContain('if (requestGeneration.current !== generation) return;');
     expect(screen).toContain('requestGeneration.current += 1');
+    expect(screen).toContain('firstPageLoadingRef.current = true');
+    expect(screen).toContain('|| firstPageLoadingRef.current');
     expect(screen).toContain('loadingMoreRef.current');
     expect(screen).toContain("loadFirstPage('refresh')");
     expect(screen).toContain('<RefreshControl');

@@ -201,12 +201,19 @@ describe('MyPet customer journey contracts', () => {
     expect(matrix).toContain('- **2.6.2 Recurring Orders & Subscriptions (`DEFERRED`)**:');
   });
 
-  it('keeps the core customer journeys free of mock appointment confirmation timers', () => {
+  it('keeps appointment booking real while grooming entry remains provider-first', () => {
     const discovery = source('src/screens/appointment-discovery-screen.tsx');
     const grooming = source('src/app/grooming/index.tsx');
+
     expect(discovery).not.toContain('setTimeout(');
     expect(discovery).not.toContain('mockAppointment');
+    expectAll(discovery, ['fetchAvailableAppointmentSlots', 'holdAppointmentSlot']);
+
     expect(grooming).not.toContain('setTimeout(');
-    expectAll(grooming, ['/groom', 'Choose live slot & pay']);
+    expectAll(grooming, ["fetchProviderPage('GROOMER'", '/groomer/', 'Grooming near you']);
+    expect(grooming).not.toContain('fetchAppointmentServices');
+    expect(grooming).not.toContain('fetchAvailableAppointmentSlots');
+    expect(grooming).not.toContain('Choose live slot & pay');
+    expect(grooming).not.toContain('Pay at provider');
   });
 });

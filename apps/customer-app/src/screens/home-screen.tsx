@@ -75,7 +75,7 @@ const HEALTH_ACTIONS: ShortcutItem[] = [
 const CATEGORIES: CategoryItem[] = [
   { id: 'stores', label: 'Pet Stores', route: '/stores', image: DEMO_MEDIA.store },
   { id: 'food', label: 'Food & Nutrition', route: '/category/food', image: DEMO_MEDIA.food },
-  { id: 'grooming', label: 'Grooming Services', route: '/groom', image: DEMO_MEDIA.grooming },
+  { id: 'grooming', label: 'Grooming Services', route: '/grooming', image: DEMO_MEDIA.grooming },
   { id: 'hospitals', label: 'Hospitals & Care', route: '/vet', image: DEMO_MEDIA.hospital },
   { id: 'treats', label: 'Treats & Chews', route: '/category/treats', image: DEMO_MEDIA.treats },
   { id: 'toys', label: 'Toys & Enrichment', route: '/category/toys', image: DEMO_MEDIA.toys },
@@ -126,7 +126,7 @@ const GROOMING_NEARBY: DiscoveryCardItem[] = [
     rating: '4.8',
     meta: '0.8 km away',
     metaIcon: 'location',
-    route: '/groom',
+    route: '/grooming',
   },
   {
     id: 'groom-2',
@@ -137,7 +137,7 @@ const GROOMING_NEARBY: DiscoveryCardItem[] = [
     rating: '4.6',
     meta: '1.9 km away',
     metaIcon: 'location',
-    route: '/groom',
+    route: '/grooming',
   },
 ];
 
@@ -383,9 +383,12 @@ export default function HomeScreen() {
     }
 
     setLiveDiscoveryState('loading');
+    const groomerPreview = activeCity.featureFlags.allowGrooming
+      ? fetchProviderPage('GROOMER', INITIAL_MARKET, selectedPincode, { page: 0, pageSize: HOME_PROVIDER_PREVIEW_SIZE })
+      : Promise.resolve({ items: [], page: 0, pageSize: HOME_PROVIDER_PREVIEW_SIZE, hasNext: false });
     void Promise.all([
       fetchProviderPage('PET_STORE', INITIAL_MARKET, selectedPincode, { page: 0, pageSize: HOME_PROVIDER_PREVIEW_SIZE }),
-      fetchProviderPage('GROOMER', INITIAL_MARKET, selectedPincode, { page: 0, pageSize: HOME_PROVIDER_PREVIEW_SIZE }),
+      groomerPreview,
       fetchProviderPage('VET_HOSPITAL', INITIAL_MARKET, selectedPincode, { page: 0, pageSize: HOME_PROVIDER_PREVIEW_SIZE }),
       fetchCommerceProducts({ category: 'food' }),
     ])
@@ -418,7 +421,7 @@ export default function HomeScreen() {
     return () => {
       active = false;
     };
-  }, [discoveryReloadKey, selectedPincode]);
+  }, [activeCity.featureFlags.allowGrooming, discoveryReloadKey, selectedPincode]);
 
   const liveStoreCards = useMemo(
     () => liveStores.map((provider) => liveProviderCard(provider, 'store', selectedPincode)),
@@ -589,7 +592,7 @@ export default function HomeScreen() {
                 <ActivityIndicator color={theme.primary} />
                 <View style={styles.discoveryStateCopy}>
                   <ThemedText style={[styles.discoveryStateTitle, { color: theme.text }]}>Finding nearby pet care</ThemedText>
-                  <ThemedText style={[styles.discoveryStateBody, { color: theme.textSecondary }]}>Checking active stores, groomers and veterinary providers serving PIN {selectedPincode}.</ThemedText>
+                  <ThemedText style={[styles.discoveryStateBody, { color: theme.textSecondary }]}>Checking active stores, {activeCity.featureFlags.allowGrooming ? 'groomers and ' : ''}veterinary providers serving PIN {selectedPincode}.</ThemedText>
                 </View>
               </View>
             ) : null}
@@ -636,8 +639,8 @@ export default function HomeScreen() {
             {liveStoreCards.length > 0 ? (
               <HorizontalCardSection title="Pet Stores Near You 🛍️" items={liveStoreCards} actionLabel="View stores" onAction={() => router.push('/stores' as never)} />
             ) : null}
-            {liveGroomerCards.length > 0 ? (
-              <HorizontalCardSection title="Grooming Near You ✂️" items={liveGroomerCards} actionLabel="View groomers" onAction={() => router.push('/groom' as never)} />
+            {activeCity.featureFlags.allowGrooming && liveGroomerCards.length > 0 ? (
+              <HorizontalCardSection title="Grooming Near You ✂️" items={liveGroomerCards} actionLabel="View groomers" onAction={() => router.push('/grooming' as never)} />
             ) : null}
             {liveVetCards.length > 0 ? (
               <HorizontalCardSection title="Veterinary Care Near You 🏥" items={liveVetCards} actionLabel="View hospitals" onAction={() => router.push('/vet' as never)} />
@@ -701,7 +704,9 @@ export default function HomeScreen() {
         ) : (
           <>
             <HorizontalCardSection title="Food & Nutrition Nearby 🏆" items={FOOD_AND_NUTRITION} actionLabel="View all" onAction={() => router.push('/category/food' as never)} />
-            <HorizontalCardSection title="Grooming Nearby ✂️" items={GROOMING_NEARBY} actionLabel="View spas" onAction={() => router.push('/groom' as never)} />
+            {activeCity.featureFlags.allowGrooming ? (
+              <HorizontalCardSection title="Grooming Nearby ✂️" items={GROOMING_NEARBY} actionLabel="View spas" onAction={() => router.push('/grooming' as never)} />
+            ) : null}
             <HorizontalCardSection title="Hospitals & Care Nearby 🏥" items={HOSPITALS_AND_CARE} actionLabel="View hospitals" onAction={() => router.push('/vet' as never)} />
           </>
         )}

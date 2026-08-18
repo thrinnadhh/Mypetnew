@@ -1,8 +1,7 @@
-import { useLocalSearchParams } from 'expo-router';
+import { Redirect, useLocalSearchParams } from 'expo-router';
 import React from 'react';
 
 import AppointmentDiscoveryScreen from '@/screens/appointment-discovery-screen';
-import GroomingServicesScreen from './grooming/index';
 
 function single(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -16,6 +15,8 @@ export default function GroomingRoute() {
   const providerId = single(params.providerId);
   const serviceId = single(params.serviceId);
 
+  // Preserve the existing parameterized appointment handoff for later phases,
+  // but make provider discovery the only canonical no-parameter grooming entry.
   if (providerId || serviceId) {
     return (
       <AppointmentDiscoveryScreen
@@ -26,5 +27,5 @@ export default function GroomingRoute() {
     );
   }
 
-  return <GroomingServicesScreen />;
+  return <Redirect href="/grooming" />;
 }

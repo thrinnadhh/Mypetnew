@@ -1,201 +1,324 @@
 import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 
-import { FilterChip, StateView } from '@/components/foundation/primitives';
+import { AppIcon } from '@/components/app-icon';
+import { StateView } from '@/components/foundation/primitives';
 import { ScreenShell } from '@/components/foundation/screen-shell';
 import { ThemedText } from '@/components/themed-text';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { ScreenHeader } from '@/components/ui/screen-header';
-import { StatusBadge } from '@/components/ui/status-badge';
 import { INITIAL_MARKET } from '@/config/markets';
 import { BottomTabInset } from '@/constants/theme';
 import { useLocation } from '@/context/LocationContext';
-import { radii, shadows, spacing, typography } from '@/design/tokens';
+import { radii, shadows, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
-import {
-  fetchAppointmentServices,
-  type AppointmentServiceOption,
-} from '@/services/appointment-booking';
 import { isOfflineError } from '@/services/customer-profile';
-import { fetchProviders } from '@/services/provider-discovery';
+import {
+  fetchProviderPage,
+  mergeUniqueProviders,
+  PROVIDER_DISCOVERY_PAGE_SIZE,
+  type ProviderSummary,
+} from '@/services/provider-discovery';
 
-type DurationFilter = 'ALL' | 'QUICK' | 'STANDARD' | 'EXTENDED';
-type LoadState = 'loading' | 'ready' | 'offline' | 'error';
+type LoadState = 'loading' | 'ready' | 'offline' | 'error' | 'feature_disabled' | 'invalid_location';
+type RefreshError = 'offline' | 'error' | null;
 
-const FILTERS: ReadonlyArray<{ id: DurationFilter; label: string }> = [
-  { id: 'ALL', label: 'All Services' },
-  { id: 'QUICK', label: 'Quick Care' },
-  { id: 'STANDARD', label: '30–60 mins' },
-  { id: 'EXTENDED', label: '60+ mins' },
-];
+const SERVICE_PIN_PATTERN = /^[1-9][0-9]{5}$/;
 
-function matchesDuration(service: AppointmentServiceOption, filter: DurationFilter): boolean {
-  if (filter === 'ALL') return true;
-  if (filter === 'QUICK') return service.durationMinutes < 30;
-  if (filter === 'STANDARD') return service.durationMinutes >= 30 && service.durationMinutes <= 60;
-  return service.durationMinutes > 60;
-}
-
-export default function GroomingServicesScreen() {
+export default function GroomingDiscoveryScreen() {
   const router = useRouter();
   const theme = useTheme();
-  const { activeCity, selectedPincode } = useLocation();
-  const [filterCategory, setFilterCategory] = useState<DurationFilter>('ALL');
-  const [services, setServices] = useState<AppointmentServiceOption[]>([]);
+  const { activeCity, selectedPincode, openLocationModal } = useLocation();
+  const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [state, setState] = useState<LoadState>('loading');
+  const [hasNext, setHasNext] = useState(false);
+  const [nextPage, setNextPage] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<RefreshError>(null);
+  const requestGeneration = useRef(0);
+  const firstPageLoadingRef = useRef(false);
+  const loadingMoreRef = useRef(false);
 
-  const load = useCallback(async () => {
-    setState('loading');
-    setServices([]);
-    if (!activeCity.featureFlags.allowGrooming) {
-      setState('ready');
+  const goBack = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
       return;
     }
-    if (!/^[1-9][0-9]{5}$/.test(selectedPincode)) {
-      setState('error');
+    router.replace('/(tabs)/home' as never);
+  }, [router]);
+
+  const loadFirstPage = useCallback(async (mode: 'initial' | 'refresh' = 'initial') => {
+    const generation = requestGeneration.current + 1;
+    requestGeneration.current = generation;
+    firstPageLoadingRef.current = true;
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
+    setLoadMoreError(null);
+    setRefreshError(null);
+
+    if (!activeCity.featureFlags.allowGrooming) {
+      firstPageLoadingRef.current = false;
+      setProviders([]);
+      setHasNext(false);
+      setNextPage(1);
+      setRefreshing(false);
+      setState('feature_disabled');
       return;
+    }
+    if (!SERVICE_PIN_PATTERN.test(selectedPincode)) {
+      firstPageLoadingRef.current = false;
+      setProviders([]);
+      setHasNext(false);
+      setNextPage(1);
+      setRefreshing(false);
+      setState('invalid_location');
+      return;
+    }
+
+    if (mode === 'initial') {
+      setProviders([]);
+      setHasNext(false);
+      setNextPage(1);
+      setState('loading');
+    } else {
+      setRefreshing(true);
     }
 
     try {
-      const providers = await fetchProviders('GROOMER', INITIAL_MARKET, selectedPincode);
-      const groups = await Promise.all(
-        providers.map((provider) => fetchAppointmentServices({
-          providerId: provider.id,
-          capability: 'GROOMING',
-        })),
-      );
-      const unique = new Map<string, AppointmentServiceOption>();
-      for (const service of groups.flat()) unique.set(service.id, service);
-      setServices([...unique.values()].sort((left, right) => left.name.localeCompare(right.name)));
+      const response = await fetchProviderPage('GROOMER', INITIAL_MARKET, selectedPincode, {
+        page: 0,
+        pageSize: PROVIDER_DISCOVERY_PAGE_SIZE,
+      });
+      if (requestGeneration.current !== generation) return;
+      setProviders(mergeUniqueProviders([], response.items));
+      setHasNext(response.hasNext);
+      setNextPage(response.page + 1);
       setState('ready');
     } catch (error) {
-      setState(isOfflineError(error) ? 'offline' : 'error');
+      if (requestGeneration.current !== generation) return;
+      const failure = isOfflineError(error) ? 'offline' : 'error';
+      if (mode === 'refresh') {
+        setRefreshError(failure);
+        setState('ready');
+      } else {
+        setProviders([]);
+        setHasNext(false);
+        setNextPage(1);
+        setState(failure);
+      }
+    } finally {
+      if (requestGeneration.current === generation) {
+        firstPageLoadingRef.current = false;
+        setRefreshing(false);
+      }
     }
   }, [activeCity.featureFlags.allowGrooming, selectedPincode]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadFirstPage('initial');
+    return () => {
+      requestGeneration.current += 1;
+      firstPageLoadingRef.current = false;
+      loadingMoreRef.current = false;
+    };
+  }, [loadFirstPage]);
 
-  const filteredServices = useMemo(
-    () => services.filter((service) => matchesDuration(service, filterCategory)),
-    [filterCategory, services],
-  );
+  const loadNextPage = useCallback(async () => {
+    if (
+      state !== 'ready'
+      || refreshing
+      || firstPageLoadingRef.current
+      || !hasNext
+      || loadingMoreRef.current
+      || !SERVICE_PIN_PATTERN.test(selectedPincode)
+    ) return;
+
+    const generation = requestGeneration.current;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    setLoadMoreError(null);
+
+    try {
+      const response = await fetchProviderPage('GROOMER', INITIAL_MARKET, selectedPincode, {
+        page: nextPage,
+        pageSize: PROVIDER_DISCOVERY_PAGE_SIZE,
+      });
+      if (requestGeneration.current !== generation) return;
+      setProviders((current) => mergeUniqueProviders(current, response.items));
+      setHasNext(response.hasNext);
+      setNextPage(response.page + 1);
+    } catch (error) {
+      if (requestGeneration.current !== generation) return;
+      setLoadMoreError(
+        isOfflineError(error)
+          ? 'Reconnect to load more groomers serving this PIN.'
+          : 'Could not load more groomers serving this PIN.',
+      );
+    } finally {
+      if (requestGeneration.current === generation) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
+    }
+  }, [hasNext, nextPage, refreshing, selectedPincode, state]);
+
+  const openProvider = useCallback((providerId: string) => {
+    router.push(`/groomer/${encodeURIComponent(providerId)}` as never);
+  }, [router]);
+
+  const subtitle = SERVICE_PIN_PATTERN.test(selectedPincode)
+    ? `Active grooming providers serving PIN ${selectedPincode}`
+    : 'Choose an active service PIN to discover groomers';
 
   return (
     <ScreenShell
       scroll={false}
       header={(
         <ScreenHeader
-          title="Grooming Services & Spa"
-          subtitle={/^[1-9][0-9]{5}$/.test(selectedPincode)
-            ? `Live services serving PIN ${selectedPincode}`
-            : 'Live serviceability unavailable'}
+          title="Grooming near you"
+          subtitle={subtitle}
+          onBack={goBack}
+          backLabel="Back from grooming discovery"
         />
       )}
       contentContainerStyle={styles.shellContent}
-      testID="grooming-services-screen"
+      testID="grooming-discovery-screen"
     >
-      <FlatList
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        data={FILTERS}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.filterList}
-        style={styles.filterRow}
-        renderItem={({ item }) => (
-          <FilterChip
-            label={item.label}
-            selected={filterCategory === item.id}
-            onPress={() => setFilterCategory(item.id)}
-          />
-        )}
-      />
-
       {state === 'loading' ? (
-        <StateView kind="loading" title="Loading grooming services" message="Checking live provider availability." />
+        <StateView
+          kind="loading"
+          title="Finding serviceable groomers"
+          message={`Checking active grooming providers serving PIN ${selectedPincode}.`}
+        />
       ) : null}
+
+      {state === 'feature_disabled' ? (
+        <StateView
+          kind="empty"
+          title={`Grooming is not available in ${activeCity.displayName}`}
+          message="Choose another service city to discover active grooming providers."
+          actionLabel="Change location"
+          onAction={openLocationModal}
+        />
+      ) : null}
+
+      {state === 'invalid_location' ? (
+        <StateView
+          kind="error"
+          title="Select a service PIN"
+          message="A valid active six-digit service PIN is required before MyPet can check grooming serviceability."
+          actionLabel="Choose location"
+          onAction={openLocationModal}
+        />
+      ) : null}
+
       {state === 'offline' ? (
         <StateView
           kind="offline"
           title="You're offline"
-          message="Reconnect to load current grooming services and prices."
+          message="Reconnect to load the current groomers serving your selected PIN."
           actionLabel="Retry"
-          onAction={() => void load()}
+          onAction={() => void loadFirstPage('initial')}
         />
       ) : null}
+
       {state === 'error' ? (
         <StateView
           kind="error"
-          title="Grooming services unavailable"
-          message="Select a valid live service PIN and retry."
+          title="Groomers could not load"
+          message="MyPet could not verify current grooming providers for this service PIN."
           actionLabel="Retry"
-          onAction={() => void load()}
-        />
-      ) : null}
-      {state === 'ready' && !activeCity.featureFlags.allowGrooming ? (
-        <StateView
-          kind="empty"
-          title={`Grooming is not enabled in ${activeCity.displayName}`}
-          message="Choose another service city to see bookable grooming services."
-        />
-      ) : null}
-      {state === 'ready' && activeCity.featureFlags.allowGrooming && services.length === 0 ? (
-        <StateView
-          kind="empty"
-          title="No serviceable grooming services yet"
-          message={`Groomers serving PIN ${selectedPincode} have not published bookable services yet.`}
-        />
-      ) : null}
-      {state === 'ready' && services.length > 0 && filteredServices.length === 0 ? (
-        <StateView
-          kind="empty"
-          title="No services in this duration"
-          message="Choose another filter to see currently published grooming services."
-          actionLabel="Show all"
-          onAction={() => setFilterCategory('ALL')}
+          onAction={() => void loadFirstPage('initial')}
         />
       ) : null}
 
-      {state === 'ready' && filteredServices.length > 0 ? (
+      {state === 'ready' ? (
         <FlatList
-          style={styles.serviceList}
-          data={filteredServices}
+          data={providers}
           keyExtractor={(item) => item.id}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.listContent}
-          renderItem={({ item }) => (
-            <View
-              style={[
-                styles.serviceCard,
-                shadows.raised,
-                { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-              ]}
-            >
-              <View style={styles.cardHeader}>
-                <View style={styles.cardCopy}>
-                  <StatusBadge label={`⏱ ${item.durationMinutes} mins`} color={theme.primary} />
-                  <ThemedText style={[styles.serviceTitle, { color: theme.text }]}>{item.name}</ThemedText>
-                  <ThemedText numberOfLines={3} style={[styles.description, { color: theme.textSecondary }]}>
-                    {item.description || 'Published by an active MyPet grooming provider.'}
-                  </ThemedText>
-                </View>
-                <ThemedText style={[styles.price, { color: theme.primary }]}>₹{item.price.toFixed(0)}</ThemedText>
-              </View>
-
-              <View style={styles.inclusionGrid}>
-                <StatusBadge label="✓ Live price" color={theme.success} />
-                <StatusBadge label="✓ Live slots" color={theme.success} />
-                <StatusBadge label="✓ Pay at provider" color={theme.success} />
-              </View>
-
+          contentContainerStyle={providers.length === 0 ? styles.emptyListContent : styles.listContent}
+          refreshControl={(
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void loadFirstPage('refresh')}
+            />
+          )}
+          ListHeaderComponent={refreshError ? (
+            <View style={[styles.notice, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+              <ThemedText style={[styles.noticeTitle, { color: theme.text }]}>Refresh failed</ThemedText>
+              <ThemedText style={[styles.noticeBody, { color: theme.textSecondary }]}>
+                {refreshError === 'offline'
+                  ? 'Reconnect and retry. The previous verified list is still shown.'
+                  : 'Current provider data could not be refreshed. The previous verified list is still shown.'}
+              </ThemedText>
               <PrimaryButton
-                label="Choose live slot & pay"
-                onPress={() => router.push(`/groom?providerId=${encodeURIComponent(item.providerId)}&serviceId=${encodeURIComponent(item.id)}` as never)}
+                label="Retry refresh"
+                variant="secondary"
+                onPress={() => void loadFirstPage('refresh')}
               />
             </View>
+          ) : null}
+          ListEmptyComponent={(
+            <StateView
+              kind="empty"
+              title="No groomers serve this PIN yet"
+              message={`No active GROOMING provider currently serves PIN ${selectedPincode}. Try another supported service location.`}
+              actionLabel="Change location"
+              onAction={openLocationModal}
+            />
           )}
+          renderItem={({ item }) => (
+            <Pressable
+              onPress={() => openProvider(item.id)}
+              accessibilityRole="button"
+              accessibilityLabel={`${item.name}. ${item.description || 'Pet grooming'}. Serves PIN ${selectedPincode}. Open groomer details.`}
+              style={({ pressed }) => [
+                styles.providerCard,
+                shadows.card,
+                { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+                pressed && styles.pressed,
+              ]}
+            >
+              <View style={[styles.iconWrap, { backgroundColor: theme.primarySoft }]}>
+                <AppIcon name="groom" color={theme.primary} size={28} />
+              </View>
+              <View style={styles.providerCopy}>
+                <ThemedText style={[styles.providerName, { color: theme.text }]}>{item.name}</ThemedText>
+                <ThemedText style={[styles.description, { color: theme.textSecondary }]}>
+                  {item.description || 'Pet grooming'}
+                </ThemedText>
+                <ThemedText style={[styles.serviceability, { color: theme.primary }]}>Serves PIN {selectedPincode}</ThemedText>
+              </View>
+              <AppIcon name="chevron" color={theme.textSecondary} size={18} />
+            </Pressable>
+          )}
+          ListFooterComponent={providers.length > 0 ? (
+            <View style={styles.paginationFooter}>
+              {loadMoreError ? (
+                <>
+                  <ThemedText style={[styles.noticeBody, { color: theme.textSecondary }]}>{loadMoreError}</ThemedText>
+                  <PrimaryButton
+                    label="Retry loading more"
+                    variant="secondary"
+                    onPress={() => void loadNextPage()}
+                  />
+                </>
+              ) : hasNext ? (
+                <PrimaryButton
+                  label="Load more groomers"
+                  variant="secondary"
+                  loading={loadingMore}
+                  onPress={() => void loadNextPage()}
+                />
+              ) : (
+                <ThemedText style={[styles.endLabel, { color: theme.textSecondary }]}>All serviceable groomers loaded.</ThemedText>
+              )}
+            </View>
+          ) : null}
         />
       ) : null}
     </ScreenShell>
@@ -203,16 +326,27 @@ export default function GroomingServicesScreen() {
 }
 
 const styles = StyleSheet.create({
-  shellContent: { paddingHorizontal: spacing.x4, paddingTop: spacing.x3, gap: spacing.x3 },
-  filterRow: { flexGrow: 0, minHeight: 44 },
-  filterList: { gap: spacing.x2, paddingRight: spacing.x6 },
-  serviceList: { flex: 1 },
-  listContent: { gap: spacing.x4, paddingBottom: BottomTabInset + spacing.x8 },
-  serviceCard: { padding: spacing.x4, borderRadius: radii.card, borderWidth: StyleSheet.hairlineWidth, gap: spacing.x3 },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.x3 },
-  cardCopy: { flex: 1, minWidth: 0, gap: spacing.x1 },
-  serviceTitle: { ...typography.headline, fontSize: 16, lineHeight: 22, fontWeight: '700' },
-  description: { fontSize: 13, lineHeight: 19 },
-  price: { ...typography.headline, fontSize: 20, fontWeight: '900' },
-  inclusionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x2 },
+  shellContent: { flex: 1, paddingHorizontal: spacing.x4, paddingTop: spacing.x3 },
+  listContent: { gap: spacing.x3, paddingBottom: BottomTabInset + spacing.x8 },
+  emptyListContent: { flexGrow: 1, paddingBottom: BottomTabInset + spacing.x8 },
+  providerCard: {
+    minHeight: 104,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radii.card,
+    padding: spacing.x4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.x3,
+  },
+  iconWrap: { width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, alignItems: 'center', justifyContent: 'center' },
+  providerCopy: { flex: 1, minWidth: 0, gap: spacing.x1 },
+  providerName: { ...typography.headline, fontSize: 17, lineHeight: 23, fontWeight: '800', flexShrink: 1 },
+  description: { fontSize: 13, lineHeight: 19, flexShrink: 1 },
+  serviceability: { fontSize: 12, lineHeight: 18, fontWeight: '800' },
+  notice: { borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card, padding: spacing.x3, gap: spacing.x2, marginBottom: spacing.x3 },
+  noticeTitle: { fontSize: 14, lineHeight: 20, fontWeight: '800' },
+  noticeBody: { fontSize: 12, lineHeight: 18 },
+  paginationFooter: { gap: spacing.x2, paddingVertical: spacing.x3 },
+  endLabel: { minHeight: touchTarget, textAlign: 'center', textAlignVertical: 'center', fontSize: 12, lineHeight: 18 },
+  pressed: { opacity: 0.82 },
 });

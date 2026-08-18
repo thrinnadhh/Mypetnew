@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAuth } from '@/context/AuthContext';
+import { apiClient } from '@/services/api-client';
 import { cancelCustomerOrder } from '@/services/customer-order-detail';
 import {
   fetchCustomerOrderPage,
+  type CustomerOrderCursor,
   type CustomerOrderSummaryRecord,
   type OrderTabCategory,
 } from '@/services/customer-order-list';
@@ -15,95 +17,109 @@ const PAGE_SIZE = 20;
 
 export function useOrders() {
   const { user, session } = useAuth();
+  const accountId = session?.accountId ?? null;
+  const accessToken = session?.accessToken ?? null;
   const [orders, setOrders] = useState<CustomerOrderSummaryRecord[]>([]);
   const [state, setState] = useState<OrdersStateKind>('idle');
   const [activeTab, setActiveTab] = useState<OrderTabCategory>('active');
-  const [searchQuery, setSearchQuery] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<'offline' | 'error' | null>(null);
   const [nextPage, setNextPage] = useState(1);
+  const [nextCursor, setNextCursor] = useState<CustomerOrderCursor | null>(null);
   const [hasNext, setHasNext] = useState(false);
+  const loadGenerationRef = useRef(0);
 
   const load = useCallback(async () => {
-    if (!user || !session) return;
+    if (!accountId || !accessToken) return;
+    const generation = ++loadGenerationRef.current;
+    const authEpoch = apiClient.getAuthEpoch();
     setState('loading');
+    setLoadMoreError(null);
     try {
-      const page = await fetchCustomerOrderPage(session.accessToken, 0, PAGE_SIZE);
+      const page = await fetchCustomerOrderPage(accessToken, 0, PAGE_SIZE, activeTab);
+      if (generation !== loadGenerationRef.current || authEpoch !== apiClient.getAuthEpoch()) return;
       setOrders(page.items);
       setNextPage(1);
+      setNextCursor(page.nextCursor);
       setHasNext(page.hasNext);
       setState('ready');
     } catch (error) {
+      if (generation !== loadGenerationRef.current || authEpoch !== apiClient.getAuthEpoch()) return;
+      setOrders([]);
+      setHasNext(false);
+      setNextCursor(null);
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, [session, user]);
+  }, [accessToken, accountId, activeTab]);
 
   const loadMore = useCallback(async () => {
-    if (!user || !session || !hasNext || loadingMore) return;
+    if (!accountId || !accessToken || !hasNext || !nextCursor || loadingMore) return;
+    const generation = loadGenerationRef.current;
+    const authEpoch = apiClient.getAuthEpoch();
+    const cursorAtStart = nextCursor;
+    const pageAtStart = nextPage;
     setLoadingMore(true);
+    setLoadMoreError(null);
     try {
-      const page = await fetchCustomerOrderPage(session.accessToken, nextPage, PAGE_SIZE);
+      const page = await fetchCustomerOrderPage(accessToken, pageAtStart, PAGE_SIZE, activeTab, cursorAtStart);
+      if (generation !== loadGenerationRef.current || authEpoch !== apiClient.getAuthEpoch()) return;
       setOrders((current) => [
         ...current,
         ...page.items.filter((item) => !current.some((existing) => existing.id === item.id)),
       ]);
-      setNextPage((current) => current + 1);
+      setNextPage(pageAtStart + 1);
+      setNextCursor(page.nextCursor);
       setHasNext(page.hasNext);
     } catch (error) {
-      setState(isOfflineError(error) ? 'offline' : 'error');
+      if (generation !== loadGenerationRef.current || authEpoch !== apiClient.getAuthEpoch()) return;
+      setLoadMoreError(isOfflineError(error) ? 'offline' : 'error');
     } finally {
-      setLoadingMore(false);
+      if (generation === loadGenerationRef.current && authEpoch === apiClient.getAuthEpoch()) {
+        setLoadingMore(false);
+      }
     }
-  }, [hasNext, loadingMore, nextPage, session, user]);
+  }, [accessToken, accountId, activeTab, hasNext, loadingMore, nextCursor, nextPage]);
 
   useEffect(() => {
-    if (user && session) void load();
-  }, [load, session, user]);
-
-  const filteredOrders = useMemo(() => {
-    return orders.filter((order) => {
-      const isPast = ['DELIVERED', 'COMPLETED', 'CANCELLED', 'REJECTED'].includes(order.status);
-
-      if (activeTab === 'past' && !isPast) return false;
-      if (activeTab === 'active' && isPast) return false;
-
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase().trim();
-        const matchProvider = order.providerName.toLowerCase().includes(query);
-        const matchId = order.id.toLowerCase().includes(query);
-        if (!matchProvider && !matchId) return false;
-      }
-
-      return true;
-    });
-  }, [activeTab, orders, searchQuery]);
+    if (!accountId || !accessToken || !user) {
+      loadGenerationRef.current += 1;
+      setOrders([]);
+      setState('idle');
+      setHasNext(false);
+      setNextCursor(null);
+      setNextPage(1);
+      setLoadingMore(false);
+      setLoadMoreError(null);
+      return;
+    }
+    void load();
+  }, [accessToken, accountId, load, user]);
 
   const cancel = useCallback(
     async (orderId: string, reason: string) => {
-      if (!session) return;
+      if (!accessToken) return;
       setActionLoading(true);
       try {
-        await cancelCustomerOrder(orderId, reason, session.accessToken);
+        await cancelCustomerOrder(orderId, reason, accessToken);
         await load();
       } finally {
         setActionLoading(false);
       }
     },
-    [load, session],
+    [accessToken, load],
   );
 
   return {
     user,
     session,
     orders,
-    filteredOrders,
     state,
     activeTab,
     setActiveTab,
-    searchQuery,
-    setSearchQuery,
     actionLoading,
     loadingMore,
+    loadMoreError,
     hasNext,
     reload: load,
     loadMore,

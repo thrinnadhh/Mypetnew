@@ -55,14 +55,30 @@ export function SearchField(props: { value: string; onChangeText: (value: string
   );
 }
 
-export function FilterChip({ label, selected, onPress }: { label: string; selected?: boolean; onPress: () => void }) {
+export function FilterChip({
+  label,
+  selected,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  selected?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
   const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
       accessibilityRole="button"
-      accessibilityState={{ selected }}
-      style={({ pressed }) => [styles.chip, { backgroundColor: selected ? theme.primarySoft : theme.backgroundElement, borderColor: selected ? theme.primary : theme.border }, pressed && styles.pressed]}
+      accessibilityState={{ selected, disabled }}
+      style={({ pressed }) => [
+        styles.chip,
+        { backgroundColor: selected ? theme.primarySoft : theme.backgroundElement, borderColor: selected ? theme.primary : theme.border },
+        disabled && styles.disabled,
+        pressed && !disabled && styles.pressed,
+      ]}
     >
       <ThemedText type="small" style={{ color: selected ? theme.primary : theme.text, fontWeight: '700' }}>{label}</ThemedText>
     </Pressable>

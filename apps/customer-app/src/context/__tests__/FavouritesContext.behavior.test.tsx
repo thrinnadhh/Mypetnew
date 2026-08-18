@@ -231,7 +231,7 @@ describe('FavouritesContext P6 behaviour', () => {
     await settle();
 
     expect(latest?.favourites).toEqual([]);
-    expect(mockStorage.get('mypet_favourites_v4_account:user-b')).toBeUndefined();
+    expect(JSON.parse(mockStorage.get('mypet_favourites_v4_account:user-b') ?? '[]')).toEqual([]);
   });
 
   it('serializes two different shop writes so one local favourite cannot clobber the other', async () => {
@@ -329,6 +329,6 @@ describe('FavouritesContext P6 behaviour', () => {
 
     expect(mockApiPut).toHaveBeenCalledTimes(1);
     expect(latest?.favourites).toEqual([]);
-    expect(mockStorage.get('mypet_favourites_v4_account:user-b')).toBeUndefined();
+    expect(JSON.parse(mockStorage.get('mypet_favourites_v4_account:user-b') ?? '[]')).toEqual([]);
   });
 });

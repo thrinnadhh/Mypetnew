@@ -1,4 +1,4 @@
-import { apiClient } from '@/services/api-client';
+import { ApiError, apiClient } from '@/services/api-client';
 
 export type ProviderProfileKind = 'store' | 'groomer' | 'vet';
 
@@ -107,11 +107,29 @@ function mapLegacyProvider(value: LegacyProviderProfileDto): ProviderProfile {
   };
 }
 
+async function fetchPublicOutlet(
+  providerId: string,
+  pincode?: string,
+  capability?: string,
+): Promise<PublicOutletDto> {
+  const params = new URLSearchParams();
+  if (pincode) params.set('pincode', pincode);
+  if (capability) params.set('capability', capability);
+  const query = params.toString();
+  return apiClient.get<PublicOutletDto>(
+    `/api/v1/public/outlets/${encodeURIComponent(providerId)}${query ? `?${query}` : ''}`,
+  );
+}
+
 export async function fetchProviderProfile(
   providerId: string,
   options: { kind?: ProviderProfileKind; pincode?: string } = {},
 ): Promise<ProviderProfile> {
   if (!UUID_PATTERN.test(providerId)) {
+    if (options.pincode !== undefined) {
+      requireValidServicePincode(options.pincode);
+      throw new Error('PROVIDER_SERVICEABILITY_UNVERIFIABLE');
+    }
     const legacy = await apiClient.get<LegacyProviderProfileDto>(
       `/api/v1/providers/${encodeURIComponent(providerId)}`,
     );
@@ -130,21 +148,33 @@ export async function fetchProviderProfile(
     return mapped;
   }
 
-  const params = new URLSearchParams();
-  if (options.pincode !== undefined) params.set('pincode', requireValidServicePincode(options.pincode));
-  if (options.kind && options.kind !== 'vet') {
-    params.set('capability', requiredCapabilities(options.kind)[0]);
+  if (!options.kind) {
+    const pincode = options.pincode === undefined
+      ? undefined
+      : requireValidServicePincode(options.pincode);
+    return mapPublicOutlet(await fetchPublicOutlet(providerId, pincode));
   }
-  const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  const value = await apiClient.get<PublicOutletDto>(
-    `/api/v1/public/outlets/${encodeURIComponent(providerId)}${suffix}`,
-  );
 
-  if (options.kind) {
-    const expected = requiredCapabilities(options.kind);
-    if (!expected.some((capability) => value.capabilities.includes(capability))) {
-      throw new Error('PROVIDER_CAPABILITY_MISMATCH');
+  const pincode = requireValidServicePincode(options.pincode);
+  const expected = requiredCapabilities(options.kind);
+  let lastNotFound: ApiError | null = null;
+
+  for (const capability of expected) {
+    try {
+      const value = await fetchPublicOutlet(providerId, pincode, capability);
+      if (!value.capabilities.includes(capability)) {
+        throw new Error('PROVIDER_CAPABILITY_MISMATCH');
+      }
+      return mapPublicOutlet(value);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        lastNotFound = error;
+        continue;
+      }
+      throw error;
     }
   }
-  return mapPublicOutlet(value);
+
+  if (lastNotFound) throw lastNotFound;
+  throw new Error('PROVIDER_CAPABILITY_MISMATCH');
 }

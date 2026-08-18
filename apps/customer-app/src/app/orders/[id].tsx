@@ -28,6 +28,10 @@ function paise(value: number): string {
   return `₹${(value / 100).toFixed(2)}`;
 }
 
+function negativePaise(value: number): string {
+  return `−${paise(value)}`;
+}
+
 export default function OrderDetailRoute() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { t } = useTranslation();
@@ -258,6 +262,10 @@ export default function OrderDetailRoute() {
             ))}
             <View style={[styles.divider, { backgroundColor: theme.border }]} />
             <DetailRow label="Item subtotal" value={paise(order.pricing.itemSubtotalPaise)} />
+            {order.pricing.itemDiscountPaise > 0 ? <DetailRow label="Item discount" value={negativePaise(order.pricing.itemDiscountPaise)} /> : null}
+            {order.pricing.couponDiscountPaise > 0 ? <DetailRow label="Coupon discount" value={negativePaise(order.pricing.couponDiscountPaise)} /> : null}
+            {order.pricing.loyaltyRewardPaise > 0 ? <DetailRow label="Loyalty reward" value={negativePaise(order.pricing.loyaltyRewardPaise)} /> : null}
+            {order.pricing.taxPaise > 0 ? <DetailRow label="Tax" value={paise(order.pricing.taxPaise)} /> : null}
             <DetailRow label="Platform fee" value={paise(order.pricing.platformFeePaise)} />
             {order.pricing.deliveryFeePaise > 0 ? <DetailRow label="Delivery fee" value={paise(order.pricing.deliveryFeePaise)} /> : null}
             <View style={styles.row}>

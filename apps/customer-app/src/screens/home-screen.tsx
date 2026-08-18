@@ -549,7 +549,7 @@ export default function HomeScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={category.label}
               >
-                <View style={[styles.categoryImageWrap, { backgroundColor: theme.muted }]}>
+                <View style={[styles.categoryImageWrap, { backgroundColor: theme.muted }]}> 
                   <ResilientRemoteImage
                     uri={category.image}
                     fallbackUri={DEMO_MEDIA.store}
@@ -704,7 +704,9 @@ export default function HomeScreen() {
         ) : (
           <>
             <HorizontalCardSection title="Food & Nutrition Nearby 🏆" items={FOOD_AND_NUTRITION} actionLabel="View all" onAction={() => router.push('/category/food' as never)} />
-            <HorizontalCardSection title="Grooming Nearby ✂️" items={GROOMING_NEARBY} actionLabel="View spas" onAction={() => router.push('/grooming' as never)} />
+            {activeCity.featureFlags.allowGrooming ? (
+              <HorizontalCardSection title="Grooming Nearby ✂️" items={GROOMING_NEARBY} actionLabel="View spas" onAction={() => router.push('/grooming' as never)} />
+            ) : null}
             <HorizontalCardSection title="Hospitals & Care Nearby 🏥" items={HOSPITALS_AND_CARE} actionLabel="View hospitals" onAction={() => router.push('/vet' as never)} />
           </>
         )}

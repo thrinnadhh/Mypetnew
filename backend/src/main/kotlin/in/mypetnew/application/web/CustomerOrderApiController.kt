@@ -1,11 +1,13 @@
 package `in`.mypetnew.application.web
 
-import `in`.mypetnew.catalog.domain.CatalogService
 import `in`.mypetnew.catalog.domain.InventoryService
+import `in`.mypetnew.commerce.domain.CustomerOrderCategory
+import `in`.mypetnew.commerce.domain.CustomerOrderCursor
+import `in`.mypetnew.commerce.domain.CustomerOrderDetailSnapshot
 import `in`.mypetnew.commerce.domain.CustomerOrderQuery
 import `in`.mypetnew.commerce.domain.OrderService
 import `in`.mypetnew.commerce.domain.OrderStatus
-import `in`.mypetnew.commerce.domain.ProductOrder
+import `in`.mypetnew.commerce.domain.QuoteService
 import `in`.mypetnew.common.auth.Authorizer
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
@@ -24,33 +26,60 @@ import java.time.Instant
 import java.util.UUID
 
 data class CustomerOrderCancelRequest(val reason: String)
-data class CustomerOrderItemView(val listingId: UUID, val name: String?, val quantity: Int)
+data class CustomerOrderItemView(
+    val listingId: UUID,
+    val name: String,
+    val quantity: Int,
+    val unitPricePaise: Long,
+    val lineTotalPaise: Long,
+)
 data class CustomerOrderHistoryView(
     val fromStatus: OrderStatus?,
     val toStatus: OrderStatus,
     val changedAt: Instant,
     val reason: String?,
 )
+data class CustomerOrderPricingView(
+    val itemSubtotalPaise: Long,
+    val platformFeePaise: Long,
+    val deliveryFeePaise: Long,
+    val grandTotalPaise: Long,
+    val currency: String,
+)
+data class CustomerOrderDeliveryAddressView(
+    val addressId: UUID,
+    val recipientName: String,
+    val phoneNumber: String,
+    val line1: String,
+    val line2: String?,
+    val city: String,
+    val state: String,
+    val pincode: String,
+)
+data class CustomerOrderCancellationView(
+    val cancelled: Boolean,
+    val reason: String?,
+    val cancelledAt: Instant?,
+)
+data class CustomerOrderOutletSummary(
+    val id: UUID,
+    val name: String,
+)
 data class CustomerOrderView(
     val orderId: UUID,
     val orderNumber: String,
-    val outletId: UUID,
-    val organizationId: UUID,
-    val outletName: String,
+    val outlet: CustomerOrderOutletSummary,
     val items: List<CustomerOrderItemView>,
-    val grandTotalPaise: Long,
-    val platformFeePaise: Long,
+    val pricing: CustomerOrderPricingView,
     val paymentMethod: String,
     val paymentStatus: String,
     val fulfilmentMode: String,
     val status: OrderStatus,
     val placedAt: Instant?,
     val statusHistory: List<CustomerOrderHistoryView>,
-)
-
-data class CustomerOrderOutletSummary(
-    val id: UUID,
-    val name: String,
+    val deliveryAddress: CustomerOrderDeliveryAddressView?,
+    val canCancel: Boolean,
+    val cancellation: CustomerOrderCancellationView,
 )
 
 data class CustomerOrderSummaryResponse(
@@ -66,13 +95,26 @@ data class CustomerOrderSummaryResponse(
     val lastUpdatedAt: Instant,
 )
 
+data class CustomerOrderCursorResponse(
+    val placedAt: Instant,
+    val orderId: UUID,
+)
+
+data class CustomerOrderPageResponse(
+    val items: List<CustomerOrderSummaryResponse>,
+    val page: Int,
+    val pageSize: Int,
+    val hasNext: Boolean,
+    val nextCursor: CustomerOrderCursorResponse?,
+)
+
 @RestController
 @RequestMapping("/api/v1/customer/orders")
 class CustomerOrderApiController(
     private val orders: OrderService,
     private val orderQuery: CustomerOrderQuery,
     private val providers: ProviderService,
-    private val catalog: CatalogService,
+    private val quotes: QuoteService,
 ) {
     @GetMapping
     fun list(
@@ -80,13 +122,24 @@ class CustomerOrderApiController(
         @RequestParam(defaultValue = "0") page: Int,
         @RequestParam(defaultValue = "20") pageSize: Int,
         @RequestParam(required = false) status: OrderStatus?,
-    ): PageResponse<CustomerOrderSummaryResponse> {
+        @RequestParam(required = false) category: CustomerOrderCategory?,
+        @RequestParam(required = false) beforePlacedAt: Instant?,
+        @RequestParam(required = false) beforeOrderId: UUID?,
+    ): CustomerOrderPageResponse {
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
         PaginationHelper.validate(page, pageSize)
+        if ((beforePlacedAt == null) != (beforeOrderId == null)) {
+            throw DomainException("ORDER_CURSOR_INVALID", "The order cursor is incomplete")
+        }
+        val cursor = if (beforePlacedAt != null && beforeOrderId != null) {
+            CustomerOrderCursor(beforePlacedAt, beforeOrderId)
+        } else {
+            null
+        }
 
-        val result = orderQuery.list(customer.actorId, status, page, pageSize)
-        return PageResponse(
+        val result = orderQuery.list(customer.actorId, status, page, pageSize, category, cursor)
+        return CustomerOrderPageResponse(
             items = result.items.map { summary ->
                 val outlet = providers.getOutlet(summary.outletId)
                 CustomerOrderSummaryResponse(
@@ -105,6 +158,7 @@ class CustomerOrderApiController(
             page = page,
             pageSize = pageSize,
             hasNext = result.hasNext,
+            nextCursor = result.nextCursor?.let { CustomerOrderCursorResponse(it.placedAt, it.orderId) },
         )
     }
 
@@ -112,7 +166,7 @@ class CustomerOrderApiController(
     fun get(authentication: Authentication, @PathVariable orderId: UUID): CustomerOrderView {
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
-        return view(ownedOrder(customer.actorId, orderId))
+        return view(customer.actorId, ownedSnapshot(customer.actorId, orderId))
     }
 
     @PostMapping("/{orderId}/cancel")
@@ -124,64 +178,56 @@ class CustomerOrderApiController(
     ): CustomerOrderView {
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
-        ownedOrder(customer.actorId, orderId)
-        return view(
-            orders.transition(
-                orderId = orderId,
-                target = OrderStatus.CANCELLED,
-                idempotencyKey = idempotencyKey,
-                actorId = customer.actorId,
-                actorRole = Role.CUSTOMER,
-                reason = request.reason,
-                traceId = MDC.get("traceId") ?: InventoryService.SYSTEM_TRACE_ID,
-            ),
+        ownedSnapshot(customer.actorId, orderId)
+        orders.transition(
+            orderId = orderId,
+            target = OrderStatus.CANCELLED,
+            idempotencyKey = idempotencyKey,
+            actorId = customer.actorId,
+            actorRole = Role.CUSTOMER,
+            reason = request.reason,
+            traceId = MDC.get("traceId") ?: InventoryService.SYSTEM_TRACE_ID,
         )
+        return view(customer.actorId, ownedSnapshot(customer.actorId, orderId))
     }
 
-    private fun ownedOrder(customerId: UUID, orderId: UUID): ProductOrder {
-        val order = try {
-            orders.get(orderId)
-        } catch (error: DomainException) {
-            if (error.code == "ORDER_NOT_FOUND") {
-                throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
-            }
-            throw error
-        }
-        if (order.customerId != customerId) {
+    private fun ownedSnapshot(customerId: UUID, orderId: UUID): CustomerOrderDetailSnapshot =
+        orderQuery.detail(customerId, orderId)
+            ?: throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+
+    private fun view(customerId: UUID, order: CustomerOrderDetailSnapshot): CustomerOrderView {
+        val outlet = providers.getOutlet(order.outletId)
+        val quote = quotes.get(order.quoteId)
+        if (quote.customerId != customerId || quote.outletId != order.outletId) {
             throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
         }
-        return order
-    }
-
-    private fun listingName(listingId: UUID): String? = try {
-        catalog.getListing(listingId).name
-    } catch (error: DomainException) {
-        if (error.code == "RESOURCE_NOT_FOUND") null else throw error
-    }
-
-    private fun view(order: ProductOrder): CustomerOrderView {
-        val outlet = providers.getOutlet(order.outletId)
+        val cancellationEntry = order.statusHistory.lastOrNull { it.status == OrderStatus.CANCELLED }
         return CustomerOrderView(
-            orderId = order.id,
+            orderId = order.orderId,
             orderNumber = order.orderNumber,
-            outletId = order.outletId,
-            organizationId = order.organizationId,
-            outletName = outlet.name,
-            items = order.lines.map { (listingId, quantity) ->
+            outlet = CustomerOrderOutletSummary(outlet.id, outlet.name),
+            items = order.items.map { item ->
                 CustomerOrderItemView(
-                    listingId = listingId,
-                    name = listingName(listingId),
-                    quantity = quantity,
+                    listingId = item.listingId,
+                    name = item.listingName,
+                    quantity = item.quantity,
+                    unitPricePaise = item.unitPricePaise,
+                    lineTotalPaise = Math.multiplyExact(item.unitPricePaise, item.quantity.toLong()),
                 )
             },
-            grandTotalPaise = order.grandTotalPaise,
-            platformFeePaise = order.platformFeePaise,
+            pricing = CustomerOrderPricingView(
+                itemSubtotalPaise = quote.pricing.itemSubtotalPaise,
+                platformFeePaise = quote.pricing.platformFeePaise,
+                deliveryFeePaise = quote.pricing.deliveryFeePaise,
+                grandTotalPaise = order.grandTotalPaise,
+                currency = quote.pricing.currency,
+            ),
             paymentMethod = order.paymentMethod,
             paymentStatus = order.paymentStatus,
             fulfilmentMode = order.fulfilmentMode,
             status = order.status,
-            placedAt = order.history.firstOrNull()?.occurredAt,
-            statusHistory = order.history.map { entry ->
+            placedAt = order.placedAt,
+            statusHistory = order.statusHistory.map { entry ->
                 CustomerOrderHistoryView(
                     fromStatus = entry.fromStatus,
                     toStatus = entry.status,
@@ -189,6 +235,24 @@ class CustomerOrderApiController(
                     reason = entry.reason,
                 )
             },
+            deliveryAddress = quote.deliveryAddress?.let { address ->
+                CustomerOrderDeliveryAddressView(
+                    addressId = address.addressId,
+                    recipientName = address.recipientName,
+                    phoneNumber = address.phoneNumber,
+                    line1 = address.line1,
+                    line2 = address.line2,
+                    city = address.city,
+                    state = address.state,
+                    pincode = address.pincode,
+                )
+            },
+            canCancel = order.status == OrderStatus.PLACED,
+            cancellation = CustomerOrderCancellationView(
+                cancelled = order.status == OrderStatus.CANCELLED,
+                reason = cancellationEntry?.reason,
+                cancelledAt = cancellationEntry?.occurredAt,
+            ),
         )
     }
 }

@@ -20,6 +20,8 @@ describe('home live-content contract', () => {
     expect(carousel).toMatch(/banners = \[\]/);
     expect(carousel).toMatch(/const safeBanners = useMemo\(\(\) => banners, \[banners\]\)/);
     expect(carousel).not.toContain('banners.length > 0 ? banners : PROMO_BANNERS');
+    expect(carousel).toContain('uri={item.imageUrl}');
+    expect(carousel).not.toContain('DEMO_BANNER_IMAGES');
   });
 
   it('keeps fixture guide articles out of live Home fallbacks', () => {

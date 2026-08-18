@@ -29,7 +29,7 @@ import java.util.UUID
         "mypet.security.token-secret=test-only-secret-that-is-longer-than-32-bytes",
         "mypet.security.token-issuer=mypetnew-p2-test",
         "mypet.security.token-audience=mypetnew-test-clients",
-        "spring.datasource.url=jdbc:h2:mem=p2api;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
+        "spring.datasource.url=jdbc:h2:mem:p2api;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
         "spring.flyway.enabled=false",
@@ -209,8 +209,11 @@ class CustomerProfileDataApiTest {
             jsonPath("$.reasonCode") { value("DELIVERY_ORIGIN_UNAVAILABLE") }
         }
 
+        val outletScopedMerchantToken = tokens.issue(
+            Principal(merchantActor, Role.MERCHANT, outletIds = setOf(UUID.fromString(outletId))),
+        )
         mockMvc.put("/api/v1/merchant/outlets/$outletId/dispatch-origin") {
-            header("Authorization", "Bearer $merchantToken")
+            header("Authorization", "Bearer $outletScopedMerchantToken")
             contentType = MediaType.APPLICATION_JSON
             content = """{"latitude":13.6288,"longitude":79.4192}"""
         }.andExpect { status { isOk() } }

@@ -13,12 +13,15 @@ export function LocationModal() {
     activeCity,
     selectedPincode,
     enabledCities,
+    serviceRegionError,
+    loading,
     isLocationModalOpen,
     locating,
     closeLocationModal,
     selectCity,
     selectCurrentLocation,
     requestUnavailableCityLaunch,
+    refreshCities,
   } = useLocation();
 
   const [query, setQuery] = useState('');
@@ -57,122 +60,147 @@ export function LocationModal() {
             </Pressable>
           </View>
 
-          <Pressable
-            onPress={() => void selectCurrentLocation()}
-            disabled={locating}
-            accessibilityRole="button"
-            accessibilityLabel="Use current device location"
-            accessibilityState={{ disabled: locating }}
-            style={[
-              styles.currentLocationButton,
-              {
-                backgroundColor: theme.primarySoft,
-                borderColor: theme.primary,
-                opacity: locating ? 0.7 : 1,
-              },
-            ]}
-          >
-            {locating ? (
-              <ActivityIndicator size="small" color={theme.primary} />
-            ) : (
-              <AppIcon name="location" color={theme.primary} size={20} />
-            )}
-            <View style={styles.cityInfo}>
-              <ThemedText style={{ color: theme.primary, fontWeight: '800' }}>
-                {locating ? 'Detecting your location…' : 'Use current location'}
-              </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                Selects the nearest active city and its configured service PIN; you can change the PIN below.
-              </ThemedText>
-            </View>
-          </Pressable>
-
-          <View style={[styles.searchBar, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-            <AppIcon name="search" color={theme.textSecondary} size={18} />
-            <TextInput
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Search city, state, or pincode..."
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.searchInput, { color: theme.text }]}
-              autoCapitalize="none"
-              accessibilityLabel="Search service city, state, or pincode"
-            />
-          </View>
-
-          <ScrollView style={styles.cityList} contentContainerStyle={styles.cityListContent}>
-            <ThemedText style={styles.sectionHeading}>Available service PINs</ThemedText>
-            {filteredCities.map((city) => {
-              const citySelected = city.cityIdentity === activeCity.cityIdentity;
-              return (
-                <View
-                  key={city.id}
-                  style={[
-                    styles.cityCard,
-                    {
-                      backgroundColor: citySelected ? theme.primarySoft : theme.backgroundElement,
-                      borderColor: citySelected ? theme.primary : theme.border,
-                    },
-                  ]}
-                >
-                  <View style={styles.cityRow}>
-                    <AppIcon name="location" color={citySelected ? theme.primary : theme.textSecondary} size={20} />
-                    <View style={styles.cityInfo}>
-                      <ThemedText style={[styles.cityName, { color: citySelected ? theme.primary : theme.text }]}>
-                        {city.displayName}
-                      </ThemedText>
-                      <ThemedText style={styles.citySub}>{city.state}, {city.country}</ThemedText>
-                    </View>
-                  </View>
-
-                  <View style={styles.pinGrid}>
-                    {city.pincodes.map((pincode) => {
-                      const isSelected = citySelected && pincode === selectedPincode;
-                      return (
-                        <Pressable
-                          key={pincode}
-                          onPress={() => void selectCity(city, pincode)}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Select ${city.displayName} service PIN ${pincode}`}
-                          accessibilityState={{ selected: isSelected }}
-                          style={[
-                            styles.pinChip,
-                            {
-                              backgroundColor: isSelected ? theme.primary : theme.background,
-                              borderColor: isSelected ? theme.primary : theme.border,
-                            },
-                          ]}
-                        >
-                          <ThemedText style={{ color: isSelected ? '#FFFFFF' : theme.text, fontWeight: '700' }}>
-                            {pincode}
-                          </ThemedText>
-                          {isSelected ? <AppIcon name="check" color="#FFFFFF" size={16} /> : null}
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </View>
-              );
-            })}
-
-            {!isExactMatch && query.trim().length > 0 ? (
-              <View style={[styles.unsupportedBox, { backgroundColor: theme.muted }]}>
-                <ThemedText style={styles.unsupportedText}>
-                  {`No active service region found for "${query}".`}
+          {serviceRegionError ? (
+            <View style={[styles.regionError, { backgroundColor: theme.muted, borderColor: theme.border }]}>
+              <AppIcon name="warning" color={theme.danger} size={22} />
+              <View style={styles.cityInfo}>
+                <ThemedText style={{ fontWeight: '800', color: theme.text }}>Service regions unavailable</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Live serviceability could not be loaded. MyPet will not substitute a demo city or PIN.
                 </ThemedText>
-                <Pressable
-                  onPress={() => requestUnavailableCityLaunch(query.trim())}
-                  style={[styles.notifyBtn, { backgroundColor: theme.primary }]}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Request launch notification for ${query.trim()}`}
-                >
-                  <ThemedText style={{ color: '#FFFFFF', fontWeight: '700' }}>
-                    Notify Me When Available
-                  </ThemedText>
-                </Pressable>
               </View>
-            ) : null}
-          </ScrollView>
+              <Pressable
+                onPress={() => void refreshCities()}
+                disabled={loading}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading service regions"
+                accessibilityState={{ disabled: loading }}
+                style={[styles.retryBtn, { backgroundColor: theme.primary, opacity: loading ? 0.7 : 1 }]}
+              >
+                {loading ? <ActivityIndicator size="small" color="#FFFFFF" /> : null}
+                <ThemedText style={{ color: '#FFFFFF', fontWeight: '800' }}>Retry</ThemedText>
+              </Pressable>
+            </View>
+          ) : (
+            <>
+              <Pressable
+                onPress={() => void selectCurrentLocation()}
+                disabled={locating || loading}
+                accessibilityRole="button"
+                accessibilityLabel="Use current device location"
+                accessibilityState={{ disabled: locating || loading }}
+                style={[
+                  styles.currentLocationButton,
+                  {
+                    backgroundColor: theme.primarySoft,
+                    borderColor: theme.primary,
+                    opacity: locating || loading ? 0.7 : 1,
+                  },
+                ]}
+              >
+                {locating ? (
+                  <ActivityIndicator size="small" color={theme.primary} />
+                ) : (
+                  <AppIcon name="location" color={theme.primary} size={20} />
+                )}
+                <View style={styles.cityInfo}>
+                  <ThemedText style={{ color: theme.primary, fontWeight: '800' }}>
+                    {locating ? 'Detecting your location…' : 'Use current location'}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Selects the nearest active city and its configured service PIN; you can change the PIN below.
+                  </ThemedText>
+                </View>
+              </Pressable>
+
+              <View style={[styles.searchBar, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+                <AppIcon name="search" color={theme.textSecondary} size={18} />
+                <TextInput
+                  value={query}
+                  onChangeText={setQuery}
+                  placeholder="Search city, state, or pincode..."
+                  placeholderTextColor={theme.textSecondary}
+                  style={[styles.searchInput, { color: theme.text }]}
+                  autoCapitalize="none"
+                  accessibilityLabel="Search service city, state, or pincode"
+                />
+              </View>
+
+              <ScrollView style={styles.cityList} contentContainerStyle={styles.cityListContent}>
+                <ThemedText style={styles.sectionHeading}>Available service PINs</ThemedText>
+                {filteredCities.map((city) => {
+                  const citySelected = city.cityIdentity === activeCity.cityIdentity;
+                  return (
+                    <View
+                      key={city.id}
+                      style={[
+                        styles.cityCard,
+                        {
+                          backgroundColor: citySelected ? theme.primarySoft : theme.backgroundElement,
+                          borderColor: citySelected ? theme.primary : theme.border,
+                        },
+                      ]}
+                    >
+                      <View style={styles.cityRow}>
+                        <AppIcon name="location" color={citySelected ? theme.primary : theme.textSecondary} size={20} />
+                        <View style={styles.cityInfo}>
+                          <ThemedText style={[styles.cityName, { color: citySelected ? theme.primary : theme.text }]}>
+                            {city.displayName}
+                          </ThemedText>
+                          <ThemedText style={styles.citySub}>{city.state}, {city.country}</ThemedText>
+                        </View>
+                      </View>
+
+                      <View style={styles.pinGrid}>
+                        {city.pincodes.map((pincode) => {
+                          const isSelected = citySelected && pincode === selectedPincode;
+                          return (
+                            <Pressable
+                              key={pincode}
+                              onPress={() => void selectCity(city, pincode)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Select ${city.displayName} service PIN ${pincode}`}
+                              accessibilityState={{ selected: isSelected }}
+                              style={[
+                                styles.pinChip,
+                                {
+                                  backgroundColor: isSelected ? theme.primary : theme.background,
+                                  borderColor: isSelected ? theme.primary : theme.border,
+                                },
+                              ]}
+                            >
+                              <ThemedText style={{ color: isSelected ? '#FFFFFF' : theme.text, fontWeight: '700' }}>
+                                {pincode}
+                              </ThemedText>
+                              {isSelected ? <AppIcon name="check" color="#FFFFFF" size={16} /> : null}
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  );
+                })}
+
+                {!isExactMatch && query.trim().length > 0 ? (
+                  <View style={[styles.unsupportedBox, { backgroundColor: theme.muted }]}>
+                    <ThemedText style={styles.unsupportedText}>
+                      {`No active service region found for "${query}".`}
+                    </ThemedText>
+                    <Pressable
+                      onPress={() => requestUnavailableCityLaunch(query.trim())}
+                      style={[styles.notifyBtn, { backgroundColor: theme.primary }]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Request launch notification for ${query.trim()}`}
+                    >
+                      <ThemedText style={{ color: '#FFFFFF', fontWeight: '700' }}>
+                        Notify Me When Available
+                      </ThemedText>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </ScrollView>
+            </>
+          )}
         </View>
       </View>
     </Modal>
@@ -249,6 +277,8 @@ const styles = StyleSheet.create({
   title: { ...typography.headline, fontSize: 18 },
   subtitle: { ...typography.body, fontSize: 13, color: '#666666' },
   closeBtn: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
+  regionError: { borderWidth: 1, borderRadius: radii.compact, padding: spacing.x3, gap: spacing.x3, flexDirection: 'row', alignItems: 'center' },
+  retryBtn: { minWidth: 82, minHeight: touchTarget, borderRadius: radii.compact, paddingHorizontal: spacing.x3, flexDirection: 'row', gap: spacing.x2, alignItems: 'center', justifyContent: 'center' },
   currentLocationButton: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: spacing.x3, borderWidth: 1, borderRadius: radii.compact, padding: spacing.x3 },
   searchBar: { flexDirection: 'row', alignItems: 'center', gap: spacing.x2, borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x3, minHeight: touchTarget },
   searchInput: { flex: 1, minHeight: touchTarget, ...typography.body },

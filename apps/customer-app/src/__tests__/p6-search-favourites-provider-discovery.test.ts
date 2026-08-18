@@ -143,8 +143,8 @@ describe('P6 search, favourites and provider discovery contract', () => {
     const favouritesController = source('../../backend/src/main/kotlin/in/mypetnew/application/web/CustomerFavouriteController.kt');
     const publicCatalog = source('../../backend/src/main/kotlin/in/mypetnew/application/web/PublicCatalogController.kt');
 
-    expect(favouritesController).toContain('principal.requireCustomer()');
-    expect(favouritesController).toContain('customerId = principal.actorId');
+    expect(favouritesController).toContain('Authorizer.requireRole(principal, Role.CUSTOMER)');
+    expect(favouritesController).toContain('return principal.actorId');
     expect(publicCatalog).toContain('it.status == OutletStatus.ACTIVE');
     expect(publicCatalog).toContain('(capability == null || capability in it.capabilities)');
     expect(publicCatalog).toContain('(pincodeFilter == null || pincodeFilter in it.servicePinCodes)');

@@ -36,7 +36,9 @@ describe('customer route destination regressions', () => {
     expect(groomRoute).toContain('providerId');
     expect(groomingCatalogue).toContain('/groom?providerId=');
     expect(providerDetail).toContain("const bookingRoute = kind === 'groomer' ? '/groom' : '/vet'");
-    expect(providerDetail).toContain('onBack={() => router.back()}');
+    expect(providerDetail).toContain('router.canGoBack()');
+    expect(providerDetail).toContain('router.replace(bookingRoute');
+    expect(providerDetail).toContain('onBack={goBack}');
   });
 
   it('keeps product details resilient, serviceable, navigable and variant-stock aware', () => {

@@ -40,21 +40,25 @@ function matchesDuration(service: AppointmentServiceOption, filter: DurationFilt
 export default function GroomingServicesScreen() {
   const router = useRouter();
   const theme = useTheme();
-  const { activeCity } = useLocation();
+  const { activeCity, selectedPincode } = useLocation();
   const [filterCategory, setFilterCategory] = useState<DurationFilter>('ALL');
   const [services, setServices] = useState<AppointmentServiceOption[]>([]);
   const [state, setState] = useState<LoadState>('loading');
 
   const load = useCallback(async () => {
     setState('loading');
+    setServices([]);
     if (!activeCity.featureFlags.allowGrooming) {
-      setServices([]);
       setState('ready');
+      return;
+    }
+    if (!/^[1-9][0-9]{5}$/.test(selectedPincode)) {
+      setState('error');
       return;
     }
 
     try {
-      const providers = await fetchProviders('GROOMER', INITIAL_MARKET, activeCity.pincodes);
+      const providers = await fetchProviders('GROOMER', INITIAL_MARKET, selectedPincode);
       const groups = await Promise.all(
         providers.map((provider) => fetchAppointmentServices({
           providerId: provider.id,
@@ -68,7 +72,7 @@ export default function GroomingServicesScreen() {
     } catch (error) {
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, [activeCity.featureFlags.allowGrooming, activeCity.pincodes]);
+  }, [activeCity.featureFlags.allowGrooming, selectedPincode]);
 
   useEffect(() => {
     void load();
@@ -85,7 +89,9 @@ export default function GroomingServicesScreen() {
       header={(
         <ScreenHeader
           title="Grooming Services & Spa"
-          subtitle={`Live services in ${activeCity.displayName}`}
+          subtitle={/^[1-9][0-9]{5}$/.test(selectedPincode)
+            ? `Live services serving PIN ${selectedPincode}`
+            : 'Live serviceability unavailable'}
         />
       )}
       contentContainerStyle={styles.shellContent}
@@ -123,7 +129,7 @@ export default function GroomingServicesScreen() {
         <StateView
           kind="error"
           title="Grooming services unavailable"
-          message="We couldn't load the current service catalogue."
+          message="Select a valid live service PIN and retry."
           actionLabel="Retry"
           onAction={() => void load()}
         />
@@ -139,7 +145,7 @@ export default function GroomingServicesScreen() {
         <StateView
           kind="empty"
           title="No serviceable grooming services yet"
-          message={`Groomers serving the selected ${activeCity.displayName} PIN codes have not published bookable services yet.`}
+          message={`Groomers serving PIN ${selectedPincode} have not published bookable services yet.`}
         />
       ) : null}
       {state === 'ready' && services.length > 0 && filteredServices.length === 0 ? (

@@ -79,10 +79,7 @@ function authHeaders(accessToken: string | null | undefined): Record<string, str
 }
 
 function jsonHeaders(accessToken: string | null | undefined): Record<string, string> {
-  return {
-    ...authHeaders(accessToken),
-    'Content-Type': 'application/json',
-  };
+  return { ...authHeaders(accessToken), 'Content-Type': 'application/json' };
 }
 
 async function readJson<T>(response: Response, fallbackMessage: string): Promise<T> {
@@ -138,16 +135,13 @@ function mapAppointment(appointment: AppointmentDto): CustomerAppointmentRecord 
   };
 }
 
-async function fetchAppointmentPage(
-  page: number,
-  accessToken: string | null | undefined,
-): Promise<PageResponse<AppointmentDto>> {
+async function fetchAppointmentPage(page: number, accessToken: string | null | undefined): Promise<PageResponse<AppointmentDto>> {
   const response = await fetch(
     `${appConfig.apiBaseUrl}/api/v1/customer/appointments?page=${page}&pageSize=${HISTORY_PAGE_SIZE}`,
     { headers: authHeaders(accessToken) },
   );
   const payload = await readJson<PageResponse<AppointmentDto>>(response, 'Could not load appointment history.');
-  if (!Array.isArray(payload.items) || payload.page !== page || payload.pageSize !== HISTORY_PAGE_SIZE) {
+  if (!Array.isArray(payload.items) || payload.page !== page || !Number.isInteger(payload.pageSize) || payload.pageSize <= 0) {
     const error = new Error('The appointment history response was invalid.');
     error.name = 'APPOINTMENT_HISTORY_RESPONSE_INVALID';
     throw error;
@@ -155,12 +149,8 @@ async function fetchAppointmentPage(
   return payload;
 }
 
-export async function fetchCustomerAppointments(
-  customerId: string,
-  accessToken: string | null | undefined,
-): Promise<CustomerAppointmentRecord[]> {
+export async function fetchCustomerAppointments(customerId: string, accessToken: string | null | undefined): Promise<CustomerAppointmentRecord[]> {
   const cacheKey = `${CACHE_PREFIX}${customerId}`;
-
   try {
     const unique = new Map<string, CustomerAppointmentRecord>();
     for (let page = 0; page < MAX_HISTORY_PAGES; page += 1) {
@@ -182,20 +172,14 @@ export async function fetchCustomerAppointments(
     if (!isNetworkFailure(error)) throw error;
     const cached = await AsyncStorage.getItem(cacheKey).catch(() => null);
     if (cached) {
-      try {
-        return JSON.parse(cached) as CustomerAppointmentRecord[];
-      } catch {
-        await AsyncStorage.removeItem(cacheKey).catch(() => null);
-      }
+      try { return JSON.parse(cached) as CustomerAppointmentRecord[]; }
+      catch { await AsyncStorage.removeItem(cacheKey).catch(() => null); }
     }
     throw error;
   }
 }
 
-export async function fetchAppointmentDetails(
-  appointmentId: string,
-  accessToken: string | null | undefined,
-): Promise<CustomerAppointmentRecord> {
+export async function fetchAppointmentDetails(appointmentId: string, accessToken: string | null | undefined): Promise<CustomerAppointmentRecord> {
   const response = await fetch(
     `${appConfig.apiBaseUrl}/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}`,
     { headers: authHeaders(accessToken) },
@@ -203,27 +187,15 @@ export async function fetchAppointmentDetails(
   return mapAppointment(await readJson<AppointmentDto>(response, 'Could not load appointment details.'));
 }
 
-export async function cancelAppointment(
-  appointmentId: string,
-  reason: string,
-  accessToken: string | null | undefined,
-): Promise<void> {
+export async function cancelAppointment(appointmentId: string, reason: string, accessToken: string | null | undefined): Promise<void> {
   const response = await fetch(
     `${appConfig.apiBaseUrl}/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}/cancel`,
-    {
-      method: 'POST',
-      headers: jsonHeaders(accessToken),
-      body: JSON.stringify({ reason: reason.trim() || null }),
-    },
+    { method: 'POST', headers: jsonHeaders(accessToken), body: JSON.stringify({ reason: reason.trim() || null }) },
   );
   await readJson<AppointmentDto>(response, 'Could not cancel appointment.');
 }
 
-export async function rescheduleAppointment(
-  _appointmentId: string,
-  _newSlotId: string,
-  _accessToken: string | null | undefined,
-): Promise<void> {
+export async function rescheduleAppointment(_appointmentId: string, _newSlotId: string, _accessToken: string | null | undefined): Promise<void> {
   throw new Error('Appointment rescheduling is not available in the current canonical booking contract.');
 }
 

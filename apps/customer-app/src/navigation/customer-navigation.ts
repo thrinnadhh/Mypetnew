@@ -8,8 +8,8 @@ export const CUSTOMER_TABS = [
 ] as const satisfies ReadonlyArray<{ name: string; labelKey: string; icon: AppIconName }>;
 
 export const NESTED_ROUTE_FOUNDATIONS = [
-  '/stores', '/shop/[id]',
-  '/commerce/[slug]', '/providers/[type]/[id]',
+  '/stores', '/shop/[id]', '/products', '/category/[id]', '/commerce/product-detail',
+  '/providers/[type]/[id]',
   '/groom', '/groomer/[id]', '/grooming/[slug]',
   '/vet', '/vet/[slug]',
   '/health/[slug]', '/guides/[slug]',

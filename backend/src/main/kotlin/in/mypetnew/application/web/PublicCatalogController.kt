@@ -161,10 +161,19 @@ class PublicOutletController(
     }
 
     @GetMapping("/{outletId}")
-    fun get(@PathVariable outletId: UUID): PublicOutletSummary {
+    fun get(
+        @PathVariable outletId: UUID,
+        @RequestParam(required = false) capability: ProviderCapability?,
+        @RequestParam(required = false) pincode: String?,
+    ): PublicOutletSummary {
+        val pincodeFilter = normalizeOptionalPincode(pincode)
         val outlet = providers.allOutlets().find { it.id == outletId }
             ?: throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
-        if (outlet.status != ProviderStatus.ACTIVE) {
+        if (
+            outlet.status != ProviderStatus.ACTIVE ||
+            (capability != null && capability !in outlet.capabilities) ||
+            (pincodeFilter != null && pincodeFilter !in outlet.servicePinCodes)
+        ) {
             throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
         }
         return PublicOutletSummary(
@@ -198,9 +207,14 @@ class PublicCatalogController(
         @RequestParam(required = false) commerceMode: CommerceMode?,
         @RequestParam(required = false) availability: AvailabilityFilter?,
         @RequestParam(required = false) sort: CatalogSortOption?,
+        @RequestParam(required = false) pincode: String?,
     ): PageResponse<PublicListingSummary> {
+        val pincodeFilter = normalizeOptionalPincode(pincode)
         val activeOutlets = providers.allOutlets()
-            .filter { it.status == ProviderStatus.ACTIVE }
+            .filter {
+                it.status == ProviderStatus.ACTIVE &&
+                (pincodeFilter == null || pincodeFilter in it.servicePinCodes)
+            }
             .associateBy { it.id }
 
         val query = q?.trim()?.lowercase()
@@ -262,12 +276,19 @@ class PublicCatalogController(
     }
 
     @GetMapping("/{listingId}")
-    fun getDetail(@PathVariable listingId: UUID): PublicListingDetail {
+    fun getDetail(
+        @PathVariable listingId: UUID,
+        @RequestParam(required = false) pincode: String?,
+    ): PublicListingDetail {
+        val pincodeFilter = normalizeOptionalPincode(pincode)
         val listing = catalog.allListings().find { it.id == listingId }
             ?: throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
         val outlet = providers.allOutlets().find { it.id == listing.outletId }
             ?: throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
-        if (outlet.status != ProviderStatus.ACTIVE) {
+        if (
+            outlet.status != ProviderStatus.ACTIVE ||
+            (pincodeFilter != null && pincodeFilter !in outlet.servicePinCodes)
+        ) {
             throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
         }
         val availableQty = inventory.available(listing.id)

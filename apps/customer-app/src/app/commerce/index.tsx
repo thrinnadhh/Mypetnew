@@ -1,5 +1,5 @@
 import { Redirect } from 'expo-router';
 
-export default function LegacyShopDiscoveryRedirect() {
+export default function LegacyCommerceIndexRedirect() {
   return <Redirect href="/stores" />;
 }

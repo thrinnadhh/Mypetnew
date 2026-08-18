@@ -15,12 +15,14 @@ describe('MyPet customer journey contracts', () => {
   it('connects home discovery to the requested commerce and care categories', () => {
     const home = source('src/screens/home-screen.tsx');
     const category = source('src/app/category/[id].tsx');
+    const categoryTemplate = source('src/components/commerce/CategoryTemplate.tsx');
 
     expectAll(home, ['Food & Nutrition', 'Treats & Chews', 'Toys & Enrichment', 'Travel & Apparel']);
     expectAll(category, [
       "food: 'Food & Nutrition'", "toys: 'Toys & Enrichment'", "travel: 'Travel & Apparel'",
-      "treats: 'Treats & Chews'", "apparel: 'Travel & Apparel'", "appearance: 'Travel & Apparel'", 'fetchCommerceProducts',
+      "treats: 'Treats & Chews'", "apparel: 'Travel & Apparel'", "appearance: 'Travel & Apparel'", 'catalogQueryFor',
     ]);
+    expectAll(categoryTemplate, ['fetchCommerceCatalogPage', 'CUSTOMER_CATALOG_PAGE_SIZE']);
   });
 
   it('prevents blank catalog, banner and shop images with resilient fallbacks', () => {

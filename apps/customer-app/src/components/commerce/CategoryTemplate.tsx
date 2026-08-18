@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   Pressable,
@@ -29,16 +29,26 @@ import {
 import { useTheme } from '@/hooks/use-theme';
 import type { CommerceProduct } from '@/services/catalog-data';
 import { isCommerceEligible } from '@/services/commerce-eligibility';
+import type { PublicCatalogQuery } from '@/services/customer-catalog';
+import { isOfflineError } from '@/services/customer-profile';
 import { DEMO_MEDIA } from '@/services/demo-customer-data';
+import {
+  CUSTOMER_CATALOG_PAGE_SIZE,
+  fetchCommerceCatalogPage,
+  mergeUniqueProducts,
+} from '@/services/paginated-catalog';
 import { appConfig } from '@/utils/app-config';
 
 interface CategoryTemplateProps {
   title: string;
   subtitle?: string;
-  products: CommerceProduct[];
+  catalogQuery: PublicCatalogQuery;
+  backFallback?: string;
 }
 
-type SortMode = 'RELEVANCE' | 'PRICE_LOW' | 'PRICE_HIGH' | 'RATING';
+type SortMode = 'DEFAULT' | 'PRICE_ASC' | 'PRICE_DESC';
+type LoadState = 'loading' | 'ready' | 'offline' | 'error';
+
 type FoodFilter = 'ALL' | 'DRY' | 'WET' | 'PUPPY' | 'ADULT' | 'SENIOR';
 
 const FOOD_FILTERS: ReadonlyArray<{ id: FoodFilter; label: string }> = [
@@ -51,9 +61,7 @@ const FOOD_FILTERS: ReadonlyArray<{ id: FoodFilter; label: string }> = [
 ];
 
 function fallbackForProduct(product: CommerceProduct): string | undefined {
-  if (!appConfig.allowDemoMode) {
-    return undefined;
-  }
+  if (!appConfig.allowDemoMode) return undefined;
   switch (product.category) {
     case 'food': return DEMO_MEDIA.food;
     case 'treats': return DEMO_MEDIA.treats;
@@ -69,7 +77,8 @@ function fallbackForProduct(product: CommerceProduct): string | undefined {
 export function CategoryTemplate({
   title,
   subtitle,
-  products,
+  catalogQuery,
+  backFallback = '/stores',
 }: CategoryTemplateProps) {
   const router = useRouter();
   const theme = useTheme();
@@ -77,107 +86,204 @@ export function CategoryTemplate({
   const { addToCart, items, updateQuantity } = useCart();
   const { isFavourite, toggleFavourite } = useFavourites();
 
+  const [products, setProducts] = useState<CommerceProduct[]>([]);
+  const [state, setState] = useState<LoadState>('loading');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedSort, setSelectedSort] = useState<SortMode>('RELEVANCE');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [selectedSort, setSelectedSort] = useState<SortMode>('DEFAULT');
   const [inStockOnly, setInStockOnly] = useState(false);
-  const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
   const [selectedFoodFilter, setSelectedFoodFilter] = useState<FoodFilter>('ALL');
+  const [hasNext, setHasNext] = useState(false);
+  const [nextPage, setNextPage] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
 
+  const requestGeneration = useRef(0);
+  const loadingMoreRef = useRef(false);
   const columns = width >= 840 ? 2 : 1;
-  const isFoodCatalog = useMemo(
-    () => title.toLowerCase().includes('food') || products.some((product) => product.category === 'food'),
-    [products, title],
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const requestKey = JSON.stringify({
+    ...catalogQuery,
+    q: debouncedSearch || undefined,
+    availability: inStockOnly ? 'IN_STOCK' : catalogQuery.availability,
+    sort:
+      selectedSort === 'DEFAULT'
+        ? catalogQuery.sort
+        : selectedSort,
+    pageSize: CUSTOMER_CATALOG_PAGE_SIZE,
+  });
+
+  const requestQuery = useMemo(
+    () => JSON.parse(requestKey) as PublicCatalogQuery,
+    [requestKey],
   );
 
-  const brands = useMemo(
-    () => Array.from(new Set(products.map((product) => product.brand).filter((b): b is string => Boolean(b)))).sort(),
-    [products],
-  );
+  const loadFirstPage = useCallback(async () => {
+    const generation = requestGeneration.current + 1;
+    requestGeneration.current = generation;
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
+    setLoadMoreError(null);
+    setState('loading');
+    setProducts([]);
 
-  const filteredProducts = useMemo(() => {
-    let list = [...products];
-    const query = searchQuery.toLowerCase().trim();
-
-    if (query) {
-      list = list.filter(
-        (product) =>
-          product.name.toLowerCase().includes(query) ||
-          (product.brand && product.brand.toLowerCase().includes(query)) ||
-          product.providerName.toLowerCase().includes(query),
-      );
+    try {
+      const response = await fetchCommerceCatalogPage({
+        ...requestQuery,
+        page: 0,
+        pageSize: CUSTOMER_CATALOG_PAGE_SIZE,
+      });
+      if (requestGeneration.current !== generation) return;
+      setProducts(response.items);
+      setHasNext(response.hasNext);
+      setNextPage(response.page + 1);
+      setState('ready');
+    } catch (error) {
+      if (requestGeneration.current !== generation) return;
+      setProducts([]);
+      setHasNext(false);
+      setState(isOfflineError(error) ? 'offline' : 'error');
     }
+  }, [requestQuery]);
 
-    if (inStockOnly) list = list.filter((product) => product.inStock);
-    if (selectedBrand) list = list.filter((product) => product.brand === selectedBrand);
+  useEffect(() => {
+    void loadFirstPage();
+  }, [loadFirstPage]);
 
-    if (isFoodCatalog && selectedFoodFilter !== 'ALL') {
-      if (selectedFoodFilter === 'DRY' || selectedFoodFilter === 'WET') {
-        list = list.filter((product) => product.foodForm === selectedFoodFilter);
-      } else {
-        list = list.filter((product) => product.lifeStages?.includes(selectedFoodFilter));
+  const loadNextPage = useCallback(async () => {
+    if (!hasNext || loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    setLoadMoreError(null);
+    const generation = requestGeneration.current;
+
+    try {
+      const response = await fetchCommerceCatalogPage({
+        ...requestQuery,
+        page: nextPage,
+        pageSize: CUSTOMER_CATALOG_PAGE_SIZE,
+      });
+      if (requestGeneration.current !== generation) return;
+      setProducts((current) => mergeUniqueProducts(current, response.items));
+      setHasNext(response.hasNext);
+      setNextPage(response.page + 1);
+    } catch (error) {
+      if (requestGeneration.current !== generation) return;
+      setLoadMoreError(
+        isOfflineError(error)
+          ? 'Reconnect to load more products.'
+          : 'Could not load the next page.',
+      );
+    } finally {
+      if (requestGeneration.current === generation) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
       }
     }
+  }, [hasNext, nextPage, requestQuery]);
 
-    if (selectedSort === 'PRICE_LOW') list.sort((a, b) => a.price - b.price);
-    if (selectedSort === 'PRICE_HIGH') list.sort((a, b) => b.price - a.price);
-    if (selectedSort === 'RATING') {
-      list.sort((a, b) => Number.parseFloat(b.rating ?? '0') - Number.parseFloat(a.rating ?? '0'));
+  const goBack = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
     }
+    router.replace(backFallback as never);
+  }, [backFallback, router]);
 
-    return list;
-  }, [
-    inStockOnly,
-    isFoodCatalog,
-    products,
-    searchQuery,
-    selectedBrand,
-    selectedFoodFilter,
-    selectedSort,
-  ]);
-
-  const clearFilters = () => {
+  const clearFilters = useCallback(() => {
     setSearchQuery('');
-    setSelectedBrand(null);
-    setSelectedSort('RELEVANCE');
+    setDebouncedSearch('');
+    setSelectedSort('DEFAULT');
     setInStockOnly(false);
     setSelectedFoodFilter('ALL');
-  };
+  }, []);
+
+  const isFoodCatalog = title.toLowerCase().includes('food');
+  const visibleProducts = useMemo(() => {
+    if (!appConfig.allowDemoMode || !isFoodCatalog || selectedFoodFilter === 'ALL') {
+      return products;
+    }
+    if (selectedFoodFilter === 'DRY' || selectedFoodFilter === 'WET') {
+      return products.filter((product) => product.foodForm === selectedFoodFilter);
+    }
+    return products.filter((product) => product.lifeStages?.includes(selectedFoodFilter));
+  }, [isFoodCatalog, products, selectedFoodFilter]);
+
+  const hasActiveFilters = Boolean(
+    debouncedSearch
+    || inStockOnly
+    || selectedSort !== 'DEFAULT'
+    || selectedFoodFilter !== 'ALL',
+  );
 
   const utilityFilters = [
-    { id: 'ALL_BRANDS', label: 'All brands', active: selectedBrand === null, onPress: () => setSelectedBrand(null) },
-    { id: 'STOCK', label: 'In stock', active: inStockOnly, onPress: () => setInStockOnly((value) => !value) },
+    {
+      id: 'STOCK',
+      label: 'In stock',
+      active: inStockOnly,
+      onPress: () => setInStockOnly((value) => !value),
+    },
     {
       id: 'LOW',
       label: 'Price: low to high',
-      active: selectedSort === 'PRICE_LOW',
-      onPress: () => setSelectedSort(selectedSort === 'PRICE_LOW' ? 'RELEVANCE' : 'PRICE_LOW'),
+      active: selectedSort === 'PRICE_ASC',
+      onPress: () => setSelectedSort(selectedSort === 'PRICE_ASC' ? 'DEFAULT' : 'PRICE_ASC'),
     },
     {
       id: 'HIGH',
       label: 'Price: high to low',
-      active: selectedSort === 'PRICE_HIGH',
-      onPress: () => setSelectedSort(selectedSort === 'PRICE_HIGH' ? 'RELEVANCE' : 'PRICE_HIGH'),
+      active: selectedSort === 'PRICE_DESC',
+      onPress: () => setSelectedSort(selectedSort === 'PRICE_DESC' ? 'DEFAULT' : 'PRICE_DESC'),
     },
-    ...(appConfig.allowDemoMode
-      ? [{
-          id: 'RATING',
-          label: 'Top rated',
-          active: selectedSort === 'RATING',
-          onPress: () => setSelectedSort(selectedSort === 'RATING' ? 'RELEVANCE' : 'RATING'),
-        }]
-      : []),
-    ...brands.map((brand) => ({
-      id: `brand-${brand}`,
-      label: brand,
-      active: selectedBrand === brand,
-      onPress: () => setSelectedBrand(selectedBrand === brand ? null : brand),
-    })),
   ];
+
+  if (state === 'loading') {
+    return (
+      <ScreenShell
+        scroll={false}
+        header={<ScreenHeader title={title} subtitle={subtitle} onBack={goBack} />}
+        contentContainerStyle={styles.shellContent}
+      >
+        <StateView
+          kind="loading"
+          title="Loading live products"
+          message="Checking current stock and prices from verified local stores…"
+        />
+      </ScreenShell>
+    );
+  }
+
+  if (state === 'offline' || state === 'error') {
+    return (
+      <ScreenShell
+        scroll={false}
+        header={<ScreenHeader title={title} subtitle={subtitle} onBack={goBack} />}
+        contentContainerStyle={styles.shellContent}
+      >
+        <StateView
+          kind={state}
+          title={state === 'offline' ? 'You are offline' : 'Catalog unavailable'}
+          message={
+            state === 'offline'
+              ? 'Reconnect to load current inventory and prices.'
+              : 'The live catalog could not be loaded.'
+          }
+          actionLabel="Retry"
+          onAction={() => void loadFirstPage()}
+        />
+      </ScreenShell>
+    );
+  }
 
   return (
     <ScreenShell
       scroll={false}
-      header={<ScreenHeader title={title} subtitle={subtitle ?? 'Live stock & store pickup'} />}
+      header={<ScreenHeader title={title} subtitle={subtitle ?? 'Live stock & store pickup'} onBack={goBack} />}
       contentContainerStyle={styles.shellContent}
       testID="customer-category-screen"
     >
@@ -199,7 +305,6 @@ export function CategoryTemplate({
               onPress={() => setSearchQuery('')}
               accessibilityRole="button"
               accessibilityLabel="Clear search"
-              hitSlop={8}
               style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
             >
               <AppIcon name="close" color={theme.textSecondary} size={18} />
@@ -232,29 +337,60 @@ export function CategoryTemplate({
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.chipList}
           style={styles.chipRow}
-          renderItem={({ item }) => <FilterChip label={item.label} selected={item.active} onPress={item.onPress} />}
+          renderItem={({ item }) => (
+            <FilterChip label={item.label} selected={item.active} onPress={item.onPress} />
+          )}
         />
       </View>
 
-      {filteredProducts.length === 0 ? (
+      {visibleProducts.length === 0 ? (
         <StateView
           kind="empty"
-          title="No matching products"
-          message="Clear one or more filters to see products available from verified local stores."
-          actionLabel="Clear filters"
-          onAction={clearFilters}
+          title={hasActiveFilters ? 'No matching products' : 'No products available'}
+          message={
+            hasActiveFilters
+              ? 'Clear one or more filters to see other products available from verified local stores.'
+              : 'This catalogue does not have any public listings right now.'
+          }
+          actionLabel={hasActiveFilters ? 'Clear filters' : undefined}
+          onAction={hasActiveFilters ? clearFilters : undefined}
         />
       ) : (
         <FlatList
           key={`catalog-${columns}`}
           style={styles.productList}
-          data={filteredProducts}
+          data={visibleProducts}
           numColumns={columns}
           keyExtractor={(item) => item.id}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           columnWrapperStyle={columns > 1 ? styles.columnRow : undefined}
           contentContainerStyle={styles.listContent}
+          onEndReached={() => {
+            if (hasNext && !loadMoreError) void loadNextPage();
+          }}
+          onEndReachedThreshold={0.35}
+          ListFooterComponent={
+            loadMoreError ? (
+              <View style={styles.paginationFooter}>
+                <ThemedText type="small" themeColor="textSecondary">{loadMoreError}</ThemedText>
+                <PrimaryButton
+                  label="Retry loading more"
+                  variant="secondary"
+                  onPress={() => void loadNextPage()}
+                />
+              </View>
+            ) : hasNext ? (
+              <View style={styles.paginationFooter}>
+                <PrimaryButton
+                  label="Load more products"
+                  variant="secondary"
+                  loading={loadingMore}
+                  onPress={() => void loadNextPage()}
+                />
+              </View>
+            ) : null
+          }
           renderItem={({ item }) => {
             const favourite = isFavourite('PRODUCT', item.id);
             const cartItem = items.find((entry) => entry.product.id === item.id);
@@ -263,7 +399,7 @@ export function CategoryTemplate({
 
             return (
               <Pressable
-                onPress={() => router.push(`/commerce/product-detail?id=${item.id}` as never)}
+                onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(item.id)}` as never)}
                 accessibilityRole="button"
                 accessibilityLabel={`${item.name}. ${item.brand ? `${item.brand}. ` : ''}₹${item.price}. ${item.inStock ? 'In stock' : 'Out of stock'}.`}
                 style={({ pressed }) => [
@@ -291,7 +427,6 @@ export function CategoryTemplate({
                     accessibilityRole="button"
                     accessibilityLabel={favourite ? `Remove ${item.name} from favourites` : `Add ${item.name} to favourites`}
                     accessibilityState={{ selected: favourite }}
-                    hitSlop={8}
                     style={({ pressed }) => [
                       styles.favouriteButton,
                       { backgroundColor: theme.backgroundElement },
@@ -370,7 +505,7 @@ export function CategoryTemplate({
                       ) : (
                         <PrimaryButton
                           label="Add"
-                          style={{ minHeight: 36, paddingHorizontal: 12 }}
+                          style={{ paddingHorizontal: 12 }}
                           onPress={() => addToCart(item, item.variants[0])}
                         />
                       )
@@ -401,34 +536,34 @@ const styles = StyleSheet.create({
   shellContent: { gap: spacing.x3, paddingHorizontal: spacing.x4, paddingBottom: spacing.x4 },
   controls: { gap: spacing.x2 },
   searchBox: {
-    height: 44,
+    minHeight: touchTarget,
     borderRadius: radii.pill,
     borderWidth: 1,
-    paddingHorizontal: spacing.x3,
+    paddingLeft: spacing.x3,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.x2,
   },
   searchInput: {
     flex: 1,
+    minHeight: touchTarget,
     fontSize: 14,
     fontWeight: '500',
     paddingVertical: 0,
   },
-  chipRow: { maxHeight: 36 },
+  chipRow: { minHeight: touchTarget },
   chipList: { gap: spacing.x2, paddingRight: spacing.x2 },
   productList: { flex: 1 },
   listContent: { gap: spacing.x3, paddingBottom: spacing.x6 },
   columnRow: { gap: spacing.x3 },
+  paginationFooter: { gap: spacing.x2, paddingVertical: spacing.x3, alignItems: 'stretch' },
   productCard: {
     borderRadius: radii.card,
     borderWidth: 1,
     overflow: 'hidden',
     gap: spacing.x2,
   },
-  productCardWide: {
-    flex: 1,
-  },
+  productCardWide: { flex: 1 },
   imageContainer: {
     height: 180,
     width: '100%',
@@ -436,21 +571,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     position: 'relative',
   },
-  imageContainerWide: {
-    height: 160,
-  },
-  productImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
+  imageContainerWide: { height: 160 },
+  productImage: { width: '100%', height: '100%', resizeMode: 'cover' },
   favouriteButton: {
     position: 'absolute',
     top: spacing.x2,
     right: spacing.x2,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: touchTarget,
+    height: touchTarget,
+    borderRadius: touchTarget / 2,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -467,57 +596,30 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: radii.compact,
   },
-  productDetails: {
-    padding: spacing.x3,
-    gap: spacing.x1,
-  },
-  brandRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  flex: {
-    flex: 1,
-  },
-  productName: {
-    ...typography.headline,
-    fontSize: 15,
-    fontWeight: '700',
-  },
+  productDetails: { padding: spacing.x3, gap: spacing.x1 },
+  brandRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  flex: { flex: 1 },
+  productName: { ...typography.headline, fontSize: 15, fontWeight: '700' },
   priceFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-end',
     marginTop: spacing.x2,
   },
-  priceBlock: {
-    gap: 2,
-  },
-  priceRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: spacing.x1,
-  },
-  priceText: {
-    ...typography.headline,
-    fontSize: 17,
-    fontWeight: '800',
-  },
-  strikethrough: {
-    textDecorationLine: 'line-through',
-    fontSize: 12,
-  },
+  priceBlock: { gap: 2 },
+  priceRow: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.x1 },
+  priceText: { ...typography.headline, fontSize: 17, fontWeight: '800' },
+  strikethrough: { textDecorationLine: 'line-through', fontSize: 12 },
   stepper: {
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: radii.pill,
     borderWidth: 1,
-    height: 36,
-    paddingHorizontal: 4,
+    minHeight: touchTarget,
   },
   stepButton: {
-    minWidth: 28,
-    height: '100%',
+    minWidth: touchTarget,
+    minHeight: touchTarget,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -527,7 +629,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pressed: {
-    opacity: 0.85,
-  },
+  pressed: { opacity: 0.85 },
 });

@@ -21,7 +21,8 @@ describe('customer accessibility and device contract', () => {
     expect(primaryButton).toMatch(/style,[\s\n]*styles\.minimumTouchTarget/);
     expect(searchScreen).toContain('touchTarget');
     expect(searchScreen).toMatch(/backBtn:\s*\{[\s\S]*minWidth:\s*touchTarget[\s\S]*minHeight:\s*touchTarget/);
-    expect(searchScreen).toMatch(/searchBox:\s*\{[\s\S]*height:\s*touchTarget/);
+    expect(searchScreen).toMatch(/searchBox:\s*\{[\s\S]*minHeight:\s*touchTarget/);
+    expect(searchScreen).toMatch(/searchInput:\s*\{[\s\S]*minHeight:\s*touchTarget/);
     expect(searchScreen).toMatch(/iconBtn:\s*\{[\s\S]*minWidth:\s*touchTarget[\s\S]*minHeight:\s*touchTarget/);
   });
 

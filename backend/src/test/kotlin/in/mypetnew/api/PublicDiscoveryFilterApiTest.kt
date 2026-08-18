@@ -85,7 +85,8 @@ class PublicDiscoveryFilterApiTest {
     }
 
     @Test
-    fun `public catalog commerceMode filter separates commerce from view-only medicine`() {
+    fun `public catalog commerceMode and service PIN filters are enforced across list and deep links`() {
+        val servicePincode = "517502"
         val adminToken = tokens.issue(
             Principal(UUID.randomUUID(), Role.ADMIN, permissions = setOf(AdminPermission.PROVIDER_REVIEW)),
         )
@@ -98,7 +99,7 @@ class PublicDiscoveryFilterApiTest {
             body = """{
                 "name":"Discovery Filter Store",
                 "capabilities":["PRODUCT_STORE","MEDICINE_CATALOG_VIEW_ONLY"],
-                "servicePinCodes":["517501"]
+                "servicePinCodes":["$servicePincode"]
             }""",
         )
         val outletId = outlet.uuid("id")
@@ -149,20 +150,23 @@ class PublicDiscoveryFilterApiTest {
                 "category":"health"
             }""",
         )
+        val productId = product.uuid("id")
 
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
             param("commerceMode", "COMMERCE")
+            param("pincode", servicePincode)
         }.andExpect {
             status { isOk() }
             jsonPath("$.items.length()") { value(1) }
-            jsonPath("$.items[0].id") { value(product.uuid("id").toString()) }
+            jsonPath("$.items[0].id") { value(productId.toString()) }
             jsonPath("$.items[0].commerceMode") { value("COMMERCE") }
         }
 
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
             param("commerceMode", "VIEW_ONLY")
+            param("pincode", servicePincode)
         }.andExpect {
             status { isOk() }
             jsonPath("$.items.length()") { value(1) }
@@ -171,10 +175,55 @@ class PublicDiscoveryFilterApiTest {
         }
 
         mockMvc.get("/api/v1/public/catalog") {
+            param("outletId", outletId.toString())
+            param("pincode", "517520")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items.length()") { value(0) }
+        }
+
+        mockMvc.get("/api/v1/public/outlets/$outletId") {
+            param("capability", "PRODUCT_STORE")
+            param("pincode", servicePincode)
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.id") { value(outletId.toString()) }
+        }
+
+        mockMvc.get("/api/v1/public/outlets/$outletId") {
+            param("capability", "PRODUCT_STORE")
+            param("pincode", "517520")
+        }.andExpect {
+            status { isNotFound() }
+            jsonPath("$.code") { value("RESOURCE_NOT_FOUND") }
+        }
+
+        mockMvc.get("/api/v1/public/catalog/$productId") {
+            param("pincode", servicePincode)
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.id") { value(productId.toString()) }
+        }
+
+        mockMvc.get("/api/v1/public/catalog/$productId") {
+            param("pincode", "517520")
+        }.andExpect {
+            status { isNotFound() }
+            jsonPath("$.code") { value("RESOURCE_NOT_FOUND") }
+        }
+
+        mockMvc.get("/api/v1/public/catalog") {
             param("commerceMode", "INVALID")
         }.andExpect {
             status { isBadRequest() }
             jsonPath("$.code") { value("VALIDATION_FAILED") }
+        }
+
+        mockMvc.get("/api/v1/public/catalog") {
+            param("pincode", "000000")
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.code") { value("PIN_CODE_INVALID") }
         }
     }
 

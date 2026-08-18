@@ -242,7 +242,7 @@ export default function GroomerDetailScreen() {
           <View style={styles.section}>
             <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Published grooming services</ThemedText>
             <ThemedText style={[styles.sectionSubtitle, { color: theme.textSecondary }]}>
-              Price, duration and description below are read from this provider's current public catalogue.
+              Price, duration and description below are read from this provider’s current public catalogue.
             </ThemedText>
 
             {services.length === 0 ? (

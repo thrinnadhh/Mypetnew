@@ -40,6 +40,10 @@ function accountStorageKey(accountId: string): string {
   return `${ACCOUNT_STORAGE_PREFIX}${accountId}`;
 }
 
+function favouriteOwnerKey(accountId: string | null): string {
+  return accountId ? `account:${accountId}` : 'guest';
+}
+
 function normalizeLocal(items: FavouriteItem[]): FavouriteItem[] {
   const unique = new Map<string, FavouriteItem>();
   for (const item of items) {
@@ -129,17 +133,22 @@ function withoutTarget(
 export function FavouritesProvider({ children }: { children: React.ReactNode }) {
   const { session } = useAuth();
   const accountId = session?.accountId ?? null;
+  const currentOwnerKey = favouriteOwnerKey(accountId);
   const [favourites, setFavourites] = useState<FavouriteItem[]>([]);
+  const [resolvedOwnerKey, setResolvedOwnerKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const favouritesRef = useRef<FavouriteItem[]>([]);
+  const resolvedOwnerKeyRef = useRef<string | null>(null);
   const loadGenerationRef = useRef(0);
   const mutationQueueRef = useRef<Promise<boolean>>(Promise.resolve(false));
 
-  const replaceFavourites = useCallback((items: FavouriteItem[]) => {
+  const replaceFavourites = useCallback((items: FavouriteItem[], ownerKey: string) => {
     const next = normalizeLocal(items);
     favouritesRef.current = next;
+    resolvedOwnerKeyRef.current = ownerKey;
     setFavourites(next);
+    setResolvedOwnerKey(ownerKey);
   }, []);
 
   const reload = useCallback(async () => {
@@ -147,6 +156,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
     loadGenerationRef.current = generation;
     const authEpoch = apiClient.getAuthEpoch();
     const accountAtStart = accountId;
+    const ownerAtStart = favouriteOwnerKey(accountAtStart);
     setLoading(true);
     setError(null);
 
@@ -158,7 +168,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
     try {
       if (!accountAtStart) {
         const guest = await loadGuestLocal(true);
-        if (isCurrent()) replaceFavourites(guest);
+        if (isCurrent()) replaceFavourites(guest, ownerAtStart);
         return;
       }
 
@@ -202,7 +212,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
         saveStored(GUEST_STORAGE_KEY, []),
       ]);
       if (!isCurrent()) return;
-      replaceFavourites([...serverProducts, ...accountLocalNext]);
+      replaceFavourites([...serverProducts, ...accountLocalNext], ownerAtStart);
     } catch (loadError) {
       if (!isCurrent()) return;
       console.warn('Failed to load favourites', loadError);
@@ -210,7 +220,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
         ? await loadAccountLocal(accountAtStart)
         : await loadGuestLocal(true);
       if (!isCurrent()) return;
-      replaceFavourites(safeLocal);
+      replaceFavourites(safeLocal, ownerAtStart);
       setError(loadError instanceof Error ? loadError.message : 'Could not load favourites.');
     } finally {
       if (isCurrent()) setLoading(false);
@@ -224,23 +234,31 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
     };
   }, [reload, session?.accessToken]);
 
+  const visibleFavourites = resolvedOwnerKey === currentOwnerKey ? favourites : [];
+  const visibleLoading = loading || resolvedOwnerKey !== currentOwnerKey;
+  const visibleError = resolvedOwnerKey === currentOwnerKey ? error : null;
+
   const isFavourite = useCallback(
     (targetType: 'PRODUCT' | 'SHOP', targetId: string): boolean =>
-      favourites.some((favourite) => favourite.targetType === targetType && favourite.targetId === targetId),
-    [favourites],
+      visibleFavourites.some((favourite) => favourite.targetType === targetType && favourite.targetId === targetId),
+    [visibleFavourites],
   );
 
   const performToggle = useCallback(async (
     targetType: 'PRODUCT' | 'SHOP',
     targetId: string,
     accountAtStart: string | null,
+    ownerAtStart: string,
     authEpoch: number,
   ): Promise<boolean> => {
-    const currentItems = favouritesRef.current;
+    const currentItems = resolvedOwnerKeyRef.current === ownerAtStart ? favouritesRef.current : [];
     const currentlyFavourite = currentItems.some(
       (favourite) => favourite.targetType === targetType && favourite.targetId === targetId,
     );
-    const stillSameAccount = () => apiClient.getAuthEpoch() === authEpoch;
+    const stillSameAccount = () => (
+      apiClient.getAuthEpoch() === authEpoch
+      && resolvedOwnerKeyRef.current === ownerAtStart
+    );
 
     if (!stillSameAccount()) return currentlyFavourite;
 
@@ -263,7 +281,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
               { targetType: 'SHOP', targetId, createdAt: new Date().toISOString() },
               ...favouritesRef.current,
             ]);
-        replaceFavourites(next);
+        replaceFavourites(next, ownerAtStart);
         return !currentlyFavourite;
       }
 
@@ -278,7 +296,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
             ]);
         await saveStored(GUEST_STORAGE_KEY, nextLocal);
         if (!stillSameAccount()) return currentlyFavourite;
-        replaceFavourites(nextLocal);
+        replaceFavourites(nextLocal, ownerAtStart);
         return !currentlyFavourite;
       }
 
@@ -289,7 +307,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
         if (!stillSameAccount()) return currentlyFavourite;
         await saveAccountLocal(accountAtStart, withoutTarget(accountLocal, 'PRODUCT', targetId));
         if (!stillSameAccount()) return currentlyFavourite;
-        replaceFavourites(withoutTarget(favouritesRef.current, 'PRODUCT', targetId));
+        replaceFavourites(withoutTarget(favouritesRef.current, 'PRODUCT', targetId), ownerAtStart);
         return false;
       }
 
@@ -299,7 +317,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
       if (!stillSameAccount()) return currentlyFavourite;
       await saveAccountLocal(accountAtStart, withoutTarget(accountLocal, 'PRODUCT', targetId));
       if (!stillSameAccount()) return currentlyFavourite;
-      replaceFavourites([saved, ...favouritesRef.current]);
+      replaceFavourites([saved, ...favouritesRef.current], ownerAtStart);
       return true;
     } catch (mutationError) {
       if (!stillSameAccount()) return currentlyFavourite;
@@ -314,7 +332,10 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
     targetId: string,
   ): Promise<boolean> => {
     const accountAtInvocation = accountId;
+    const ownerAtInvocation = favouriteOwnerKey(accountAtInvocation);
     const authEpochAtInvocation = apiClient.getAuthEpoch();
+    if (resolvedOwnerKeyRef.current !== ownerAtInvocation) return Promise.resolve(false);
+
     const previous = mutationQueueRef.current;
     const next = previous
       .catch(() => false)
@@ -322,6 +343,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
         targetType,
         targetId,
         accountAtInvocation,
+        ownerAtInvocation,
         authEpochAtInvocation,
       ));
     mutationQueueRef.current = next;
@@ -329,7 +351,14 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
   }, [accountId, performToggle]);
 
   return (
-    <FavouritesContext.Provider value={{ favourites, loading, error, retry: reload, isFavourite, toggleFavourite }}>
+    <FavouritesContext.Provider value={{
+      favourites: visibleFavourites,
+      loading: visibleLoading,
+      error: visibleError,
+      retry: reload,
+      isFavourite,
+      toggleFavourite,
+    }}>
       {children}
     </FavouritesContext.Provider>
   );

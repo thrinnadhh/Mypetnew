@@ -6,7 +6,7 @@ function source(relativePath: string): string {
 }
 
 describe('P9 grooming discovery contract', () => {
-  it('routes every Home grooming entry into canonical provider discovery and suppresses live grooming preview when disabled', () => {
+  it('routes every Home grooming entry into canonical provider discovery and suppresses grooming previews when disabled', () => {
     const home = source('src/screens/home-screen.tsx');
     const legacyRoute = source('src/app/groom.tsx');
 
@@ -16,6 +16,7 @@ describe('P9 grooming discovery contract', () => {
     expect(home).toContain("? fetchProviderPage('GROOMER'");
     expect(home).toContain(': Promise.resolve({ items: [], page: 0');
     expect(home).toContain('activeCity.featureFlags.allowGrooming && liveGroomerCards.length > 0');
+    expect(home).toContain("{activeCity.featureFlags.allowGrooming ? (\n              <HorizontalCardSection title=\"Grooming Nearby ✂️\"");
 
     expect(legacyRoute).toContain('providerId || serviceId');
     expect(legacyRoute).toContain('AppointmentDiscoveryScreen');

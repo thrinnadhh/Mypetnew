@@ -16,6 +16,10 @@ export interface CustomerOrderDetail {
   }>;
   pricing: {
     itemSubtotalPaise: number;
+    itemDiscountPaise: number;
+    couponDiscountPaise: number;
+    loyaltyRewardPaise: number;
+    taxPaise: number;
     platformFeePaise: number;
     deliveryFeePaise: number;
     grandTotalPaise: number;
@@ -64,6 +68,10 @@ function validateCanonicalOrder(order: CustomerOrderDetail): CustomerOrderDetail
   }
   if (
     !validNonNegativeInteger(order.pricing.itemSubtotalPaise) ||
+    !validNonNegativeInteger(order.pricing.itemDiscountPaise) ||
+    !validNonNegativeInteger(order.pricing.couponDiscountPaise) ||
+    !validNonNegativeInteger(order.pricing.loyaltyRewardPaise) ||
+    !validNonNegativeInteger(order.pricing.taxPaise) ||
     !validNonNegativeInteger(order.pricing.platformFeePaise) ||
     !validNonNegativeInteger(order.pricing.deliveryFeePaise) ||
     !validNonNegativeInteger(order.pricing.grandTotalPaise) ||

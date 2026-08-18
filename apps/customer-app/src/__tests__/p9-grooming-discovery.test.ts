@@ -72,6 +72,7 @@ describe('P9 grooming discovery contract', () => {
     expect(screen).toContain('Retry refresh');
     expect(screen).toContain('Retry loading more');
     expect(screen).toContain('[activeCity.featureFlags.allowGrooming, selectedPincode]');
+    expect(screen).toContain("if (mode === 'initial') {\n      setProviders([]);\n      setHasNext(false);\n      setNextPage(1);");
   });
 
   it('distinguishes loading, empty, offline, server error, pagination error and refresh error states', () => {
@@ -89,6 +90,7 @@ describe('P9 grooming discovery contract', () => {
 
   it('keeps P9 provider-first and truthful with no service, slot, payment, image, rating, distance or ETA invention', () => {
     const screen = source('src/app/grooming/index.tsx');
+    const resilientImage = source('src/components/ui/resilient-remote-image.tsx');
 
     expect(screen).toContain('Serves PIN ${selectedPincode}');
     expect(screen).toContain("router.push(`/groomer/${encodeURIComponent(providerId)}`");
@@ -103,6 +105,8 @@ describe('P9 grooming discovery contract', () => {
     expect(screen).not.toContain('DEMO_MEDIA');
     expect(screen).not.toContain('slot');
     expect(screen).not.toContain('payment');
+    expect(resilientImage).toContain('const effectiveFallback = appConfig.allowDemoMode');
+    expect(resilientImage).toContain('if (!appConfig.allowDemoMode && DEMO_MEDIA_URIS.has(candidate)) return undefined;');
   });
 
   it('keeps controls accessible and responsive for long provider content', () => {

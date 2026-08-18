@@ -155,6 +155,7 @@ export default function CheckoutScreen() {
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
   const [availability, setAvailability] = useState<FulfilmentAvailability | null>(null);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  const [availabilityRetry, setAvailabilityRetry] = useState(0);
   const [quote, setQuote] = useState<CheckoutViewQuote | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -220,7 +221,7 @@ export default function CheckoutScreen() {
     }
     if (!PIN_PATTERN.test(selectedPincode)) {
       setAvailability({ pickup: false, delivery: false });
-      setAvailabilityError('Select an active six-digit service PIN before checkout.');
+      setAvailabilityError(null);
       return;
     }
 
@@ -234,14 +235,19 @@ export default function CheckoutScreen() {
       if (!active) return;
       setAvailability({ pickup: pickup.serviceable, delivery: delivery.serviceable });
       setAvailabilityError(null);
+      setErrorMessage(null);
+      setState('ready');
     }).catch((error) => {
       if (!active) return;
       const presentation = checkoutErrorPresentation(error);
       setAvailability({ pickup: false, delivery: false });
       setAvailabilityError(presentation.message);
+      setErrorMessage(presentation.message);
+      setQuoteRecovery('retry');
+      setState('error');
     });
     return () => { active = false; };
-  }, [cartLoading, checkoutItems.length, demoCheckout, hasPreviewItems, locationLoading, providerId, selectedPincode, session, user]);
+  }, [availabilityRetry, cartLoading, checkoutItems.length, demoCheckout, hasPreviewItems, locationLoading, providerId, selectedPincode, session, user]);
 
   useEffect(() => {
     if (!availability) return;
@@ -314,8 +320,8 @@ export default function CheckoutScreen() {
   }, [availability, cartLoading, checkoutItems, demoCheckout, fulfilmentMode, hasPreviewItems, itemSubtotal, locationLoading, paymentMethod, providerId, quoteRequestKey, selectedAddressId, selectedAddressMatchesPin, selectedPincode, session, user]);
 
   useEffect(() => {
-    if (user && session && (demoCheckout || availability)) void loadQuote();
-  }, [availability, demoCheckout, loadQuote, session, user]);
+    if (user && session && !availabilityError && (demoCheckout || availability)) void loadQuote();
+  }, [availability, availabilityError, demoCheckout, loadQuote, session, user]);
 
   useEffect(() => {
     if (!quote || demoCheckout) return;
@@ -473,7 +479,12 @@ export default function CheckoutScreen() {
         setPaymentMethod('PAY_ON_FULFILMENT');
         break;
       default:
-        void loadQuote();
+        if (availabilityError) {
+          setState('loading');
+          setAvailabilityRetry((current) => current + 1);
+        } else {
+          void loadQuote();
+        }
     }
   };
 
@@ -547,13 +558,13 @@ export default function CheckoutScreen() {
     );
   }
 
-  if (!demoCheckout && availability && !availability.pickup && !availability.delivery) {
+  if (!demoCheckout && availability && !availability.pickup && !availability.delivery && !availabilityError) {
     return (
       <ScreenShell scroll={false} header={<AppBar title={t('routes.checkout')} />}>
         <StateView
           kind="error"
           title="No fulfilment available"
-          message={availabilityError ?? 'This provider cannot fulfil the cart for the selected service context.'}
+          message="This provider cannot fulfil the cart for the selected service context."
           actionLabel="Change service PIN"
           onAction={openLocationModal}
         />
@@ -570,12 +581,14 @@ export default function CheckoutScreen() {
           ? 'Use available fulfilment'
           : quoteRecovery === 'payment'
             ? 'Use pay on fulfilment'
-            : 'Request fresh quote';
+            : availabilityError
+              ? 'Retry fulfilment check'
+              : 'Request fresh quote';
     return (
       <ScreenShell scroll={false} header={<AppBar title={t('routes.checkout')} />}>
         <StateView
           kind="error"
-          title="Checkout unavailable"
+          title={availabilityError ? 'Checkout requires a connection' : 'Checkout unavailable'}
           message={errorMessage ?? 'Could not load checkout.'}
           actionLabel={actionLabel}
           onAction={recoverQuote}

@@ -4,12 +4,14 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ProviderProfileTemplate } from '@/components/commerce/ProviderProfileTemplate';
 import { AppBar, StateView } from '@/components/foundation/primitives';
 import { ScreenShell } from '@/components/foundation/screen-shell';
+import { useLocation } from '@/context/LocationContext';
 import type { ShopProfileData } from '@/services/catalog-data';
-import { fetchPublicOutlet, fetchShopProfile } from '@/services/customer-catalog';
+import { fetchShopProfile } from '@/services/customer-catalog';
 import { isOfflineError } from '@/services/customer-profile';
 import {
   CUSTOMER_CATALOG_PAGE_SIZE,
   fetchProductCatalogPage,
+  fetchServiceableProductStore,
   mergeUniqueProducts,
 } from '@/services/paginated-catalog';
 import { appConfig } from '@/utils/app-config';
@@ -18,6 +20,7 @@ type LoadState = 'loading' | 'ready' | 'offline' | 'error';
 
 export default function ShopProfileScreen() {
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
+  const { selectedPincode } = useLocation();
   const rawId = Array.isArray(id) ? id[0] : id;
   const outletId = rawId?.trim() ?? '';
 
@@ -37,7 +40,7 @@ export default function ShopProfileScreen() {
     setLoadingMore(false);
     setLoadMoreError(null);
 
-    if (!outletId) {
+    if (!outletId || !/^[1-9][0-9]{5}$/.test(selectedPincode)) {
       setShop(null);
       setState('error');
       return;
@@ -56,13 +59,10 @@ export default function ShopProfileScreen() {
         return;
       }
 
-      const outlet = await fetchPublicOutlet(outletId);
-      if (!outlet.capabilities.includes('PRODUCT_STORE')) {
-        throw new Error('OUTLET_NOT_PRODUCT_STORE');
-      }
-
+      const outlet = await fetchServiceableProductStore(outletId, selectedPincode);
       const firstPage = await fetchProductCatalogPage({
         outletId,
+        pincode: selectedPincode,
         sort: 'NAME',
         page: 0,
         pageSize: CUSTOMER_CATALOG_PAGE_SIZE,
@@ -86,7 +86,7 @@ export default function ShopProfileScreen() {
       setHasNext(false);
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, [outletId]);
+  }, [outletId, selectedPincode]);
 
   useEffect(() => {
     void load();
@@ -102,6 +102,7 @@ export default function ShopProfileScreen() {
     try {
       const response = await fetchProductCatalogPage({
         outletId: shop.id,
+        pincode: selectedPincode,
         sort: 'NAME',
         page: nextPage,
         pageSize: CUSTOMER_CATALOG_PAGE_SIZE,
@@ -125,11 +126,11 @@ export default function ShopProfileScreen() {
         setLoadingMore(false);
       }
     }
-  }, [hasNext, nextPage, shop]);
+  }, [hasNext, nextPage, selectedPincode, shop]);
 
   if (state === 'loading') {
     return (
-      <ScreenShell scroll={false} header={<AppBar title="Pet store" />}>
+      <ScreenShell scroll={false} header={<AppBar title="Pet store" subtitle={`Service PIN ${selectedPincode}`} />}>
         <StateView kind="loading" title="Loading live store catalog" />
       </ScreenShell>
     );
@@ -137,14 +138,14 @@ export default function ShopProfileScreen() {
 
   if (state === 'offline' || state === 'error' || !shop) {
     return (
-      <ScreenShell scroll={false} header={<AppBar title="Pet store" />}>
+      <ScreenShell scroll={false} header={<AppBar title="Pet store" subtitle={`Service PIN ${selectedPincode}`} />}>
         <StateView
           kind={state === 'offline' ? 'offline' : 'error'}
           title={state === 'offline' ? 'You are offline' : 'Store unavailable'}
           message={
             state === 'offline'
               ? 'Reconnect to load current store inventory.'
-              : 'This store is not an active public product store or could not be loaded.'
+              : `This store is not an active public product store serving PIN ${selectedPincode}, or it could not be loaded.`
           }
           actionLabel="Retry"
           onAction={() => void load()}

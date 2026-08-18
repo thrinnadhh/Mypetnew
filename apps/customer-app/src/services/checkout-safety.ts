@@ -8,6 +8,7 @@ export interface CheckoutRequestLine {
 }
 
 export interface CheckoutRequestState {
+  customerId: string;
   providerId: string;
   lines: readonly CheckoutRequestLine[];
   fulfilmentMode: ProductFulfilmentMode;
@@ -29,6 +30,7 @@ export function buildCheckoutRequestKey(input: CheckoutRequestState): string {
     .map((line) => `${line.offeringId}:${line.quantity}`)
     .join('|');
   return [
+    input.customerId,
     input.providerId,
     input.fulfilmentMode,
     input.paymentMethod,

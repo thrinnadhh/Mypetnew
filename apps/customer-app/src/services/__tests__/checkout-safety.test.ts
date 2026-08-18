@@ -12,8 +12,9 @@ function apiError(code: string, message = code): ApiError {
 }
 
 describe('checkout safety helpers', () => {
-  it('binds a quote request to cart, fulfilment, payment, address and selected service PIN', () => {
+  it('binds a quote request to customer, cart, fulfilment, payment, address and selected service PIN', () => {
     const base = {
+      customerId: '00000000-0000-4000-8000-000000000001',
       providerId: '11111111-1111-4111-8111-111111111111',
       lines: [
         { offeringId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', quantity: 2 },
@@ -27,6 +28,7 @@ describe('checkout safety helpers', () => {
 
     const canonical = buildCheckoutRequestKey(base);
     expect(buildCheckoutRequestKey({ ...base, lines: [...base.lines].reverse() })).toBe(canonical);
+    expect(buildCheckoutRequestKey({ ...base, customerId: '00000000-0000-4000-8000-000000000002' })).not.toBe(canonical);
     expect(buildCheckoutRequestKey({ ...base, selectedPincode: '517502' })).not.toBe(canonical);
     expect(buildCheckoutRequestKey({ ...base, selectedAddressId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' })).not.toBe(canonical);
     expect(buildCheckoutRequestKey({ ...base, lines: [{ ...base.lines[0], quantity: 3 }] })).not.toBe(canonical);

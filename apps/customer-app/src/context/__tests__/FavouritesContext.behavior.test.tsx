@@ -10,12 +10,14 @@ const mockApiPut = jest.fn();
 const mockApiDelete = jest.fn();
 let mockAuthEpoch = 0;
 let mockSession: { accountId: string; accessToken: string } | null = null;
+let mockBeforeStorageSet: ((key: string, value: string) => Promise<void>) | null = null;
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,
   default: {
     getItem: jest.fn(async (key: string) => mockStorage.get(key) ?? null),
     setItem: jest.fn(async (key: string, value: string) => {
+      if (mockBeforeStorageSet) await mockBeforeStorageSet(key, value);
       mockStorage.set(key, value);
     }),
     removeItem: jest.fn(async (key: string) => {
@@ -93,6 +95,7 @@ describe('FavouritesContext P6 behaviour', () => {
     mockApiDelete.mockResolvedValue({});
     mockAuthEpoch = 0;
     mockSession = null;
+    mockBeforeStorageSet = null;
     latest = null;
   });
 
@@ -175,6 +178,60 @@ describe('FavouritesContext P6 behaviour', () => {
     expect(latest?.favourites).toEqual([
       expect.objectContaining({ targetType: 'PRODUCT', targetId: 'product-gone' }),
     ]);
+  });
+
+  it('does not leave a stale guest shop addition for a later account when login crosses the storage write', async () => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(tree());
+    });
+    await settle();
+
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let blocked = false;
+    mockBeforeStorageSet = async (key) => {
+      if (!blocked && key === 'mypet_favourites_v4_guest') {
+        blocked = true;
+        markWriteStarted();
+        await writeGate;
+      }
+    };
+
+    const guestToggle = latest!.toggleFavourite('SHOP', 'shop-race');
+    await writeStarted;
+
+    mockSession = { accountId: 'user-a', accessToken: 'token-a' };
+    mockAuthEpoch += 1;
+    act(() => {
+      renderer!.update(tree());
+    });
+    await settle();
+
+    mockBeforeStorageSet = null;
+    releaseWrite();
+    await act(async () => {
+      await guestToggle;
+    });
+    await settle();
+
+    expect(JSON.parse(mockStorage.get('mypet_favourites_v4_guest') ?? '[]')).toEqual([]);
+
+    mockSession = { accountId: 'user-b', accessToken: 'token-b' };
+    mockAuthEpoch += 1;
+    act(() => {
+      renderer!.update(tree());
+    });
+    await settle();
+
+    expect(latest?.favourites).toEqual([]);
+    expect(mockStorage.get('mypet_favourites_v4_account:user-b')).toBeUndefined();
   });
 
   it('serializes two different shop writes so one local favourite cannot clobber the other', async () => {

@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, type StyleProp, type ViewStyl
 
 import { ThemedText } from '@/components/themed-text';
 import { Radius, Shadows, Spacing } from '@/constants/theme';
+import { touchTarget } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 
 type ButtonVariant = 'primary' | 'secondary' | 'ghost';
@@ -44,6 +45,7 @@ export function PrimaryButton({
         },
         pressed && !isDisabled && { transform: [{ scale: 0.98 }] },
         style,
+        styles.minimumTouchTarget,
       ]}
       accessibilityRole="button"
       accessibilityLabel={label}
@@ -65,6 +67,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.four,
+  },
+  minimumTouchTarget: {
+    minHeight: touchTarget,
   },
   primaryShadow: {
     ...Shadows.pressed,

@@ -19,7 +19,7 @@ import {
 } from '@/services/paginated-catalog';
 
 const RECENT_SEARCHES_KEY = 'mypet_recent_searches_v1';
-const POPULAR_SEARCHES = ['Adult Dog Food', 'Cat Treats', 'Chew Toys', 'Grooming Shampoo'];
+const SUGGESTED_SEARCHES = ['Adult Dog Food', 'Cat Treats', 'Chew Toys', 'Grooming Shampoo'];
 
 type SearchState = 'idle' | 'loading' | 'ready' | 'offline' | 'error';
 
@@ -270,9 +270,9 @@ export default function UniversalSearchScreen() {
             </>
           ) : null}
 
-          <ThemedText style={[styles.recentTitle, { marginTop: spacing.x6 }]}>Popular Searches</ThemedText>
+          <ThemedText style={[styles.recentTitle, { marginTop: spacing.x6 }]}>Suggested Searches</ThemedText>
           <View style={styles.chipGrid}>
-            {POPULAR_SEARCHES.map((term) => (
+            {SUGGESTED_SEARCHES.map((term) => (
               <Pressable
                 key={term}
                 onPress={() => selectSuggestedSearch(term)}
@@ -280,7 +280,7 @@ export default function UniversalSearchScreen() {
                 accessibilityLabel={`Search for ${term}`}
                 style={[styles.recentChip, { backgroundColor: theme.primarySoft, borderColor: theme.primary }]}
               >
-                <AppIcon name="sparkle" color={theme.primary} size={14} />
+                <AppIcon name="search" color={theme.primary} size={14} />
                 <ThemedText style={{ fontSize: 13, color: theme.primary, fontWeight: '600' }}>{term}</ThemedText>
               </Pressable>
             ))}

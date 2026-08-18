@@ -41,7 +41,11 @@ describe('P10 groomer date and slot discovery contract', () => {
     expect(service).toContain("export const APPOINTMENT_DISPLAY_TIME_ZONE = 'Asia/Kolkata'");
     expect(service).toContain('startsAt: dto.startsAt');
     expect(service).toContain('endsAt: dto.endsAt');
-    expect(service).toContain('if (startsAtMs <= nowMs) return null;');
+    expect(service).toContain('const strictContract = Boolean(capability)');
+    expect(service).toContain('const hasValidTimes = Number.isFinite(startsAtMs)');
+    expect(service).toContain('if (!hasValidTimes && strictContract)');
+    expect(service).toContain("throw contractError('SLOT_TIME_INVALID'");
+    expect(service).toContain('if (hasValidTimes && startsAtMs <= nowMs) return null;');
     expect(service).not.toContain("replace('Z'");
   });
 

@@ -45,9 +45,9 @@ describe('checkout safety helpers', () => {
     expect(hasServerPriceChange(100, 11_000)).toBe(true);
   });
 
-  it('maps cart, saved-address and serviceability failures to actionable recovery', () => {
+  it('maps cart, address and serviceability failures to actionable recovery', () => {
     expect(checkoutErrorPresentation(apiError('LISTING_UNAVAILABLE')).recovery).toBe('cart');
-    expect(checkoutErrorPresentation(apiError('ADDRESS_NOT_FOUND')).recovery).toBe('saved-address');
+    expect(checkoutErrorPresentation(apiError('ADDRESS_NOT_FOUND')).recovery).toBe('fulfilment');
     expect(checkoutErrorPresentation(apiError('OUTLET_NOT_SERVICEABLE')).recovery).toBe('address');
     expect(checkoutErrorPresentation(apiError('DELIVERY_DISPATCH_ORIGIN_REQUIRED')).recovery).toBe('fulfilment');
     expect(checkoutErrorPresentation(apiError('PAYMENT_PROVIDER_UNAVAILABLE')).recovery).toBe('payment');

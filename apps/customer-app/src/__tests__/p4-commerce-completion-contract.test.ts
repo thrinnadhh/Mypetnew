@@ -22,10 +22,11 @@ describe('P4 commerce completion contract', () => {
     expect(navigation).not.toContain("'/commerce/[slug]'");
   });
 
-  it('keeps category/product discovery bounded and server-authoritative', () => {
+  it('keeps category/product discovery bounded, PIN-scoped and server-authoritative', () => {
     const template = source('src/components/commerce/CategoryTemplate.tsx');
     const products = source('src/app/products/index.tsx');
     const category = source('src/app/category/[id].tsx');
+    const service = source('src/services/paginated-catalog.ts');
 
     expect(template).toContain('fetchCommerceCatalogPage');
     expect(template).toContain('CUSTOMER_CATALOG_PAGE_SIZE');
@@ -35,8 +36,11 @@ describe('P4 commerce completion contract', () => {
     expect(template).toContain("availability: inStockOnly ? 'IN_STOCK'");
     expect(template).toContain("selectedSort === 'PRICE_ASC'");
     expect(template).toContain('q: debouncedSearch || undefined');
-    expect(products).toContain('catalogQuery={{');
-    expect(category).toContain('catalogQuery={catalogQueryFor(catKey)}');
+    expect(products).toContain('catalogQuery={catalogQuery}');
+    expect(products).toContain('pincode: selectedPincode');
+    expect(category).toContain('catalogQuery={catalogQuery}');
+    expect(category).toContain('pincode: selectedPincode');
+    expect(service).toContain("['pincode', query.pincode]");
     expect(products).not.toContain('fetchCommerceProducts');
     expect(category).not.toContain('fetchAllCatalogItems');
     expect(category).not.toContain('fetchCommerceProducts');
@@ -57,7 +61,7 @@ describe('P4 commerce completion contract', () => {
     expect(providerTemplate).toContain('stepTouch: { minWidth: touchTarget, minHeight: touchTarget');
   });
 
-  it('keeps live search product-only, paginated, route-backed and race-safe', () => {
+  it('keeps live search product-only, paginated, route-backed, PIN-scoped and race-safe', () => {
     const search = source('src/screens/search-screen.tsx');
 
     expect(search).toContain('fetchProductCatalogPage');
@@ -65,22 +69,40 @@ describe('P4 commerce completion contract', () => {
     expect(search).toContain('Retry loading more');
     expect(search).toContain('router.setParams({ q: clean })');
     expect(search).toContain('onSubmitEditing={submitSearch}');
+    expect(search).toContain('pincode: selectedPincode');
     expect(search).not.toContain('fetchAllCatalogItems');
     expect(search).not.toContain('fetchAllPublicOutlets');
     expect(search).not.toContain("type === 'PET_SHOP'");
   });
 
-  it('loads shop product pages incrementally and rejects non-product outlets', () => {
+  it('loads shop product pages incrementally and rejects non-serviceable product outlets', () => {
     const shop = source('src/app/shop/[id].tsx');
     const provider = source('src/components/commerce/ProviderProfileTemplate.tsx');
 
-    expect(shop).toContain("outlet.capabilities.includes('PRODUCT_STORE')");
+    expect(shop).toContain('fetchServiceableProductStore');
     expect(shop).toContain('fetchProductCatalogPage');
+    expect(shop).toContain('pincode: selectedPincode');
     expect(shop).toContain('CUSTOMER_CATALOG_PAGE_SIZE');
     expect(shop).toContain('loadMoreError');
     expect(provider).toContain('No products available');
     expect(provider).toContain('Load more products');
     expect(provider).toContain('onBack={goBack}');
+  });
+
+  it('uses an explicit selected PIN and paginates store discovery', () => {
+    const location = source('src/context/LocationContext.tsx');
+    const modal = source('src/components/location-modal.tsx');
+    const stores = source('src/screens/commerce-discovery-screen.tsx');
+
+    expect(location).toContain('selectedPincode');
+    expect(location).toContain('PIN_STORAGE_KEY');
+    expect(modal).toContain('Select Service Location');
+    expect(modal).toContain('selectCity(city, pincode)');
+    expect(stores).toContain("capability: 'PRODUCT_STORE'");
+    expect(stores).toContain('pincode: selectedPincode');
+    expect(stores).toContain('Load more stores');
+    expect(stores).not.toContain('fetchAllPublicOutlets');
+    expect(stores).not.toContain('label="Approved"');
   });
 
   it('distinguishes invalid categories and preserves view-only medicines', () => {

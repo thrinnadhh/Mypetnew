@@ -25,9 +25,13 @@ const order = {
   }],
   pricing: {
     itemSubtotalPaise: 50_000,
+    itemDiscountPaise: 1_000,
+    couponDiscountPaise: 2_000,
+    loyaltyRewardPaise: 500,
+    taxPaise: 1_500,
     platformFeePaise: 1_000,
     deliveryFeePaise: 0,
-    grandTotalPaise: 51_000,
+    grandTotalPaise: 49_000,
     currency: 'INR',
   },
   paymentMethod: 'PAY_ON_FULFILMENT',
@@ -47,11 +51,21 @@ describe('canonical Customer order detail contract', () => {
     global.fetch = mockedFetch as unknown as typeof fetch;
   });
 
-  it('reads customer-owned pickup detail with immutable line pricing', async () => {
+  it('reads customer-owned pickup detail with immutable line and complete persisted pricing', async () => {
     mockedFetch.mockResolvedValueOnce(response(200, order));
     const result = await fetchCustomerOrderDetail(order.orderId, 'token');
     expect(result.statusHistory).toHaveLength(1);
     expect(result.items[0]).toMatchObject({ name: 'Dog Food at checkout', unitPricePaise: 25_000, lineTotalPaise: 50_000 });
+    expect(result.pricing).toMatchObject({
+      itemSubtotalPaise: 50_000,
+      itemDiscountPaise: 1_000,
+      couponDiscountPaise: 2_000,
+      loyaltyRewardPaise: 500,
+      taxPaise: 1_500,
+      platformFeePaise: 1_000,
+      deliveryFeePaise: 0,
+      grandTotalPaise: 49_000,
+    });
     const [url, init] = mockedFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toContain(`/api/v1/customer/orders/${order.orderId}`);
     expect(init.headers).toMatchObject({ Authorization: 'Bearer token' });
@@ -103,6 +117,14 @@ describe('canonical Customer order detail contract', () => {
       items: [{ ...order.items[0], lineTotalPaise: 1 }],
     }));
     await expect(fetchCustomerOrderDetail(order.orderId, 'token')).rejects.toThrow('invalid historical order items');
+  });
+
+  it('fails closed on incomplete or invalid historical pricing', async () => {
+    mockedFetch.mockResolvedValueOnce(response(200, {
+      ...order,
+      pricing: { ...order.pricing, taxPaise: -1 },
+    }));
+    await expect(fetchCustomerOrderDetail(order.orderId, 'token')).rejects.toThrow('invalid server pricing');
   });
 
   it('still fails closed if the server returns an unknown fulfilment mode', async () => {

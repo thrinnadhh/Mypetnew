@@ -1,3 +1,4 @@
+import { apiClient } from '@/services/api-client';
 import type { CommerceProduct } from '@/services/catalog-data';
 import { SAMPLE_PRODUCTS } from '@/services/catalog-data';
 import {
@@ -6,12 +7,18 @@ import {
   normalizeDemoCommerceProduct,
   type PageResponse,
   type PublicCatalogQuery,
+  type PublicListingSummary,
+  type PublicOutletSummary,
 } from '@/services/customer-catalog';
 import { appConfig } from '@/utils/app-config';
 
 export const CUSTOMER_CATALOG_PAGE_SIZE = 20;
 
-function demoCatalogPage(query: PublicCatalogQuery): PageResponse<CommerceProduct> {
+export type ServiceableCatalogQuery = PublicCatalogQuery & {
+  pincode?: string;
+};
+
+function demoCatalogPage(query: ServiceableCatalogQuery): PageResponse<CommerceProduct> {
   const page = query.page ?? 0;
   const pageSize = query.pageSize ?? CUSTOMER_CATALOG_PAGE_SIZE;
 
@@ -80,10 +87,40 @@ function demoCatalogPage(query: PublicCatalogQuery): PageResponse<CommerceProduc
   };
 }
 
+function appendCatalogParams(params: URLSearchParams, query: ServiceableCatalogQuery): void {
+  const values: ReadonlyArray<[string, string | number | undefined]> = [
+    ['page', query.page],
+    ['pageSize', query.pageSize],
+    ['q', query.q],
+    ['outletId', query.outletId],
+    ['kind', query.kind],
+    ['category', query.category],
+    ['brand', query.brand],
+    ['petType', query.petType],
+    ['lifeStage', query.lifeStage],
+    ['commerceMode', query.commerceMode],
+    ['availability', query.availability],
+    ['sort', query.sort],
+    ['pincode', query.pincode],
+  ];
+
+  for (const [key, value] of values) {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  }
+}
+
+async function fetchServiceableCatalogPage(
+  query: ServiceableCatalogQuery,
+): Promise<PageResponse<PublicListingSummary>> {
+  const params = new URLSearchParams();
+  appendCatalogParams(params, query);
+  return apiClient.get<PageResponse<PublicListingSummary>>(`/api/v1/public/catalog?${params.toString()}`);
+}
+
 export async function fetchCommerceCatalogPage(
-  query: PublicCatalogQuery = {},
+  query: ServiceableCatalogQuery = {},
 ): Promise<PageResponse<CommerceProduct>> {
-  const normalizedQuery: PublicCatalogQuery = {
+  const normalizedQuery: ServiceableCatalogQuery = {
     page: query.page ?? 0,
     pageSize: query.pageSize ?? CUSTOMER_CATALOG_PAGE_SIZE,
     ...query,
@@ -93,7 +130,9 @@ export async function fetchCommerceCatalogPage(
     return demoCatalogPage(normalizedQuery);
   }
 
-  const response = await fetchCatalogPage(normalizedQuery);
+  const response = normalizedQuery.pincode
+    ? await fetchServiceableCatalogPage(normalizedQuery)
+    : await fetchCatalogPage(normalizedQuery);
   return {
     ...response,
     items: response.items.map((listing) => mapListingToCommerceProduct(listing)),
@@ -101,13 +140,23 @@ export async function fetchCommerceCatalogPage(
 }
 
 export async function fetchProductCatalogPage(
-  query: PublicCatalogQuery = {},
+  query: ServiceableCatalogQuery = {},
 ): Promise<PageResponse<CommerceProduct>> {
   return fetchCommerceCatalogPage({
     ...query,
     kind: 'PRODUCT',
     commerceMode: 'COMMERCE',
   });
+}
+
+export async function fetchServiceableProductStore(
+  outletId: string,
+  pincode: string,
+): Promise<PublicOutletSummary> {
+  const params = new URLSearchParams({ capability: 'PRODUCT_STORE', pincode });
+  return apiClient.get<PublicOutletSummary>(
+    `/api/v1/public/outlets/${encodeURIComponent(outletId)}?${params.toString()}`,
+  );
 }
 
 export function mergeUniqueProducts(

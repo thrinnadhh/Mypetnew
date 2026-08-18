@@ -34,6 +34,7 @@ export function useOrders() {
     if (!accountId || !accessToken) return;
     const generation = ++loadGenerationRef.current;
     const authEpoch = apiClient.getAuthEpoch();
+    setLoadingMore(false);
     setState('loading');
     setLoadMoreError(null);
     try {

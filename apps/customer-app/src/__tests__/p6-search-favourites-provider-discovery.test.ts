@@ -111,7 +111,7 @@ describe('P6 search, favourites and provider discovery contract', () => {
     expect(favourites).toContain('const authEpochAtInvocation = apiClient.getAuthEpoch();');
     expect(favourites).toContain('if (resolvedOwnerKeyRef.current !== ownerAtInvocation) return Promise.resolve(false);');
     expect(favourites).toContain('if (!stillSameAccount()) return currentlyFavourite;');
-    expect(favourites).toContain('if (migrationError instanceof ApiError && migrationError.status === 404) continue');
+    expect(favourites).toContain('if (migrationError instanceof ApiError && migrationError.status === 404) {');
     expect(favourites).toContain('retryableLocalProducts.push(product)');
     expect(favourites).toContain('saveStored(GUEST_STORAGE_KEY, [])');
   });

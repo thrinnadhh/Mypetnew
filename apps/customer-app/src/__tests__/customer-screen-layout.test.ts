@@ -21,10 +21,14 @@ describe('customer screen layout contracts', () => {
     expect(source).toContain('paddingHorizontal: spacing.x4');
   });
 
-  test('grooming filters are horizontally scrollable', () => {
+  test('grooming discovery uses a responsive vertical provider list', () => {
     const source = read('app/grooming/index.tsx');
-    expect(source).toContain('horizontal');
-    expect(source).toContain('showsHorizontalScrollIndicator={false}');
+    expect(source).toContain('<FlatList');
+    expect(source).toContain('showsVerticalScrollIndicator={false}');
+    expect(source).toContain('providerCopy: { flex: 1, minWidth: 0');
+    expect(source).toContain('flexShrink: 1');
+    expect(source).toContain('minHeight: 104');
+    expect(source).not.toContain('showsHorizontalScrollIndicator={false}');
   });
 
   test('profile exposes API-backed pet management', () => {

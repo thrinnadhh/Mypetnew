@@ -21,4 +21,11 @@ describe('home live-content contract', () => {
     expect(carousel).toMatch(/const safeBanners = useMemo\(\(\) => banners, \[banners\]\)/);
     expect(carousel).not.toContain('banners.length > 0 ? banners : PROMO_BANNERS');
   });
+
+  it('keeps fixture guide articles out of live Home fallbacks', () => {
+    const home = source('src/screens/home-screen.tsx');
+
+    expect(home).toMatch(/useState<DiscoveryCardItem\[\]>\(appConfig\.allowDemoMode \? GUIDES : \[\]\)/);
+    expect(home).toMatch(/catch\(\(\) => setGuideItems\(appConfig\.allowDemoMode \? GUIDES : \[\]\)\)/);
+  });
 });

@@ -12,6 +12,7 @@ import {
 
 jest.mock('@/services/customer-catalog', () => ({
   fetchCatalogPage: jest.fn(),
+  fetchCommerceProduct: jest.fn(),
   mapListingToCommerceProduct: jest.fn(),
   normalizeDemoCommerceProduct: jest.fn((product) => product),
 }));
@@ -96,6 +97,45 @@ describe('P4 bounded catalog pagination', () => {
       kind: 'PRODUCT',
       commerceMode: 'COMMERCE',
     }));
+  });
+
+  it('propagates a page failure so the caller can retry the same page, then succeeds on retry', async () => {
+    const listing = { id: 'listing-retry' } as never;
+    fetchCatalogPageMock
+      .mockRejectedValueOnce(new Error('temporary catalogue failure'))
+      .mockResolvedValueOnce({
+        items: [listing],
+        page: 1,
+        pageSize: CUSTOMER_CATALOG_PAGE_SIZE,
+        hasNext: false,
+      });
+    mapListingMock.mockReturnValue(product('listing-retry'));
+
+    await expect(fetchCommerceCatalogPage({ page: 1 })).rejects.toThrow('temporary catalogue failure');
+    const retry = await fetchCommerceCatalogPage({ page: 1 });
+
+    expect(fetchCatalogPageMock).toHaveBeenCalledTimes(2);
+    expect(fetchCatalogPageMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ page: 1 }));
+    expect(fetchCatalogPageMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ page: 1 }));
+    expect(retry).toMatchObject({ page: 1, hasNext: false });
+    expect(retry.items.map((item) => item.id)).toEqual(['listing-retry']);
+  });
+
+  it('keeps first-page and next-page requests independent so reset starts again at page zero', async () => {
+    fetchCatalogPageMock.mockResolvedValue({
+      items: [],
+      page: 0,
+      pageSize: CUSTOMER_CATALOG_PAGE_SIZE,
+      hasNext: false,
+    });
+
+    await fetchCommerceCatalogPage({ q: 'food', page: 0 });
+    await fetchCommerceCatalogPage({ q: 'food', page: 1 });
+    await fetchCommerceCatalogPage({ q: 'toys', page: 0 });
+
+    expect(fetchCatalogPageMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ q: 'food', page: 0 }));
+    expect(fetchCatalogPageMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ q: 'food', page: 1 }));
+    expect(fetchCatalogPageMock).toHaveBeenNthCalledWith(3, expect.objectContaining({ q: 'toys', page: 0 }));
   });
 
   it('appends pages without duplicating canonical listing IDs', () => {

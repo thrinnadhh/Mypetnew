@@ -88,9 +88,9 @@ export default function AppointmentPaymentScreen() {
   }, [appointmentId, demoAppointment, session]);
 
   const paymentMethod: AppointmentPaymentMethod = appointment?.paymentMethod ?? routePaymentMethod;
-  const serviceName = appointment?.serviceName ?? single(params.serviceName) || 'Pet care appointment';
-  const providerName = appointment?.providerName ?? single(params.providerName) || 'MyPet provider';
-  const petName = appointment?.petName ?? single(params.petName) || 'Your pet';
+  const serviceName = appointment?.serviceName ?? (single(params.serviceName) || 'Pet care appointment');
+  const providerName = appointment?.providerName ?? (single(params.providerName) || 'MyPet provider');
+  const petName = appointment?.petName ?? (single(params.petName) || 'Your pet');
   const slotStart = appointment?.slotStartsAt ?? single(params.slotStart);
   const slotEnd = appointment?.slotEndsAt ?? single(params.slotEnd);
   const amount = appointment?.priceAmount ?? routeAmount;

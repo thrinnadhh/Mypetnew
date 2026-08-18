@@ -22,7 +22,8 @@ function requireServicePincode(pincode: string): string {
 function maxKnownStock(item: CartItem): number {
   const productStock = item.product.availableQuantity ?? item.product.stockCount;
   const variantStock = item.selectedVariant?.stockCount ?? productStock;
-  return Math.max(0, Math.min(productStock, variantStock));
+  if (!Number.isFinite(productStock) || !Number.isFinite(variantStock)) return 0;
+  return Math.max(0, Math.min(Math.floor(productStock), Math.floor(variantStock)));
 }
 
 function variantForCurrentListing(current: CartItem, liveProduct: CartItem['product']) {
@@ -93,7 +94,10 @@ export async function revalidateCartItemsAgainstCatalog(
       continue;
     }
 
-    const quantity = Math.min(Math.max(1, Math.floor(current.quantity)), stock);
+    const requestedQuantity = Number.isFinite(current.quantity)
+      ? Math.max(1, Math.floor(current.quantity))
+      : 1;
+    const quantity = Math.min(requestedQuantity, stock);
     if (quantity !== current.quantity) quantityChangedCount += 1;
     if (selectedVariant.price !== current.unitPrice) priceChangedCount += 1;
 

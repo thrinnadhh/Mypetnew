@@ -41,6 +41,10 @@ data class CustomerOrderHistoryView(
 )
 data class CustomerOrderPricingView(
     val itemSubtotalPaise: Long,
+    val itemDiscountPaise: Long,
+    val couponDiscountPaise: Long,
+    val loyaltyRewardPaise: Long,
+    val taxPaise: Long,
     val platformFeePaise: Long,
     val deliveryFeePaise: Long,
     val grandTotalPaise: Long,
@@ -217,6 +221,10 @@ class CustomerOrderApiController(
             },
             pricing = CustomerOrderPricingView(
                 itemSubtotalPaise = quote.pricing.itemSubtotalPaise,
+                itemDiscountPaise = quote.pricing.itemDiscountPaise,
+                couponDiscountPaise = quote.pricing.couponDiscountPaise,
+                loyaltyRewardPaise = quote.pricing.loyaltyRewardPaise,
+                taxPaise = quote.pricing.taxPaise,
                 platformFeePaise = quote.pricing.platformFeePaise,
                 deliveryFeePaise = quote.pricing.deliveryFeePaise,
                 grandTotalPaise = order.grandTotalPaise,

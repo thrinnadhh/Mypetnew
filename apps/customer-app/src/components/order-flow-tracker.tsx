@@ -3,38 +3,88 @@ import { StyleSheet, View } from 'react-native';
 
 import { AppIcon } from '@/components/app-icon';
 import { ThemedText } from '@/components/themed-text';
-import type { OrderStatus } from '@/contracts/order-contract.generated';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import type { CustomerProductFulfilmentMode, CustomerProductOrderStatus } from '@/services/customer-order-list';
 
-const ACTIVE_STEPS = [
-  { status: 'PLACED', label: 'Order placed' },
-  { status: 'ACCEPTED', label: 'Merchant accepted' },
-  { status: 'PREPARING', label: 'Merchant preparing' },
-  { status: 'READY_FOR_PICKUP', label: 'Ready for pickup' },
-  { status: 'ASSIGNED', label: 'Captain assigned' },
-  { status: 'PICKED_UP', label: 'Picked up' },
-  { status: 'DELIVERED', label: 'Delivered' },
-  { status: 'COMPLETED', label: 'Completed' },
-] as const satisfies ReadonlyArray<{ status: OrderStatus; label: string }>;
+type TimelineKey = CustomerProductOrderStatus | 'CAPTAIN_ASSIGNED';
+type HistoryEntry = { toStatus: CustomerProductOrderStatus };
 
-const TERMINAL_LABELS: Partial<Record<OrderStatus, string>> = {
+type Step = { key: TimelineKey; label: string };
+
+const PICKUP_STEPS: Step[] = [
+  { key: 'PLACED', label: 'Order placed' },
+  { key: 'ACCEPTED', label: 'Merchant accepted' },
+  { key: 'PREPARING', label: 'Merchant preparing' },
+  { key: 'READY_FOR_PICKUP', label: 'Ready for pickup' },
+  { key: 'PICKED_UP', label: 'Picked up' },
+  { key: 'DELIVERED', label: 'Completed' },
+];
+
+const DELIVERY_STEPS: Step[] = [
+  { key: 'PLACED', label: 'Order placed' },
+  { key: 'ACCEPTED', label: 'Merchant accepted' },
+  { key: 'PREPARING', label: 'Merchant preparing' },
+  { key: 'READY_FOR_PICKUP', label: 'Ready for Captain' },
+  { key: 'CAPTAIN_ASSIGNED', label: 'Captain assigned' },
+  { key: 'PICKED_UP', label: 'Picked up for delivery' },
+  { key: 'DELIVERED', label: 'Delivered' },
+];
+
+const TERMINAL_LABELS: Partial<Record<CustomerProductOrderStatus, string>> = {
   REJECTED: 'Merchant rejected',
   CANCELLED: 'Order cancelled',
 };
 
-export function OrderFlowTracker({ status }: { status: OrderStatus }) {
+function currentTimelineKey(
+  status: CustomerProductOrderStatus,
+  fulfilmentMode: CustomerProductFulfilmentMode,
+  deliveryStatus?: string | null,
+): TimelineKey | null {
+  if (status === 'CANCELLED' || status === 'REJECTED') return null;
+  if (
+    fulfilmentMode === 'MYPET_CAPTAIN_DELIVERY' &&
+    status === 'READY_FOR_PICKUP' &&
+    ['ASSIGNED', 'PICKED_UP', 'DELIVERED'].includes(deliveryStatus ?? '')
+  ) {
+    return 'CAPTAIN_ASSIGNED';
+  }
+  return status;
+}
+
+export function OrderFlowTracker({
+  status,
+  fulfilmentMode,
+  deliveryStatus,
+  statusHistory,
+}: {
+  status: CustomerProductOrderStatus;
+  fulfilmentMode: CustomerProductFulfilmentMode;
+  deliveryStatus?: string | null;
+  statusHistory: HistoryEntry[];
+}) {
   const theme = useTheme();
-  const currentIndex = ACTIVE_STEPS.findIndex((step) => step.status === status);
+  const steps = fulfilmentMode === 'MYPET_CAPTAIN_DELIVERY' ? DELIVERY_STEPS : PICKUP_STEPS;
+  const currentKey = currentTimelineKey(status, fulfilmentMode, deliveryStatus);
+  const currentIndex = currentKey ? steps.findIndex((step) => step.key === currentKey) : -1;
+  const historicalProgress = statusHistory.reduce((highest, entry) => {
+    const index = steps.findIndex((step) => step.key === entry.toStatus);
+    return Math.max(highest, index);
+  }, -1);
+  const completedThrough = currentIndex >= 0 ? currentIndex : historicalProgress;
   const terminalLabel = TERMINAL_LABELS[status];
+  const spoken = [
+    ...steps.map((step, index) => `${step.label}: ${index < completedThrough ? 'completed' : index === completedThrough && !terminalLabel ? 'current' : 'upcoming'}`),
+    terminalLabel ? `${terminalLabel}: current` : null,
+  ].filter(Boolean).join('. ');
 
   return (
-    <View style={styles.container}>
-      {ACTIVE_STEPS.map((step, index) => {
-        const done = currentIndex >= 0 && index <= currentIndex;
-        const active = index === currentIndex;
+    <View style={styles.container} accessible accessibilityLabel={spoken}>
+      {steps.map((step, index) => {
+        const done = index < completedThrough || (!terminalLabel && index === completedThrough);
+        const active = !terminalLabel && index === completedThrough;
         return (
-          <View key={step.status} style={styles.row}>
+          <View key={step.key} style={styles.row}>
             <View
               style={[
                 styles.dot,
@@ -50,7 +100,7 @@ export function OrderFlowTracker({ status }: { status: OrderStatus }) {
               type="small"
               style={{ fontWeight: active ? '900' : '600', color: done ? theme.text : theme.textSecondary }}
             >
-              {step.label}
+              {step.label}{active ? ' · Current' : ''}
             </ThemedText>
           </View>
         );
@@ -60,7 +110,7 @@ export function OrderFlowTracker({ status }: { status: OrderStatus }) {
           <View style={[styles.dot, { backgroundColor: theme.danger, borderColor: theme.danger }]}>
             <AppIcon name="close" color="#FFFFFF" size={12} />
           </View>
-          <ThemedText type="small" style={{ fontWeight: '900', color: theme.danger }}>{terminalLabel}</ThemedText>
+          <ThemedText type="small" style={{ fontWeight: '900', color: theme.danger }}>{terminalLabel} · Current</ThemedText>
         </View>
       ) : null}
     </View>

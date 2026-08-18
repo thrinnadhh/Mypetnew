@@ -18,6 +18,7 @@ import org.springframework.test.web.servlet.delete
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.patch
 import org.springframework.test.web.servlet.post
+import org.springframework.test.web.servlet.put
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
 import java.util.UUID
@@ -200,6 +201,19 @@ class CustomerProfileDataApiTest {
         )
         val outletId = submitted.path("id").asString()
         postWithToken("/api/v1/admin/outlets/$outletId/approve", adminToken, "p2-approve", "{}")
+
+        mockMvc.get("/api/v1/public/outlets/$outletId/serviceability?pincode=517501&mode=DELIVERY").andExpect {
+            status { isOk() }
+            jsonPath("$.serviceable") { value(false) }
+            jsonPath("$.fulfilmentMode") { value("MYPET_CAPTAIN_DELIVERY") }
+            jsonPath("$.reasonCode") { value("DELIVERY_ORIGIN_UNAVAILABLE") }
+        }
+
+        mockMvc.put("/api/v1/merchant/outlets/$outletId/dispatch-origin") {
+            header("Authorization", "Bearer $merchantToken")
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"latitude":13.6288,"longitude":79.4192}"""
+        }.andExpect { status { isOk() } }
 
         mockMvc.get("/api/v1/public/outlets/$outletId/serviceability?pincode=517501&mode=DELIVERY").andExpect {
             status { isOk() }

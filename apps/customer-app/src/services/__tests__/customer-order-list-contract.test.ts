@@ -39,14 +39,9 @@ describe('canonical Customer order list contract', () => {
   });
 
   it('uses the authenticated customer-owned paged endpoint and maps server totals', async () => {
-    mockedFetch.mockResolvedValueOnce(response(200, {
-      items: [summary],
-      page: 0,
-      pageSize: 20,
-      hasNext: false,
-    }));
+    mockedFetch.mockResolvedValueOnce(response(200, { items: [summary], page: 0, pageSize: 20, hasNext: false, nextCursor: null }));
 
-    const result = await fetchCustomerOrderPage('token', 0, 20);
+    const result = await fetchCustomerOrderPage('token', 0, 20, 'active');
 
     expect(result.items[0]).toMatchObject({
       providerName: 'Happy Pets Tirupati',
@@ -57,50 +52,51 @@ describe('canonical Customer order list contract', () => {
       fulfilmentMode: 'STORE_PICKUP',
     });
     const [url, init] = mockedFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('/api/v1/customer/orders?page=0&pageSize=20');
-    expect(url).not.toContain('/api/v1/orders/customer/');
+    expect(url).toContain('/api/v1/customer/orders?');
+    expect(url).toContain('page=0');
+    expect(url).toContain('pageSize=20');
+    expect(url).toContain('category=ACTIVE');
+    expect(url).not.toContain('customerId');
     expect(init.headers).toMatchObject({ Authorization: 'Bearer token' });
   });
 
-  it('renders Captain-delivery orders instead of rejecting the P4 fulfilment mode', async () => {
+  it('accepts Captain delivery and online payment from P7', async () => {
     mockedFetch.mockResolvedValueOnce(response(200, {
-      items: [{ ...summary, fulfilmentMode: 'MYPET_CAPTAIN_DELIVERY' }],
+      items: [{ ...summary, fulfilmentMode: 'MYPET_CAPTAIN_DELIVERY', paymentMethod: 'ONLINE_PAYMENT', paymentStatus: 'PAID' }],
       page: 0,
       pageSize: 20,
       hasNext: false,
+      nextCursor: null,
     }));
 
     const result = await fetchCustomerOrderPage('token');
-    expect(result.items[0].fulfilmentMode).toBe('MYPET_CAPTAIN_DELIVERY');
+    expect(result.items[0]).toMatchObject({ fulfilmentMode: 'MYPET_CAPTAIN_DELIVERY', paymentMethod: 'ONLINE_PAYMENT', paymentStatus: 'PAID' });
   });
 
-  it('supports a server-side status filter without sending a customer id', async () => {
-    mockedFetch.mockResolvedValueOnce(response(200, { items: [], page: 1, pageSize: 10, hasNext: false }));
-    await fetchCustomerOrderPage('token', 1, 10, 'DELIVERED');
+  it('sends the server cursor for stable load more', async () => {
+    const cursor = { placedAt: '2026-08-15T00:00:00Z', orderId: summary.orderId };
+    mockedFetch.mockResolvedValueOnce(response(200, { items: [], page: 1, pageSize: 10, hasNext: false, nextCursor: null }));
+    await fetchCustomerOrderPage('token', 1, 10, 'past', cursor);
 
     const [url] = mockedFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('status=DELIVERED');
-    expect(url).not.toContain('customerId');
+    expect(url).toContain('category=PAST');
+    expect(url).toContain(`beforeOrderId=${summary.orderId}`);
+    expect(url).toContain('beforePlacedAt=2026-08-15T00%3A00%3A00Z');
+  });
+
+  it('fails closed if hasNext omits the cursor', async () => {
+    mockedFetch.mockResolvedValueOnce(response(200, { items: [summary], page: 0, pageSize: 20, hasNext: true }));
+    await expect(fetchCustomerOrderPage('token')).rejects.toThrow('invalid pagination cursor');
   });
 
   it('fails closed on invalid pagination pricing and unknown fulfilment modes', async () => {
-    mockedFetch.mockResolvedValueOnce(response(200, { items: [], page: -1, pageSize: 20, hasNext: false }));
+    mockedFetch.mockResolvedValueOnce(response(200, { items: [], page: -1, pageSize: 20, hasNext: false, nextCursor: null }));
     await expect(fetchCustomerOrderPage('token')).rejects.toThrow('invalid page');
 
-    mockedFetch.mockResolvedValueOnce(response(200, {
-      items: [{ ...summary, grandTotalPaise: -1 }],
-      page: 0,
-      pageSize: 20,
-      hasNext: false,
-    }));
+    mockedFetch.mockResolvedValueOnce(response(200, { items: [{ ...summary, grandTotalPaise: -1 }], page: 0, pageSize: 20, hasNext: false, nextCursor: null }));
     await expect(fetchCustomerOrderPage('token')).rejects.toThrow('invalid server pricing');
 
-    mockedFetch.mockResolvedValueOnce(response(200, {
-      items: [{ ...summary, fulfilmentMode: 'COURIER' }],
-      page: 0,
-      pageSize: 20,
-      hasNext: false,
-    }));
+    mockedFetch.mockResolvedValueOnce(response(200, { items: [{ ...summary, fulfilmentMode: 'COURIER' }], page: 0, pageSize: 20, hasNext: false, nextCursor: null }));
     await expect(fetchCustomerOrderPage('token')).rejects.toThrow('unsupported canonical order contract');
   });
 

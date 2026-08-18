@@ -56,17 +56,19 @@ export default function GroomingDiscoveryScreen() {
     setLoadingMore(false);
     setLoadMoreError(null);
     setRefreshError(null);
-    setHasNext(false);
-    setNextPage(1);
 
     if (!activeCity.featureFlags.allowGrooming) {
       setProviders([]);
+      setHasNext(false);
+      setNextPage(1);
       setRefreshing(false);
       setState('feature_disabled');
       return;
     }
     if (!SERVICE_PIN_PATTERN.test(selectedPincode)) {
       setProviders([]);
+      setHasNext(false);
+      setNextPage(1);
       setRefreshing(false);
       setState('invalid_location');
       return;
@@ -74,6 +76,8 @@ export default function GroomingDiscoveryScreen() {
 
     if (mode === 'initial') {
       setProviders([]);
+      setHasNext(false);
+      setNextPage(1);
       setState('loading');
     } else {
       setRefreshing(true);
@@ -97,6 +101,8 @@ export default function GroomingDiscoveryScreen() {
         setState('ready');
       } else {
         setProviders([]);
+        setHasNext(false);
+        setNextPage(1);
         setState(failure);
       }
     } finally {

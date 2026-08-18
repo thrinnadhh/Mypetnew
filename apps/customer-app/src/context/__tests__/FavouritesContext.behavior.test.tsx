@@ -55,7 +55,12 @@ type FavouriteContextValue = ReturnType<typeof useFavourites>;
 let latest: FavouriteContextValue | null = null;
 
 function Probe() {
-  latest = useFavourites();
+  const value = useFavourites();
+
+  React.useEffect(() => {
+    latest = value;
+  }, [value]);
+
   return null;
 }
 

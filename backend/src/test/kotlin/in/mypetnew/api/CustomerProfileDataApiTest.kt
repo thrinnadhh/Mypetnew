@@ -29,7 +29,7 @@ import java.util.UUID
         "mypet.security.token-secret=test-only-secret-that-is-longer-than-32-bytes",
         "mypet.security.token-issuer=mypetnew-p2-test",
         "mypet.security.token-audience=mypetnew-test-clients",
-        "spring.datasource.url=jdbc:h2:mem:p2api;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
+        "spring.datasource.url=jdbc:h2:mem=p2api;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
         "spring.flyway.enabled=false",

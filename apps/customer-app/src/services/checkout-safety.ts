@@ -17,7 +17,7 @@ export interface CheckoutRequestState {
   selectedPincode: string;
 }
 
-export type CheckoutRecovery = 'retry' | 'cart' | 'address' | 'fulfilment' | 'payment';
+export type CheckoutRecovery = 'retry' | 'cart' | 'address' | 'saved-address' | 'fulfilment' | 'payment';
 
 export interface CheckoutErrorPresentation {
   message: string;
@@ -63,7 +63,7 @@ export function checkoutErrorPresentation(error: unknown): CheckoutErrorPresenta
       case 'ADDRESS_NOT_FOUND':
         return {
           message: 'The selected delivery address is no longer available. Choose or save a current address before requesting delivery again.',
-          recovery: 'address',
+          recovery: 'saved-address',
         };
       case 'OUTLET_NOT_SERVICEABLE':
       case 'PIN_CODE_INVALID':

@@ -262,6 +262,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       setLoading(true);
       applyCart([]);
       try {
+        await writeQueueRef.current;
+        if (!active) return;
+
         let stored = await AsyncStorage.getItem(storageKey);
         if (!stored && !user?.id) {
           stored = await AsyncStorage.getItem(LEGACY_STORAGE_KEY);
@@ -317,6 +320,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
                     },
                   },
                 ],
+                { cancelable: false },
               );
             }
           }
@@ -373,6 +377,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         Alert.alert('Out of stock', `${product.name} is currently unavailable.`);
         return false;
       }
+      const requestedQuantity = Number.isFinite(qty) ? Math.max(1, Math.floor(qty)) : 1;
 
       const current = itemsRef.current;
       const currentProviderId = current[0]?.product.providerId ?? null;
@@ -387,7 +392,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
               text: 'Clear & Continue',
               style: 'destructive',
               onPress: () => {
-                const quantity = clampCartQuantity(qty, maxStock);
+                const quantity = clampCartQuantity(requestedQuantity, maxStock);
                 const newItems: CartItem[] = [{
                   product,
                   selectedVariant,
@@ -417,7 +422,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           product,
           selectedVariant,
           unitPrice: selectedVariant.price,
-          quantity: clampCartQuantity(existing.quantity + Math.max(1, Math.floor(qty)), maxStock),
+          quantity: clampCartQuantity(existing.quantity + requestedQuantity, maxStock),
         };
       } else {
         next = [
@@ -425,7 +430,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           {
             product,
             selectedVariant,
-            quantity: clampCartQuantity(qty, maxStock),
+            quantity: clampCartQuantity(requestedQuantity, maxStock),
             unitPrice: selectedVariant.price,
           },
         ];

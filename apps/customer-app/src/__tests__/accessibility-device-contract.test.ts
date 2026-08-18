@@ -10,6 +10,7 @@ describe('customer accessibility and device contract', () => {
     const tokens = source('src/design/tokens.ts');
     const screenHeader = source('src/components/ui/screen-header.tsx');
     const primaryButton = source('src/components/ui/primary-button.tsx');
+    const searchScreen = source('src/screens/search-screen.tsx');
 
     expect(tokens).toMatch(/touchTarget\s*=\s*48/);
     expect(screenHeader).toContain("import { touchTarget } from '@/design/tokens'");
@@ -18,6 +19,10 @@ describe('customer accessibility and device contract', () => {
     expect(primaryButton).toContain("import { touchTarget } from '@/design/tokens'");
     expect(primaryButton).toMatch(/minimumTouchTarget:\s*\{[\s\S]*minHeight:\s*touchTarget/);
     expect(primaryButton).toMatch(/style,[\s\n]*styles\.minimumTouchTarget/);
+    expect(searchScreen).toContain('touchTarget');
+    expect(searchScreen).toMatch(/backBtn:\s*\{[\s\S]*minWidth:\s*touchTarget[\s\S]*minHeight:\s*touchTarget/);
+    expect(searchScreen).toMatch(/searchBox:\s*\{[\s\S]*height:\s*touchTarget/);
+    expect(searchScreen).toMatch(/iconBtn:\s*\{[\s\S]*minWidth:\s*touchTarget[\s\S]*minHeight:\s*touchTarget/);
   });
 
   it('supports bounded responsive screens and pull to refresh', () => {

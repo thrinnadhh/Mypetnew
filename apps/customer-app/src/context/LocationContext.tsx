@@ -55,6 +55,7 @@ export const DEFAULT_TIRUPATI_REGION: ActiveCity = {
 
 interface LocationContextType {
   activeCity: ActiveCity;
+  selectedPincode: string;
   enabledCities: ActiveCity[];
   isLocationModalOpen: boolean;
   isNotifyModalOpen: boolean;
@@ -64,7 +65,8 @@ interface LocationContextType {
   openLocationModal: () => void;
   closeLocationModal: () => void;
   closeNotifyModal: () => void;
-  selectCity: (city: ActiveCity) => Promise<void>;
+  selectCity: (city: ActiveCity, pincode?: string) => Promise<void>;
+  selectPincode: (pincode: string) => Promise<void>;
   selectCurrentLocation: () => Promise<void>;
   requestUnavailableCityLaunch: (cityName: string) => void;
   submitCityNotificationRequest: (contactInfo: string) => Promise<void>;
@@ -73,6 +75,15 @@ interface LocationContextType {
 
 const LocationContext = createContext<LocationContextType | null>(null);
 const STORAGE_KEY = 'mypet_active_city_v1';
+const PIN_STORAGE_KEY = 'mypet_selected_pincode_v1';
+
+function normalizeSelectablePincode(city: ActiveCity, pincode?: string | null): string | null {
+  const normalized = pincode?.trim() ?? '';
+  if (/^[1-9][0-9]{5}$/.test(normalized) && city.pincodes.includes(normalized)) {
+    return normalized;
+  }
+  return city.pincodes.find((value) => /^[1-9][0-9]{5}$/.test(value)) ?? null;
+}
 
 async function responseError(response: Response): Promise<Error> {
   const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null;
@@ -81,6 +92,9 @@ async function responseError(response: Response): Promise<Error> {
 
 export function LocationProvider({ children }: { children: React.ReactNode }) {
   const [activeCity, setActiveCity] = useState<ActiveCity>(DEFAULT_TIRUPATI_REGION);
+  const [selectedPincode, setSelectedPincode] = useState(
+    normalizeSelectablePincode(DEFAULT_TIRUPATI_REGION) ?? '',
+  );
   const [enabledCities, setEnabledCities] = useState<ActiveCity[]>([DEFAULT_TIRUPATI_REGION]);
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [isNotifyModalOpen, setIsNotifyModalOpen] = useState(false);
@@ -102,25 +116,37 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     return [DEFAULT_TIRUPATI_REGION];
   }, []);
 
-  const persistCity = useCallback(async (city: ActiveCity) => {
+  const persistCity = useCallback(async (city: ActiveCity, pincode?: string) => {
+    const nextPincode = normalizeSelectablePincode(
+      city,
+      pincode ?? (city.cityIdentity === activeCity.cityIdentity ? selectedPincode : undefined),
+    );
+    if (!nextPincode) {
+      throw new Error('The selected city does not have an active service PIN code.');
+    }
     setActiveCity(city);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(city));
-  }, []);
+    setSelectedPincode(nextPincode);
+    await AsyncStorage.multiSet([
+      [STORAGE_KEY, JSON.stringify(city)],
+      [PIN_STORAGE_KEY, nextPincode],
+    ]);
+  }, [activeCity.cityIdentity, selectedPincode]);
 
   const refreshCities = useCallback(async () => {
     setLoading(true);
     try {
       const cities = await fetchActiveCities();
       setEnabledCities(cities);
-      setActiveCity((current) =>
-        cities.find((city) => city.cityIdentity === current.cityIdentity) ??
-        cities[0] ??
-        DEFAULT_TIRUPATI_REGION,
-      );
+      const nextCity =
+        cities.find((city) => city.cityIdentity === activeCity.cityIdentity)
+        ?? cities[0]
+        ?? DEFAULT_TIRUPATI_REGION;
+      setActiveCity(nextCity);
+      setSelectedPincode((current) => normalizeSelectablePincode(nextCity, current) ?? '');
     } finally {
       setLoading(false);
     }
-  }, [fetchActiveCities]);
+  }, [activeCity.cityIdentity, fetchActiveCities]);
 
   useEffect(() => {
     let active = true;
@@ -131,17 +157,23 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
       setEnabledCities(cities);
 
       try {
-        const stored = await AsyncStorage.getItem(STORAGE_KEY);
+        const [storedCity, storedPincode] = await Promise.all([
+          AsyncStorage.getItem(STORAGE_KEY),
+          AsyncStorage.getItem(PIN_STORAGE_KEY),
+        ]);
         if (!active) return;
-        if (stored) {
-          const parsed = JSON.parse(stored) as ActiveCity;
-          const matched = cities.find((city) => city.cityIdentity === parsed.cityIdentity);
-          setActiveCity(matched ?? cities[0] ?? DEFAULT_TIRUPATI_REGION);
-        } else {
-          setActiveCity(cities[0] ?? DEFAULT_TIRUPATI_REGION);
-        }
+        const parsed = storedCity ? JSON.parse(storedCity) as ActiveCity : null;
+        const matched = parsed
+          ? cities.find((city) => city.cityIdentity === parsed.cityIdentity)
+          : null;
+        const nextCity = matched ?? cities[0] ?? DEFAULT_TIRUPATI_REGION;
+        setActiveCity(nextCity);
+        setSelectedPincode(normalizeSelectablePincode(nextCity, storedPincode) ?? '');
       } catch (error) {
-        console.warn('Error reading stored active city', error);
+        console.warn('Error reading stored active service location', error);
+        const nextCity = cities[0] ?? DEFAULT_TIRUPATI_REGION;
+        setActiveCity(nextCity);
+        setSelectedPincode(normalizeSelectablePincode(nextCity) ?? '');
       } finally {
         if (active) setLoading(false);
       }
@@ -153,15 +185,25 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     };
   }, [fetchActiveCities]);
 
-  const selectCity = useCallback(async (city: ActiveCity) => {
+  const selectCity = useCallback(async (city: ActiveCity, pincode?: string) => {
     try {
-      await persistCity(city);
+      await persistCity(city, pincode);
       setIsLocationModalOpen(false);
     } catch (error) {
-      console.warn('Error persisting active city', error);
-      Alert.alert('Location not saved', 'Select the city again.');
+      console.warn('Error persisting active service location', error);
+      Alert.alert('Location not saved', 'Select the city and service PIN again.');
     }
   }, [persistCity]);
+
+  const selectPincode = useCallback(async (pincode: string) => {
+    try {
+      await persistCity(activeCity, pincode);
+      setIsLocationModalOpen(false);
+    } catch (error) {
+      console.warn('Error persisting service PIN', error);
+      Alert.alert('PIN not saved', 'Select an active service PIN again.');
+    }
+  }, [activeCity, persistCity]);
 
   const selectCurrentLocation = useCallback(async () => {
     if (locating) return;
@@ -175,11 +217,18 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
           'MyPet is not active at your current location yet. Search for your city to request a launch notification.',
         );
       }
-      await persistCity(match.city);
+      const pincode = normalizeSelectablePincode(match.city);
+      if (!pincode) {
+        throw new DeviceLocationError(
+          'OUTSIDE_SERVICE_AREA',
+          'This service city has no active PIN code configured.',
+        );
+      }
+      await persistCity(match.city, pincode);
       setIsLocationModalOpen(false);
       Alert.alert(
         'Location selected',
-        `${match.city.displayName} is ${match.distanceKm.toFixed(1)} km from your current position.`,
+        `${match.city.displayName} · service PIN ${pincode}. You can change the PIN from the location selector.`,
       );
     } catch (error) {
       Alert.alert(
@@ -242,6 +291,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     <LocationContext.Provider
       value={{
         activeCity,
+        selectedPincode,
         enabledCities,
         isLocationModalOpen,
         isNotifyModalOpen,
@@ -252,6 +302,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         closeLocationModal,
         closeNotifyModal,
         selectCity,
+        selectPincode,
         selectCurrentLocation,
         requestUnavailableCityLaunch,
         submitCityNotificationRequest,

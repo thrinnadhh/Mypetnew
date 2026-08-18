@@ -123,7 +123,7 @@ export default function VeterinaryProviderDetailScreen() {
           </View>
           <View style={styles.section}>
             <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Published veterinary services</ThemedText>
-            <ThemedText style={[styles.meta, { color: theme.textSecondary }]}>Price, duration and description are read from this provider's current public catalogue.</ThemedText>
+            <ThemedText style={[styles.meta, { color: theme.textSecondary }]}>Price, duration and description are read from the current public catalogue for this provider.</ThemedText>
             {services.length === 0 ? <StateView kind="empty" title="No veterinary services published" message="This provider is currently serviceable but has no active public veterinary services to select." actionLabel="Refresh" onAction={() => void load()} /> : (
               <View style={styles.serviceList}>
                 {services.map((service) => (

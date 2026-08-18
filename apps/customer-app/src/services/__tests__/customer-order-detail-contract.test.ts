@@ -15,19 +15,31 @@ function response(status = 200, body: unknown = {}) {
 const order = {
   orderId: '99999999-9999-4999-8999-999999999999',
   orderNumber: 'MP-99999999',
-  outletId: '11111111-1111-4111-8111-111111111111',
-  organizationId: '22222222-2222-4222-8222-222222222222',
-  outletName: 'Outlet One',
-  items: [{ listingId: '33333333-3333-4333-8333-333333333333', name: 'Dog Food', quantity: 2 }],
-  grandTotalPaise: 50900,
-  platformFeePaise: 1000,
+  outlet: { id: '11111111-1111-4111-8111-111111111111', name: 'Outlet One' },
+  items: [{
+    listingId: '33333333-3333-4333-8333-333333333333',
+    name: 'Dog Food at checkout',
+    quantity: 2,
+    unitPricePaise: 25_000,
+    lineTotalPaise: 50_000,
+  }],
+  pricing: {
+    itemSubtotalPaise: 50_000,
+    platformFeePaise: 1_000,
+    deliveryFeePaise: 0,
+    grandTotalPaise: 51_000,
+    currency: 'INR',
+  },
   paymentMethod: 'PAY_ON_FULFILMENT',
   paymentStatus: 'PENDING_EXTERNAL_COLLECTION',
   fulfilmentMode: 'STORE_PICKUP',
   status: 'PLACED',
   placedAt: '2026-08-13T00:00:00Z',
   statusHistory: [{ fromStatus: null, toStatus: 'PLACED', changedAt: '2026-08-13T00:00:00Z', reason: null }],
-};
+  deliveryAddress: null,
+  canCancel: true,
+  cancellation: { cancelled: false, reason: null, cancelledAt: null },
+} as const;
 
 describe('canonical Customer order detail contract', () => {
   beforeEach(() => {
@@ -35,32 +47,62 @@ describe('canonical Customer order detail contract', () => {
     global.fetch = mockedFetch as unknown as typeof fetch;
   });
 
-  it('reads customer-owned pickup detail from the canonical route', async () => {
+  it('reads customer-owned pickup detail with immutable line pricing', async () => {
     mockedFetch.mockResolvedValueOnce(response(200, order));
     const result = await fetchCustomerOrderDetail(order.orderId, 'token');
     expect(result.statusHistory).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ name: 'Dog Food at checkout', unitPricePaise: 25_000, lineTotalPaise: 50_000 });
     const [url, init] = mockedFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toContain(`/api/v1/customer/orders/${order.orderId}`);
     expect(init.headers).toMatchObject({ Authorization: 'Bearer token' });
   });
 
-  it('accepts the canonical Captain delivery fulfilment mode', async () => {
-    mockedFetch.mockResolvedValueOnce(response(200, { ...order, fulfilmentMode: 'MYPET_CAPTAIN_DELIVERY' }));
+  it('accepts canonical Captain delivery and online payment', async () => {
+    mockedFetch.mockResolvedValueOnce(response(200, {
+      ...order,
+      fulfilmentMode: 'MYPET_CAPTAIN_DELIVERY',
+      paymentMethod: 'ONLINE_PAYMENT',
+      paymentStatus: 'PAID',
+      deliveryAddress: {
+        addressId: '44444444-4444-4444-8444-444444444444',
+        recipientName: 'Customer',
+        phoneNumber: '+919999999999',
+        line1: '1 Main Road',
+        line2: null,
+        city: 'Tirupati',
+        state: 'Andhra Pradesh',
+        pincode: '517501',
+      },
+    }));
     const result = await fetchCustomerOrderDetail(order.orderId, 'token');
     expect(result.fulfilmentMode).toBe('MYPET_CAPTAIN_DELIVERY');
+    expect(result.paymentMethod).toBe('ONLINE_PAYMENT');
   });
 
-  it('cancels through the customer-owned endpoint with an idempotency key', async () => {
-    mockedFetch.mockResolvedValueOnce(response(200, { ...order, status: 'CANCELLED' }));
+  it('cancels with an intent-bound replay key', async () => {
+    mockedFetch.mockResolvedValueOnce(response(200, {
+      ...order,
+      status: 'CANCELLED',
+      canCancel: false,
+      cancellation: { cancelled: true, reason: 'Changed my mind', cancelledAt: '2026-08-13T00:01:00Z' },
+    }));
     const result = await cancelCustomerOrder(order.orderId, 'Changed my mind', 'token');
     expect(result.status).toBe('CANCELLED');
     const [url, init] = mockedFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toContain(`/api/v1/customer/orders/${order.orderId}/cancel`);
     expect(JSON.parse(init.body as string)).toEqual({ reason: 'Changed my mind' });
-    expect(init.headers).toMatchObject({
-      Authorization: 'Bearer token',
-      'Idempotency-Key': `customer-cancel:${order.orderId}`,
-    });
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer token' });
+    expect((init.headers as Record<string, string>)['Idempotency-Key']).toMatch(
+      new RegExp(`^customer-cancel:${order.orderId}:[0-9a-f]+$`),
+    );
+  });
+
+  it('fails closed on a rewritten line total', async () => {
+    mockedFetch.mockResolvedValueOnce(response(200, {
+      ...order,
+      items: [{ ...order.items[0], lineTotalPaise: 1 }],
+    }));
+    await expect(fetchCustomerOrderDetail(order.orderId, 'token')).rejects.toThrow('invalid historical order items');
   });
 
   it('still fails closed if the server returns an unknown fulfilment mode', async () => {

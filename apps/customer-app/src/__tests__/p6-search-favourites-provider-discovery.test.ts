@@ -148,9 +148,9 @@ describe('P6 search, favourites and provider discovery contract', () => {
 
     expect(favouritesController).toContain('Authorizer.requireRole(principal, Role.CUSTOMER)');
     expect(favouritesController).toContain('return principal.actorId');
-    expect(publicCatalog).toContain('it.status == OutletStatus.ACTIVE');
-    expect(publicCatalog).toContain('(capability == null || capability in it.capabilities)');
-    expect(publicCatalog).toContain('(pincodeFilter == null || pincodeFilter in it.servicePinCodes)');
-    expect(publicCatalog).toContain('requirePageSize(pageSize)');
+    expect(publicCatalog).toContain('outlet.status == ProviderStatus.ACTIVE');
+    expect(publicCatalog).toContain('(capability == null || capability in outlet.capabilities)');
+    expect(publicCatalog).toContain('(pincodeFilter == null || pincodeFilter in outlet.servicePinCodes)');
+    expect(publicCatalog).toContain('return PaginationHelper.paginate(visible, page, pageSize)');
   });
 });

@@ -1,7 +1,7 @@
 import React from 'react';
 
-import LiveCareProviderDetailScreen from '@/screens/live-care-provider-detail-screen';
+import VeterinaryProviderDetailScreen from '@/screens/veterinary-provider-detail-screen';
 
 export default function VeterinaryProviderProfileScreen() {
-  return <LiveCareProviderDetailScreen kind="vet" />;
+  return <VeterinaryProviderDetailScreen />;
 }

@@ -86,6 +86,7 @@ class PublicDiscoveryFilterApiTest {
 
     @Test
     fun `public catalog commerceMode and service PIN filters are enforced across list and deep links`() {
+        val servicePincode = "517502"
         val adminToken = tokens.issue(
             Principal(UUID.randomUUID(), Role.ADMIN, permissions = setOf(AdminPermission.PROVIDER_REVIEW)),
         )
@@ -98,7 +99,7 @@ class PublicDiscoveryFilterApiTest {
             body = """{
                 "name":"Discovery Filter Store",
                 "capabilities":["PRODUCT_STORE","MEDICINE_CATALOG_VIEW_ONLY"],
-                "servicePinCodes":["517501"]
+                "servicePinCodes":["$servicePincode"]
             }""",
         )
         val outletId = outlet.uuid("id")
@@ -154,7 +155,7 @@ class PublicDiscoveryFilterApiTest {
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
             param("commerceMode", "COMMERCE")
-            param("pincode", "517501")
+            param("pincode", servicePincode)
         }.andExpect {
             status { isOk() }
             jsonPath("$.items.length()") { value(1) }
@@ -165,7 +166,7 @@ class PublicDiscoveryFilterApiTest {
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
             param("commerceMode", "VIEW_ONLY")
-            param("pincode", "517501")
+            param("pincode", servicePincode)
         }.andExpect {
             status { isOk() }
             jsonPath("$.items.length()") { value(1) }
@@ -183,7 +184,7 @@ class PublicDiscoveryFilterApiTest {
 
         mockMvc.get("/api/v1/public/outlets/$outletId") {
             param("capability", "PRODUCT_STORE")
-            param("pincode", "517501")
+            param("pincode", servicePincode)
         }.andExpect {
             status { isOk() }
             jsonPath("$.id") { value(outletId.toString()) }
@@ -198,7 +199,7 @@ class PublicDiscoveryFilterApiTest {
         }
 
         mockMvc.get("/api/v1/public/catalog/$productId") {
-            param("pincode", "517501")
+            param("pincode", servicePincode)
         }.andExpect {
             status { isOk() }
             jsonPath("$.id") { value(productId.toString()) }

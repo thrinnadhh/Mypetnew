@@ -31,13 +31,15 @@ describe('P3 canonical favourites contract', () => {
     expect(source).toContain('loadGuestLocal(false)');
   });
 
-  it('recognises both prior local storage generations for safe guest migration', () => {
-    expect(source).toContain("'mypet_favourites_v3_local'");
-    expect(source).toContain("'mypet_favourites_v2_guest'");
-    expect(source).toContain('AsyncStorage.multiRemove([...LEGACY_STORAGE_KEYS])');
+  it('migrates only the explicitly guest-owned legacy key and discards ambiguous v3 state', () => {
+    expect(source).toContain("const LEGACY_GUEST_STORAGE_KEY = 'mypet_favourites_v2_guest'");
+    expect(source).toContain("const AMBIGUOUS_LEGACY_STORAGE_KEY = 'mypet_favourites_v3_local'");
+    expect(source).toContain('parseStored(LEGACY_GUEST_STORAGE_KEY)');
+    expect(source).not.toContain('parseStored(AMBIGUOUS_LEGACY_STORAGE_KEY)');
+    expect(source).toContain('AsyncStorage.multiRemove([LEGACY_GUEST_STORAGE_KEY, AMBIGUOUS_LEGACY_STORAGE_KEY])');
   });
 
-  it('erases guest and current-account local favourite preferences after successful account deletion', () => {
+  it('erases guest, legacy and current-account local favourite preferences after account deletion', () => {
     expect(source).toContain('export async function clearLocalFavourites(accountId?: string)');
     expect(source).toContain('if (accountId) keys.push(accountStorageKey(accountId))');
     expect(privacySource).toContain('const deletedAccountId = session.accountId;');

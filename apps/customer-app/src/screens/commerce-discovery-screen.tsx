@@ -131,7 +131,12 @@ export default function CommerceDiscoveryScreen() {
   const router = useRouter();
   const theme = useTheme();
   const { t } = useTranslation();
-  const { activeCity, selectedPincode } = useLocation();
+  const {
+    activeCity,
+    selectedPincode,
+    serviceRegionError,
+    refreshCities,
+  } = useLocation();
   const { providerName, totalItemsCount, subtotalAmount } = useCart();
   const [stores, setStores] = useState<PublicOutletSummary[]>([]);
   const [state, setState] = useState<LoadState>('loading');
@@ -181,6 +186,14 @@ export default function CommerceDiscoveryScreen() {
     void load();
   }, [load]);
 
+  const retry = useCallback(async () => {
+    if (serviceRegionError || !/^[1-9][0-9]{5}$/.test(selectedPincode)) {
+      await refreshCities();
+      return;
+    }
+    await load();
+  }, [load, refreshCities, selectedPincode, serviceRegionError]);
+
   const loadNextPage = useCallback(async () => {
     if (!hasNext || loadingMoreRef.current) return;
     loadingMoreRef.current = true;
@@ -214,12 +227,18 @@ export default function CommerceDiscoveryScreen() {
     }
   }, [hasNext, nextPage, selectedPincode]);
 
+  const hasValidPin = /^[1-9][0-9]{5}$/.test(selectedPincode);
+
   return (
     <ScreenShell
       header={(
         <AppBar
           title={t('commerceFoundation.title')}
-          subtitle={`Pet stores serving ${selectedPincode} in ${activeCity.displayName}`}
+          subtitle={
+            hasValidPin
+              ? `Pet stores serving ${selectedPincode} in ${activeCity.displayName}`
+              : 'Live serviceability unavailable'
+          }
         />
       )}
       testID="commerce-discovery-screen"
@@ -227,19 +246,25 @@ export default function CommerceDiscoveryScreen() {
       <View style={styles.container}>
         <ShopCategoryNav />
         {state === 'loading' ? (
-          <StateView kind="loading" title="Finding active pet stores" message={`Checking active product stores serving PIN ${selectedPincode}.`} />
+          <StateView
+            kind="loading"
+            title="Finding active pet stores"
+            message={hasValidPin ? `Checking active product stores serving PIN ${selectedPincode}.` : 'Loading live serviceability.'}
+          />
         ) : null}
         {state === 'offline' || state === 'error' ? (
           <StateView
             kind={state}
-            title={state === 'offline' ? 'You are offline' : 'Stores unavailable'}
+            title={state === 'offline' ? 'You are offline' : serviceRegionError ? 'Service regions unavailable' : 'Stores unavailable'}
             message={
               state === 'offline'
                 ? 'Reconnect to load live stores.'
-                : 'Select a valid active service PIN and retry.'
+                : serviceRegionError
+                  ? 'MyPet could not load live service regions and will not substitute a demo city or PIN.'
+                  : 'Select a valid active service PIN and retry.'
             }
             actionLabel="Retry"
-            onAction={() => void load()}
+            onAction={() => void retry()}
           />
         ) : null}
         {state === 'ready' && stores.length === 0 ? (

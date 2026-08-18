@@ -12,12 +12,13 @@ import { ScreenHeader } from '@/components/ui/screen-header';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { useCart } from '@/context/CartContext';
 import { useFavourites } from '@/context/FavouritesContext';
-import { radii, shadows, spacing, typography } from '@/design/tokens';
+import { useLocation } from '@/context/LocationContext';
+import { radii, shadows, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import type { CommerceProduct, ProductVariant } from '@/services/catalog-data';
 import { isCommerceEligible } from '@/services/commerce-eligibility';
-import { fetchCommerceProduct } from '@/services/customer-catalog';
 import { isOfflineError } from '@/services/customer-profile';
+import { fetchServiceableCommerceProduct } from '@/services/paginated-catalog';
 
 type LoadState = 'loading' | 'ready' | 'offline' | 'error';
 
@@ -30,14 +31,23 @@ export default function ProductDetailScreen() {
   const id = single(params.id);
   const router = useRouter();
   const theme = useTheme();
+  const { selectedPincode } = useLocation();
   const { addToCart, items, updateQuantity } = useCart();
   const { isFavourite, toggleFavourite } = useFavourites();
   const [product, setProduct] = useState<CommerceProduct | null>(null);
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const [state, setState] = useState<LoadState>('loading');
 
+  const goBack = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/products' as never);
+  }, [router]);
+
   const load = useCallback(async () => {
-    if (!id) {
+    if (!id || !/^[1-9][0-9]{5}$/.test(selectedPincode)) {
       setProduct(null);
       setSelectedVariant(null);
       setState('error');
@@ -46,7 +56,7 @@ export default function ProductDetailScreen() {
 
     setState('loading');
     try {
-      const nextProduct = await fetchCommerceProduct(id);
+      const nextProduct = await fetchServiceableCommerceProduct(id, selectedPincode);
       setProduct(nextProduct);
       setSelectedVariant(
         nextProduct.variants.find((variant) => variant.inStock && variant.stockCount > 0)
@@ -59,7 +69,7 @@ export default function ProductDetailScreen() {
       setSelectedVariant(null);
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, [id]);
+  }, [id, selectedPincode]);
 
   useEffect(() => {
     void load();
@@ -69,7 +79,7 @@ export default function ProductDetailScreen() {
     return (
       <ScreenShell
         scroll={false}
-        header={<ScreenHeader title="Product" subtitle="Loading live price and stock" onBack={() => router.back()} />}
+        header={<ScreenHeader title="Product" subtitle={`Loading live price and stock for PIN ${selectedPincode}`} onBack={goBack} />}
         testID="product-detail-screen"
       >
         <StateView kind="loading" title="Loading product" message="Checking current price, variants and store stock." />
@@ -81,7 +91,7 @@ export default function ProductDetailScreen() {
     return (
       <ScreenShell
         scroll={false}
-        header={<ScreenHeader title="Product" subtitle="Live catalog" onBack={() => router.back()} />}
+        header={<ScreenHeader title="Product" subtitle={`Service PIN ${selectedPincode}`} onBack={goBack} />}
         testID="product-detail-screen"
       >
         <StateView
@@ -90,7 +100,7 @@ export default function ProductDetailScreen() {
           message={
             state === 'offline'
               ? 'Reconnect to verify the latest price and stock.'
-              : 'This product or its purchasable variants are no longer available.'
+              : `This product is unavailable from an active store serving PIN ${selectedPincode}, or its purchasable variants are no longer available.`
           }
           actionLabel="Retry"
           onAction={() => void load()}
@@ -122,7 +132,7 @@ export default function ProductDetailScreen() {
 
   return (
     <ScreenShell
-      header={<ScreenHeader title={product.brand || 'Product'} subtitle={product.name} onBack={() => router.back()} />}
+      header={<ScreenHeader title={product.brand || 'Product'} subtitle={product.name} onBack={goBack} />}
       footer={(
         <View style={[styles.footer, shadows.raised, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
           <View style={styles.footerPriceBlock}>
@@ -308,7 +318,7 @@ const styles = StyleSheet.create({
   content: { gap: spacing.x4, paddingBottom: spacing.x6 },
   imageCard: { width: '100%', height: 280, borderRadius: radii.card, overflow: 'hidden', position: 'relative' },
   mainImage: { width: '100%', height: '100%' },
-  favouriteButton: { position: 'absolute', top: spacing.x3, right: spacing.x3, width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  favouriteButton: { position: 'absolute', top: spacing.x3, right: spacing.x3, width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, alignItems: 'center', justifyContent: 'center' },
   section: { gap: spacing.x2 },
   badgeRow: { flexDirection: 'row', gap: spacing.x2, flexWrap: 'wrap' },
   title: { ...typography.headline, fontSize: 21, lineHeight: 27, fontWeight: '800' },
@@ -322,7 +332,7 @@ const styles = StyleSheet.create({
   specRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.x3 },
   specKey: { width: 120 },
   specValue: { flex: 1, fontWeight: '600' },
-  sellerCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.x3, padding: spacing.x4, borderRadius: radii.card, borderWidth: StyleSheet.hairlineWidth },
+  sellerCard: { minHeight: touchTarget, flexDirection: 'row', alignItems: 'center', gap: spacing.x3, padding: spacing.x4, borderRadius: radii.card, borderWidth: StyleSheet.hairlineWidth },
   sellerCopy: { flex: 1, minWidth: 0, gap: spacing.x1 },
   sellerName: { fontWeight: '800', fontSize: 14 },
   policyBox: { padding: spacing.x4, borderRadius: radii.compact, gap: spacing.x3 },
@@ -331,8 +341,8 @@ const styles = StyleSheet.create({
   footer: { borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: spacing.x4, paddingTop: spacing.x3, paddingBottom: spacing.x4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.x3 },
   footerPriceBlock: { minWidth: 92 },
   footerPrice: { ...typography.headline, fontSize: 20, fontWeight: '900' },
-  stepper: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: radii.compact, minHeight: 44 },
-  stepButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  stepper: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: radii.compact, minHeight: touchTarget },
+  stepButton: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
   stepText: { fontWeight: '900', fontSize: 18 },
   quantity: { minWidth: 28, textAlign: 'center', fontWeight: '900' },
   pressed: { opacity: 0.78 },

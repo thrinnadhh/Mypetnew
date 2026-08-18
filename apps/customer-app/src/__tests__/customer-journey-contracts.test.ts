@@ -30,9 +30,10 @@ describe('MyPet customer journey contracts', () => {
     const resilientImage = source('src/components/ui/resilient-remote-image.tsx');
 
     expectAll(categoryTemplate, ['ResilientRemoteImage', 'fallbackUri']);
-    expectAll(banners, ['ResilientRemoteImage', 'DEMO_BANNER_IMAGES', 'fallbackUri={DEMO_MEDIA.store}']);
+    expectAll(banners, ['ResilientRemoteImage', 'uri={item.imageUrl}', 'fallbackUri={DEMO_MEDIA.store}']);
+    expect(banners).not.toContain('DEMO_BANNER_IMAGES');
     expectAll(provider, ['ResilientRemoteImage', 'shop.heroImageUrl', 'item.imageUrl']);
-    expectAll(resilientImage, ['onError', 'fallbackUri']);
+    expectAll(resilientImage, ['onError', 'fallbackUri', 'appConfig.allowDemoMode', 'styles.placeholder']);
   });
 
   it('keeps dummy marketplace data explicit and development-only', () => {

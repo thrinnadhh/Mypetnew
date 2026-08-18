@@ -4,6 +4,7 @@ import React from 'react';
 import { CategoryTemplate } from '@/components/commerce/CategoryTemplate';
 import { AppBar, StateView } from '@/components/foundation/primitives';
 import { ScreenShell } from '@/components/foundation/screen-shell';
+import { useLocation } from '@/context/LocationContext';
 import type { PublicCatalogQuery } from '@/services/customer-catalog';
 
 const CATEGORY_NAMES: Record<string, string> = {
@@ -48,6 +49,7 @@ function catalogQueryFor(category: string): PublicCatalogQuery {
 export default function CategoryScreen() {
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const router = useRouter();
+  const { selectedPincode } = useLocation();
   const rawId = Array.isArray(id) ? id[0] : id;
   const catKey = rawId?.trim().toLowerCase() ?? '';
   const title = CATEGORY_NAMES[catKey];
@@ -67,16 +69,20 @@ export default function CategoryScreen() {
   }
 
   const isMedicineDiscovery = catKey === 'medicines';
+  const catalogQuery = {
+    ...catalogQueryFor(catKey),
+    pincode: selectedPincode,
+  };
 
   return (
     <CategoryTemplate
       title={title}
       subtitle={
         isMedicineDiscovery
-          ? 'Discovery only · medicines cannot be added to cart or purchased in MyPet'
-          : 'Live stock from verified local stores'
+          ? `Discovery only for PIN ${selectedPincode} · medicines cannot be added to cart or purchased in MyPet`
+          : `Live stock serving PIN ${selectedPincode}`
       }
-      catalogQuery={catalogQueryFor(catKey)}
+      catalogQuery={catalogQuery}
       backFallback="/stores"
     />
   );

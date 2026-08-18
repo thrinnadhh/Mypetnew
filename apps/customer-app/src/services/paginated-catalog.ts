@@ -20,6 +20,14 @@ export type ServiceableCatalogQuery = PublicCatalogQuery & {
   pincode?: string;
 };
 
+function requireValidServicePincode(pincode: string | undefined): string {
+  const normalized = pincode?.trim() ?? '';
+  if (!/^[1-9][0-9]{5}$/.test(normalized)) {
+    throw new Error('A valid active six-digit service PIN is required for live commerce discovery.');
+  }
+  return normalized;
+}
+
 function demoCatalogPage(query: ServiceableCatalogQuery): PageResponse<CommerceProduct> {
   const page = query.page ?? 0;
   const pageSize = query.pageSize ?? CUSTOMER_CATALOG_PAGE_SIZE;
@@ -132,7 +140,10 @@ export async function fetchCommerceCatalogPage(
     return demoCatalogPage(normalizedQuery);
   }
 
-  const response = normalizedQuery.pincode
+  const serviceScoped = Object.prototype.hasOwnProperty.call(query, 'pincode');
+  if (serviceScoped) normalizedQuery.pincode = requireValidServicePincode(normalizedQuery.pincode);
+
+  const response = serviceScoped
     ? await fetchServiceableCatalogPage(normalizedQuery)
     : await fetchCatalogPage(normalizedQuery);
   return {
@@ -155,7 +166,8 @@ export async function fetchServiceableProductStore(
   outletId: string,
   pincode: string,
 ): Promise<PublicOutletSummary> {
-  const params = new URLSearchParams({ capability: 'PRODUCT_STORE', pincode });
+  const servicePincode = requireValidServicePincode(pincode);
+  const params = new URLSearchParams({ capability: 'PRODUCT_STORE', pincode: servicePincode });
   return apiClient.get<PublicOutletSummary>(
     `/api/v1/public/outlets/${encodeURIComponent(outletId)}?${params.toString()}`,
   );
@@ -166,7 +178,8 @@ export async function fetchServiceableCommerceProduct(
   pincode: string,
 ): Promise<CommerceProduct> {
   if (appConfig.allowDemoMode) return fetchCommerceProduct(listingId);
-  const params = new URLSearchParams({ pincode });
+  const servicePincode = requireValidServicePincode(pincode);
+  const params = new URLSearchParams({ pincode: servicePincode });
   const detail = await apiClient.get<PublicListingDetail>(
     `/api/v1/public/catalog/${encodeURIComponent(listingId)}?${params.toString()}`,
   );

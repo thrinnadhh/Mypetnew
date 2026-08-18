@@ -1,142 +1,308 @@
 import { useRouter } from 'expo-router';
-import React from 'react';
-import { FlatList, Image, Pressable, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
+import { StateView } from '@/components/foundation/primitives';
+import { ScreenShell } from '@/components/foundation/screen-shell';
 import { ThemedText } from '@/components/themed-text';
 import { PrimaryButton } from '@/components/ui/primary-button';
+import { ResilientRemoteImage } from '@/components/ui/resilient-remote-image';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { useCart } from '@/context/CartContext';
-import { radii, shadows, spacing, typography } from '@/design/tokens';
+import { stockForCartLine, useCart } from '@/context/CartContext';
+import { useLocation } from '@/context/LocationContext';
+import { radii, shadows, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
+import { revalidateCartItemsAgainstCatalog } from '@/services/cart-revalidation';
+import { isOfflineError } from '@/services/customer-profile';
+
+function money(value: number): string {
+  return Number.isInteger(value) ? `₹${value}` : `₹${value.toFixed(2)}`;
+}
 
 export default function CartScreen() {
   const router = useRouter();
   const theme = useTheme();
-  const { items, providerName, subtotalAmount, updateQuantity, removeFromCart, clearCart, revalidateCart } = useCart();
+  const insets = useSafeAreaInsets();
+  const { selectedPincode } = useLocation();
+  const {
+    items,
+    providerName,
+    subtotalAmount,
+    totalItemsCount,
+    loading,
+    adjustQuantity,
+    removeFromCart,
+    clearCart,
+    replaceCart,
+  } = useCart();
+  const [checkingCart, setCheckingCart] = useState(false);
+  const [cartNotice, setCartNotice] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const checkoutGeneration = useRef(0);
 
-  const deliveryFee = subtotalAmount > 0 ? 49 : 0;
-  const grandTotal = subtotalAmount + deliveryFee;
+  useEffect(() => () => {
+    checkoutGeneration.current += 1;
+  }, []);
 
-  const handleCheckoutProceed = () => {
-    const isValid = revalidateCart();
-    if (!isValid) {
-      alert('Some items in your cart were modified due to stock updates. Please review your cart.');
+  const goBack = useCallback(() => {
+    if (checkingCart) return;
+    if (router.canGoBack()) {
+      router.back();
       return;
     }
-    router.push('/checkout' as never);
-  };
+    router.replace('/products' as never);
+  }, [checkingCart, router]);
+
+  const continueShopping = useCallback(() => {
+    if (checkingCart) return;
+    router.push('/products' as never);
+  }, [checkingCart, router]);
+
+  const handleCheckoutProceed = useCallback(async () => {
+    if (checkingCart || items.length === 0) return;
+    const generation = checkoutGeneration.current + 1;
+    checkoutGeneration.current = generation;
+    setCheckingCart(true);
+    setCartNotice(null);
+    setRefreshError(null);
+
+    try {
+      const result = await revalidateCartItemsAgainstCatalog(items, selectedPincode);
+      if (checkoutGeneration.current !== generation) return;
+
+      await replaceCart(result.items);
+      if (checkoutGeneration.current !== generation) return;
+
+      if (result.materialChanged) {
+        const changes = [
+          result.removedCount > 0 ? `${result.removedCount} unavailable item${result.removedCount === 1 ? '' : 's'} removed` : null,
+          result.priceChangedCount > 0 ? `${result.priceChangedCount} price update${result.priceChangedCount === 1 ? '' : 's'}` : null,
+          result.quantityChangedCount > 0 ? `${result.quantityChangedCount} quantity adjustment${result.quantityChangedCount === 1 ? '' : 's'}` : null,
+        ].filter(Boolean).join(', ');
+        setCartNotice(
+          result.items.length === 0
+            ? `Cart refreshed: ${changes}. No purchasable items remain.`
+            : `Cart refreshed: ${changes}. Review the current item subtotal before continuing.`,
+        );
+        return;
+      }
+
+      router.push('/checkout' as never);
+    } catch (error) {
+      if (checkoutGeneration.current !== generation) return;
+      const message = isOfflineError(error)
+        ? 'You are offline. Reconnect to refresh current price, stock, and serviceability before checkout.'
+        : error instanceof Error
+          ? error.message
+          : 'Could not refresh the cart. Your existing cart was kept unchanged.';
+      setRefreshError(message);
+    } finally {
+      if (checkoutGeneration.current === generation) setCheckingCart(false);
+    }
+  }, [checkingCart, items, replaceCart, router, selectedPincode]);
+
+  if (loading) {
+    return (
+      <ScreenShell
+        scroll={false}
+        header={<ScreenHeader title="My Cart" subtitle="Restoring your saved cart" onBack={goBack} />}
+        testID="cart-screen"
+      >
+        <StateView kind="loading" title="Loading cart" message="Restoring your saved items safely." />
+      </ScreenShell>
+    );
+  }
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <ScreenHeader
-        title="My Cart"
-        subtitle={providerName ? `Ordering from ${providerName}` : 'Your selected pet items'}
-        trailing={
-          items.length > 0 ? (
-            <Pressable onPress={() => void clearCart()} style={{ padding: 4 }}>
-              <ThemedText style={{ color: theme.danger, fontWeight: '700', fontSize: 13 }}>Clear Cart</ThemedText>
-            </Pressable>
-          ) : undefined
-        }
-      />
-
+    <ScreenShell
+      scroll={false}
+      header={(
+        <ScreenHeader
+          title="My Cart"
+          subtitle={providerName ? `Ordering from ${providerName}` : 'Your selected pet items'}
+          onBack={goBack}
+          trailing={
+            items.length > 0 ? (
+              <Pressable
+                onPress={() => {
+                  if (checkingCart) return;
+                  Alert.alert('Clear cart?', 'Remove every item from this cart?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Clear Cart', style: 'destructive', onPress: () => { void clearCart(); } },
+                  ]);
+                }}
+                disabled={checkingCart}
+                accessibilityRole="button"
+                accessibilityLabel="Clear cart"
+                accessibilityState={{ disabled: checkingCart }}
+                style={({ pressed }) => [styles.headerAction, checkingCart && styles.disabled, pressed && !checkingCart && styles.pressed]}
+              >
+                <ThemedText style={{ color: theme.danger, fontWeight: '700', fontSize: 13 }}>Clear Cart</ThemedText>
+              </Pressable>
+            ) : undefined
+          }
+        />
+      )}
+      footer={
+        items.length > 0 ? (
+          <View
+            style={[
+              styles.checkoutBox,
+              shadows.raised,
+              { backgroundColor: theme.backgroundElement, borderColor: theme.border, paddingBottom: Math.max(spacing.x4, insets.bottom + spacing.x2) },
+            ]}
+          >
+            {cartNotice ? (
+              <ThemedText type="small" style={{ color: theme.warning }} accessibilityLiveRegion="polite">
+                {cartNotice}
+              </ThemedText>
+            ) : null}
+            {refreshError ? (
+              <ThemedText type="small" style={{ color: theme.danger }} accessibilityLiveRegion="assertive">
+                {refreshError}
+              </ThemedText>
+            ) : null}
+            <View style={styles.summaryRow}>
+              <View style={styles.summaryCopy}>
+                <ThemedText style={{ color: theme.textSecondary, fontSize: 13 }}>Current item subtotal</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {totalItemsCount} item{totalItemsCount === 1 ? '' : 's'} · projection only
+                </ThemedText>
+              </View>
+              <ThemedText style={{ color: theme.primary, fontWeight: '900', fontSize: 20 }}>{money(subtotalAmount)}</ThemedText>
+            </View>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.quoteBoundaryText}>
+              Delivery, platform fee, tax, discounts and the final payable amount are calculated by the authoritative checkout quote.
+            </ThemedText>
+            <View style={styles.footerActions}>
+              <PrimaryButton label="Continue shopping" variant="secondary" disabled={checkingCart} onPress={continueShopping} style={styles.footerButton} />
+              <PrimaryButton
+                label="Proceed to Checkout →"
+                loading={checkingCart}
+                onPress={() => { void handleCheckoutProceed(); }}
+                style={styles.footerButton}
+              />
+            </View>
+          </View>
+        ) : undefined
+      }
+      contentContainerStyle={styles.content}
+      testID="cart-screen"
+    >
       {items.length === 0 ? (
-        <View style={styles.emptyState}>
-          <AppIcon name="store" color={theme.textSecondary} size={48} />
-          <ThemedText style={styles.emptyTitle}>Your Cart is Empty</ThemedText>
-          <ThemedText style={{ color: theme.textSecondary, fontSize: 13, textAlign: 'center' }}>
-            Browse our categories or pet superstores to add food, toys, and supplies.
-          </ThemedText>
-          <PrimaryButton label="Start Shopping" onPress={() => router.push('/category/food' as never)} />
-        </View>
+        <StateView
+          kind="empty"
+          title="Your cart is empty"
+          message={cartNotice ?? 'Browse live products from verified local stores to start a single-store cart.'}
+          actionLabel="Browse products"
+          onAction={() => router.replace('/products' as never)}
+        />
       ) : (
-        <View style={{ flex: 1 }}>
-          <FlatList
-            data={items}
-            keyExtractor={(item) => `${item.product.id}-${item.selectedVariant?.id ?? 'default'}`}
-            contentContainerStyle={styles.listContent}
-            renderItem={({ item }) => (
+        <FlatList
+          data={items}
+          keyExtractor={(item) => `${item.product.id}-${item.selectedVariant?.id ?? 'default'}`}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          renderItem={({ item }) => {
+            const maxStock = stockForCartLine(item.product, item.selectedVariant);
+            const atKnownMax = item.quantity >= maxStock;
+            return (
               <View style={[styles.cartItemCard, shadows.raised, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-                <Image source={{ uri: item.product.imageUrl }} style={styles.itemImage} resizeMode="cover" />
+                <ResilientRemoteImage
+                  uri={item.product.imageUrl}
+                  accessibilityLabel={`${item.product.name} product image`}
+                  style={styles.itemImage}
+                  contentFit="cover"
+                />
 
-                <View style={{ flex: 1, gap: 4 }}>
-                  <ThemedText style={{ fontSize: 11, color: theme.textSecondary }}>{item.product.brand}</ThemedText>
-                  <ThemedText style={[styles.itemTitle, { color: theme.text }]} numberOfLines={1}>
+                <View style={styles.itemCopy}>
+                  {item.product.brand ? (
+                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>{item.product.brand}</ThemedText>
+                  ) : null}
+                  <ThemedText style={[styles.itemTitle, { color: theme.text }]} numberOfLines={2}>
                     {item.product.name}
                   </ThemedText>
-                  {item.selectedVariant && (
-                    <StatusBadge label={item.selectedVariant.name} color={theme.primary} />
-                  )}
+                  {item.selectedVariant ? <StatusBadge label={item.selectedVariant.name} color={theme.primary} /> : null}
                   <ThemedText style={{ fontWeight: '800', fontSize: 15, color: theme.primary }}>
-                    ₹{item.unitPrice * item.quantity}
+                    {money(item.unitPrice * item.quantity)}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {money(item.unitPrice)} each · cart stock snapshot {maxStock}
                   </ThemedText>
                 </View>
 
                 <View style={styles.actionCol}>
                   <Pressable
                     onPress={() => removeFromCart(item.product.id, item.selectedVariant?.id)}
-                    style={{ alignSelf: 'flex-end', padding: 4 }}
+                    disabled={checkingCart}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${item.product.name} from cart`}
+                    accessibilityState={{ disabled: checkingCart }}
+                    style={({ pressed }) => [styles.removeButton, checkingCart && styles.disabled, pressed && !checkingCart && styles.pressed]}
                   >
-                    <AppIcon name="warning" color={theme.textSecondary} size={16} />
+                    <AppIcon name="close" color={theme.textSecondary} size={18} />
                   </Pressable>
 
-                  <View style={[styles.stepper, { backgroundColor: theme.primarySoft, borderColor: theme.primary }]}>
+                  <View
+                    style={[styles.stepper, { backgroundColor: theme.primarySoft, borderColor: theme.primary }]}
+                    accessibilityRole="adjustable"
+                    accessibilityLabel={`${item.product.name} quantity`}
+                    accessibilityValue={{ min: 1, max: maxStock, now: item.quantity }}
+                  >
                     <Pressable
-                      onPress={() => updateQuantity(item.product.id, item.selectedVariant?.id, item.quantity - 1)}
-                      style={styles.stepBtn}
+                      onPress={() => adjustQuantity(item.product.id, item.selectedVariant?.id, -1)}
+                      disabled={checkingCart}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Decrease ${item.product.name} quantity`}
+                      accessibilityState={{ disabled: checkingCart }}
+                      style={({ pressed }) => [styles.stepBtn, checkingCart && styles.disabled, pressed && !checkingCart && styles.pressed]}
                     >
-                      <ThemedText style={{ color: theme.primary, fontWeight: '800' }}>-</ThemedText>
+                      <ThemedText style={{ color: theme.primary, fontWeight: '800', fontSize: 18 }}>−</ThemedText>
                     </Pressable>
-                    <ThemedText style={{ color: theme.primary, fontWeight: '700', paddingHorizontal: 6 }}>{item.quantity}</ThemedText>
+                    <ThemedText style={[styles.quantity, { color: theme.primary }]}>{item.quantity}</ThemedText>
                     <Pressable
-                      onPress={() => updateQuantity(item.product.id, item.selectedVariant?.id, item.quantity + 1)}
-                      style={styles.stepBtn}
+                      onPress={() => adjustQuantity(item.product.id, item.selectedVariant?.id, 1)}
+                      disabled={atKnownMax || checkingCart}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Increase ${item.product.name} quantity`}
+                      accessibilityState={{ disabled: atKnownMax || checkingCart }}
+                      style={({ pressed }) => [styles.stepBtn, (atKnownMax || checkingCart) && styles.disabled, pressed && !atKnownMax && !checkingCart && styles.pressed]}
                     >
-                      <ThemedText style={{ color: theme.primary, fontWeight: '800' }}>+</ThemedText>
+                      <ThemedText style={{ color: theme.primary, fontWeight: '800', fontSize: 18 }}>+</ThemedText>
                     </Pressable>
                   </View>
                 </View>
               </View>
-            )}
-          />
-
-          {/* Price Breakdown Footer */}
-          <View style={[styles.checkoutBox, shadows.raised, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-
-            <View style={styles.summaryRow}>
-              <ThemedText style={{ color: theme.textSecondary, fontSize: 13 }}>Items Subtotal</ThemedText>
-              <ThemedText style={{ color: theme.text, fontWeight: '700', fontSize: 13 }}>₹{subtotalAmount}</ThemedText>
-            </View>
-            <View style={styles.summaryRow}>
-              <ThemedText style={{ color: theme.textSecondary, fontSize: 13 }}>Delivery Fee</ThemedText>
-              <ThemedText style={{ color: theme.text, fontWeight: '700', fontSize: 13 }}>₹{deliveryFee}</ThemedText>
-            </View>
-            <View style={[styles.summaryRow, { marginTop: 4, paddingTop: 4, borderTopWidth: 1, borderColor: theme.border }]}>
-              <ThemedText style={{ color: theme.text, fontWeight: '800', fontSize: 16 }}>Total Amount</ThemedText>
-              <ThemedText style={{ color: theme.primary, fontWeight: '900', fontSize: 18 }}>₹{grandTotal}</ThemedText>
-            </View>
-
-            <PrimaryButton label="Proceed to Checkout →" onPress={handleCheckoutProceed} />
-          </View>
-        </View>
+            );
+          }}
+        />
       )}
-    </View>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: spacing.x3 },
-  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.x6, gap: spacing.x3 },
-  emptyTitle: { ...typography.headline, fontSize: 18, marginTop: 8 },
-  listContent: { gap: spacing.x3, paddingBottom: 160 },
+  content: { flex: 1, paddingHorizontal: spacing.x4, paddingTop: spacing.x3 },
+  headerAction: { minWidth: touchTarget, minHeight: touchTarget, paddingHorizontal: spacing.x2, alignItems: 'center', justifyContent: 'center' },
+  listContent: { gap: spacing.x3, paddingBottom: spacing.x4 },
   cartItemCard: { flexDirection: 'row', alignItems: 'center', padding: spacing.x3, borderRadius: radii.card, borderWidth: 1, gap: spacing.x3 },
-  itemImage: { width: 64, height: 64, borderRadius: radii.compact },
-  itemTitle: { ...typography.headline, fontSize: 14, fontWeight: '700' },
-  actionCol: { justifyContent: 'space-between', alignItems: 'flex-end', height: 64 },
-  stepper: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: 4, height: 32 },
-  stepBtn: { paddingHorizontal: 6, paddingVertical: 2 },
-  checkoutBox: { position: 'absolute', bottom: 0, left: 0, right: 0, borderTopWidth: 1, padding: spacing.x4, gap: spacing.x2 },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  itemImage: { width: 76, height: 76, borderRadius: radii.compact },
+  itemCopy: { flex: 1, minWidth: 0, gap: spacing.x1 },
+  itemTitle: { ...typography.headline, fontSize: 14, lineHeight: 19, fontWeight: '700' },
+  actionCol: { justifyContent: 'space-between', alignItems: 'flex-end', alignSelf: 'stretch', minHeight: 76, gap: spacing.x2 },
+  removeButton: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
+  stepper: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: radii.pill, minHeight: touchTarget },
+  stepBtn: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
+  quantity: { minWidth: 28, textAlign: 'center', fontWeight: '800' },
+  checkoutBox: { borderTopWidth: 1, paddingHorizontal: spacing.x4, paddingTop: spacing.x3, paddingBottom: spacing.x4, gap: spacing.x2 },
+  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.x3 },
+  summaryCopy: { flex: 1, gap: 2 },
+  quoteBoundaryText: { lineHeight: 18 },
+  footerActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x2 },
+  footerButton: { flexGrow: 1, flexBasis: 160 },
+  pressed: { opacity: 0.82 },
+  disabled: { opacity: 0.45 },
 });

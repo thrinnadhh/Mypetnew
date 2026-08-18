@@ -14,11 +14,13 @@ export function ResilientRemoteImage({
   fallbackUri,
   style,
   contentFit = 'cover',
+  accessibilityLabel,
 }: {
   uri?: string | null;
   fallbackUri?: string;
   style?: StyleProp<ImageStyle>;
   contentFit?: ImageContentFit;
+  accessibilityLabel?: string;
 }) {
   const theme = useTheme();
   const effectiveFallback = appConfig.allowDemoMode
@@ -43,7 +45,12 @@ export function ResilientRemoteImage({
 
   if (failed || !sourceUri) {
     return (
-      <View style={[style, styles.placeholder, { backgroundColor: theme.muted }]}>
+      <View
+        style={[style, styles.placeholder, { backgroundColor: theme.muted }]}
+        accessible={Boolean(accessibilityLabel)}
+        accessibilityRole={accessibilityLabel ? 'image' : undefined}
+        accessibilityLabel={accessibilityLabel ? `${accessibilityLabel}. Image unavailable.` : undefined}
+      >
         <AppIcon name="paw" color={theme.textSecondary} size={28} />
       </View>
     );
@@ -55,6 +62,7 @@ export function ResilientRemoteImage({
       style={style}
       contentFit={contentFit}
       transition={160}
+      accessibilityLabel={accessibilityLabel}
       onError={() => {
         if (sourceUri !== effectiveFallback && effectiveFallback) {
           setSourceUri(effectiveFallback);

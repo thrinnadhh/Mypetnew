@@ -28,12 +28,18 @@ function formattedOrderDate(value: string): string {
 }
 
 function statusTone(status: string): 'success' | 'warning' | 'error' | 'neutral' {
-  if (['DELIVERED', 'COMPLETED'].includes(status)) return 'success';
+  if (status === 'DELIVERED') return 'success';
   if (['CANCELLED', 'REJECTED'].includes(status)) return 'error';
-  if (['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'PICKED_UP'].includes(status)) {
-    return 'warning';
-  }
+  if (['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'PICKED_UP'].includes(status)) return 'warning';
   return 'neutral';
+}
+
+function paymentMethodLabel(method: CustomerOrderSummaryRecord['paymentMethod']): string {
+  return method === 'ONLINE_PAYMENT' ? 'Online payment' : 'Pay on fulfilment';
+}
+
+function fulfilmentLabel(mode: CustomerOrderSummaryRecord['fulfilmentMode']): string {
+  return mode === 'MYPET_CAPTAIN_DELIVERY' ? 'MyPet Captain delivery' : 'Store pickup';
 }
 
 export default function OrdersScreen() {
@@ -41,18 +47,16 @@ export default function OrdersScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { requireAuth } = useAuthIntent();
-
   const {
     user,
     session,
-    filteredOrders,
+    orders,
     state,
     activeTab,
     setActiveTab,
-    searchQuery,
-    setSearchQuery,
     actionLoading,
     loadingMore,
+    loadMoreError,
     hasNext,
     reload,
     loadMore,
@@ -98,30 +102,6 @@ export default function OrdersScreen() {
           <FilterChip label="Active" selected={activeTab === 'active'} onPress={() => setActiveTab('active')} />
           <FilterChip label="Past orders" selected={activeTab === 'past'} onPress={() => setActiveTab('past')} />
         </ScrollView>
-
-        <View style={[styles.searchBox, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-          <AppIcon name="search" size={18} color={theme.textSecondary} />
-          <TextInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Search store or order ID…"
-            placeholderTextColor={theme.textSecondary}
-            style={[styles.searchInput, { color: theme.text }]}
-            accessibilityLabel="Search orders"
-            returnKeyType="search"
-            maxFontSizeMultiplier={1.6}
-          />
-          {searchQuery ? (
-            <Pressable
-              onPress={() => setSearchQuery('')}
-              accessibilityRole="button"
-              accessibilityLabel="Clear order search"
-              style={({ pressed }) => [styles.clearButton, pressed && styles.pressed]}
-            >
-              <AppIcon name="close" size={18} color={theme.textSecondary} />
-            </Pressable>
-          ) : null}
-        </View>
       </View>
 
       {state === 'loading' || state === 'idle' ? (
@@ -145,29 +125,26 @@ export default function OrdersScreen() {
           onAction={() => void reload()}
         />
       ) : null}
-      {state === 'ready' && filteredOrders.length === 0 ? (
+      {state === 'ready' && orders.length === 0 ? (
         <StateView
           kind="empty"
-          title={searchQuery ? 'No matching orders' : t('ordersFoundation.emptyTitle')}
-          message={searchQuery ? 'Try another store name or order ID.' : t('ordersFoundation.emptyMessage')}
-          actionLabel={searchQuery ? 'Clear search' : undefined}
-          onAction={searchQuery ? () => setSearchQuery('') : undefined}
+          title={activeTab === 'active' ? 'No active orders' : 'No past orders'}
+          message={activeTab === 'active' ? 'New orders and orders in progress will appear here.' : 'Completed or cancelled orders will appear here.'}
         />
       ) : null}
 
-      {state === 'ready' && filteredOrders.length > 0 ? (
+      {state === 'ready' && orders.length > 0 ? (
         <View style={styles.list}>
-          {filteredOrders.map((order) => {
+          {orders.map((order) => {
             const isCancellable = order.status === 'PLACED';
             const tone = statusTone(order.status);
-            const accentColor =
-              tone === 'success'
-                ? theme.success
-                : tone === 'error'
-                  ? theme.danger
-                  : tone === 'warning'
-                    ? theme.warning
-                    : theme.textSecondary;
+            const accentColor = tone === 'success'
+              ? theme.success
+              : tone === 'error'
+                ? theme.danger
+                : tone === 'warning'
+                  ? theme.warning
+                  : theme.textSecondary;
 
             return (
               <View
@@ -181,10 +158,12 @@ export default function OrdersScreen() {
                     borderLeftColor: accentColor,
                   },
                 ]}
-                accessible
-                accessibilityLabel={`Order ${order.id.slice(0, 8)} from ${order.providerName}. ${order.status}. Total ${order.total}.`}
               >
-                <View style={styles.cardHeader}>
+                <View
+                  style={styles.cardHeader}
+                  accessible
+                  accessibilityLabel={`Order ${order.id.slice(0, 8)} from ${order.providerName}. ${order.status.replaceAll('_', ' ')}. ${fulfilmentLabel(order.fulfilmentMode)}. ${paymentMethodLabel(order.paymentMethod)}. Total ${order.total}.`}
+                >
                   <View style={[styles.storeIcon, { backgroundColor: theme.primarySoft }]}>
                     <AppIcon name="store" size={23} color={theme.primary} />
                   </View>
@@ -200,12 +179,12 @@ export default function OrdersScreen() {
                 <View style={[styles.itemsPanel, { backgroundColor: theme.muted }]}>
                   <ThemedText type="smallBold">{order.itemCount} item{order.itemCount === 1 ? '' : 's'}</ThemedText>
                   <ThemedText type="small" themeColor="textSecondary">
-                    {order.fulfilmentMode.replaceAll('_', ' ')} · {order.paymentMethod.replaceAll('_', ' ')}
+                    {fulfilmentLabel(order.fulfilmentMode)} · {paymentMethodLabel(order.paymentMethod)}
                   </ThemedText>
                 </View>
 
                 <View style={styles.amountRow}>
-                  <View>
+                  <View style={styles.flex}>
                     <ThemedText type="small" themeColor="textSecondary">Order total</ThemedText>
                     <ThemedText style={[styles.amountText, { color: theme.primary }]}>{order.total}</ThemedText>
                   </View>
@@ -242,6 +221,15 @@ export default function OrdersScreen() {
             );
           })}
 
+          {loadMoreError ? (
+            <StateView
+              kind={loadMoreError === 'offline' ? 'offline' : 'error'}
+              title={loadMoreError === 'offline' ? t('states.offline') : 'More orders could not be loaded'}
+              message="The orders already shown are preserved. Retry to continue this page."
+              actionLabel={t('states.retry')}
+              onAction={() => void loadMore()}
+            />
+          ) : null}
           {hasNext ? (
             <PrimaryAction label="Load more orders" onPress={() => void loadMore()} loading={loadingMore} />
           ) : null}
@@ -294,20 +282,9 @@ export default function OrdersScreen() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
+  flex: { flex: 1, minWidth: 0 },
   controls: { paddingHorizontal: spacing.x4, gap: spacing.x3, marginBottom: spacing.x3 },
   tabsScroll: { flexDirection: 'row', gap: spacing.x2, paddingRight: spacing.x4 },
-  searchBox: {
-    minHeight: touchTarget,
-    borderWidth: 1,
-    borderRadius: radii.compact,
-    paddingLeft: spacing.x3,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.x2,
-  },
-  searchInput: { flex: 1, minHeight: touchTarget, ...typography.body, paddingVertical: 0 },
-  clearButton: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
   list: { paddingHorizontal: spacing.x4, gap: spacing.x3, paddingBottom: spacing.x6 },
   orderCard: {
     borderWidth: StyleSheet.hairlineWidth,
@@ -316,11 +293,11 @@ const styles = StyleSheet.create({
     padding: spacing.x4,
     gap: spacing.x3,
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.x3 },
-  storeIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  storeName: { ...typography.title, fontSize: 18, lineHeight: 24 },
+  cardHeader: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: spacing.x3 },
+  storeIcon: { width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, alignItems: 'center', justifyContent: 'center' },
+  storeName: { ...typography.title, fontSize: 18, lineHeight: 24, flexShrink: 1 },
   itemsPanel: { borderRadius: radii.compact, padding: spacing.x3, gap: spacing.x1 },
-  amountRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.x3 },
+  amountRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: spacing.x3 },
   amountText: { ...typography.title, fontSize: 18, lineHeight: 24 },
   actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x2, alignItems: 'center' },
   primaryCardAction: {

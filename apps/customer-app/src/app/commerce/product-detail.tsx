@@ -47,7 +47,7 @@ export default function ProductDetailScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { selectedPincode } = useLocation();
-  const { addToCart, items, updateQuantity } = useCart();
+  const { addToCart, items, adjustQuantity } = useCart();
   const { isFavourite, toggleFavourite } = useFavourites();
   const [product, setProduct] = useState<CommerceProduct | null>(null);
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
@@ -248,7 +248,7 @@ export default function ProductDetailScreen() {
                   accessibilityValue={{ min: 1, max: maxStock, now: quantity }}
                 >
                   <Pressable
-                    onPress={() => updateQuantity(product.id, selectedVariant.id, quantity - 1)}
+                    onPress={() => adjustQuantity(product.id, selectedVariant.id, -1)}
                     accessibilityRole="button"
                     accessibilityLabel={`Decrease ${product.name} quantity`}
                     style={({ pressed }) => [styles.stepButton, pressed && styles.pressed]}
@@ -257,7 +257,7 @@ export default function ProductDetailScreen() {
                   </Pressable>
                   <ThemedText style={[styles.quantity, { color: theme.primary }]}>{quantity}</ThemedText>
                   <Pressable
-                    onPress={() => updateQuantity(product.id, selectedVariant.id, quantity + 1)}
+                    onPress={() => adjustQuantity(product.id, selectedVariant.id, 1)}
                     disabled={atKnownMax}
                     accessibilityRole="button"
                     accessibilityLabel={`Increase ${product.name} quantity`}

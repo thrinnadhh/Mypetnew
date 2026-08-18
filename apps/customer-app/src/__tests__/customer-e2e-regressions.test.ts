@@ -6,23 +6,31 @@ function source(relativePath: string): string {
 }
 
 describe('customer end-to-end regression contracts', () => {
-  it('uses live catalog APIs instead of production demo fixtures', () => {
+  it('uses bounded live catalog APIs instead of production demo fixtures', () => {
     const category = source('src/app/category/[id].tsx');
     const aliasRoute = source('src/app/commerce/[slug].tsx');
     const product = source('src/app/commerce/product-detail.tsx');
     const shop = source('src/app/shop/[id].tsx');
     const favourites = source('src/app/favourites/index.tsx');
     const discovery = source('src/screens/commerce-discovery-screen.tsx');
+    const catalog = source('src/services/paginated-catalog.ts');
     const registry = source('src/services/route-catalog.ts');
 
-    expect(category).toMatch(/fetchCommerceProducts/);
-    expect(aliasRoute).toMatch(/fetchCommerceProducts/);
-    expect(product).toMatch(/fetchCommerceProduct/);
-    expect(shop).toMatch(/fetchShopProfile/);
+    expect(category).toMatch(/catalogQueryFor/);
+    expect(category).toMatch(/pincode: selectedPincode/);
+    expect(aliasRoute).toMatch(/Redirect/);
+    expect(aliasRoute).toMatch(/\/category\//);
+    expect(product).toMatch(/fetchServiceableCommerceProduct/);
+    expect(shop).toMatch(/fetchProductCatalogPage/);
+    expect(shop).toMatch(/fetchServiceableProductStore/);
     expect(favourites).toMatch(/fetchCommerceProduct/);
     expect(favourites).toMatch(/fetchShopProfile/);
-    expect(discovery).toMatch(/fetchAllPublicOutlets/);
+    expect(discovery).toMatch(/fetchPublicOutlets/);
+    expect(discovery).toMatch(/pincode: selectedPincode/);
+    expect(catalog).toMatch(/CUSTOMER_CATALOG_PAGE_SIZE = 20/);
     expect(`${category}\n${aliasRoute}\n${product}\n${shop}\n${favourites}\n${discovery}\n${registry}`).not.toMatch(/SAMPLE_PRODUCTS|SHOPS_DATA/);
+    expect(discovery).not.toMatch(/fetchAllPublicOutlets/);
+    expect(shop).not.toMatch(/fetchAllCatalogItems/);
   });
 
   it('propagates and clears authenticated server session while payment uses canonical apiClient', () => {
@@ -135,24 +143,28 @@ describe('customer end-to-end regression contracts', () => {
     expect(search).not.toMatch(/Simulate voice|Listening\.\.\. Speak now/);
   });
 
-  it('persists address and unavailable-city intent through backend APIs', () => {
+  it('persists address, exact service PIN and unavailable-city intent through backend APIs', () => {
     const profile = source('src/services/customer-profile.ts');
     const location = source('src/context/LocationContext.tsx');
     expect(profile).toMatch(/\/api\/v1\/customer\/addresses/);
     expect(profile).toMatch(/apiClient\.(post|patch)/);
     expect(profile).not.toMatch(/\/api\/v1\/addresses\/default/);
     expect(location).toMatch(/\/api\/v1\/service-regions\/launch-requests/);
+    expect(location).toMatch(/PIN_STORAGE_KEY/);
+    expect(location).toMatch(/selectedPincode/);
     expect(location).toMatch(/method: 'POST'/);
   });
 
-  it('uses foreground device coordinates to select a service city', () => {
+  it('uses foreground device coordinates to select a service city and service PIN', () => {
     const context = source('src/context/LocationContext.tsx');
     const modal = source('src/components/location-modal.tsx');
     const locationService = source('src/services/device-location.ts');
     const config = source('app.json');
     expect(context).toMatch(/requestCurrentCoordinates/);
     expect(context).toMatch(/nearestEnabledCity/);
+    expect(context).toMatch(/normalizeSelectablePincode/);
     expect(modal).toMatch(/Use current location/);
+    expect(modal).toMatch(/Select Service Location/);
     expect(locationService).toMatch(/requestForegroundPermissionsAsync/);
     expect(locationService).toMatch(/getCurrentPositionAsync/);
     expect(config).toMatch(/expo-location/);

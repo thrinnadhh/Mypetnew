@@ -3,10 +3,12 @@ import type { CommerceProduct } from '@/services/catalog-data';
 import { SAMPLE_PRODUCTS } from '@/services/catalog-data';
 import {
   fetchCatalogPage,
+  fetchCommerceProduct,
   mapListingToCommerceProduct,
   normalizeDemoCommerceProduct,
   type PageResponse,
   type PublicCatalogQuery,
+  type PublicListingDetail,
   type PublicListingSummary,
   type PublicOutletSummary,
 } from '@/services/customer-catalog';
@@ -157,6 +159,18 @@ export async function fetchServiceableProductStore(
   return apiClient.get<PublicOutletSummary>(
     `/api/v1/public/outlets/${encodeURIComponent(outletId)}?${params.toString()}`,
   );
+}
+
+export async function fetchServiceableCommerceProduct(
+  listingId: string,
+  pincode: string,
+): Promise<CommerceProduct> {
+  if (appConfig.allowDemoMode) return fetchCommerceProduct(listingId);
+  const params = new URLSearchParams({ pincode });
+  const detail = await apiClient.get<PublicListingDetail>(
+    `/api/v1/public/catalog/${encodeURIComponent(listingId)}?${params.toString()}`,
+  );
+  return mapListingToCommerceProduct(detail);
 }
 
 export function mergeUniqueProducts(

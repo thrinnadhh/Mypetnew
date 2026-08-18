@@ -47,11 +47,33 @@ function single(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+function sameHandoffSlot(
+  slot: AppointmentSlotOption,
+  slotId: string,
+  startsAt?: string,
+  endsAt?: string,
+): boolean {
+  return slot.id === slotId
+    && (!startsAt || slot.startsAt === startsAt)
+    && (!endsAt || slot.endsAt === endsAt);
+}
+
 export default function AppointmentDiscoveryScreen({ providerType, route, titleKey }: Props) {
   const router = useRouter();
-  const params = useLocalSearchParams<{ providerId?: string | string[]; serviceId?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    providerId?: string | string[];
+    serviceId?: string | string[];
+    slotId?: string | string[];
+    slotStartsAt?: string | string[];
+    slotEndsAt?: string | string[];
+    pincode?: string | string[];
+  }>();
   const preferredProviderId = single(params.providerId);
   const preferredServiceId = single(params.serviceId);
+  const preferredSlotId = single(params.slotId);
+  const preferredSlotStartsAt = single(params.slotStartsAt);
+  const preferredSlotEndsAt = single(params.slotEndsAt);
+  const preferredPincode = single(params.pincode);
   const theme = useTheme();
   const { t } = useTranslation();
   const { user, session } = useAuth();
@@ -73,6 +95,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
   const [provider, setProvider] = useState<ProviderSummary | null>(null);
   const [slots, setSlots] = useState<AppointmentSlotOption[]>([]);
   const [slotState, setSlotState] = useState<LoadState>('ready');
+  const [handoffSlotStale, setHandoffSlotStale] = useState(false);
   const [pets, setPets] = useState<CustomerPet[]>([]);
   const [selectedPetId, setSelectedPetId] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<AppointmentPaymentMethod>('ONLINE_PAYMENT');
@@ -91,6 +114,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
     setState('loading');
     setProvider(null);
     setSlots([]);
+    setHandoffSlotStale(false);
     setProviders([]);
     setHasNext(false);
 
@@ -209,14 +233,46 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
   const chooseProvider = useCallback(async (next: ProviderSummary, serviceId?: string) => {
     setProvider(next);
     setSlots([]);
+    setHandoffSlotStale(false);
     setSlotState('loading');
     try {
-      setSlots(await fetchAvailableAppointmentSlots(next.id, serviceId, serviceCapability));
+      const currentSlots = await fetchAvailableAppointmentSlots(next.id, serviceId, serviceCapability);
+      const canConsumeP10Handoff = Boolean(
+        preferredSlotId
+        && preferredProviderId === next.id
+        && preferredServiceId === serviceId
+        && (!preferredPincode || preferredPincode === selectedPincode),
+      );
+      if (canConsumeP10Handoff && preferredSlotId) {
+        const selected = currentSlots.find((slot) => sameHandoffSlot(
+          slot,
+          preferredSlotId,
+          preferredSlotStartsAt,
+          preferredSlotEndsAt,
+        ));
+        setHandoffSlotStale(!selected);
+        setSlots(selected
+          ? [selected, ...currentSlots.filter((slot) => slot.id !== selected.id)]
+          : currentSlots);
+      } else {
+        setHandoffSlotStale(Boolean(preferredSlotId && preferredProviderId === next.id));
+        setSlots(currentSlots);
+      }
       setSlotState('ready');
     } catch (error) {
+      setHandoffSlotStale(false);
       setSlotState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, [serviceCapability]);
+  }, [
+    preferredPincode,
+    preferredProviderId,
+    preferredServiceId,
+    preferredSlotEndsAt,
+    preferredSlotId,
+    preferredSlotStartsAt,
+    selectedPincode,
+    serviceCapability,
+  ]);
 
   useEffect(() => {
     if (state !== 'ready' || provider || !preferredProviderId) return;
@@ -289,6 +345,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
     if (bookingSlotId) return;
     setProvider(null);
     setSlots([]);
+    setHandoffSlotStale(false);
   };
 
   return (
@@ -417,27 +474,43 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
             onAction={provider ? () => void chooseProvider(provider, provider.id === preferredProviderId ? preferredServiceId : undefined) : undefined}
           />
         ) : null}
+        {slotState === 'ready' && handoffSlotStale ? (
+          <StateView
+            kind="error"
+            title="Previously selected time changed"
+            message="The P10-selected slot is no longer present with the same provider, service, PIN and timestamps. Choose a current slot before booking."
+          />
+        ) : null}
         {slotState === 'ready' && slots.length === 0 ? (
           <StateView kind="empty" title={t('appointmentFoundation.noSlots')} />
         ) : null}
         {slotState === 'ready' ? (
           <View style={styles.list}>
-            {slots.map((slot) => (
-              <EntityCard
-                key={slot.id}
-                title={slot.serviceName}
-                subtitle={`${slot.startTime} – ${slot.endTime}`}
-                meta={
-                  bookingSlotId === slot.id
-                    ? 'Reserving slot…'
-                    : `₹${slot.price} · ${paymentMethod === 'ONLINE_PAYMENT' ? 'Pay online' : 'Pay at provider'} · Tap to review`
-                }
-                icon="calendar"
-                onPress={() => {
-                  if (!bookingSlotId) void requestBooking(slot);
-                }}
-              />
-            ))}
+            {slots.map((slot, index) => {
+              const isP10Selection = !handoffSlotStale
+                && index === 0
+                && Boolean(preferredSlotId)
+                && preferredProviderId === provider?.id
+                && preferredServiceId === slot.offeringId
+                && sameHandoffSlot(slot, preferredSlotId as string, preferredSlotStartsAt, preferredSlotEndsAt)
+                && (!preferredPincode || preferredPincode === selectedPincode);
+              return (
+                <EntityCard
+                  key={slot.id}
+                  title={slot.serviceName}
+                  subtitle={`${slot.startTime} – ${slot.endTime}`}
+                  meta={
+                    bookingSlotId === slot.id
+                      ? 'Reserving slot…'
+                      : `${isP10Selection ? 'Selected in P10 · ' : ''}₹${slot.price} · ${paymentMethod === 'ONLINE_PAYMENT' ? 'Pay online' : 'Pay at provider'} · Tap to review`
+                  }
+                  icon="calendar"
+                  onPress={() => {
+                    if (!bookingSlotId) void requestBooking(slot);
+                  }}
+                />
+              );
+            })}
           </View>
         ) : null}
       </BottomSheet>

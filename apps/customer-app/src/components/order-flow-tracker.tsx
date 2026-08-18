@@ -71,34 +71,42 @@ export function OrderFlowTracker({
     const index = steps.findIndex((step) => step.key === entry.toStatus);
     return Math.max(highest, index);
   }, -1);
-  const completedThrough = currentIndex >= 0 ? currentIndex : historicalProgress;
+  const progressIndex = currentIndex >= 0 ? currentIndex : historicalProgress;
   const terminalLabel = TERMINAL_LABELS[status];
   const spoken = [
-    ...steps.map((step, index) => `${step.label}: ${index < completedThrough ? 'completed' : index === completedThrough && !terminalLabel ? 'current' : 'upcoming'}`),
+    ...steps.map((step, index) => {
+      const completed = terminalLabel ? index <= progressIndex : index < progressIndex;
+      const current = !terminalLabel && index === progressIndex;
+      return `${step.label}: ${completed ? 'completed' : current ? 'current' : 'upcoming'}`;
+    }),
     terminalLabel ? `${terminalLabel}: current` : null,
   ].filter(Boolean).join('. ');
 
   return (
     <View style={styles.container} accessible accessibilityLabel={spoken}>
       {steps.map((step, index) => {
-        const done = index < completedThrough || (!terminalLabel && index === completedThrough);
-        const active = !terminalLabel && index === completedThrough;
+        const completed = terminalLabel ? index <= progressIndex : index < progressIndex;
+        const active = !terminalLabel && index === progressIndex;
         return (
           <View key={step.key} style={styles.row}>
             <View
               style={[
                 styles.dot,
                 {
-                  backgroundColor: done ? theme.primary : theme.muted,
-                  borderColor: active ? theme.primary : theme.border,
+                  backgroundColor: completed ? theme.primary : active ? theme.primarySoft : theme.muted,
+                  borderColor: active || completed ? theme.primary : theme.border,
+                  borderWidth: active ? 2 : 1,
                 },
               ]}
             >
-              {done ? <AppIcon name="check" color="#FFFFFF" size={12} /> : null}
+              {completed ? <AppIcon name="check" color="#FFFFFF" size={12} /> : null}
             </View>
             <ThemedText
               type="small"
-              style={{ fontWeight: active ? '900' : '600', color: done ? theme.text : theme.textSecondary }}
+              style={{
+                fontWeight: active ? '900' : '600',
+                color: active ? theme.primary : completed ? theme.text : theme.textSecondary,
+              }}
             >
               {step.label}{active ? ' · Current' : ''}
             </ThemedText>

@@ -8,7 +8,7 @@ import { FilterChip, StateView } from '@/components/foundation/primitives';
 import { ThemedText } from '@/components/themed-text';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { useLocation } from '@/context/LocationContext';
-import { radii, shadows, spacing, typography } from '@/design/tokens';
+import { radii, shadows, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { type CommerceProduct, SAMPLE_PRODUCTS } from '@/services/catalog-data';
 import { fetchAllCatalogItems, fetchAllPublicOutlets } from '@/services/customer-catalog';
@@ -213,7 +213,12 @@ export default function UniversalSearchScreen() {
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <View style={[styles.navHeader, { borderColor: theme.border }]}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn} accessibilityLabel="Back">
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <AppIcon name="close" color={theme.text} size={20} />
         </Pressable>
 
@@ -230,7 +235,12 @@ export default function UniversalSearchScreen() {
             accessibilityLabel="Search MyPet"
           />
           {query.length > 0 ? (
-            <Pressable onPress={() => setQuery('')} style={styles.iconBtn} accessibilityLabel="Clear search">
+            <Pressable
+              onPress={() => setQuery('')}
+              style={styles.iconBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+            >
               <AppIcon name="close" color={theme.textSecondary} size={16} />
             </Pressable>
           ) : null}
@@ -354,10 +364,10 @@ export default function UniversalSearchScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   navHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.x3, paddingHorizontal: spacing.x4, paddingTop: spacing.x6, paddingBottom: spacing.x3, borderBottomWidth: 1 },
-  backBtn: { padding: 4 },
-  searchBox: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.x2, borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x3, height: 44 },
-  searchInput: { flex: 1, height: 44, ...typography.body },
-  iconBtn: { padding: 4 },
+  backBtn: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
+  searchBox: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.x2, borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x3, height: touchTarget },
+  searchInput: { flex: 1, height: touchTarget, ...typography.body },
+  iconBtn: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
   filterRow: { paddingVertical: spacing.x2 },
   filterList: { gap: spacing.x2, paddingHorizontal: spacing.x4 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.x6 },

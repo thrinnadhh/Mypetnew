@@ -1,9 +1,9 @@
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { FlatList, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { AppIcon } from '@/components/app-icon';
-import { FilterChip } from '@/components/foundation/primitives';
+import { FilterChip, StateView } from '@/components/foundation/primitives';
 import { LoyaltyCard } from '@/components/loyalty-card';
 import { ThemedText } from '@/components/themed-text';
 import { PrimaryButton } from '@/components/ui/primary-button';
@@ -12,7 +12,7 @@ import { ScreenHeader } from '@/components/ui/screen-header';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { useCart } from '@/context/CartContext';
 import { useFavourites } from '@/context/FavouritesContext';
-import { radii, shadows, spacing, typography } from '@/design/tokens';
+import { radii, shadows, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { type CommerceProduct, type ShopProfileData } from '@/services/catalog-data';
 import { isCommerceEligible } from '@/services/commerce-eligibility';
@@ -21,12 +21,14 @@ import { appConfig } from '@/utils/app-config';
 
 interface ProviderProfileTemplateProps {
   shop: ShopProfileData;
+  hasNext?: boolean;
+  loadingMore?: boolean;
+  loadMoreError?: string | null;
+  onLoadMore?: () => void;
 }
 
 function fallbackForProduct(product: CommerceProduct): string | undefined {
-  if (!appConfig.allowDemoMode) {
-    return undefined;
-  }
+  if (!appConfig.allowDemoMode) return undefined;
   switch (product.category) {
     case 'food': return DEMO_MEDIA.food;
     case 'treats': return DEMO_MEDIA.treats;
@@ -39,7 +41,13 @@ function fallbackForProduct(product: CommerceProduct): string | undefined {
   }
 }
 
-export function ProviderProfileTemplate({ shop }: ProviderProfileTemplateProps) {
+export function ProviderProfileTemplate({
+  shop,
+  hasNext = false,
+  loadingMore = false,
+  loadMoreError = null,
+  onLoadMore,
+}: ProviderProfileTemplateProps) {
   const router = useRouter();
   const theme = useTheme();
   const { addToCart, items, providerId, totalItemsCount, subtotalAmount, updateQuantity } = useCart();
@@ -47,16 +55,25 @@ export function ProviderProfileTemplate({ shop }: ProviderProfileTemplateProps) 
 
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const isShopFav = isFavourite('SHOP', shop.id);
+  const showCategoryFilters = shop.categories.length > 0;
 
   const filteredProducts = selectedCategory
-    ? shop.products.filter((product) => product.category.toLowerCase().includes(selectedCategory.toLowerCase()))
+    ? shop.products.filter((product) => product.category.toLowerCase() === selectedCategory.toLowerCase())
     : shop.products;
 
   const isCartFromThisShop = providerId === shop.id && totalItemsCount > 0;
 
+  const goBack = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/stores' as never);
+  }, [router]);
+
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <ScreenHeader title={shop.name} subtitle="Product Store" />
+      <ScreenHeader title={shop.name} subtitle="Product Store" onBack={goBack} />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={[styles.heroCard, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
@@ -68,7 +85,7 @@ export function ProviderProfileTemplate({ shop }: ProviderProfileTemplateProps) 
 
           <View style={styles.heroBody}>
             <View style={styles.titleRow}>
-              <View style={{ flex: 1 }}>
+              <View style={styles.flex}>
                 <ThemedText style={[styles.shopName, { color: theme.text }]}>{shop.name}</ThemedText>
                 {shop.tagline ? <ThemedText style={{ fontSize: 13, color: theme.textSecondary }}>{shop.tagline}</ThemedText> : null}
               </View>
@@ -115,98 +132,145 @@ export function ProviderProfileTemplate({ shop }: ProviderProfileTemplateProps) 
 
         <View style={styles.sectionMargin}>
           <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Store Catalog</ThemedText>
-          <FlatList
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            data={['All Items', ...shop.categories]}
-            keyExtractor={(item) => item}
-            contentContainerStyle={styles.chipScroll}
-            renderItem={({ item }) => {
-              const isSelected = (item === 'All Items' && selectedCategory === null) || selectedCategory === item;
-              return (
-                <FilterChip
-                  label={item}
-                  selected={isSelected}
-                  onPress={() => setSelectedCategory(item === 'All Items' ? null : item)}
-                />
-              );
-            }}
+          {showCategoryFilters ? (
+            <FlatList
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              data={['All Items', ...shop.categories]}
+              keyExtractor={(item) => item}
+              contentContainerStyle={styles.chipScroll}
+              renderItem={({ item }) => {
+                const isSelected = (item === 'All Items' && selectedCategory === null) || selectedCategory === item;
+                return (
+                  <FilterChip
+                    label={item}
+                    selected={isSelected}
+                    onPress={() => setSelectedCategory(item === 'All Items' ? null : item)}
+                  />
+                );
+              }}
+            />
+          ) : null}
+        </View>
+
+        {filteredProducts.length === 0 ? (
+          <StateView
+            kind="empty"
+            title={selectedCategory ? 'No matching products' : 'No products available'}
+            message={
+              selectedCategory
+                ? 'Choose another category to view this store catalogue.'
+                : 'This store does not have any public commerce listings right now.'
+            }
+            actionLabel={selectedCategory ? 'Show all items' : undefined}
+            onAction={selectedCategory ? () => setSelectedCategory(null) : undefined}
           />
-        </View>
+        ) : (
+          <View style={styles.productsGrid}>
+            {filteredProducts.map((item) => {
+              const isFav = isFavourite('PRODUCT', item.id);
+              const cartItem = items.find((cartLine) => cartLine.product.id === item.id);
+              const qtyInCart = cartItem?.quantity ?? 0;
+              const variant = item.variants[0];
+              const eligible = isCommerceEligible(item);
 
-        <View style={styles.productsGrid}>
-          {filteredProducts.map((item) => {
-            const isFav = isFavourite('PRODUCT', item.id);
-            const cartItem = items.find((cartLine) => cartLine.product.id === item.id);
-            const qtyInCart = cartItem?.quantity ?? 0;
-            const variant = item.variants[0];
-            const eligible = isCommerceEligible(item);
-
-            return (
-              <Pressable
-                key={item.id}
-                onPress={() => router.push(`/commerce/product-detail?id=${item.id}` as never)}
-                accessibilityRole="button"
-                accessibilityLabel={`${item.name}, ₹${item.price}`}
-                style={({ pressed }) => [
-                  styles.productCard,
-                  shadows.raised,
-                  { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-                  pressed && styles.pressed,
-                ]}
-              >
-                <ResilientRemoteImage
-                  uri={item.imageUrl}
-                  fallbackUri={fallbackForProduct(item)}
-                  style={styles.productImg}
-                />
-                <View style={styles.productMeta}>
-                  <ThemedText style={[styles.productTitle, { color: theme.text }]} numberOfLines={2}>
-                    {item.name}
-                  </ThemedText>
-                  <ThemedText style={{ fontSize: 12, color: theme.textSecondary }}>
-                    {item.brand ? `${item.brand} · ` : ''}₹{item.price}
-                  </ThemedText>
-                  <View style={styles.cardActions}>
-                    <Pressable
-                      onPress={() => void toggleFavourite('PRODUCT', item.id)}
-                      style={[styles.smallIconBtn, { backgroundColor: isFav ? theme.primarySoft : theme.muted }]}
-                      accessibilityLabel={isFav ? 'Remove from favourites' : 'Add to favourites'}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: isFav }}
-                    >
-                      <AppIcon name="heart" color={isFav ? theme.danger : theme.textSecondary} size={16} />
-                    </Pressable>
-                    {eligible ? (
-                      qtyInCart > 0 ? (
-                        <View style={[styles.inlineStepper, { backgroundColor: theme.primarySoft }]}>
-                          <Pressable onPress={() => updateQuantity(item.id, undefined, qtyInCart - 1)} style={styles.stepTouch}>
-                            <ThemedText style={{ color: theme.primary, fontWeight: '700' }}>-</ThemedText>
-                          </Pressable>
-                          <ThemedText style={{ color: theme.primary, fontWeight: '800' }}>{qtyInCart}</ThemedText>
-                          <Pressable onPress={() => updateQuantity(item.id, undefined, qtyInCart + 1)} style={styles.stepTouch}>
-                            <ThemedText style={{ color: theme.primary, fontWeight: '700' }}>+</ThemedText>
-                          </Pressable>
-                        </View>
+              return (
+                <Pressable
+                  key={item.id}
+                  onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(item.id)}` as never)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.name}, ₹${item.price}`}
+                  style={({ pressed }) => [
+                    styles.productCard,
+                    shadows.raised,
+                    { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <ResilientRemoteImage
+                    uri={item.imageUrl}
+                    fallbackUri={fallbackForProduct(item)}
+                    style={styles.productImg}
+                  />
+                  <View style={styles.productMeta}>
+                    <ThemedText style={[styles.productTitle, { color: theme.text }]} numberOfLines={2}>
+                      {item.name}
+                    </ThemedText>
+                    <ThemedText style={{ fontSize: 12, color: theme.textSecondary }}>
+                      {item.brand ? `${item.brand} · ` : ''}₹{item.price}
+                    </ThemedText>
+                    <View style={styles.cardActions}>
+                      <Pressable
+                        onPress={() => void toggleFavourite('PRODUCT', item.id)}
+                        style={[styles.smallIconBtn, { backgroundColor: isFav ? theme.primarySoft : theme.muted }]}
+                        accessibilityLabel={isFav ? `Remove ${item.name} from favourites` : `Add ${item.name} to favourites`}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isFav }}
+                      >
+                        <AppIcon name="heart" color={isFav ? theme.danger : theme.textSecondary} size={18} />
+                      </Pressable>
+                      {eligible ? (
+                        qtyInCart > 0 ? (
+                          <View
+                            style={[styles.inlineStepper, { backgroundColor: theme.primarySoft }]}
+                            accessibilityRole="adjustable"
+                            accessibilityLabel={`${item.name} quantity`}
+                            accessibilityValue={{ min: 0, now: qtyInCart }}
+                          >
+                            <Pressable
+                              onPress={() => updateQuantity(item.id, undefined, qtyInCart - 1)}
+                              style={styles.stepTouch}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Decrease ${item.name} quantity`}
+                            >
+                              <ThemedText style={{ color: theme.primary, fontWeight: '700' }}>−</ThemedText>
+                            </Pressable>
+                            <ThemedText style={{ color: theme.primary, fontWeight: '800', minWidth: 20, textAlign: 'center' }}>{qtyInCart}</ThemedText>
+                            <Pressable
+                              onPress={() => updateQuantity(item.id, undefined, qtyInCart + 1)}
+                              style={styles.stepTouch}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Increase ${item.name} quantity`}
+                            >
+                              <ThemedText style={{ color: theme.primary, fontWeight: '700' }}>+</ThemedText>
+                            </Pressable>
+                          </View>
+                        ) : (
+                          <PrimaryButton
+                            label="Add"
+                            style={{ paddingHorizontal: 12 }}
+                            onPress={() => addToCart(item, variant)}
+                          />
+                        )
                       ) : (
-                        <PrimaryButton
-                          label="Add"
-                          style={{ minHeight: 36, paddingHorizontal: 12 }}
-                          onPress={() => addToCart(item, variant)}
+                        <StatusBadge
+                          label={item.kind === 'MEDICINE' || item.commerceMode === 'VIEW_ONLY' ? 'VIEW ONLY' : 'UNAVAILABLE'}
+                          color={theme.textSecondary}
                         />
-                      )
-                    ) : (
-                      <StatusBadge
-                        label={item.kind === 'MEDICINE' || item.commerceMode === 'VIEW_ONLY' ? 'VIEW ONLY' : 'UNAVAILABLE'}
-                        color={theme.textSecondary}
-                      />
-                    )}
+                      )}
+                    </View>
                   </View>
-                </View>
-              </Pressable>
-            );
-          })}
-        </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+
+        {loadMoreError && onLoadMore ? (
+          <View style={styles.paginationFooter}>
+            <ThemedText type="small" themeColor="textSecondary">{loadMoreError}</ThemedText>
+            <PrimaryButton label="Retry loading more" variant="secondary" onPress={onLoadMore} />
+          </View>
+        ) : hasNext && onLoadMore ? (
+          <View style={styles.paginationFooter}>
+            <PrimaryButton
+              label="Load more products"
+              variant="secondary"
+              loading={loadingMore}
+              onPress={onLoadMore}
+            />
+          </View>
+        ) : null}
       </ScrollView>
 
       {isCartFromThisShop ? (
@@ -217,7 +281,12 @@ export function ProviderProfileTemplate({ shop }: ProviderProfileTemplateProps) 
             </ThemedText>
             <ThemedText style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12 }}>Items in cart</ThemedText>
           </View>
-          <Pressable onPress={() => router.push('/cart' as never)} style={styles.viewCartBtn}>
+          <Pressable
+            onPress={() => router.push('/cart' as never)}
+            style={styles.viewCartBtn}
+            accessibilityRole="button"
+            accessibilityLabel="View cart"
+          >
             <ThemedText style={{ color: theme.primary, fontWeight: '800' }}>View Cart →</ThemedText>
           </Pressable>
         </View>
@@ -228,13 +297,14 @@ export function ProviderProfileTemplate({ shop }: ProviderProfileTemplateProps) 
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  flex: { flex: 1 },
   scrollContent: { padding: spacing.x4, gap: spacing.x4, paddingBottom: 90 },
   heroCard: { borderRadius: radii.card, borderWidth: 1, overflow: 'hidden' },
   heroImage: { width: '100%', height: 160 },
   heroBody: { padding: spacing.x3, gap: spacing.x2 },
   titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.x2 },
   shopName: { ...typography.headline, fontSize: 18, fontWeight: '800' },
-  favBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  favBtn: { width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, alignItems: 'center', justifyContent: 'center' },
   badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x2 },
   infoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.x2 },
   sectionMargin: { gap: spacing.x2, marginTop: spacing.x2 },
@@ -245,11 +315,12 @@ const styles = StyleSheet.create({
   productImg: { width: 80, height: 80, borderRadius: radii.compact },
   productMeta: { flex: 1, gap: 4 },
   productTitle: { ...typography.body, fontWeight: '700' },
-  cardActions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
-  smallIconBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  inlineStepper: { flexDirection: 'row', alignItems: 'center', borderRadius: radii.pill, paddingHorizontal: 8, height: 32, gap: 8 },
-  stepTouch: { paddingHorizontal: 6, paddingVertical: 2 },
-  cartBanner: { position: 'absolute', bottom: 16, left: 16, right: 16, borderRadius: radii.card, paddingHorizontal: spacing.x4, paddingVertical: spacing.x3, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  viewCartBtn: { backgroundColor: '#FFFFFF', paddingHorizontal: spacing.x4, paddingVertical: spacing.x2, borderRadius: radii.compact },
+  cardActions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, gap: spacing.x2 },
+  smallIconBtn: { width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, alignItems: 'center', justifyContent: 'center' },
+  inlineStepper: { flexDirection: 'row', alignItems: 'center', borderRadius: radii.pill, minHeight: touchTarget },
+  stepTouch: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
+  paginationFooter: { gap: spacing.x2, paddingVertical: spacing.x3 },
+  cartBanner: { position: 'absolute', bottom: 16, left: 16, right: 16, borderRadius: radii.card, paddingHorizontal: spacing.x4, paddingVertical: spacing.x3, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.x2 },
+  viewCartBtn: { minHeight: touchTarget, backgroundColor: '#FFFFFF', paddingHorizontal: spacing.x4, borderRadius: radii.compact, alignItems: 'center', justifyContent: 'center' },
   pressed: { opacity: 0.88 },
 });

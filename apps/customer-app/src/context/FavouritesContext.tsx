@@ -130,6 +130,14 @@ function withoutTarget(
   return items.filter((item) => !(item.targetType === targetType && item.targetId === targetId));
 }
 
+async function discardStaleGuestAddition(
+  targetType: 'PRODUCT' | 'SHOP',
+  targetId: string,
+): Promise<void> {
+  const guest = await loadGuestLocal(false);
+  await saveStored(GUEST_STORAGE_KEY, withoutTarget(guest, targetType, targetId));
+}
+
 export function FavouritesProvider({ children }: { children: React.ReactNode }) {
   const { session } = useAuth();
   const accountId = session?.accountId ?? null;
@@ -281,7 +289,12 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
               ...local,
             ]);
         await saveStored(storageKey, nextLocal);
-        if (!stillSameAccount()) return currentlyFavourite;
+        if (!stillSameAccount()) {
+          if (!accountAtStart && !currentlyFavourite) {
+            await discardStaleGuestAddition('SHOP', targetId);
+          }
+          return currentlyFavourite;
+        }
         const next = currentlyFavourite
           ? withoutTarget(favouritesRef.current, 'SHOP', targetId)
           : normalizeLocal([
@@ -302,7 +315,12 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
               ...local,
             ]);
         await saveStored(GUEST_STORAGE_KEY, nextLocal);
-        if (!stillSameAccount()) return currentlyFavourite;
+        if (!stillSameAccount()) {
+          if (!currentlyFavourite) {
+            await discardStaleGuestAddition('PRODUCT', targetId);
+          }
+          return currentlyFavourite;
+        }
         replaceFavourites(nextLocal, ownerAtStart);
         return !currentlyFavourite;
       }

@@ -60,6 +60,11 @@ export function checkoutErrorPresentation(error: unknown): CheckoutErrorPresenta
           message: 'One or more cart items changed or became unavailable. Return to cart, review the affected items, and quote again.',
           recovery: 'cart',
         };
+      case 'ADDRESS_NOT_FOUND':
+        return {
+          message: 'The selected delivery address is no longer available. Choose or save a current address before requesting delivery again.',
+          recovery: 'address',
+        };
       case 'OUTLET_NOT_SERVICEABLE':
       case 'PIN_CODE_INVALID':
         return {

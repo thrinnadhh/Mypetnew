@@ -88,7 +88,7 @@ describe('P6 search, favourites and provider discovery contract', () => {
     expect(genericDetail).toContain('router.replace(`/vet/');
   });
 
-  it('isolates local favourites by account and protects queued mutations across auth changes', () => {
+  it('isolates local favourites by account, hides stale owner data, and protects queued mutations across auth changes', () => {
     const favourites = source('src/context/FavouritesContext.tsx');
 
     expect(favourites).toContain("const GUEST_STORAGE_KEY = 'mypet_favourites_v4_guest'");
@@ -96,15 +96,20 @@ describe('P6 search, favourites and provider discovery contract', () => {
     expect(favourites).toContain("const LEGACY_GUEST_STORAGE_KEY = 'mypet_favourites_v2_guest'");
     expect(favourites).toContain("const AMBIGUOUS_LEGACY_STORAGE_KEY = 'mypet_favourites_v3_local'");
     expect(favourites).toContain('accountStorageKey(accountId)');
+    expect(favourites).toContain('favouriteOwnerKey(accountId)');
     expect(favourites).toContain('loadAccountLocal(accountAtStart)');
     expect(favourites).toContain('loadGuestLocal(true)');
     expect(favourites).toContain('parseStored(LEGACY_GUEST_STORAGE_KEY)');
     expect(favourites).not.toContain('parseStored(AMBIGUOUS_LEGACY_STORAGE_KEY)');
     expect(favourites).toContain('apiClient.getAuthEpoch()');
     expect(favourites).toContain('loadGenerationRef');
+    expect(favourites).toContain('resolvedOwnerKeyRef');
+    expect(favourites).toContain('const visibleFavourites = resolvedOwnerKey === currentOwnerKey ? favourites : []');
+    expect(favourites).toContain('const visibleLoading = loading || resolvedOwnerKey !== currentOwnerKey');
     expect(favourites).toContain('mutationQueueRef');
     expect(favourites).toContain('const accountAtInvocation = accountId;');
     expect(favourites).toContain('const authEpochAtInvocation = apiClient.getAuthEpoch();');
+    expect(favourites).toContain('if (resolvedOwnerKeyRef.current !== ownerAtInvocation) return Promise.resolve(false);');
     expect(favourites).toContain('if (!stillSameAccount()) return currentlyFavourite;');
     expect(favourites).toContain('if (migrationError instanceof ApiError && migrationError.status === 404) continue');
     expect(favourites).toContain('retryableLocalProducts.push(product)');

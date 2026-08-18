@@ -23,12 +23,12 @@ describe('P3 canonical favourites contract', () => {
     expect(source).not.toContain('body: JSON.stringify({ targetType');
   });
 
-  it('keeps guest and authenticated local preference buckets distinct', () => {
+  it('keeps guest and authenticated local preference buckets distinct while restoring explicit guest data', () => {
     expect(source).toContain("const GUEST_STORAGE_KEY = 'mypet_favourites_v4_guest'");
     expect(source).toContain("const ACCOUNT_STORAGE_PREFIX = 'mypet_favourites_v4_account:'");
     expect(source).toContain('function accountStorageKey(accountId: string)');
     expect(source).toContain('loadAccountLocal(accountAtStart)');
-    expect(source).toContain('loadGuestLocal(false)');
+    expect(source).toContain('loadGuestLocal(true)');
   });
 
   it('migrates only the explicitly guest-owned legacy key and discards ambiguous v3 state', () => {

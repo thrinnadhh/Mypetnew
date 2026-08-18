@@ -11,6 +11,7 @@ export function LocationModal() {
   const theme = useTheme();
   const {
     activeCity,
+    selectedPincode,
     enabledCities,
     isLocationModalOpen,
     locating,
@@ -40,7 +41,12 @@ export function LocationModal() {
       <View style={styles.overlay}>
         <View style={[styles.modalCard, { backgroundColor: theme.background, borderColor: theme.border }]}>
           <View style={styles.header}>
-            <ThemedText style={styles.title}>Select Service Location</ThemedText>
+            <View style={styles.cityInfo}>
+              <ThemedText style={styles.title}>Select Service Location</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Choose the exact PIN used to filter live stores and serviceability.
+              </ThemedText>
+            </View>
             <Pressable
               onPress={closeLocationModal}
               style={styles.closeBtn}
@@ -76,7 +82,7 @@ export function LocationModal() {
                 {locating ? 'Detecting your location…' : 'Use current location'}
               </ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
-                MyPet requests foreground access only while selecting your city.
+                Selects the nearest active city and its configured service PIN; you can change the PIN below.
               </ThemedText>
             </View>
           </Pressable>
@@ -95,33 +101,57 @@ export function LocationModal() {
           </View>
 
           <ScrollView style={styles.cityList} contentContainerStyle={styles.cityListContent}>
-            <ThemedText style={styles.sectionHeading}>Available Cities</ThemedText>
+            <ThemedText style={styles.sectionHeading}>Available service PINs</ThemedText>
             {filteredCities.map((city) => {
-              const isSelected = city.cityIdentity === activeCity.cityIdentity;
+              const citySelected = city.cityIdentity === activeCity.cityIdentity;
               return (
-                <Pressable
+                <View
                   key={city.id}
-                  onPress={() => void selectCity(city)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Select ${city.displayName}, ${city.state}`}
-                  accessibilityState={{ selected: isSelected }}
                   style={[
-                    styles.cityRow,
+                    styles.cityCard,
                     {
-                      backgroundColor: isSelected ? theme.primarySoft : theme.backgroundElement,
-                      borderColor: isSelected ? theme.primary : theme.border,
+                      backgroundColor: citySelected ? theme.primarySoft : theme.backgroundElement,
+                      borderColor: citySelected ? theme.primary : theme.border,
                     },
                   ]}
                 >
-                  <AppIcon name="location" color={isSelected ? theme.primary : theme.textSecondary} size={20} />
-                  <View style={styles.cityInfo}>
-                    <ThemedText style={[styles.cityName, { color: isSelected ? theme.primary : theme.text }]}>
-                      {city.displayName}
-                    </ThemedText>
-                    <ThemedText style={styles.citySub}>{city.state}, {city.country}</ThemedText>
+                  <View style={styles.cityRow}>
+                    <AppIcon name="location" color={citySelected ? theme.primary : theme.textSecondary} size={20} />
+                    <View style={styles.cityInfo}>
+                      <ThemedText style={[styles.cityName, { color: citySelected ? theme.primary : theme.text }]}>
+                        {city.displayName}
+                      </ThemedText>
+                      <ThemedText style={styles.citySub}>{city.state}, {city.country}</ThemedText>
+                    </View>
                   </View>
-                  {isSelected ? <AppIcon name="check" color={theme.primary} size={18} /> : null}
-                </Pressable>
+
+                  <View style={styles.pinGrid}>
+                    {city.pincodes.map((pincode) => {
+                      const isSelected = citySelected && pincode === selectedPincode;
+                      return (
+                        <Pressable
+                          key={pincode}
+                          onPress={() => void selectCity(city, pincode)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Select ${city.displayName} service PIN ${pincode}`}
+                          accessibilityState={{ selected: isSelected }}
+                          style={[
+                            styles.pinChip,
+                            {
+                              backgroundColor: isSelected ? theme.primary : theme.background,
+                              borderColor: isSelected ? theme.primary : theme.border,
+                            },
+                          ]}
+                        >
+                          <ThemedText style={{ color: isSelected ? '#FFFFFF' : theme.text, fontWeight: '700' }}>
+                            {pincode}
+                          </ThemedText>
+                          {isSelected ? <AppIcon name="check" color="#FFFFFF" size={16} /> : null}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
               );
             })}
 
@@ -215,24 +245,27 @@ export function NotifyCityModal() {
 const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalCard: { borderTopLeftRadius: radii.feature, borderTopRightRadius: radii.feature, padding: spacing.x6, gap: spacing.x4, maxHeight: '80%' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.x3 },
   title: { ...typography.headline, fontSize: 18 },
   subtitle: { ...typography.body, fontSize: 13, color: '#666666' },
   closeBtn: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
   currentLocationButton: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: spacing.x3, borderWidth: 1, borderRadius: radii.compact, padding: spacing.x3 },
-  searchBar: { flexDirection: 'row', alignItems: 'center', gap: spacing.x2, borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x3, height: touchTarget },
-  searchInput: { flex: 1, height: touchTarget, ...typography.body },
+  searchBar: { flexDirection: 'row', alignItems: 'center', gap: spacing.x2, borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x3, minHeight: touchTarget },
+  searchInput: { flex: 1, minHeight: touchTarget, ...typography.body },
   cityList: { flexGrow: 0 },
   cityListContent: { gap: spacing.x3, paddingVertical: spacing.x2 },
   sectionHeading: { ...typography.label, fontSize: 12, color: '#888888', textTransform: 'uppercase' },
-  cityRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.x3, padding: spacing.x3, borderRadius: radii.compact, borderWidth: 1 },
+  cityCard: { gap: spacing.x3, padding: spacing.x3, borderRadius: radii.compact, borderWidth: 1 },
+  cityRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.x3 },
   cityInfo: { flex: 1, gap: 2 },
   cityName: { ...typography.headline, fontSize: 15 },
   citySub: { ...typography.caption, color: '#777777' },
+  pinGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x2 },
+  pinChip: { minHeight: touchTarget, minWidth: 92, paddingHorizontal: spacing.x3, borderRadius: radii.pill, borderWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.x1 },
   unsupportedBox: { padding: spacing.x4, borderRadius: radii.compact, gap: spacing.x3, alignItems: 'center' },
   unsupportedText: { ...typography.body, fontSize: 13, textAlign: 'center' },
   notifyBtn: { minHeight: touchTarget, paddingHorizontal: spacing.x4, paddingVertical: spacing.x2, borderRadius: radii.compact, alignItems: 'center', justifyContent: 'center' },
-  input: { borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x3, height: touchTarget, ...typography.body },
+  input: { borderWidth: 1, borderRadius: radii.compact, paddingHorizontal: spacing.x3, minHeight: touchTarget, ...typography.body },
   btnRow: { flexDirection: 'row', gap: spacing.x3, justifyContent: 'flex-end' },
   modalBtn: { paddingHorizontal: spacing.x4, paddingVertical: spacing.x2, borderRadius: radii.compact, minWidth: 80, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
 });

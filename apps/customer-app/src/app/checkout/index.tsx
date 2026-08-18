@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
@@ -9,9 +9,18 @@ import type { CustomerPaymentMethod } from '@/contracts/customer-payment';
 import { useAuth } from '@/context/AuthContext';
 import { useAuthIntent } from '@/context/AuthIntentContext';
 import { useCart } from '@/context/CartContext';
+import { useLocation } from '@/context/LocationContext';
 import { radii, shadows, spacing, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
+import {
+  buildCheckoutRequestKey,
+  checkoutErrorPresentation,
+  hasServerPriceChange,
+  isQuoteExpired,
+  requiresFreshQuote,
+  type CheckoutRecovery,
+} from '@/services/checkout-safety';
 import { createProductOrder, type ProductFulfilmentMode } from '@/services/customer-checkout';
 import {
   clearPendingPayment,
@@ -28,14 +37,20 @@ import {
   fetchPickupQuote,
   type CanonicalProductQuote,
 } from '@/services/customer-quotes';
-import { fetchCustomerAddresses, type CustomerAddress } from '@/services/customer-profile';
+import {
+  checkOutletServiceability,
+  fetchCustomerAddresses,
+  type CustomerAddress,
+} from '@/services/customer-profile';
 import { appConfig } from '@/utils/app-config';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PIN_PATTERN = /^[1-9][0-9]{5}$/;
 
 type CheckoutViewQuote = {
   quoteId: string;
   cartSignature: string;
+  requestKey: string;
   fulfilmentMode: ProductFulfilmentMode;
   paymentMethod: CustomerPaymentMethod;
   subtotal: number;
@@ -49,13 +64,20 @@ type CheckoutViewQuote = {
   currency: 'INR';
   ruleVersion: string;
   expiresAt: string;
+  lineUnitPrices: Record<string, number>;
 };
 
-function quoteToView(quote: CanonicalProductQuote): CheckoutViewQuote {
+type FulfilmentAvailability = {
+  pickup: boolean;
+  delivery: boolean;
+};
+
+function quoteToView(quote: CanonicalProductQuote, requestKey: string): CheckoutViewQuote {
   const rupees = (paise: number) => paise / 100;
   return {
     quoteId: quote.id,
     cartSignature: quote.cartSignature,
+    requestKey,
     fulfilmentMode: quote.fulfilmentMode,
     paymentMethod: quote.paymentMethod,
     subtotal: rupees(quote.pricing.itemSubtotalPaise),
@@ -69,13 +91,17 @@ function quoteToView(quote: CanonicalProductQuote): CheckoutViewQuote {
     currency: quote.pricing.currency,
     ruleVersion: quote.pricing.ruleVersion,
     expiresAt: quote.expiresAt,
+    lineUnitPrices: Object.fromEntries(
+      Object.entries(quote.lines).map(([listingId, line]) => [listingId, rupees(line[1])]),
+    ),
   };
 }
 
-function demoQuote(subtotal: number): CheckoutViewQuote {
+function demoQuote(subtotal: number, requestKey: string): CheckoutViewQuote {
   return {
     quoteId: `DEMO-${Date.now()}`,
     cartSignature: 'demo-signature',
+    requestKey,
     fulfilmentMode: 'STORE_PICKUP',
     paymentMethod: 'PAY_ON_FULFILMENT',
     subtotal,
@@ -89,6 +115,7 @@ function demoQuote(subtotal: number): CheckoutViewQuote {
     currency: 'INR',
     ruleVersion: 'demo-s1',
     expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    lineUnitPrices: {},
   };
 }
 
@@ -99,6 +126,12 @@ export default function CheckoutScreen() {
   const { user, session } = useAuth();
   const { requireAuth } = useAuthIntent();
   const { items, providerId, clearCart, loading: cartLoading } = useCart();
+  const {
+    selectedPincode,
+    loading: locationLoading,
+    openLocationModal,
+  } = useLocation();
+  const quoteGenerationRef = useRef(0);
 
   const checkoutItems = useMemo(() => {
     const quantities = new Map<string, number>();
@@ -120,12 +153,30 @@ export default function CheckoutScreen() {
   const [paymentMethod, setPaymentMethod] = useState<CustomerPaymentMethod>('PAY_ON_FULFILMENT');
   const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
+  const [availability, setAvailability] = useState<FulfilmentAvailability | null>(null);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [quote, setQuote] = useState<CheckoutViewQuote | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [quoteRecovery, setQuoteRecovery] = useState<CheckoutRecovery>('retry');
   const [placing, setPlacing] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [pendingRecovery, setPendingRecovery] = useState<PendingPaymentRecovery | null>(null);
+
+  const selectedAddress = useMemo(
+    () => addresses.find((address) => address.addressId === selectedAddressId) ?? null,
+    [addresses, selectedAddressId],
+  );
+  const selectedAddressMatchesPin = !selectedAddress || selectedAddress.pincode === selectedPincode;
+
+  const quoteRequestKey = useMemo(() => buildCheckoutRequestKey({
+    providerId: providerId ?? '',
+    lines: checkoutItems,
+    fulfilmentMode,
+    paymentMethod,
+    selectedAddressId,
+    selectedPincode,
+  }), [checkoutItems, fulfilmentMode, paymentMethod, providerId, selectedAddressId, selectedPincode]);
 
   useEffect(() => {
     if (!session) {
@@ -161,8 +212,49 @@ export default function CheckoutScreen() {
     }
   }, [demoCheckout, paymentMethod]);
 
+  useEffect(() => {
+    if (!user || !session || cartLoading || locationLoading || !providerId || checkoutItems.length === 0 || hasPreviewItems) {
+      setAvailability(demoCheckout ? { pickup: true, delivery: false } : null);
+      setAvailabilityError(null);
+      return;
+    }
+    if (!PIN_PATTERN.test(selectedPincode)) {
+      setAvailability({ pickup: false, delivery: false });
+      setAvailabilityError('Select an active six-digit service PIN before checkout.');
+      return;
+    }
+
+    let active = true;
+    setAvailability(null);
+    setAvailabilityError(null);
+    void Promise.all([
+      checkOutletServiceability(providerId, selectedPincode, 'PICKUP'),
+      checkOutletServiceability(providerId, selectedPincode, 'DELIVERY'),
+    ]).then(([pickup, delivery]) => {
+      if (!active) return;
+      setAvailability({ pickup: pickup.serviceable, delivery: delivery.serviceable });
+      setAvailabilityError(null);
+    }).catch((error) => {
+      if (!active) return;
+      const presentation = checkoutErrorPresentation(error);
+      setAvailability({ pickup: false, delivery: false });
+      setAvailabilityError(presentation.message);
+    });
+    return () => { active = false; };
+  }, [cartLoading, checkoutItems.length, demoCheckout, hasPreviewItems, locationLoading, providerId, selectedPincode, session, user]);
+
+  useEffect(() => {
+    if (!availability) return;
+    if (fulfilmentMode === 'STORE_PICKUP' && !availability.pickup && availability.delivery) {
+      setFulfilmentMode('MYPET_CAPTAIN_DELIVERY');
+    } else if (fulfilmentMode === 'MYPET_CAPTAIN_DELIVERY' && !availability.delivery && availability.pickup) {
+      setFulfilmentMode('STORE_PICKUP');
+    }
+  }, [availability, fulfilmentMode]);
+
   const loadQuote = useCallback(async () => {
-    if (!user || !session || cartLoading) return;
+    const requestGeneration = ++quoteGenerationRef.current;
+    if (!user || !session || cartLoading || locationLoading) return;
     if (!providerId || checkoutItems.length === 0) {
       setQuote(null);
       setState('ready');
@@ -170,8 +262,9 @@ export default function CheckoutScreen() {
     }
     if (demoCheckout) {
       setFulfilmentMode('STORE_PICKUP');
-      setQuote(demoQuote(itemSubtotal));
+      setQuote(demoQuote(itemSubtotal, quoteRequestKey));
       setErrorMessage(null);
+      setQuoteRecovery('retry');
       setState('ready');
       return;
     }
@@ -181,7 +274,18 @@ export default function CheckoutScreen() {
       setState('ready');
       return;
     }
-    if (fulfilmentMode === 'MYPET_CAPTAIN_DELIVERY' && !selectedAddressId) {
+    if (!PIN_PATTERN.test(selectedPincode) || !availability) {
+      setQuote(null);
+      setState('ready');
+      return;
+    }
+    const modeAvailable = fulfilmentMode === 'STORE_PICKUP' ? availability.pickup : availability.delivery;
+    if (!modeAvailable) {
+      setQuote(null);
+      setState('ready');
+      return;
+    }
+    if (fulfilmentMode === 'MYPET_CAPTAIN_DELIVERY' && (!selectedAddressId || !selectedAddressMatchesPin)) {
       setQuote(null);
       setErrorMessage(null);
       setState('ready');
@@ -190,23 +294,48 @@ export default function CheckoutScreen() {
 
     setState('loading');
     setErrorMessage(null);
+    setQuoteRecovery('retry');
     try {
       const lines = checkoutItems.map((item) => ({ listingId: item.offeringId, quantity: item.quantity }));
       const canonical = fulfilmentMode === 'STORE_PICKUP'
         ? await fetchPickupQuote(providerId, lines, paymentMethod)
         : await fetchCaptainDeliveryQuote(providerId, selectedAddressId as string, lines, paymentMethod);
-      setQuote(quoteToView(canonical));
+      if (requestGeneration !== quoteGenerationRef.current) return;
+      setQuote(quoteToView(canonical, quoteRequestKey));
       setState('ready');
     } catch (error) {
+      if (requestGeneration !== quoteGenerationRef.current) return;
+      const presentation = checkoutErrorPresentation(error);
       setQuote(null);
-      setErrorMessage(error instanceof Error ? error.message : 'Could not load checkout quote.');
+      setErrorMessage(presentation.message);
+      setQuoteRecovery(presentation.recovery);
       setState('error');
     }
-  }, [cartLoading, checkoutItems, demoCheckout, fulfilmentMode, hasPreviewItems, itemSubtotal, paymentMethod, providerId, selectedAddressId, session, user]);
+  }, [availability, cartLoading, checkoutItems, demoCheckout, fulfilmentMode, hasPreviewItems, itemSubtotal, locationLoading, paymentMethod, providerId, quoteRequestKey, selectedAddressId, selectedAddressMatchesPin, selectedPincode, session, user]);
 
   useEffect(() => {
-    if (user && session) void loadQuote();
-  }, [loadQuote, session, user]);
+    if (user && session && (demoCheckout || availability)) void loadQuote();
+  }, [availability, demoCheckout, loadQuote, session, user]);
+
+  useEffect(() => {
+    if (!quote || demoCheckout) return;
+    const expiresAt = Date.parse(quote.expiresAt);
+    const remaining = expiresAt - Date.now();
+    if (!Number.isFinite(expiresAt) || remaining <= 0) {
+      setQuote(null);
+      setErrorMessage('This checkout quote expired. Request a fresh server quote and review the total before ordering.');
+      setQuoteRecovery('retry');
+      setState('error');
+      return;
+    }
+    const timer = setTimeout(() => {
+      setQuote((current) => current?.quoteId === quote.quoteId ? null : current);
+      setErrorMessage('This checkout quote expired. Request a fresh server quote and review the total before ordering.');
+      setQuoteRecovery('retry');
+      setState('error');
+    }, remaining);
+    return () => clearTimeout(timer);
+  }, [demoCheckout, quote]);
 
   const finishVerifiedPayment = useCallback(async (payment: CustomerPaymentView, orderId: string) => {
     if (payment.status === 'CAPTURED') {
@@ -255,7 +384,7 @@ export default function CheckoutScreen() {
   }, [finishVerifiedPayment]);
 
   const handleResumePayment = async () => {
-    if (!pendingRecovery) return;
+    if (!pendingRecovery || placing) return;
     setPlacing(true);
     try {
       const payment = await fetchPaymentStatus(pendingRecovery.paymentId);
@@ -267,17 +396,36 @@ export default function CheckoutScreen() {
     }
   };
 
+  const quoteCurrent = Boolean(
+    quote &&
+    quote.requestKey === quoteRequestKey &&
+    !isQuoteExpired(quote.expiresAt),
+  );
+  const activeQuote = quoteCurrent ? quote : null;
+  const priceChanged = activeQuote
+    ? hasServerPriceChange(itemSubtotal, Math.round(activeQuote.subtotal * 100))
+    : false;
+
   const handlePlaceOrder = async () => {
-    if (!session || !quote || !providerId || checkoutItems.length === 0) return;
+    if (!session || !activeQuote || !providerId || checkoutItems.length === 0 || placing) return;
     if (demoCheckout) {
-      Alert.alert('Demo pickup simulated', `₹${quote.payableTotal.toFixed(2)} was simulated. No backend order was created.`);
+      Alert.alert('Demo pickup simulated', `₹${activeQuote.payableTotal.toFixed(2)} was simulated. No backend order was created.`);
+      return;
+    }
+    if (isQuoteExpired(activeQuote.expiresAt)) {
+      await loadQuote();
+      Alert.alert('Quote expired', 'A fresh server quote was requested. Review the new total before placing the order.');
+      return;
+    }
+    if (fulfilmentMode === 'MYPET_CAPTAIN_DELIVERY' && !selectedAddressMatchesPin) {
+      Alert.alert('Service PIN mismatch', 'Choose a delivery address that matches the active service PIN before requesting delivery.');
       return;
     }
 
     setPlacing(true);
     try {
       const order = await createProductOrder(
-        { quoteId: quote.quoteId, cartSignature: quote.cartSignature },
+        { quoteId: activeQuote.quoteId, cartSignature: activeQuote.cartSignature },
         fulfilmentMode,
         paymentMethod,
       );
@@ -291,11 +439,41 @@ export default function CheckoutScreen() {
       setPendingRecovery({ paymentId: payment.paymentId, orderId: order.id });
       await verifyCanonicalPayment(payment, order.id, true);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not place the order.';
-      Alert.alert('Checkout failed', message);
-      void loadQuote();
+      const presentation = checkoutErrorPresentation(error);
+      if (requiresFreshQuote(error)) {
+        await loadQuote();
+        Alert.alert(
+          'Checkout changed',
+          `${presentation.message} A fresh server quote was requested. Review it before tapping Place Order again.`,
+        );
+      } else {
+        Alert.alert(
+          'Checkout failed',
+          `${presentation.message} Your current quote is preserved so a retry reuses the same idempotent order request.`,
+        );
+      }
     } finally {
       setPlacing(false);
+    }
+  };
+
+  const recoverQuote = () => {
+    switch (quoteRecovery) {
+      case 'cart':
+        router.push('/cart' as never);
+        break;
+      case 'address':
+        openLocationModal();
+        break;
+      case 'fulfilment':
+        if (availability?.pickup) setFulfilmentMode('STORE_PICKUP');
+        else openLocationModal();
+        break;
+      case 'payment':
+        setPaymentMethod('PAY_ON_FULFILMENT');
+        break;
+      default:
+        void loadQuote();
     }
   };
 
@@ -325,24 +503,10 @@ export default function CheckoutScreen() {
     );
   }
 
-  if (state === 'loading' || cartLoading) {
+  if (locationLoading || state === 'loading' || cartLoading || (!demoCheckout && !hasPreviewItems && providerId && !availability)) {
     return (
       <ScreenShell scroll={false} header={<AppBar title={t('routes.checkout')} />}>
-        <StateView kind="loading" title={t('states.loading')} message="Fetching the server-authoritative checkout total…" />
-      </ScreenShell>
-    );
-  }
-
-  if (state === 'error') {
-    return (
-      <ScreenShell scroll={false} header={<AppBar title={t('routes.checkout')} />}>
-        <StateView
-          kind="error"
-          title="Checkout unavailable"
-          message={errorMessage ?? 'Could not load checkout.'}
-          actionLabel="Request fresh quote"
-          onAction={() => void loadQuote()}
-        />
+        <StateView kind="loading" title={t('states.loading')} message="Checking fulfilment, authoritative price and stock…" />
       </ScreenShell>
     );
   }
@@ -369,9 +533,61 @@ export default function CheckoutScreen() {
     );
   }
 
-  const selectedAddress = addresses.find((address) => address.addressId === selectedAddressId) ?? null;
+  if (!demoCheckout && !PIN_PATTERN.test(selectedPincode)) {
+    return (
+      <ScreenShell scroll={false} header={<AppBar title={t('routes.checkout')} />}>
+        <StateView
+          kind="error"
+          title="Service PIN required"
+          message="Select an active six-digit service PIN before checkout. Pickup remains independent of delivery PIN eligibility, but checkout still needs a canonical service context."
+          actionLabel="Choose service PIN"
+          onAction={openLocationModal}
+        />
+      </ScreenShell>
+    );
+  }
+
+  if (!demoCheckout && availability && !availability.pickup && !availability.delivery) {
+    return (
+      <ScreenShell scroll={false} header={<AppBar title={t('routes.checkout')} />}>
+        <StateView
+          kind="error"
+          title="No fulfilment available"
+          message={availabilityError ?? 'This provider cannot fulfil the cart for the selected service context.'}
+          actionLabel="Change service PIN"
+          onAction={openLocationModal}
+        />
+      </ScreenShell>
+    );
+  }
+
+  if (state === 'error') {
+    const actionLabel = quoteRecovery === 'cart'
+      ? 'Review cart'
+      : quoteRecovery === 'address'
+        ? 'Change service PIN'
+        : quoteRecovery === 'fulfilment'
+          ? 'Use available fulfilment'
+          : quoteRecovery === 'payment'
+            ? 'Use pay on fulfilment'
+            : 'Request fresh quote';
+    return (
+      <ScreenShell scroll={false} header={<AppBar title={t('routes.checkout')} />}>
+        <StateView
+          kind="error"
+          title="Checkout unavailable"
+          message={errorMessage ?? 'Could not load checkout.'}
+          actionLabel={actionLabel}
+          onAction={recoverQuote}
+        />
+      </ScreenShell>
+    );
+  }
+
   const isDelivery = fulfilmentMode === 'MYPET_CAPTAIN_DELIVERY';
   const isOnline = paymentMethod === 'ONLINE_PAYMENT';
+  const pickupAvailable = demoCheckout || availability?.pickup === true;
+  const deliveryAvailable = !demoCheckout && availability?.delivery === true;
 
   return (
     <ScreenShell
@@ -400,35 +616,51 @@ export default function CheckoutScreen() {
           </View>
         ) : null}
 
+        {priceChanged && activeQuote ? (
+          <View style={[styles.notice, { backgroundColor: theme.primarySoft }]}>
+            <StatusBadge label="PRICE UPDATED" tone="warning" />
+            <ThemedText type="small" themeColor="textSecondary">
+              Cart estimate ₹{itemSubtotal.toFixed(2)} changed to the current server product subtotal ₹{activeQuote.subtotal.toFixed(2)}. Review the updated prices and total before ordering.
+            </ThemedText>
+          </View>
+        ) : null}
+
         <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-          <ThemedText style={styles.cardTitle}>Fulfilment</ThemedText>
+          <View style={styles.row}>
+            <ThemedText style={styles.cardTitle}>Fulfilment</ThemedText>
+            {!demoCheckout ? <StatusBadge label={`SERVICE PIN ${selectedPincode}`} /> : null}
+          </View>
           <View style={styles.modeRow}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ selected: !isDelivery }}
-              onPress={() => setFulfilmentMode('STORE_PICKUP')}
-              style={[
-                styles.modeOption,
-                { borderColor: !isDelivery ? theme.primary : theme.border, backgroundColor: !isDelivery ? theme.primarySoft : theme.backgroundElement },
-              ]}
-            >
-              <ThemedText style={styles.modeTitle}>Store pickup</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">Collect from the merchant.</ThemedText>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ selected: isDelivery, disabled: demoCheckout }}
-              disabled={demoCheckout}
-              onPress={() => setFulfilmentMode('MYPET_CAPTAIN_DELIVERY')}
-              style={[
-                styles.modeOption,
-                { borderColor: isDelivery ? theme.primary : theme.border, backgroundColor: isDelivery ? theme.primarySoft : theme.backgroundElement },
-                demoCheckout && styles.disabledOption,
-              ]}
-            >
-              <ThemedText style={styles.modeTitle}>Captain delivery</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">Server-checked PIN serviceability.</ThemedText>
-            </Pressable>
+            {pickupAvailable ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Store pickup"
+                accessibilityState={{ selected: !isDelivery }}
+                onPress={() => setFulfilmentMode('STORE_PICKUP')}
+                style={[
+                  styles.modeOption,
+                  { borderColor: !isDelivery ? theme.primary : theme.border, backgroundColor: !isDelivery ? theme.primarySoft : theme.backgroundElement },
+                ]}
+              >
+                <ThemedText style={styles.modeTitle}>Store pickup</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">Collect from the merchant.</ThemedText>
+              </Pressable>
+            ) : null}
+            {deliveryAvailable ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="MyPet Captain delivery"
+                accessibilityState={{ selected: isDelivery }}
+                onPress={() => setFulfilmentMode('MYPET_CAPTAIN_DELIVERY')}
+                style={[
+                  styles.modeOption,
+                  { borderColor: isDelivery ? theme.primary : theme.border, backgroundColor: isDelivery ? theme.primarySoft : theme.backgroundElement },
+                ]}
+              >
+                <ThemedText style={styles.modeTitle}>Captain delivery</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">Server-checked PIN and dispatch eligibility.</ThemedText>
+              </Pressable>
+            ) : null}
           </View>
         </View>
 
@@ -436,7 +668,7 @@ export default function CheckoutScreen() {
           <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
             <View style={styles.row}>
               <ThemedText style={styles.cardTitle}>Delivery address</ThemedText>
-              <StatusBadge label="PIN CHECKED" tone="success" />
+              {selectedAddress && selectedAddressMatchesPin ? <StatusBadge label="PIN MATCH" tone="success" /> : null}
             </View>
             {addresses.length === 0 ? (
               <View style={styles.addressEmpty}>
@@ -452,6 +684,7 @@ export default function CheckoutScreen() {
                   <Pressable
                     key={address.addressId}
                     accessibilityRole="button"
+                    accessibilityLabel={`${address.label}, PIN ${address.pincode}`}
                     accessibilityState={{ selected }}
                     onPress={() => setSelectedAddressId(address.addressId)}
                     style={[
@@ -475,6 +708,15 @@ export default function CheckoutScreen() {
                 Deliver to {selectedAddress.recipientName} · {selectedAddress.phoneNumber}
               </ThemedText>
             ) : null}
+            {selectedAddress && !selectedAddressMatchesPin ? (
+              <View style={[styles.notice, { backgroundColor: theme.primarySoft }]}>
+                <StatusBadge label="SERVICE PIN MISMATCH" tone="warning" />
+                <ThemedText type="small" themeColor="textSecondary">
+                  This address uses PIN {selectedAddress.pincode}, while discovery and checkout are scoped to {selectedPincode}. Change the active service PIN or select a matching address before quoting delivery.
+                </ThemedText>
+                <PrimaryAction label="Change service PIN" onPress={openLocationModal} />
+              </View>
+            ) : null}
           </View>
         ) : null}
 
@@ -483,6 +725,7 @@ export default function CheckoutScreen() {
           <View style={styles.modeRow}>
             <Pressable
               accessibilityRole="button"
+              accessibilityLabel="Pay on fulfilment"
               accessibilityState={{ selected: !isOnline }}
               onPress={() => setPaymentMethod('PAY_ON_FULFILMENT')}
               style={[
@@ -495,6 +738,7 @@ export default function CheckoutScreen() {
             </Pressable>
             <Pressable
               accessibilityRole="button"
+              accessibilityLabel="Pay online"
               accessibilityState={{ selected: isOnline, disabled: demoCheckout }}
               disabled={demoCheckout}
               onPress={() => setPaymentMethod('ONLINE_PAYMENT')}
@@ -515,46 +759,53 @@ export default function CheckoutScreen() {
             <ThemedText style={styles.cardTitle}>Order items</ThemedText>
             <ThemedText type="small" themeColor="textSecondary">{items.reduce((sum, item) => sum + item.quantity, 0)} items</ThemedText>
           </View>
-          {items.map((item) => (
-            <View key={`${item.product.id}-${item.selectedVariant?.id ?? 'default'}`} style={styles.row}>
-              <View style={styles.itemCopy}>
-                <ThemedText style={styles.itemName}>{item.product.name}</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">Qty {item.quantity}</ThemedText>
+          {items.map((item) => {
+            const serverUnitPrice = activeQuote?.lineUnitPrices[item.product.id];
+            const unitPrice = serverUnitPrice ?? item.unitPrice;
+            const unitPriceChanged = serverUnitPrice !== undefined && Math.round(serverUnitPrice * 100) !== Math.round(item.unitPrice * 100);
+            return (
+              <View key={`${item.product.id}-${item.selectedVariant?.id ?? 'default'}`} style={styles.row}>
+                <View style={styles.itemCopy}>
+                  <ThemedText style={styles.itemName}>{item.product.name}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Qty {item.quantity}{unitPriceChanged ? ` · server price ₹${unitPrice.toFixed(2)} each` : ''}
+                  </ThemedText>
+                </View>
+                <ThemedText style={styles.price}>₹{(unitPrice * item.quantity).toFixed(2)}</ThemedText>
               </View>
-              <ThemedText style={styles.price}>₹{(item.unitPrice * item.quantity).toFixed(2)}</ThemedText>
-            </View>
-          ))}
+            );
+          })}
         </View>
 
-        {quote ? (
+        {activeQuote ? (
           <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
             <ThemedText style={styles.cardTitle}>Server-authoritative total</ThemedText>
-            <PriceRow label="Products" value={quote.subtotal} />
-            {quote.itemDiscount > 0 ? <PriceRow label="Item discount" value={-quote.itemDiscount} /> : null}
-            {quote.couponDiscount > 0 ? <PriceRow label="Coupon discount" value={-quote.couponDiscount} /> : null}
-            {quote.loyaltyDiscount > 0 ? <PriceRow label="Loyalty reward" value={-quote.loyaltyDiscount} /> : null}
-            {quote.platformFee ? <PriceRow label="Platform fee" value={quote.platformFee} /> : null}
-            <PriceRow label="Delivery fee" value={quote.deliveryFee} />
-            <PriceRow label="Tax" value={quote.tax} />
+            <PriceRow label="Products" value={activeQuote.subtotal} />
+            {activeQuote.itemDiscount > 0 ? <PriceRow label="Item discount" value={-activeQuote.itemDiscount} /> : null}
+            {activeQuote.couponDiscount > 0 ? <PriceRow label="Coupon discount" value={-activeQuote.couponDiscount} /> : null}
+            {activeQuote.loyaltyDiscount > 0 ? <PriceRow label="Loyalty reward" value={-activeQuote.loyaltyDiscount} /> : null}
+            {activeQuote.platformFee ? <PriceRow label="Platform fee" value={activeQuote.platformFee} /> : null}
+            <PriceRow label="Delivery fee" value={activeQuote.deliveryFee} />
+            <PriceRow label="Tax" value={activeQuote.tax} />
             <View style={[styles.divider, { backgroundColor: theme.border }]} />
             <View style={styles.row}>
               <ThemedText style={styles.totalLabel}>{isOnline ? 'Pay online' : 'Pay on fulfilment'}</ThemedText>
-              <ThemedText style={[styles.totalValue, { color: theme.primary }]}>₹{quote.payableTotal.toFixed(2)}</ThemedText>
+              <ThemedText style={[styles.totalValue, { color: theme.primary }]}>₹{activeQuote.payableTotal.toFixed(2)}</ThemedText>
             </View>
           </View>
         ) : null}
 
         <PrimaryAction
           label={demoCheckout
-            ? `Simulate pickup · ₹${quote?.payableTotal.toFixed(2) ?? '0.00'}`
+            ? `Simulate pickup · ₹${activeQuote?.payableTotal.toFixed(2) ?? '0.00'}`
             : isOnline
-              ? `Continue to secure payment · ₹${quote?.payableTotal.toFixed(2) ?? '0.00'}`
+              ? `Continue to secure payment · ₹${activeQuote?.payableTotal.toFixed(2) ?? '0.00'}`
               : isDelivery
-                ? `Place delivery order · ₹${quote?.payableTotal.toFixed(2) ?? '0.00'}`
+                ? `Place delivery order · ₹${activeQuote?.payableTotal.toFixed(2) ?? '0.00'}`
                 : 'Place pickup order'}
           onPress={() => void handlePlaceOrder()}
           loading={placing}
-          disabled={!quote || Boolean(pendingRecovery) || (isDelivery && !selectedAddressId)}
+          disabled={!activeQuote || Boolean(pendingRecovery) || (isDelivery && (!selectedAddressId || !selectedAddressMatchesPin))}
         />
       </View>
     </ScreenShell>

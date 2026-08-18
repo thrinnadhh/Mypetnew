@@ -1,6 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/app-icon';
 import { FilterChip, StateView } from '@/components/foundation/primitives';
@@ -22,7 +23,7 @@ import { isOfflineError } from '@/services/customer-profile';
 import { fetchServiceableCommerceProduct } from '@/services/paginated-catalog';
 import { appConfig } from '@/utils/app-config';
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type LoadState = 'loading' | 'ready' | 'offline' | 'error' | 'not-found' | 'unavailable';
 
@@ -44,6 +45,7 @@ export default function ProductDetailScreen() {
   const id = single(params.id)?.trim();
   const router = useRouter();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { selectedPincode } = useLocation();
   const { addToCart, items, updateQuantity } = useCart();
   const { isFavourite, toggleFavourite } = useFavourites();
@@ -210,7 +212,13 @@ export default function ProductDetailScreen() {
     <ScreenShell
       header={<ScreenHeader title={product.brand || 'Product'} subtitle={product.name} onBack={goBack} />}
       footer={(
-        <View style={[styles.footer, shadows.raised, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+        <View
+          style={[
+            styles.footer,
+            shadows.raised,
+            { backgroundColor: theme.backgroundElement, borderColor: theme.border, paddingBottom: Math.max(spacing.x3, insets.bottom + spacing.x2) },
+          ]}
+        >
           <View style={styles.footerPriceBlock}>
             <ThemedText type="small" themeColor="textSecondary">
               {quantity > 0 ? 'Current item total' : 'Current price'}

@@ -1,38 +1,67 @@
 import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 
 import { AppIcon } from '@/components/app-icon';
 import { FilterChip, SectionHeader, StateView } from '@/components/foundation/primitives';
 import { ThemedText } from '@/components/themed-text';
 import { PrimaryButton } from '@/components/ui/primary-button';
+import { ResilientRemoteImage } from '@/components/ui/resilient-remote-image';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { useCart } from '@/context/CartContext';
-import { useFavourites } from '@/context/FavouritesContext';
+import { useFavourites, type FavouriteItem } from '@/context/FavouritesContext';
+import { useLocation } from '@/context/LocationContext';
 import { radii, shadows, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
-import type { CommerceProduct, ShopProfileData } from '@/services/catalog-data';
-import { fetchCommerceProduct, fetchShopProfile } from '@/services/customer-catalog';
+import { ApiError } from '@/services/api-client';
+import type { CommerceProduct } from '@/services/catalog-data';
+import type { PublicOutletSummary } from '@/services/customer-catalog';
 import { isOfflineError } from '@/services/customer-profile';
+import {
+  fetchServiceableCommerceProduct,
+  fetchServiceableProductStore,
+} from '@/services/paginated-catalog';
 
 type FavouriteTab = 'ALL' | 'PRODUCTS' | 'SHOPS';
 type ContentState = 'loading' | 'ready' | 'offline' | 'error';
+
+interface UnavailableFavourite {
+  targetType: 'PRODUCT' | 'SHOP';
+  targetId: string;
+}
+
+function isNotFound(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
+}
 
 export default function FavouritesScreen() {
   const router = useRouter();
   const theme = useTheme();
   const { width } = useWindowDimensions();
-  const { favourites, loading, toggleFavourite } = useFavourites();
+  const { selectedPincode } = useLocation();
+  const {
+    favourites,
+    loading,
+    error: favouritesError,
+    retry: retryFavourites,
+    toggleFavourite,
+  } = useFavourites();
   const { addToCart, items, updateQuantity } = useCart();
   const [activeTab, setActiveTab] = useState<FavouriteTab>('ALL');
   const [favouriteProducts, setFavouriteProducts] = useState<CommerceProduct[]>([]);
-  const [favouriteShops, setFavouriteShops] = useState<ShopProfileData[]>([]);
+  const [favouriteShops, setFavouriteShops] = useState<PublicOutletSummary[]>([]);
+  const [unavailable, setUnavailable] = useState<UnavailableFavourite[]>([]);
   const [contentState, setContentState] = useState<ContentState>('loading');
   const [contentError, setContentError] = useState<string | null>(null);
+  const requestGeneration = useRef(0);
 
   const loadFavouriteEntities = useCallback(async () => {
     if (loading) return;
+    const generation = requestGeneration.current + 1;
+    requestGeneration.current = generation;
+    const isCurrent = () => requestGeneration.current === generation;
+
     const productIds = favourites
       .filter((favourite) => favourite.targetType === 'PRODUCT')
       .map((favourite) => favourite.targetId);
@@ -40,101 +69,152 @@ export default function FavouritesScreen() {
       .filter((favourite) => favourite.targetType === 'SHOP')
       .map((favourite) => favourite.targetId);
 
+    setFavouriteProducts([]);
+    setFavouriteShops([]);
+    setUnavailable([]);
+    setContentError(null);
+
+    if (favouritesError) {
+      setContentState(isOfflineError(new Error(favouritesError)) ? 'offline' : 'error');
+      setContentError(favouritesError);
+      return;
+    }
+
     if (productIds.length === 0 && shopIds.length === 0) {
-      setFavouriteProducts([]);
-      setFavouriteShops([]);
       setContentState('ready');
-      setContentError(null);
+      return;
+    }
+
+    if (!/^[1-9][0-9]{5}$/.test(selectedPincode)) {
+      setContentState('error');
+      setContentError('Select a valid live six-digit service PIN to resolve saved items.');
       return;
     }
 
     setContentState('loading');
-    setContentError(null);
-    try {
-      const [productResults, shopResults] = await Promise.all([
-        Promise.allSettled(productIds.map((productId) => fetchCommerceProduct(productId))),
-        Promise.allSettled(shopIds.map((shopId) => fetchShopProfile(shopId))),
-      ]);
-      const products = productResults.flatMap((result) =>
-        result.status === 'fulfilled' ? [result.value] : [],
-      );
-      const shops = shopResults.flatMap((result) =>
-        result.status === 'fulfilled' ? [result.value] : [],
-      );
-      const failures = [...productResults, ...shopResults].filter(
-        (result) => result.status === 'rejected',
-      );
+    const [productResults, shopResults] = await Promise.all([
+      Promise.allSettled(productIds.map((productId) => fetchServiceableCommerceProduct(productId, selectedPincode))),
+      Promise.allSettled(shopIds.map((shopId) => fetchServiceableProductStore(shopId, selectedPincode))),
+    ]);
+    if (!isCurrent()) return;
 
-      setFavouriteProducts(products);
-      setFavouriteShops(shops);
-      if (failures.length > 0 && products.length === 0 && shops.length === 0) {
-        const reason = failures[0].status === 'rejected' ? failures[0].reason : null;
-        throw reason instanceof Error ? reason : new Error('Saved items could not be loaded.');
+    const products: CommerceProduct[] = [];
+    const shops: PublicOutletSummary[] = [];
+    const unavailableItems: UnavailableFavourite[] = [];
+    const operationalFailures: unknown[] = [];
+
+    productResults.forEach((result, index) => {
+      const targetId = productIds[index];
+      if (result.status === 'fulfilled') {
+        const product = result.value;
+        if (product.kind === 'PRODUCT' && product.commerceMode === 'COMMERCE') {
+          products.push(product);
+        } else {
+          unavailableItems.push({ targetType: 'PRODUCT', targetId });
+        }
+      } else if (isNotFound(result.reason)) {
+        unavailableItems.push({ targetType: 'PRODUCT', targetId });
+      } else {
+        operationalFailures.push(result.reason);
       }
-      setContentState('ready');
-    } catch (error) {
-      setFavouriteProducts([]);
-      setFavouriteShops([]);
-      setContentError(error instanceof Error ? error.message : 'Saved items could not be loaded.');
-      setContentState(isOfflineError(error) ? 'offline' : 'error');
+    });
+
+    shopResults.forEach((result, index) => {
+      const targetId = shopIds[index];
+      if (result.status === 'fulfilled') {
+        shops.push(result.value);
+      } else if (isNotFound(result.reason)) {
+        unavailableItems.push({ targetType: 'SHOP', targetId });
+      } else {
+        operationalFailures.push(result.reason);
+      }
+    });
+
+    if (!isCurrent()) return;
+    setFavouriteProducts(products);
+    setFavouriteShops(shops);
+    setUnavailable(unavailableItems);
+
+    if (operationalFailures.length > 0) {
+      const failure = operationalFailures[0];
+      setContentError(failure instanceof Error ? failure.message : 'Saved items could not be loaded.');
+      setContentState(operationalFailures.some(isOfflineError) ? 'offline' : 'error');
+      return;
     }
-  }, [favourites, loading]);
+    setContentState('ready');
+  }, [favourites, favouritesError, loading, selectedPincode]);
 
   useEffect(() => {
     void loadFavouriteEntities();
+    return () => {
+      requestGeneration.current += 1;
+    };
   }, [loadFavouriteEntities]);
 
-  const totalCount = favouriteProducts.length + favouriteShops.length;
+  const productSavedCount = favourites.filter((item) => item.targetType === 'PRODUCT').length;
+  const shopSavedCount = favourites.filter((item) => item.targetType === 'SHOP').length;
   const savedTargetCount = favourites.length;
   const showProducts = activeTab === 'ALL' || activeTab === 'PRODUCTS';
   const showShops = activeTab === 'ALL' || activeTab === 'SHOPS';
+  const visibleUnavailable = unavailable.filter((item) => (
+    activeTab === 'ALL'
+    || (activeTab === 'PRODUCTS' && item.targetType === 'PRODUCT')
+    || (activeTab === 'SHOPS' && item.targetType === 'SHOP')
+  ));
   const selectedCount = activeTab === 'PRODUCTS'
-    ? favouriteProducts.length
+    ? productSavedCount
     : activeTab === 'SHOPS'
-      ? favouriteShops.length
-      : totalCount;
+      ? shopSavedCount
+      : savedTargetCount;
   const cardWidth = width >= 780 ? '48.8%' : '100%';
+
+  const retry = useCallback(async () => {
+    if (favouritesError) await retryFavourites();
+    await loadFavouriteEntities();
+  }, [favouritesError, loadFavouriteEntities, retryFavourites]);
+
+  const removeUnavailable = useCallback(async (item: UnavailableFavourite) => {
+    await toggleFavourite(item.targetType, item.targetId);
+  }, [toggleFavourite]);
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <ScreenHeader
         title="My favourites"
-        subtitle={`${savedTargetCount} saved product${savedTargetCount === 1 ? '' : 's'} and shops`}
+        subtitle={`${savedTargetCount} saved item${savedTargetCount === 1 ? '' : 's'} · PIN ${selectedPincode || 'not selected'}`}
       />
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabRow}>
-        <FilterChip label={`All (${totalCount})`} selected={activeTab === 'ALL'} onPress={() => setActiveTab('ALL')} />
+        <FilterChip label={`All (${savedTargetCount})`} selected={activeTab === 'ALL'} onPress={() => setActiveTab('ALL')} />
         <FilterChip
-          label={`Products (${favouriteProducts.length})`}
+          label={`Products (${productSavedCount})`}
           selected={activeTab === 'PRODUCTS'}
           onPress={() => setActiveTab('PRODUCTS')}
         />
         <FilterChip
-          label={`Shops (${favouriteShops.length})`}
+          label={`Shops (${shopSavedCount})`}
           selected={activeTab === 'SHOPS'}
           onPress={() => setActiveTab('SHOPS')}
         />
       </ScrollView>
 
       {loading || contentState === 'loading' ? (
-        <StateView kind="loading" title="Loading favourites" message="Checking current products, prices, stock, and stores." />
+        <StateView kind="loading" title="Loading favourites" message="Checking current availability for the selected service PIN." />
       ) : contentState === 'offline' || contentState === 'error' ? (
         <StateView
           kind={contentState}
           title={contentState === 'offline' ? 'You are offline' : 'Favourites unavailable'}
           message={contentError ?? 'Could not load your saved items.'}
           actionLabel="Retry"
-          onAction={() => void loadFavouriteEntities()}
+          onAction={() => void retry()}
         />
       ) : selectedCount === 0 ? (
         <StateView
           kind="empty"
-          title={savedTargetCount === 0 ? 'No favourites saved yet' : `No available ${activeTab.toLowerCase()}`}
-          message={
-            savedTargetCount === 0
-              ? 'Tap the heart on a product or shop to keep it available here.'
-              : 'A saved item may have been removed or deactivated. Choose another category or refresh.'
-          }
+          title={savedTargetCount === 0 ? 'No favourites saved yet' : `No saved ${activeTab.toLowerCase()}`}
+          message={savedTargetCount === 0
+            ? 'Tap the heart on a product or shop to keep it available here.'
+            : 'Choose another favourites category.'}
           actionLabel={savedTargetCount === 0 ? 'Explore pet supplies' : 'Show all favourites'}
           onAction={() => {
             if (savedTargetCount === 0) router.push('/commerce' as never);
@@ -143,6 +223,42 @@ export default function FavouritesScreen() {
         />
       ) : (
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          {visibleUnavailable.length > 0 ? (
+            <View style={styles.section}>
+              <SectionHeader title="Saved but unavailable here" />
+              <View style={styles.grid}>
+                {visibleUnavailable.map((item) => (
+                  <View
+                    key={`${item.targetType}:${item.targetId}`}
+                    style={[
+                      styles.unavailableCard,
+                      shadows.card,
+                      { width: cardWidth, backgroundColor: theme.backgroundElement, borderColor: theme.border },
+                    ]}
+                    accessibilityLabel={`Saved ${item.targetType.toLowerCase()} is unavailable for PIN ${selectedPincode}`}
+                  >
+                    <View style={styles.unavailableCopy}>
+                      <AppIcon name={item.targetType === 'SHOP' ? 'store' : 'warning'} color={theme.textSecondary} size={24} />
+                      <View style={styles.flex}>
+                        <ThemedText style={styles.cardTitle}>
+                          {item.targetType === 'SHOP' ? 'Saved shop unavailable' : 'Saved product unavailable'}
+                        </ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          It may be inactive, deleted, no longer commerce-enabled, or not serviceable for PIN {selectedPincode}. It remains saved until you remove it.
+                        </ThemedText>
+                      </View>
+                    </View>
+                    <PrimaryButton
+                      label="Remove from favourites"
+                      variant="secondary"
+                      onPress={() => void removeUnavailable(item)}
+                    />
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
           {showShops && favouriteShops.length > 0 ? (
             <View style={styles.section}>
               <SectionHeader title="Saved shops" />
@@ -150,9 +266,9 @@ export default function FavouritesScreen() {
                 {favouriteShops.map((shop) => (
                   <Pressable
                     key={shop.id}
-                    onPress={() => router.push(`/shop/${shop.id}` as never)}
+                    onPress={() => router.push(`/shop/${encodeURIComponent(shop.id)}` as never)}
                     accessibilityRole="button"
-                    accessibilityLabel={`${shop.name}. ${shop.tagline}. Rated ${shop.rating}.`}
+                    accessibilityLabel={`${shop.name}. Serves PIN ${selectedPincode}.`}
                     style={({ pressed }) => [
                       styles.shopCard,
                       shadows.card,
@@ -160,12 +276,16 @@ export default function FavouritesScreen() {
                       pressed && styles.pressed,
                     ]}
                   >
-                    <Image source={{ uri: shop.heroImageUrl }} style={styles.shopImage} resizeMode="cover" />
+                    <ResilientRemoteImage
+                      uri={undefined}
+                      style={styles.shopImage}
+                      accessibilityLabel={shop.name}
+                    />
                     <View style={styles.shopBody}>
                       <View style={styles.cardTopRow}>
                         <View style={styles.flex}>
-                          <ThemedText style={styles.cardTitle} numberOfLines={1}>{shop.name}</ThemedText>
-                          <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>{shop.tagline}</ThemedText>
+                          <ThemedText style={styles.cardTitle} numberOfLines={2}>{shop.name}</ThemedText>
+                          <ThemedText type="small" themeColor="textSecondary">Serves PIN {selectedPincode}</ThemedText>
                         </View>
                         <Pressable
                           onPress={(event) => {
@@ -180,16 +300,10 @@ export default function FavouritesScreen() {
                           <AppIcon name="heart" color={theme.danger} size={21} />
                         </Pressable>
                       </View>
-                      <View style={styles.metaRow}>
-                        {shop.rating ? <StatusBadge label={shop.rating} color={theme.warning} /> : null}
-                        {shop.deliveryEta ? <ThemedText type="small" themeColor="textSecondary">{shop.deliveryEta}</ThemedText> : null}
-                      </View>
-                      <View style={styles.addressRow}>
-                        <AppIcon name="location" color={theme.textSecondary} size={16} />
-                        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.flex}>
-                          {shop.address}
-                        </ThemedText>
-                      </View>
+                      <StatusBadge
+                        label={shop.pickupEnabled ? 'Pickup available' : 'Pickup unavailable'}
+                        color={shop.pickupEnabled ? theme.success : theme.textSecondary}
+                      />
                     </View>
                   </Pressable>
                 ))}
@@ -209,9 +323,9 @@ export default function FavouritesScreen() {
                   return (
                     <Pressable
                       key={product.id}
-                      onPress={() => router.push(`/commerce/product-detail?id=${product.id}` as never)}
+                      onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(product.id)}` as never)}
                       accessibilityRole="button"
-                      accessibilityLabel={`${product.name}. ${product.brand}. ₹${product.price}.`}
+                      accessibilityLabel={`${product.name}. ${product.brand ? `${product.brand}. ` : ''}₹${product.price}. ${product.inStock ? 'In stock' : 'Out of stock'}.`}
                       style={({ pressed }) => [
                         styles.productCard,
                         shadows.card,
@@ -220,7 +334,11 @@ export default function FavouritesScreen() {
                       ]}
                     >
                       <View style={[styles.productImageWrap, { backgroundColor: theme.muted }]}>
-                        <Image source={{ uri: product.imageUrl }} style={styles.productImage} resizeMode="cover" />
+                        <ResilientRemoteImage
+                          uri={product.imageUrl}
+                          style={styles.productImage}
+                          accessibilityLabel={product.name}
+                        />
                         <Pressable
                           onPress={(event) => {
                             event.stopPropagation();
@@ -236,10 +354,10 @@ export default function FavouritesScreen() {
                       </View>
 
                       <View style={styles.productBody}>
-                        <ThemedText type="small" themeColor="textSecondary">{product.brand}</ThemedText>
+                        {product.brand ? <ThemedText type="small" themeColor="textSecondary">{product.brand}</ThemedText> : null}
                         <ThemedText style={styles.cardTitle} numberOfLines={2}>{product.name}</ThemedText>
                         <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                          {product.providerName} · {product.deliveryTime}
+                          {product.providerName}
                         </ThemedText>
 
                         <View style={styles.productFooter}>
@@ -307,14 +425,14 @@ const styles = StyleSheet.create({
   content: { gap: spacing.x6, paddingBottom: spacing.x8 },
   section: { gap: spacing.x3 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x3 },
+  unavailableCard: { borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card, padding: spacing.x4, gap: spacing.x3 },
+  unavailableCopy: { minHeight: touchTarget, flexDirection: 'row', alignItems: 'flex-start', gap: spacing.x3 },
   shopCard: { overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card },
   shopImage: { width: '100%', height: 150 },
   shopBody: { padding: spacing.x3, gap: spacing.x2 },
   cardTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.x2 },
   cardTitle: { ...typography.label, fontSize: 15, lineHeight: 21 },
   heartButton: { width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, alignItems: 'center', justifyContent: 'center', ...shadows.card },
-  metaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.x2 },
-  addressRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.x2 },
   productCard: { minHeight: 154, flexDirection: 'row', borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card, overflow: 'hidden' },
   productImageWrap: { width: 124, position: 'relative' },
   productImage: { width: '100%', height: '100%' },

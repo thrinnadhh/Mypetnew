@@ -503,7 +503,7 @@ export default function HomeScreen() {
 
         <BannerCarousel banners={banners} onPress={() => router.push('/category/new-arrivals' as never)} />
 
-        <View style={[styles.quickActions, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+        <View style={[styles.quickActions, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}> 
           {QUICK_ACTIONS.map((action, index) => (
             <React.Fragment key={action.id}>
               {index > 0 ? <View style={[styles.quickDivider, { backgroundColor: theme.border }]} /> : null}
@@ -515,7 +515,7 @@ export default function HomeScreen() {
           ))}
         </View>
 
-        <View style={[styles.healthPanel, { backgroundColor: theme.primarySoft, borderColor: theme.border }]}>
+        <View style={[styles.healthPanel, { backgroundColor: theme.primarySoft, borderColor: theme.border }]}> 
           <View style={styles.healthTitleRow}>
             <AppIcon name="document" color={theme.primary} size={17} />
             <ThemedText style={[styles.healthTitle, { color: theme.text }]}>Reports & Health</ThemedText>
@@ -549,7 +549,7 @@ export default function HomeScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={category.label}
               >
-                <View style={[styles.categoryImageWrap, { backgroundColor: theme.muted }]}> 
+                <View style={[styles.categoryImageWrap, { backgroundColor: theme.muted }]}>
                   <ResilientRemoteImage
                     uri={category.image}
                     fallbackUri={DEMO_MEDIA.store}

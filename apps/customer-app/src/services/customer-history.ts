@@ -25,6 +25,7 @@ export interface CustomerAppointmentRecord {
   petName: string;
   petId?: string;
   slotStartsAt: string;
+  slotEndsAt: string;
   status: HistoryAppointmentStatus;
   paymentMethod: AppointmentPaymentMethod;
   paymentStatus: AppointmentPaymentStatus;
@@ -127,6 +128,7 @@ function mapAppointment(appointment: AppointmentDto): CustomerAppointmentRecord 
     petName: appointment.petName,
     petId: appointment.petId,
     slotStartsAt: appointment.startsAt,
+    slotEndsAt: appointment.endsAt,
     status: mapStatus(appointment.status),
     paymentMethod: appointment.paymentMethod,
     paymentStatus: appointment.paymentStatus,

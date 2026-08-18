@@ -171,13 +171,14 @@ export default function CheckoutScreen() {
   const selectedAddressMatchesPin = !selectedAddress || selectedAddress.pincode === selectedPincode;
 
   const quoteRequestKey = useMemo(() => buildCheckoutRequestKey({
+    customerId: user?.id ?? '',
     providerId: providerId ?? '',
     lines: checkoutItems,
     fulfilmentMode,
     paymentMethod,
     selectedAddressId,
     selectedPincode,
-  }), [checkoutItems, fulfilmentMode, paymentMethod, providerId, selectedAddressId, selectedPincode]);
+  }), [checkoutItems, fulfilmentMode, paymentMethod, providerId, selectedAddressId, selectedPincode, user?.id]);
 
   useEffect(() => {
     if (!session) {

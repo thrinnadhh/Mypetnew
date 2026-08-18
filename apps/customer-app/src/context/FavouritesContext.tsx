@@ -162,11 +162,13 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
         return;
       }
 
-      // Only the explicit v4 guest bucket may migrate into the account that is
-      // signing in now. Account-local shop state stays keyed to that account.
+      // The explicit v4 guest bucket and the older explicitly guest-owned v2
+      // bucket may migrate into the account restoring/signing in now. The
+      // ownership-ambiguous v3 bucket is quarantined and discarded by
+      // loadGuestLocal(true). Account-local shop state remains account-keyed.
       const [accountLocal, guestLocal, serverInitial] = await Promise.all([
         loadAccountLocal(accountAtStart),
-        loadGuestLocal(false),
+        loadGuestLocal(true),
         fetchAllServerProducts(),
       ]);
       if (!isCurrent()) return;

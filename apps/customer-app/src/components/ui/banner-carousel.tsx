@@ -12,13 +12,13 @@ import {
 
 import { ThemedText } from '@/components/themed-text';
 import { ResilientRemoteImage } from '@/components/ui/resilient-remote-image';
-import { PROMO_BANNERS, type PromoBanner } from '@/constants/content';
+import { type PromoBanner } from '@/constants/content';
 import { Radius, Shadows, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { DEMO_BANNER_IMAGES, DEMO_MEDIA } from '@/services/demo-customer-data';
 
 export function BannerCarousel({
-  banners = PROMO_BANNERS,
+  banners = [],
   onPress,
 }: {
   banners?: PromoBanner[];
@@ -31,7 +31,7 @@ export function BannerCarousel({
   const listRef = useRef<FlatList<PromoBanner>>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [index, setIndex] = useState(0);
-  const safeBanners = useMemo(() => (banners.length > 0 ? banners : PROMO_BANNERS), [banners]);
+  const safeBanners = useMemo(() => banners, [banners]);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {

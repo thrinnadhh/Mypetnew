@@ -1,6 +1,7 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 
+import { ApiError } from '@/services/api-client';
 import { FavouritesProvider, useFavourites } from '../FavouritesContext';
 
 const mockStorage = new Map<string, string>();
@@ -155,6 +156,27 @@ describe('FavouritesContext P6 behaviour', () => {
     ]));
   });
 
+  it('preserves an unavailable guest product as removable account-local saved state after login', async () => {
+    mockStorage.set('mypet_favourites_v4_guest', JSON.stringify([
+      { targetType: 'PRODUCT', targetId: 'product-gone' },
+    ]));
+    mockSession = { accountId: 'user-a', accessToken: 'token-a' };
+    mockApiPut.mockRejectedValue(new ApiError(404, 'Product unavailable'));
+
+    await act(async () => {
+      TestRenderer.create(tree());
+    });
+    await settle();
+
+    expect(JSON.parse(mockStorage.get('mypet_favourites_v4_guest') ?? 'null')).toEqual([]);
+    expect(JSON.parse(mockStorage.get('mypet_favourites_v4_account:user-a') ?? 'null')).toEqual([
+      expect.objectContaining({ targetType: 'PRODUCT', targetId: 'product-gone' }),
+    ]);
+    expect(latest?.favourites).toEqual([
+      expect.objectContaining({ targetType: 'PRODUCT', targetId: 'product-gone' }),
+    ]);
+  });
+
   it('serializes two different shop writes so one local favourite cannot clobber the other', async () => {
     mockSession = { accountId: 'user-a', accessToken: 'token-a' };
 
@@ -193,6 +215,24 @@ describe('FavouritesContext P6 behaviour', () => {
 
     expect(mockApiPut).toHaveBeenCalledTimes(1);
     expect(mockApiDelete).toHaveBeenCalledTimes(1);
+    expect(latest?.isFavourite('PRODUCT', 'product-1')).toBe(false);
+  });
+
+  it('keeps product state unchanged when an authenticated favourite mutation fails', async () => {
+    mockSession = { accountId: 'user-a', accessToken: 'token-a' };
+
+    await act(async () => {
+      TestRenderer.create(tree());
+    });
+    await settle();
+    mockApiPut.mockRejectedValue(new Error('network failed'));
+
+    let result = true;
+    await act(async () => {
+      result = await latest!.toggleFavourite('PRODUCT', 'product-1');
+    });
+
+    expect(result).toBe(false);
     expect(latest?.isFavourite('PRODUCT', 'product-1')).toBe(false);
   });
 

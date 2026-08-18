@@ -60,7 +60,9 @@ describe('P6 search, favourites and provider discovery contract', () => {
     expect(profileService).not.toContain('ratingCount: 0');
 
     expect(careDetail).toContain('fetchProviderProfile(providerId, { kind, pincode: selectedPincode })');
-    expect(careDetail.indexOf('fetchProviderProfile(providerId')).toBeLessThan(careDetail.indexOf('fetchAppointmentServices'));
+    expect(careDetail.indexOf('fetchProviderProfile(providerId')).toBeLessThan(
+      careDetail.indexOf('fetchAppointmentServices({ providerId'),
+    );
     expect(careDetail).toContain('requestGeneration');
     expect(careDetail).toContain('router.canGoBack()');
     expect(careDetail).toContain('router.replace(bookingRoute');
@@ -92,7 +94,7 @@ describe('P6 search, favourites and provider discovery contract', () => {
 
     expect(screen).toContain('fetchServiceableCommerceProduct(productId, selectedPincode)');
     expect(screen).toContain('fetchServiceableProductStore(shopId, selectedPincode)');
-    expect(screen).toContain('result instanceof ApiError');
+    expect(screen).toContain('error instanceof ApiError && error.status === 404');
     expect(screen).toContain('Saved but unavailable here');
     expect(screen).toContain('It remains saved until you remove it.');
     expect(screen).toContain('Remove from favourites');

@@ -57,6 +57,7 @@ interface LocationContextType {
   activeCity: ActiveCity;
   selectedPincode: string;
   enabledCities: ActiveCity[];
+  serviceRegionError: boolean;
   isLocationModalOpen: boolean;
   isNotifyModalOpen: boolean;
   requestedUnavailableCity: string | null;
@@ -91,11 +92,15 @@ async function responseError(response: Response): Promise<Error> {
 }
 
 export function LocationProvider({ children }: { children: React.ReactNode }) {
+  const initialDemoPincode = appConfig.allowDemoMode
+    ? normalizeSelectablePincode(DEFAULT_TIRUPATI_REGION) ?? ''
+    : '';
   const [activeCity, setActiveCity] = useState<ActiveCity>(DEFAULT_TIRUPATI_REGION);
-  const [selectedPincode, setSelectedPincode] = useState(
-    normalizeSelectablePincode(DEFAULT_TIRUPATI_REGION) ?? '',
+  const [selectedPincode, setSelectedPincode] = useState(initialDemoPincode);
+  const [enabledCities, setEnabledCities] = useState<ActiveCity[]>(
+    appConfig.allowDemoMode ? [DEFAULT_TIRUPATI_REGION] : [],
   );
-  const [enabledCities, setEnabledCities] = useState<ActiveCity[]>([DEFAULT_TIRUPATI_REGION]);
+  const [serviceRegionError, setServiceRegionError] = useState(false);
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [isNotifyModalOpen, setIsNotifyModalOpen] = useState(false);
   const [requestedUnavailableCity, setRequestedUnavailableCity] = useState<string | null>(null);
@@ -110,10 +115,12 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
       if (!response.ok) throw await responseError(response);
       const data = (await response.json()) as ActiveCity[];
       if (Array.isArray(data) && data.length > 0) return data;
+      throw new Error('No active service regions were returned.');
     } catch (error) {
       console.warn('Failed to fetch active service regions', error);
+      if (appConfig.allowDemoMode) return [DEFAULT_TIRUPATI_REGION];
+      throw error;
     }
-    return [DEFAULT_TIRUPATI_REGION];
   }, []);
 
   const persistCity = useCallback(async (city: ActiveCity, pincode?: string) => {
@@ -126,6 +133,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     }
     setActiveCity(city);
     setSelectedPincode(nextPincode);
+    setServiceRegionError(false);
     await AsyncStorage.multiSet([
       [STORAGE_KEY, JSON.stringify(city)],
       [PIN_STORAGE_KEY, nextPincode],
@@ -137,12 +145,18 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     try {
       const cities = await fetchActiveCities();
       setEnabledCities(cities);
+      setServiceRegionError(false);
       const nextCity =
         cities.find((city) => city.cityIdentity === activeCity.cityIdentity)
         ?? cities[0]
         ?? DEFAULT_TIRUPATI_REGION;
       setActiveCity(nextCity);
       setSelectedPincode((current) => normalizeSelectablePincode(nextCity, current) ?? '');
+    } catch (error) {
+      console.warn('Failed to refresh active service regions', error);
+      setEnabledCities([]);
+      setSelectedPincode('');
+      setServiceRegionError(true);
     } finally {
       setLoading(false);
     }
@@ -152,11 +166,12 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     let active = true;
 
     const initLocation = async () => {
-      const cities = await fetchActiveCities();
-      if (!active) return;
-      setEnabledCities(cities);
-
       try {
+        const cities = await fetchActiveCities();
+        if (!active) return;
+        setEnabledCities(cities);
+        setServiceRegionError(false);
+
         const [storedCity, storedPincode] = await Promise.all([
           AsyncStorage.getItem(STORAGE_KEY),
           AsyncStorage.getItem(PIN_STORAGE_KEY),
@@ -170,10 +185,18 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         setActiveCity(nextCity);
         setSelectedPincode(normalizeSelectablePincode(nextCity, storedPincode) ?? '');
       } catch (error) {
-        console.warn('Error reading stored active service location', error);
-        const nextCity = cities[0] ?? DEFAULT_TIRUPATI_REGION;
-        setActiveCity(nextCity);
-        setSelectedPincode(normalizeSelectablePincode(nextCity) ?? '');
+        console.warn('Unable to initialize live service regions', error);
+        if (!active) return;
+        if (appConfig.allowDemoMode) {
+          setEnabledCities([DEFAULT_TIRUPATI_REGION]);
+          setActiveCity(DEFAULT_TIRUPATI_REGION);
+          setSelectedPincode(normalizeSelectablePincode(DEFAULT_TIRUPATI_REGION) ?? '');
+          setServiceRegionError(false);
+        } else {
+          setEnabledCities([]);
+          setSelectedPincode('');
+          setServiceRegionError(true);
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -207,6 +230,10 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
 
   const selectCurrentLocation = useCallback(async () => {
     if (locating) return;
+    if (serviceRegionError || enabledCities.length === 0) {
+      Alert.alert('Service regions unavailable', 'Retry loading live service regions before using current location.');
+      return;
+    }
     setLocating(true);
     try {
       const coordinates = await requestCurrentCoordinates();
@@ -240,7 +267,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLocating(false);
     }
-  }, [enabledCities, locating, persistCity]);
+  }, [enabledCities, locating, persistCity, serviceRegionError]);
 
   const openLocationModal = useCallback(() => setIsLocationModalOpen(true), []);
   const closeLocationModal = useCallback(() => setIsLocationModalOpen(false), []);
@@ -293,6 +320,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         activeCity,
         selectedPincode,
         enabledCities,
+        serviceRegionError,
         isLocationModalOpen,
         isNotifyModalOpen,
         requestedUnavailableCity,

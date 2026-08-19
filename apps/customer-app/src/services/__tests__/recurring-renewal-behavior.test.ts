@@ -137,7 +137,7 @@ describe('P14 recurring renewal behavior', () => {
 
     expect(result.map((item) => item.proposalId)).toEqual(['proposal-1', 'proposal-2']);
     expect(mockedFetch.mock.calls.map((call) => call[0])).toEqual([
-      'https://api.mypet.test/api/v1/customer/recurring-orders/proposals',
+      'https://api.mypet.test/api/v1/customer/recurring-orders/proposals?page=0&pageSize=20',
       'https://api.mypet.test/api/v1/customer/recurring-orders/proposals?page=1&pageSize=20',
     ]);
   });

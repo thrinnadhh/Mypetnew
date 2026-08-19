@@ -252,7 +252,7 @@ class RecurringOrderServiceTest {
                 organizationId = outlet.organizationId,
                 outletId = outlet.id,
                 barcodeType = BarcodeType.INTERNAL,
-                barcode = "RECURRING-DOG-FOOD-${UUID.randomUUID()}",
+                barcode = "REC-${UUID.randomUUID().toString().take(16)}",
                 name = "Dog Food",
                 kind = ListingKind.PRODUCT,
                 mrpPaise = 10_000,

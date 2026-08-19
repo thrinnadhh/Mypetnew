@@ -188,13 +188,38 @@ export default function AppointmentPaymentScreen() {
     try {
       await confirmAppointmentHold(action.appointmentId, action.accessToken);
       if (!isCurrentPaymentAction(action)) return;
-      Alert.alert(
-        demoAppointment ? 'Demo booking request sent' : 'Booking request sent',
-        demoAppointment
-          ? `${serviceName} for ${petName} is in demo provider-confirmation mode.`
-          : `${providerName} must accept ${serviceName} for ${petName} before the appointment becomes confirmed. Payment remains due at the provider.`,
-        [{ text: 'View appointments', onPress: goToAppointments }],
-      );
+
+      if (demoAppointment) {
+        Alert.alert(
+          'Demo booking request sent',
+          `${serviceName} for ${petName} is in demo provider-confirmation mode.`,
+          [{ text: 'View appointments', onPress: goToAppointments }],
+        );
+        return;
+      }
+
+      const canonical = await fetchAppointmentDetails(action.appointmentId, action.accessToken);
+      if (!isCurrentPaymentAction(action)) return;
+      setAppointment(canonical);
+      if (canonical.status === 'PENDING_PROVIDER') {
+        Alert.alert(
+          'Booking request sent · waiting for provider',
+          `${canonical.providerName} must accept ${canonical.serviceName} for ${canonical.petName} before the appointment becomes Confirmed. Payment remains due at the provider.`,
+          [{ text: 'View appointments', onPress: goToAppointments }],
+        );
+      } else if (canonical.status === 'CONFIRMED') {
+        Alert.alert(
+          'Provider confirmed appointment',
+          'The server reports that the provider has already accepted this booking request.',
+          [{ text: 'View appointments', onPress: goToAppointments }],
+        );
+      } else {
+        Alert.alert(
+          'Appointment status changed',
+          'The request completed, but the appointment is no longer waiting for provider confirmation. Open appointments for the canonical status.',
+          [{ text: 'View appointments', onPress: goToAppointments }],
+        );
+      }
     } catch (error) {
       if (!isCurrentPaymentAction(action)) return;
       Alert.alert('Request failed', error instanceof Error ? error.message : 'Could not send this booking request. Please retry.');
@@ -210,12 +235,30 @@ export default function AppointmentPaymentScreen() {
       throw new Error('Payment verification returned a different appointment.');
     }
     if (verified.status === 'CAPTURED') {
+      const canonical = await fetchAppointmentDetails(action.appointmentId, action.accessToken);
+      if (!isCurrentPaymentAction(action)) return;
+      setAppointment(canonical);
       setPendingRecovery(null);
-      Alert.alert(
-        'Payment successful · waiting for provider',
-        `${money(verified.amountPaise / 100)} was verified by MyPet. ${providerName} must still accept the booking request before the appointment becomes Confirmed. If the provider declines, MyPet starts the refund workflow automatically.`,
-        [{ text: 'View appointments', onPress: goToAppointments }],
-      );
+
+      if (canonical.status === 'PENDING_PROVIDER') {
+        Alert.alert(
+          'Payment successful · waiting for provider',
+          `${money(verified.amountPaise / 100)} was verified by MyPet. ${canonical.providerName} must still accept the booking request before the appointment becomes Confirmed. If the provider declines, MyPet starts the refund workflow automatically.`,
+          [{ text: 'View appointments', onPress: goToAppointments }],
+        );
+      } else if (canonical.status === 'CONFIRMED') {
+        Alert.alert(
+          'Payment successful · provider confirmed',
+          `${money(verified.amountPaise / 100)} was verified by MyPet, and the server reports that the provider has accepted the appointment.`,
+          [{ text: 'View appointments', onPress: goToAppointments }],
+        );
+      } else {
+        Alert.alert(
+          canonical.paymentStatus === 'REFUND_PENDING' ? 'Payment captured · refund pending' : 'Payment captured · booking unavailable',
+          'Cashfree capture was verified, but the appointment is not in a provider-request state. MyPet will show the canonical refund/payment status in appointment history; do not pay again.',
+          [{ text: 'View appointments', onPress: goToAppointments }],
+        );
+      }
       return;
     }
     if (verified.status === 'FAILED' || verified.status === 'EXPIRED') {

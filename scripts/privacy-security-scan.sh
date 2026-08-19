@@ -10,19 +10,19 @@ if command -v rg >/dev/null 2>&1; then
   scan_sensitive() {
     local pattern="$1"
     shift
-    rg -n --glob '!**/*.test.*' --glob '!**/node_modules/**' --glob '!**/.expo/**' --glob '!**/dist/**' --glob '!**/.next/**' -- "$pattern" "$@"
+    rg -in --glob '!**/*.test.*' --glob '!**/node_modules/**' --glob '!**/.expo/**' --glob '!**/dist/**' --glob '!**/.next/**' -- "$pattern" "$@"
   }
   scan_all() {
     local pattern="$1"
     shift
-    rg -n --glob '!**/node_modules/**' --glob '!**/.expo/**' --glob '!**/dist/**' --glob '!**/.next/**' -- "$pattern" "$@"
+    rg -in --glob '!**/node_modules/**' --glob '!**/.expo/**' --glob '!**/dist/**' --glob '!**/.next/**' -- "$pattern" "$@"
   }
 else
   echo "ripgrep not available; using grep fallback for privacy/security scan."
   scan_sensitive() {
     local pattern="$1"
     shift
-    grep -RInEI \
+    grep -RInEiI \
       --exclude='*.test.*' \
       --exclude-dir=node_modules \
       --exclude-dir=.expo \
@@ -33,7 +33,7 @@ else
   scan_all() {
     local pattern="$1"
     shift
-    grep -RInEI \
+    grep -RInEiI \
       --exclude-dir=node_modules \
       --exclude-dir=.expo \
       --exclude-dir=dist \

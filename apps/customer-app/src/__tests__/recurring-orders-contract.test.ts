@@ -17,26 +17,30 @@ describe('recurring order contract', () => {
   it('requires customer confirmation and a fresh checkout', () => {
     const screen = source('src/app/subscriptions/index.tsx');
     const service = source('src/services/recurring-orders.ts');
-    expect(screen).toMatch(/No silent charging/);
-    expect(screen).toMatch(/Revalidate and confirm/);
+    expect(screen).toMatch(/No silent order or charge/);
+    expect(screen).toMatch(/Revalidate and continue/);
     expect(screen).toMatch(/router\.push\('\/cart'/);
     expect(service).toMatch(/\/api\/v1\/customer\/recurring-orders/);
     expect(service).not.toMatch(/\/api\/v1\/orders\/subscriptions/);
   });
 
-  it('keeps the server authoritative for ownership, cadence and current-price revalidation', () => {
+  it('keeps the server authoritative for ownership, idempotency, cadence and current-price revalidation', () => {
     const controller = source('../../backend/src/main/kotlin/in/mypetnew/application/web/CustomerRecurringOrderController.kt');
     const backend = source('../../backend/src/main/kotlin/in/mypetnew/recurring/domain/RecurringOrderService.kt');
     const migration = source('../../backend/src/main/resources/db/migration/V20__customer_recurring_orders.sql');
+    const proposalMigration = source('../../backend/src/main/resources/db/migration/V21__recurring_renewal_proposals.sql');
 
     expect(controller).toContain('Authorizer.requireRole(principal, Role.CUSTOMER)');
     expect(controller).toContain('customer(authentication)');
-    expect(backend).toContain('orders.detail(customerId, sourceOrderId)');
-    expect(backend).toContain('persistence.findBySource(customerId, sourceOrderId)');
+    expect(backend).toContain('orderQuery.detail(customerId, sourceOrderId)');
+    expect(backend).toContain('validateIdempotencyKey(idempotencyKey)');
     expect(backend).toContain('ALLOWED_CADENCES = setOf(7, 15, 25, 30, 35)');
-    expect(backend).toContain('listing?.sellingPricePaise ?: line.unitPricePaise');
-    expect(backend).toContain('status = RecurringOrderStatus.AWAITING_CONFIRMATION');
+    expect(backend).toContain('listing?.sellingPricePaise ?: 0L');
+    expect(backend).toContain('listing == null -> "LISTING_UNAVAILABLE"');
+    expect(backend).toContain('status = RenewalProposalStatus.AWAITING_CONFIRMATION');
     expect(migration).toContain('UNIQUE (customer_id, source_order_id)');
+    expect(proposalMigration).toContain('UNIQUE (subscription_id, due_cycle_at)');
+    expect(proposalMigration).toContain('recurring_order_command');
   });
 
   it('preserves D-019 explicit confirmation and no automatic charging', () => {

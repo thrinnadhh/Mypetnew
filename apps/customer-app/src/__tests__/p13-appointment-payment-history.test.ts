@@ -18,16 +18,19 @@ describe('P13 appointment payment and history contract', () => {
     expect(payment).toContain('MyPet is loading the server-stored appointment, price and payment method.');
   });
 
-  it('treats Cashfree callbacks as signals and verifies canonical backend payment state', () => {
+  it('treats Cashfree callbacks as signals and verifies canonical backend payment and appointment state', () => {
     const payment = source('src/app/appointments/payment.tsx');
     const service = source('src/services/customer-payments.ts');
 
     expect(payment).toContain('waitForPaymentOutcome(payment.paymentId, 30, 2_000, action.userId)');
     expect(payment).toContain("verified.referenceType !== 'APPOINTMENT'");
     expect(payment).toContain('verified.referenceId !== action.appointmentId');
+    expect(payment).toContain('const canonical = await fetchAppointmentDetails(action.appointmentId, action.accessToken)');
+    expect(payment).toContain('Payment captured · refund pending');
     expect(service).toContain('The Cashfree native callback is never payment truth');
     expect(service).toContain('fetchPaymentStatus(paymentId)');
     expect(service).toContain("latest.status === 'CAPTURED'");
+    expect(service).toContain('Payment initiation returned a different appointment reference.');
   });
 
   it('recovers an existing appointment payment only for the current account', () => {

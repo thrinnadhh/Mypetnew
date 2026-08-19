@@ -2,6 +2,7 @@ import {
   backOrReplace,
   formatIndiaDateTime,
   isSafeHttpsUrl,
+  isTrustedBearerUploadUrl,
   safeTelephoneUrl,
   singleRouteParam,
 } from '@/utils/customer-navigation-safety';
@@ -44,6 +45,16 @@ describe('customer navigation safety', () => {
     expect(isSafeHttpsUrl('javascript:alert(1)')).toBe(false);
     expect(isSafeHttpsUrl('file:///private/report.pdf')).toBe(false);
     expect(isSafeHttpsUrl('https://user:pass@example.com/report.pdf')).toBe(false);
+  });
+
+  it('permits bearer uploads only to the API origin or its exact first-party uploads sibling', () => {
+    const api = 'https://api.mypet.test';
+    expect(isTrustedBearerUploadUrl('https://api.mypet.test/uploads/1', api)).toBe(true);
+    expect(isTrustedBearerUploadUrl('https://uploads.mypet.test/medical', api)).toBe(true);
+    expect(isTrustedBearerUploadUrl('https://evil.mypet.test/medical', api)).toBe(false);
+    expect(isTrustedBearerUploadUrl('https://uploads.mypet.test.evil.example/medical', api)).toBe(false);
+    expect(isTrustedBearerUploadUrl('http://uploads.mypet.test/medical', api)).toBe(false);
+    expect(isTrustedBearerUploadUrl('https://user:pass@uploads.mypet.test/medical', api)).toBe(false);
   });
 
   it('normalizes telephone destinations and rejects injected schemes', () => {

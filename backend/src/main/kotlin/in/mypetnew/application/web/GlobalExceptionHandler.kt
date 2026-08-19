@@ -37,6 +37,7 @@ class GlobalExceptionHandler {
             "ORDER_TRANSITION_INVALID",
             "INSUFFICIENT_STOCK",
             "APPOINTMENT_SLOT_UNAVAILABLE",
+            "APPOINTMENT_PIN_NOT_SERVICEABLE",
             "SERVICE_SLOT_CONFLICT",
             "APPOINTMENT_HOLD_EXPIRED",
             "APPOINTMENT_STATE_INVALID" -> HttpStatus.CONFLICT

@@ -3,6 +3,13 @@ import { appConfig } from '../utils/app-config';
 
 export { ApiError } from '../contracts/api-error';
 
+export class StaleAuthResponseError extends Error {
+  constructor() {
+    super('Request superseded by an account or session change');
+    this.name = 'StaleAuthResponseError';
+  }
+}
+
 export interface RequestOptions {
   method?: string;
   body?: unknown;
@@ -86,6 +93,7 @@ class ApiClient {
 
   public async request<T = any>(path: string, options: RequestOptions = {}): Promise<T> {
     const { method = 'GET', body, headers: customHeaders, _isRetry = false } = options;
+    const requestAuthEpoch = this.authEpoch;
     const baseUrl = this.getBaseUrl();
     const url = path.startsWith('http://') || path.startsWith('https://')
       ? path
@@ -101,6 +109,13 @@ class ApiClient {
     }
 
     const response = await fetch(url, config);
+
+    // A response belongs to the auth generation that issued it. A logout or a
+    // newly established account may happen while fetch is in flight; in that
+    // case neither successful data nor an error may be consumed by the newer UI.
+    if (this.authEpoch !== requestAuthEpoch) {
+      throw new StaleAuthResponseError();
+    }
 
     if (!response.ok) {
       const error = await apiErrorFromResponse(response);
@@ -158,6 +173,9 @@ class ApiClient {
     if (response.status === 204) return {} as T;
 
     const responseBody = await response.text();
+    if (this.authEpoch !== requestAuthEpoch) {
+      throw new StaleAuthResponseError();
+    }
     if (!responseBody) return {} as T;
 
     try {

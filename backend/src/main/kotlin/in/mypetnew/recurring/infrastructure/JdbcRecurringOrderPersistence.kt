@@ -39,40 +39,19 @@ class JdbcRecurringOrderPersistence(
     ): RecurringOrderSubscription {
         try {
             return tx {
-                command(subscription.customerId, idempotencyKey)?.let { existing ->
-                    verifyCommand(existing, requestFingerprint, "CREATE")
-                    return@tx get(subscription.customerId, existing.subscriptionId) ?: unavailable()
+                command(subscription.customerId, idempotencyKey)?.let { replay ->
+                    verifyCommand(replay, requestFingerprint, "CREATE")
+                    return@tx get(subscription.customerId, replay.subscriptionId) ?: unavailable()
                 }
-                jdbc.sql(
-                    """
-                    INSERT INTO mypet.recurring_order_subscription (
-                        id, customer_id, provider_id, source_order_id, delivery_address_id,
-                        fulfilment_mode, cadence_days, quantity_multiplier, status, next_order_at,
-                        last_reminded_at, time_zone, version, created_at, updated_at
-                    ) VALUES (
-                        :id, :customerId, :providerId, :sourceOrderId, :deliveryAddressId,
-                        :fulfilmentMode, :cadenceDays, :quantityMultiplier, :status, :nextOrderAt,
-                        :lastRemindedAt, :timeZone, :version, :createdAt, :updatedAt
-                    )
-                    """.trimIndent(),
+                insertSubscription(subscription)
+                insertCommand(
+                    subscription.customerId,
+                    idempotencyKey,
+                    requestFingerprint,
+                    "CREATE",
+                    subscription.id,
+                    null,
                 )
-                    .param("id", subscription.id)
-                    .param("customerId", subscription.customerId)
-                    .param("providerId", subscription.providerId)
-                    .param("sourceOrderId", subscription.sourceOrderId)
-                    .param("deliveryAddressId", subscription.deliveryAddressId)
-                    .param("fulfilmentMode", subscription.fulfilmentMode)
-                    .param("cadenceDays", subscription.cadenceDays)
-                    .param("quantityMultiplier", subscription.quantityMultiplier)
-                    .param("status", subscription.status.name)
-                    .param("nextOrderAt", subscription.nextOrderAt)
-                    .param("lastRemindedAt", subscription.lastRemindedAt)
-                    .param("timeZone", subscription.timeZone)
-                    .param("version", subscription.version)
-                    .param("createdAt", subscription.createdAt)
-                    .param("updatedAt", subscription.updatedAt)
-                    .update()
-                insertCommand(subscription.customerId, idempotencyKey, requestFingerprint, "CREATE", subscription.id, null)
                 insertHistory(
                     subscription.id,
                     null,
@@ -88,12 +67,12 @@ class JdbcRecurringOrderPersistence(
                 subscription
             }
         } catch (_: DuplicateKeyException) {
-            command(subscription.customerId, idempotencyKey)?.let { existing ->
-                verifyCommand(existing, requestFingerprint, "CREATE")
-                return get(subscription.customerId, existing.subscriptionId) ?: unavailable()
+            command(subscription.customerId, idempotencyKey)?.let { replay ->
+                verifyCommand(replay, requestFingerprint, "CREATE")
+                return get(subscription.customerId, replay.subscriptionId) ?: unavailable()
             }
             if (findBySource(subscription.customerId, subscription.sourceOrderId) != null) alreadyExists()
-            throw DomainException("RECURRING_CONFLICT", "Recurring schedule creation raced with another request; retry")
+            conflict()
         }
     }
 
@@ -151,59 +130,36 @@ class JdbcRecurringOrderPersistence(
     ): RecurringOrderSubscription {
         try {
             return tx {
-                command(customerId, idempotencyKey)?.let { existing ->
-                    verifyCommand(existing, requestFingerprint, eventType)
-                    return@tx get(customerId, existing.subscriptionId) ?: unavailable()
+                command(customerId, idempotencyKey)?.let { replay ->
+                    verifyCommand(replay, requestFingerprint, eventType)
+                    return@tx get(customerId, replay.subscriptionId) ?: unavailable()
                 }
                 val current = lockSubscription(customerId, subscriptionId) ?: unavailable()
-                if (outstandingProposalAction == OutstandingProposalAction.SKIP) {
-                    skipOutstandingProposals(current, actorId, idempotencyKey, traceId)
-                }
                 val requested = updater(current)
+                if (outstandingProposalAction == OutstandingProposalAction.SKIP) {
+                    skipOutstandingProposals(current, requested.updatedAt, actorId, idempotencyKey, traceId)
+                }
                 val updated = requested.copy(version = current.version + 1)
-                val changed = jdbc.sql(
-                    """
-                    UPDATE mypet.recurring_order_subscription
-                    SET delivery_address_id = :deliveryAddressId,
-                        fulfilment_mode = :fulfilmentMode,
-                        cadence_days = :cadenceDays,
-                        quantity_multiplier = :quantityMultiplier,
-                        status = :status,
-                        next_order_at = :nextOrderAt,
-                        last_reminded_at = :lastRemindedAt,
-                        time_zone = :timeZone,
-                        version = :nextVersion,
-                        updated_at = :updatedAt
-                    WHERE id = :id AND customer_id = :customerId AND version = :expectedVersion
-                    """.trimIndent(),
-                )
-                    .param("deliveryAddressId", updated.deliveryAddressId)
-                    .param("fulfilmentMode", updated.fulfilmentMode)
-                    .param("cadenceDays", updated.cadenceDays)
-                    .param("quantityMultiplier", updated.quantityMultiplier)
-                    .param("status", updated.status.name)
-                    .param("nextOrderAt", updated.nextOrderAt)
-                    .param("lastRemindedAt", updated.lastRemindedAt)
-                    .param("timeZone", updated.timeZone)
-                    .param("nextVersion", updated.version)
-                    .param("updatedAt", updated.updatedAt)
-                    .param("id", updated.id)
-                    .param("customerId", customerId)
-                    .param("expectedVersion", current.version)
-                    .update()
-                if (changed != 1) conflict()
+                updateSubscription(current, updated)
                 insertCommand(customerId, idempotencyKey, requestFingerprint, eventType, subscriptionId, null)
                 insertHistory(
-                    subscriptionId, null, eventType, actorId, "CUSTOMER", "API",
-                    idempotencyKey, traceId, null, updated.updatedAt,
+                    subscriptionId,
+                    null,
+                    eventType,
+                    actorId,
+                    "CUSTOMER",
+                    "API",
+                    idempotencyKey,
+                    traceId,
+                    null,
+                    updated.updatedAt,
                 )
                 updated
             }
         } catch (_: DuplicateKeyException) {
-            val existing = command(customerId, idempotencyKey)
-                ?: throw DomainException("RECURRING_CONFLICT", "Recurring command raced with another request; retry")
-            verifyCommand(existing, requestFingerprint, eventType)
-            return get(customerId, existing.subscriptionId) ?: unavailable()
+            val replay = command(customerId, idempotencyKey) ?: conflict()
+            verifyCommand(replay, requestFingerprint, eventType)
+            return get(customerId, replay.subscriptionId) ?: unavailable()
         }
     }
 
@@ -215,7 +171,8 @@ class JdbcRecurringOrderPersistence(
             WHERE s.status = 'ACTIVE'
               AND s.next_order_at <= :now
               AND NOT EXISTS (
-                  SELECT 1 FROM mypet.recurring_order_proposal p
+                  SELECT 1
+                  FROM mypet.recurring_order_proposal p
                   WHERE p.subscription_id = s.id AND p.due_cycle_at = s.next_order_at
               )
             ORDER BY s.next_order_at, s.id
@@ -224,14 +181,17 @@ class JdbcRecurringOrderPersistence(
         )
             .param("now", now)
             .param("limit", limit)
-            .query(UUID::class.java)
+            .query { result, _ -> checkNotNull(result.getObject("id", UUID::class.java)) }
             .list()
 
         return candidateIds.mapNotNull { subscriptionId ->
-            tx {
-                val subscription = lockSubscriptionById(subscriptionId) ?: return@tx null
-                if (subscription.status != RecurringOrderStatus.ACTIVE || subscription.nextOrderAt.isAfter(now)) return@tx null
-                existingProposal(subscription.id, subscription.nextOrderAt)?.let { return@tx null }
+            txNullable {
+                val subscription = lockSubscriptionById(subscriptionId) ?: return@txNullable null
+                if (subscription.status != RecurringOrderStatus.ACTIVE || subscription.nextOrderAt.isAfter(now)) {
+                    return@txNullable null
+                }
+                if (existingProposal(subscription.id, subscription.nextOrderAt) != null) return@txNullable null
+
                 val proposal = RenewalProposal(
                     id = UUID.randomUUID(),
                     subscriptionId = subscription.id,
@@ -256,7 +216,7 @@ class JdbcRecurringOrderPersistence(
                 try {
                     insertProposal(proposal)
                 } catch (_: DuplicateKeyException) {
-                    return@tx null
+                    return@txNullable null
                 }
                 jdbc.sql(
                     """
@@ -264,7 +224,10 @@ class JdbcRecurringOrderPersistence(
                     SET last_reminded_at = :now, version = version + 1, updated_at = :now
                     WHERE id = :id
                     """.trimIndent(),
-                ).param("now", now).param("id", subscription.id).update()
+                )
+                    .param("now", now)
+                    .param("id", subscription.id)
+                    .update()
                 insertHistory(
                     subscription.id,
                     proposal.id,
@@ -285,48 +248,66 @@ class JdbcRecurringOrderPersistence(
     override fun expireProposals(now: Instant, limit: Int): Int {
         val candidateIds = jdbc.sql(
             """
-            SELECT id FROM mypet.recurring_order_proposal
+            SELECT id
+            FROM mypet.recurring_order_proposal
             WHERE status IN ('AWAITING_CONFIRMATION', 'REVALIDATION_FAILED', 'CONFIRMED')
               AND expires_at <= :now
             ORDER BY expires_at, id
             LIMIT :limit
             """.trimIndent(),
-        ).param("now", now).param("limit", limit).query(UUID::class.java).list()
+        )
+            .param("now", now)
+            .param("limit", limit)
+            .query { result, _ -> checkNotNull(result.getObject("id", UUID::class.java)) }
+            .list()
 
         var expired = 0
         candidateIds.forEach { proposalId ->
-            val didExpire = tx {
-                val owner = proposalOwner(proposalId) ?: return@tx false
-                val subscription = lockSubscription(owner.first, owner.second) ?: return@tx false
-                val proposal = lockProposal(owner.first, proposalId) ?: return@tx false
-                if (
-                    proposal.status !in setOf(
-                        RenewalProposalStatus.AWAITING_CONFIRMATION,
-                        RenewalProposalStatus.REVALIDATION_FAILED,
-                        RenewalProposalStatus.CONFIRMED,
-                    ) || proposal.expiresAt.isAfter(now)
-                ) return@tx false
-                updateProposal(
-                    proposal,
-                    proposal.copy(
-                        status = RenewalProposalStatus.EXPIRED,
-                        failureReason = proposal.failureReason ?: "PROPOSAL_EXPIRED",
-                        updatedAt = now,
-                    ),
-                )
-                if (subscription.status == RecurringOrderStatus.ACTIVE && subscription.nextOrderAt == proposal.dueCycleAt) {
-                    advanceSubscription(subscription, proposal.dueCycleAt.plus(Duration.ofDays(proposal.cadenceDays.toLong())), now)
-                }
-                insertHistory(
-                    subscription.id, proposal.id, "PROPOSAL_EXPIRED",
-                    InventoryService.SYSTEM_ACTOR_ID, "SYSTEM", "SCHEDULER",
-                    "expire:${proposal.id}", "recurring-scheduler", proposal.failureReason, now,
-                )
-                true
-            }
-            if (didExpire) expired++
+            if (tx { expireOne(proposalId, now) }) expired++
         }
         return expired
+    }
+
+    private fun expireOne(proposalId: UUID, now: Instant): Boolean {
+        val owner = proposalOwner(proposalId) ?: return false
+        val subscription = lockSubscription(owner.first, owner.second) ?: return false
+        val proposal = lockProposal(owner.first, proposalId) ?: return false
+        if (
+            proposal.status !in setOf(
+                RenewalProposalStatus.AWAITING_CONFIRMATION,
+                RenewalProposalStatus.REVALIDATION_FAILED,
+                RenewalProposalStatus.CONFIRMED,
+            ) || proposal.expiresAt.isAfter(now)
+        ) return false
+
+        val expired = updateProposal(
+            proposal,
+            proposal.copy(
+                status = RenewalProposalStatus.EXPIRED,
+                failureReason = proposal.failureReason ?: "PROPOSAL_EXPIRED",
+                updatedAt = now,
+            ),
+        )
+        if (subscription.status == RecurringOrderStatus.ACTIVE && subscription.nextOrderAt == proposal.dueCycleAt) {
+            advanceSubscription(
+                subscription,
+                proposal.dueCycleAt.plus(Duration.ofDays(proposal.cadenceDays.toLong())),
+                now,
+            )
+        }
+        insertHistory(
+            subscription.id,
+            proposal.id,
+            "PROPOSAL_EXPIRED",
+            InventoryService.SYSTEM_ACTOR_ID,
+            "SYSTEM",
+            "SCHEDULER",
+            "expire:${proposal.id}",
+            "recurring-scheduler",
+            expired.failureReason,
+            now,
+        )
+        return true
     }
 
     override fun listProposals(customerId: UUID, page: Int, pageSize: Int): RenewalProposalPage {
@@ -347,7 +328,9 @@ class JdbcRecurringOrderPersistence(
     }
 
     override fun getProposal(customerId: UUID, proposalId: UUID): RenewalProposal? =
-        jdbc.sql("SELECT * FROM mypet.recurring_order_proposal WHERE id = :id AND customer_id = :customerId")
+        jdbc.sql(
+            "SELECT * FROM mypet.recurring_order_proposal WHERE id = :id AND customer_id = :customerId",
+        )
             .param("id", proposalId)
             .param("customerId", customerId)
             .query(::mapProposal)
@@ -383,16 +366,31 @@ class JdbcRecurringOrderPersistence(
             return tx {
                 val subscription = lockSubscription(customerId, subscriptionId) ?: unavailable()
                 val current = lockProposal(customerId, subscriptionId, proposalId) ?: unavailable()
-                command(customerId, idempotencyKey)?.let { existing ->
-                    verifyCommand(existing, requestFingerprint, eventType)
+                command(customerId, idempotencyKey)?.let { replay ->
+                    verifyCommand(replay, requestFingerprint, eventType)
                     return@tx mutation(subscription, current, true).copy(proposal = current)
                 }
                 val requested = mutation(subscription, current, false)
                 val stored = updateProposal(current, requested.proposal)
-                insertCommand(customerId, idempotencyKey, requestFingerprint, eventType, subscriptionId, proposalId)
+                insertCommand(
+                    customerId,
+                    idempotencyKey,
+                    requestFingerprint,
+                    eventType,
+                    subscriptionId,
+                    proposalId,
+                )
                 insertHistory(
-                    subscriptionId, proposalId, eventType, actorId, "CUSTOMER", "API",
-                    idempotencyKey, traceId, stored.failureReason, stored.updatedAt,
+                    subscriptionId,
+                    proposalId,
+                    eventType,
+                    actorId,
+                    "CUSTOMER",
+                    "API",
+                    idempotencyKey,
+                    traceId,
+                    stored.failureReason,
+                    stored.updatedAt,
                 )
                 requested.copy(proposal = stored)
             }
@@ -400,8 +398,8 @@ class JdbcRecurringOrderPersistence(
             return tx {
                 val subscription = lockSubscription(customerId, subscriptionId) ?: unavailable()
                 val current = lockProposal(customerId, subscriptionId, proposalId) ?: unavailable()
-                val existing = command(customerId, idempotencyKey) ?: conflict()
-                verifyCommand(existing, requestFingerprint, eventType)
+                val replay = command(customerId, idempotencyKey) ?: conflict()
+                verifyCommand(replay, requestFingerprint, eventType)
                 mutation(subscription, current, true).copy(proposal = current)
             }
         }
@@ -420,10 +418,13 @@ class JdbcRecurringOrderPersistence(
         val subscription = lockSubscription(customerId, owner.second) ?: unavailable()
         val proposal = lockProposal(customerId, proposalId) ?: unavailable()
         if (proposal.status == RenewalProposalStatus.ORDER_CREATED) {
-            if (proposal.orderId != orderId || proposal.checkoutIdempotencyKey != checkoutIdempotencyKey) idempotencyMismatch()
+            if (proposal.orderId != orderId || proposal.checkoutIdempotencyKey != checkoutIdempotencyKey) {
+                idempotencyMismatch()
+            }
             return@tx proposal
         }
         if (proposal.status != RenewalProposalStatus.CONFIRMED) invalidProposalState()
+
         val completed = updateProposal(
             proposal,
             proposal.copy(
@@ -435,11 +436,23 @@ class JdbcRecurringOrderPersistence(
             ),
         )
         if (subscription.status == RecurringOrderStatus.ACTIVE && subscription.nextOrderAt == proposal.dueCycleAt) {
-            advanceSubscription(subscription, proposal.dueCycleAt.plus(Duration.ofDays(proposal.cadenceDays.toLong())), now)
+            advanceSubscription(
+                subscription,
+                proposal.dueCycleAt.plus(Duration.ofDays(proposal.cadenceDays.toLong())),
+                now,
+            )
         }
         insertHistory(
-            subscription.id, proposal.id, "ORDER_CREATED", actorId, "CUSTOMER", "CHECKOUT",
-            checkoutIdempotencyKey, traceId, orderId.toString(), now,
+            subscription.id,
+            proposal.id,
+            "ORDER_CREATED",
+            actorId,
+            "CUSTOMER",
+            "CHECKOUT",
+            checkoutIdempotencyKey,
+            traceId,
+            orderId.toString(),
+            now,
         )
         completed
     }
@@ -456,11 +469,11 @@ class JdbcRecurringOrderPersistence(
             .param("subscriptionId", subscriptionId)
             .query { result, _ ->
                 RecurringHistoryEntry(
-                    id = result.getObject("id", UUID::class.java),
-                    subscriptionId = result.getObject("subscription_id", UUID::class.java),
+                    id = checkNotNull(result.getObject("id", UUID::class.java)),
+                    subscriptionId = checkNotNull(result.getObject("subscription_id", UUID::class.java)),
                     proposalId = result.getObject("proposal_id", UUID::class.java),
                     eventType = result.getString("event_type"),
-                    actorId = result.getObject("actor_id", UUID::class.java),
+                    actorId = checkNotNull(result.getObject("actor_id", UUID::class.java)),
                     actorRole = result.getString("actor_role"),
                     source = result.getString("source"),
                     idempotencyKey = result.getString("idempotency_key"),
@@ -472,6 +485,72 @@ class JdbcRecurringOrderPersistence(
             .list()
     }
 
+    private fun insertSubscription(subscription: RecurringOrderSubscription) {
+        jdbc.sql(
+            """
+            INSERT INTO mypet.recurring_order_subscription (
+                id, customer_id, provider_id, source_order_id, delivery_address_id,
+                fulfilment_mode, cadence_days, quantity_multiplier, status, next_order_at,
+                last_reminded_at, time_zone, version, created_at, updated_at
+            ) VALUES (
+                :id, :customerId, :providerId, :sourceOrderId, :deliveryAddressId,
+                :fulfilmentMode, :cadenceDays, :quantityMultiplier, :status, :nextOrderAt,
+                :lastRemindedAt, :timeZone, :version, :createdAt, :updatedAt
+            )
+            """.trimIndent(),
+        )
+            .param("id", subscription.id)
+            .param("customerId", subscription.customerId)
+            .param("providerId", subscription.providerId)
+            .param("sourceOrderId", subscription.sourceOrderId)
+            .param("deliveryAddressId", subscription.deliveryAddressId)
+            .param("fulfilmentMode", subscription.fulfilmentMode)
+            .param("cadenceDays", subscription.cadenceDays)
+            .param("quantityMultiplier", subscription.quantityMultiplier)
+            .param("status", subscription.status.name)
+            .param("nextOrderAt", subscription.nextOrderAt)
+            .param("lastRemindedAt", subscription.lastRemindedAt)
+            .param("timeZone", subscription.timeZone)
+            .param("version", subscription.version)
+            .param("createdAt", subscription.createdAt)
+            .param("updatedAt", subscription.updatedAt)
+            .update()
+    }
+
+    private fun updateSubscription(current: RecurringOrderSubscription, updated: RecurringOrderSubscription) {
+        val changed = jdbc.sql(
+            """
+            UPDATE mypet.recurring_order_subscription
+            SET delivery_address_id = :deliveryAddressId,
+                fulfilment_mode = :fulfilmentMode,
+                cadence_days = :cadenceDays,
+                quantity_multiplier = :quantityMultiplier,
+                status = :status,
+                next_order_at = :nextOrderAt,
+                last_reminded_at = :lastRemindedAt,
+                time_zone = :timeZone,
+                version = :nextVersion,
+                updated_at = :updatedAt
+            WHERE id = :id AND customer_id = :customerId AND version = :expectedVersion
+            """.trimIndent(),
+        )
+            .param("deliveryAddressId", updated.deliveryAddressId)
+            .param("fulfilmentMode", updated.fulfilmentMode)
+            .param("cadenceDays", updated.cadenceDays)
+            .param("quantityMultiplier", updated.quantityMultiplier)
+            .param("status", updated.status.name)
+            .param("nextOrderAt", updated.nextOrderAt)
+            .param("lastRemindedAt", updated.lastRemindedAt)
+            .param("timeZone", updated.timeZone)
+            .param("nextVersion", updated.version)
+            .param("updatedAt", updated.updatedAt)
+            .param("id", updated.id)
+            .param("customerId", updated.customerId)
+            .param("expectedVersion", current.version)
+            .update()
+        if (changed != 1) conflict()
+    }
+
     private fun lockSubscription(customerId: UUID, subscriptionId: UUID): RecurringOrderSubscription? =
         jdbc.sql(
             """
@@ -479,15 +558,29 @@ class JdbcRecurringOrderPersistence(
             WHERE id = :id AND customer_id = :customerId
             FOR UPDATE
             """.trimIndent(),
-        ).param("id", subscriptionId).param("customerId", customerId).query(::mapSubscription).optional().orElse(null)
+        )
+            .param("id", subscriptionId)
+            .param("customerId", customerId)
+            .query(::mapSubscription)
+            .optional()
+            .orElse(null)
 
     private fun lockSubscriptionById(subscriptionId: UUID): RecurringOrderSubscription? =
         jdbc.sql("SELECT * FROM mypet.recurring_order_subscription WHERE id = :id FOR UPDATE")
-            .param("id", subscriptionId).query(::mapSubscription).optional().orElse(null)
+            .param("id", subscriptionId)
+            .query(::mapSubscription)
+            .optional()
+            .orElse(null)
 
     private fun lockProposal(customerId: UUID, proposalId: UUID): RenewalProposal? =
-        jdbc.sql("SELECT * FROM mypet.recurring_order_proposal WHERE id = :id AND customer_id = :customerId FOR UPDATE")
-            .param("id", proposalId).param("customerId", customerId).query(::mapProposal).optional().orElse(null)
+        jdbc.sql(
+            "SELECT * FROM mypet.recurring_order_proposal WHERE id = :id AND customer_id = :customerId FOR UPDATE",
+        )
+            .param("id", proposalId)
+            .param("customerId", customerId)
+            .query(::mapProposal)
+            .optional()
+            .orElse(null)
 
     private fun lockProposal(customerId: UUID, subscriptionId: UUID, proposalId: UUID): RenewalProposal? =
         jdbc.sql(
@@ -496,8 +589,13 @@ class JdbcRecurringOrderPersistence(
             WHERE id = :id AND subscription_id = :subscriptionId AND customer_id = :customerId
             FOR UPDATE
             """.trimIndent(),
-        ).param("id", proposalId).param("subscriptionId", subscriptionId).param("customerId", customerId)
-            .query(::mapProposal).optional().orElse(null)
+        )
+            .param("id", proposalId)
+            .param("subscriptionId", subscriptionId)
+            .param("customerId", customerId)
+            .query(::mapProposal)
+            .optional()
+            .orElse(null)
 
     private fun existingProposal(subscriptionId: UUID, dueCycleAt: Instant): RenewalProposal? =
         jdbc.sql(
@@ -505,20 +603,26 @@ class JdbcRecurringOrderPersistence(
             SELECT * FROM mypet.recurring_order_proposal
             WHERE subscription_id = :subscriptionId AND due_cycle_at = :dueCycleAt
             """.trimIndent(),
-        ).param("subscriptionId", subscriptionId).param("dueCycleAt", dueCycleAt)
-            .query(::mapProposal).optional().orElse(null)
+        )
+            .param("subscriptionId", subscriptionId)
+            .param("dueCycleAt", dueCycleAt)
+            .query(::mapProposal)
+            .optional()
+            .orElse(null)
 
     private fun proposalOwner(proposalId: UUID): Pair<UUID, UUID>? =
         jdbc.sql("SELECT customer_id, subscription_id FROM mypet.recurring_order_proposal WHERE id = :id")
             .param("id", proposalId)
             .query { result, _ ->
-                result.getObject("customer_id", UUID::class.java) to result.getObject("subscription_id", UUID::class.java)
+                checkNotNull(result.getObject("customer_id", UUID::class.java)) to
+                    checkNotNull(result.getObject("subscription_id", UUID::class.java))
             }
             .optional()
             .orElse(null)
 
     private fun skipOutstandingProposals(
         subscription: RecurringOrderSubscription,
+        now: Instant,
         actorId: UUID,
         idempotencyKey: String,
         traceId: String,
@@ -531,17 +635,71 @@ class JdbcRecurringOrderPersistence(
             ORDER BY due_cycle_at, id
             FOR UPDATE
             """.trimIndent(),
-        ).param("subscriptionId", subscription.id).query(::mapProposal).list()
+        )
+            .param("subscriptionId", subscription.id)
+            .query(::mapProposal)
+            .list()
         open.forEach { proposal ->
             val skipped = updateProposal(
                 proposal,
-                proposal.copy(status = RenewalProposalStatus.SKIPPED, failureReason = "SUBSCRIPTION_MUTATED", updatedAt = subscription.updatedAt),
+                proposal.copy(
+                    status = RenewalProposalStatus.SKIPPED,
+                    failureReason = "SUBSCRIPTION_MUTATED",
+                    updatedAt = now,
+                ),
             )
             insertHistory(
-                subscription.id, proposal.id, "PROPOSAL_SKIPPED", actorId, "CUSTOMER", "API",
-                idempotencyKey, traceId, skipped.failureReason, skipped.updatedAt,
+                subscription.id,
+                proposal.id,
+                "PROPOSAL_SKIPPED",
+                actorId,
+                "CUSTOMER",
+                "API",
+                idempotencyKey,
+                traceId,
+                skipped.failureReason,
+                now,
             )
         }
+    }
+
+    private fun insertProposal(proposal: RenewalProposal) {
+        jdbc.sql(
+            """
+            INSERT INTO mypet.recurring_order_proposal (
+                id, subscription_id, customer_id, provider_id, source_order_id, delivery_address_id,
+                fulfilment_mode, cadence_days, quantity_multiplier, due_cycle_at, status, expires_at,
+                revalidated_at, confirmed_at, order_id, checkout_idempotency_key, failure_reason,
+                version, created_at, updated_at
+            ) VALUES (
+                :id, :subscriptionId, :customerId, :providerId, :sourceOrderId, :deliveryAddressId,
+                :fulfilmentMode, :cadenceDays, :quantityMultiplier, :dueCycleAt, :status, :expiresAt,
+                :revalidatedAt, :confirmedAt, :orderId, :checkoutIdempotencyKey, :failureReason,
+                :version, :createdAt, :updatedAt
+            )
+            """.trimIndent(),
+        )
+            .param("id", proposal.id)
+            .param("subscriptionId", proposal.subscriptionId)
+            .param("customerId", proposal.customerId)
+            .param("providerId", proposal.providerId)
+            .param("sourceOrderId", proposal.sourceOrderId)
+            .param("deliveryAddressId", proposal.deliveryAddressId)
+            .param("fulfilmentMode", proposal.fulfilmentMode)
+            .param("cadenceDays", proposal.cadenceDays)
+            .param("quantityMultiplier", proposal.quantityMultiplier)
+            .param("dueCycleAt", proposal.dueCycleAt)
+            .param("status", proposal.status.name)
+            .param("expiresAt", proposal.expiresAt)
+            .param("revalidatedAt", proposal.revalidatedAt)
+            .param("confirmedAt", proposal.confirmedAt)
+            .param("orderId", proposal.orderId)
+            .param("checkoutIdempotencyKey", proposal.checkoutIdempotencyKey)
+            .param("failureReason", proposal.failureReason)
+            .param("version", proposal.version)
+            .param("createdAt", proposal.createdAt)
+            .param("updatedAt", proposal.updatedAt)
+            .update()
     }
 
     private fun updateProposal(current: RenewalProposal, requested: RenewalProposal): RenewalProposal {
@@ -593,45 +751,6 @@ class JdbcRecurringOrderPersistence(
         if (changed != 1) conflict()
     }
 
-    private fun insertProposal(proposal: RenewalProposal) {
-        jdbc.sql(
-            """
-            INSERT INTO mypet.recurring_order_proposal (
-                id, subscription_id, customer_id, provider_id, source_order_id, delivery_address_id,
-                fulfilment_mode, cadence_days, quantity_multiplier, due_cycle_at, status, expires_at,
-                revalidated_at, confirmed_at, order_id, checkout_idempotency_key, failure_reason,
-                version, created_at, updated_at
-            ) VALUES (
-                :id, :subscriptionId, :customerId, :providerId, :sourceOrderId, :deliveryAddressId,
-                :fulfilmentMode, :cadenceDays, :quantityMultiplier, :dueCycleAt, :status, :expiresAt,
-                :revalidatedAt, :confirmedAt, :orderId, :checkoutIdempotencyKey, :failureReason,
-                :version, :createdAt, :updatedAt
-            )
-            """.trimIndent(),
-        )
-            .param("id", proposal.id)
-            .param("subscriptionId", proposal.subscriptionId)
-            .param("customerId", proposal.customerId)
-            .param("providerId", proposal.providerId)
-            .param("sourceOrderId", proposal.sourceOrderId)
-            .param("deliveryAddressId", proposal.deliveryAddressId)
-            .param("fulfilmentMode", proposal.fulfilmentMode)
-            .param("cadenceDays", proposal.cadenceDays)
-            .param("quantityMultiplier", proposal.quantityMultiplier)
-            .param("dueCycleAt", proposal.dueCycleAt)
-            .param("status", proposal.status.name)
-            .param("expiresAt", proposal.expiresAt)
-            .param("revalidatedAt", proposal.revalidatedAt)
-            .param("confirmedAt", proposal.confirmedAt)
-            .param("orderId", proposal.orderId)
-            .param("checkoutIdempotencyKey", proposal.checkoutIdempotencyKey)
-            .param("failureReason", proposal.failureReason)
-            .param("version", proposal.version)
-            .param("createdAt", proposal.createdAt)
-            .param("updatedAt", proposal.updatedAt)
-            .update()
-    }
-
     private fun command(customerId: UUID, key: String): CommandRow? =
         jdbc.sql(
             """
@@ -646,7 +765,7 @@ class JdbcRecurringOrderPersistence(
                 CommandRow(
                     fingerprint = result.getString("request_fingerprint"),
                     type = result.getString("command_type"),
-                    subscriptionId = result.getObject("subscription_id", UUID::class.java),
+                    subscriptionId = checkNotNull(result.getObject("subscription_id", UUID::class.java)),
                     proposalId = result.getObject("proposal_id", UUID::class.java),
                 )
             }
@@ -719,10 +838,10 @@ class JdbcRecurringOrderPersistence(
     }
 
     private fun mapSubscription(result: java.sql.ResultSet, @Suppress("UNUSED_PARAMETER") row: Int) = RecurringOrderSubscription(
-        id = result.getObject("id", UUID::class.java),
-        customerId = result.getObject("customer_id", UUID::class.java),
-        providerId = result.getObject("provider_id", UUID::class.java),
-        sourceOrderId = result.getObject("source_order_id", UUID::class.java),
+        id = checkNotNull(result.getObject("id", UUID::class.java)),
+        customerId = checkNotNull(result.getObject("customer_id", UUID::class.java)),
+        providerId = checkNotNull(result.getObject("provider_id", UUID::class.java)),
+        sourceOrderId = checkNotNull(result.getObject("source_order_id", UUID::class.java)),
         deliveryAddressId = result.getObject("delivery_address_id", UUID::class.java),
         fulfilmentMode = result.getString("fulfilment_mode"),
         cadenceDays = result.getInt("cadence_days"),
@@ -737,11 +856,11 @@ class JdbcRecurringOrderPersistence(
     )
 
     private fun mapProposal(result: java.sql.ResultSet, @Suppress("UNUSED_PARAMETER") row: Int) = RenewalProposal(
-        id = result.getObject("id", UUID::class.java),
-        subscriptionId = result.getObject("subscription_id", UUID::class.java),
-        customerId = result.getObject("customer_id", UUID::class.java),
-        providerId = result.getObject("provider_id", UUID::class.java),
-        sourceOrderId = result.getObject("source_order_id", UUID::class.java),
+        id = checkNotNull(result.getObject("id", UUID::class.java)),
+        subscriptionId = checkNotNull(result.getObject("subscription_id", UUID::class.java)),
+        customerId = checkNotNull(result.getObject("customer_id", UUID::class.java)),
+        providerId = checkNotNull(result.getObject("provider_id", UUID::class.java)),
+        sourceOrderId = checkNotNull(result.getObject("source_order_id", UUID::class.java)),
         deliveryAddressId = result.getObject("delivery_address_id", UUID::class.java),
         fulfilmentMode = result.getString("fulfilment_mode"),
         cadenceDays = result.getInt("cadence_days"),
@@ -762,13 +881,31 @@ class JdbcRecurringOrderPersistence(
     private fun <T> tx(block: () -> T): T = transactions.execute { block() }
         ?: throw IllegalStateException("Recurring-order transaction returned no result")
 
+    private fun <T> txNullable(block: () -> T?): T? = transactions.execute { block() }
+
     private fun dueKey(subscription: RecurringOrderSubscription): String =
         "due:${subscription.id}:${subscription.nextOrderAt.epochSecond}"
 
-    private fun conflict(): Nothing = throw DomainException("RECURRING_CONFLICT", "The recurring schedule changed concurrently; refresh and retry")
-    private fun unavailable(): Nothing = throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
-    private fun alreadyExists(): Nothing = throw DomainException("RECURRING_ALREADY_EXISTS", "A recurring schedule already exists for this source order")
-    private fun invalidProposalState(): Nothing = throw DomainException("PROPOSAL_STATE_INVALID", "The renewal proposal cannot perform that action")
+    private fun conflict(): Nothing = throw DomainException(
+        "RECURRING_CONFLICT",
+        "The recurring schedule changed concurrently; refresh and retry",
+    )
+
+    private fun unavailable(): Nothing = throw DomainException(
+        "RESOURCE_NOT_FOUND",
+        "The requested resource is unavailable",
+    )
+
+    private fun alreadyExists(): Nothing = throw DomainException(
+        "RECURRING_ALREADY_EXISTS",
+        "A recurring schedule already exists for this source order",
+    )
+
+    private fun invalidProposalState(): Nothing = throw DomainException(
+        "PROPOSAL_STATE_INVALID",
+        "The renewal proposal cannot perform that action",
+    )
+
     private fun idempotencyMismatch(): Nothing = throw DomainException(
         "IDEMPOTENCY_FINGERPRINT_MISMATCH",
         "The idempotency key was already used for another request",

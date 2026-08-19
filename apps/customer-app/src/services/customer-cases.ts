@@ -1,5 +1,7 @@
 import { apiErrorFromResponse } from '@/contracts/api-error';
+import { apiClient, StaleAuthResponseError } from '@/services/api-client';
 import { appConfig } from '@/utils/app-config';
+import { isSafeHttpsUrl } from '@/utils/customer-navigation-safety';
 
 export type CustomerCaseType =
   | 'MISSING_ITEM'
@@ -32,7 +34,12 @@ export interface CustomerCase {
   resolvedAt?: string | null;
 }
 
+function assertCurrentAuthEpoch(epoch: number): void {
+  if (apiClient.getAuthEpoch() !== epoch) throw new StaleAuthResponseError();
+}
+
 async function request<T>(path: string, accessToken: string, init: RequestInit = {}): Promise<T> {
+  const epoch = apiClient.getAuthEpoch();
   const response = await fetch(`${appConfig.apiBaseUrl}${path}`, {
     ...init,
     headers: {
@@ -42,8 +49,11 @@ async function request<T>(path: string, accessToken: string, init: RequestInit =
       ...((init.headers as Record<string, string> | undefined) ?? {}),
     },
   });
+  assertCurrentAuthEpoch(epoch);
   if (!response.ok) throw await apiErrorFromResponse(response);
-  return (await response.json()) as T;
+  const body = (await response.json()) as T;
+  assertCurrentAuthEpoch(epoch);
+  return body;
 }
 
 export function fetchCustomerCases(accessToken: string): Promise<CustomerCase[]> {
@@ -72,6 +82,9 @@ export async function uploadCustomerCaseEvidence(
     accessToken,
     { method: 'POST' },
   );
+  if (!isSafeHttpsUrl(reservation.uploadUrl)) {
+    throw new Error('Support evidence upload destination is invalid.');
+  }
   const body = new FormData();
   body.append('uploadToken', reservation.uploadToken);
   body.append('file', {
@@ -79,13 +92,17 @@ export async function uploadCustomerCaseEvidence(
     name: asset.name,
     type: asset.mimeType,
   } as unknown as Blob);
+  const epoch = apiClient.getAuthEpoch();
   const response = await fetch(reservation.uploadUrl, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
     body,
   });
+  assertCurrentAuthEpoch(epoch);
   if (!response.ok) throw await apiErrorFromResponse(response);
-  return (await response.json()) as CustomerCaseEvidence;
+  const evidence = (await response.json()) as CustomerCaseEvidence;
+  assertCurrentAuthEpoch(epoch);
+  return evidence;
 }
 
 export async function getCustomerCaseEvidenceLink(
@@ -98,5 +115,6 @@ export async function getCustomerCaseEvidenceLink(
     accessToken,
     { method: 'POST' },
   );
+  if (!isSafeHttpsUrl(response.url)) throw new Error('Support evidence link is invalid.');
   return response.url;
 }

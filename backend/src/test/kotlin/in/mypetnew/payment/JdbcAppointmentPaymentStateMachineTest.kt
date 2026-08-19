@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.springframework.dao.CannotAcquireLockException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.DataSourceTransactionManager
 import org.springframework.jdbc.datasource.DriverManagerDataSource
@@ -90,7 +91,7 @@ class JdbcAppointmentPaymentStateMachineTest {
     }
 
     @Test
-    fun `independent initiation instances converge on one durable provider identity`() {
+    fun `independent initiation instances converge on one durable provider identity after transient lock retry`() {
         val f = fixture()
         val appointmentId = f.appointment(f.customerA, 31_000)
         val other = JdbcAppointmentOnlinePaymentService(f.jdbc, f.transactions, f.gateway, f.clock)
@@ -98,18 +99,34 @@ class JdbcAppointmentPaymentStateMachineTest {
         val executor = Executors.newFixedThreadPool(2)
 
         try {
-            val results = executor.invokeAll(listOf(
+            val outcomes = executor.invokeAll(listOf(
                 Callable {
                     barrier.await()
-                    f.service.initiate(f.customerA, appointmentId, "CASHFREE", "race-a")
+                    try {
+                        RaceOutcome(f.service.initiate(f.customerA, appointmentId, "CASHFREE", "race-a").id)
+                    } catch (_: CannotAcquireLockException) {
+                        RaceOutcome(null)
+                    }
                 },
                 Callable {
                     barrier.await()
-                    other.initiate(f.customerA, appointmentId, "CASHFREE", "race-b")
+                    try {
+                        RaceOutcome(other.initiate(f.customerA, appointmentId, "CASHFREE", "race-b").id)
+                    } catch (_: CannotAcquireLockException) {
+                        RaceOutcome(null)
+                    }
                 },
             )).map { it.get() }
 
-            assertEquals(1, results.map { it.id }.toSet().size)
+            val resolved = outcomes.mapIndexed { index, outcome ->
+                outcome.paymentId ?: when (index) {
+                    0 -> f.service.initiate(f.customerA, appointmentId, "CASHFREE", "race-a").id
+                    else -> other.initiate(f.customerA, appointmentId, "CASHFREE", "race-b").id
+                }
+            }
+
+            assertTrue(outcomes.any { it.paymentId != null })
+            assertEquals(1, resolved.toSet().size)
             assertEquals(1, f.count("mypet.payment"))
             assertEquals(2, f.count("mypet.payment_initiation_command"))
             assertEquals(1, f.gateway.orders.map { it.providerOrderReference }.toSet().size)
@@ -277,6 +294,8 @@ class JdbcAppointmentPaymentStateMachineTest {
         )
         override fun getRefund(providerOrderReference: String, providerRefundId: String): RefundProviderResult = RefundProviderResult.NotFound
     }
+
+    private data class RaceOutcome(val paymentId: UUID?)
 
     private class MutableClock(var current: Instant) : Clock() {
         override fun getZone(): ZoneId = ZoneOffset.UTC

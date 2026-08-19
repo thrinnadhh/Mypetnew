@@ -14,6 +14,12 @@ interface PageResponse<T> {
   hasNext: boolean;
 }
 
+type RecurringOrderChanges = {
+  cadenceDays?: RecurringCadence;
+  quantityMultiplier?: number;
+  deliveryAddressId?: string;
+};
+
 const PAGE_SIZE = 20;
 const MAX_PAGES = 50;
 
@@ -34,7 +40,8 @@ async function request<T>(path: string, accessToken: string, init: RequestInit =
 async function fetchAllPages<T>(path: string, id: (item: T) => string, accessToken: string): Promise<T[]> {
   const unique = new Map<string, T>();
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const requestPath = page === 0 ? path : `${path}${path.includes('?') ? '&' : '?'}page=${page}&pageSize=${PAGE_SIZE}`;
+    const separator = path.includes('?') ? '&' : '?';
+    const requestPath = `${path}${separator}page=${page}&pageSize=${PAGE_SIZE}`;
     const payload = await request<PageResponse<T> | T[]>(requestPath, accessToken);
 
     // Historical P14 returned a single bounded array. Accept it only as a terminal
@@ -97,13 +104,17 @@ export function updateRecurringOrder(
   subscriptionId: string,
   action: 'PAUSE' | 'RESUME' | 'SKIP' | 'SKIP_NEXT' | 'CANCEL' | 'CHANGE',
   accessToken: string,
-  idempotencyKey = compatibilityCommandKey(action, subscriptionId),
-  changes: { cadenceDays?: RecurringCadence; quantityMultiplier?: number; deliveryAddressId?: string } = {},
+  idempotencyKeyOrChanges: string | RecurringOrderChanges = compatibilityCommandKey(action, subscriptionId),
+  changes: RecurringOrderChanges = {},
 ): Promise<RecurringOrderSubscription> {
+  const idempotencyKey = typeof idempotencyKeyOrChanges === 'string'
+    ? idempotencyKeyOrChanges
+    : compatibilityCommandKey(action, subscriptionId);
+  const requestedChanges = typeof idempotencyKeyOrChanges === 'string' ? changes : idempotencyKeyOrChanges;
   return request(`/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}`, accessToken, {
     method: 'PATCH',
     headers: { 'Idempotency-Key': idempotencyKey },
-    body: JSON.stringify({ action, ...changes }),
+    body: JSON.stringify({ action, ...requestedChanges }),
   });
 }
 

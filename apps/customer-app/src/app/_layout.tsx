@@ -50,7 +50,6 @@ function AppNavigator() {
   const commerceRoute = isCommerceDiscoveryRoute(segments);
   const validServicePincode = /^[1-9][0-9]{5}$/.test(selectedPincode);
   const serviceabilityUnavailable = commerceRoute && (serviceRegionError || !validServicePincode);
-  const accountNavigationKey = user?.id ?? 'guest';
 
   return (
     <ThemeProvider value={scheme === 'dark' ? DarkTheme : DefaultTheme}>
@@ -74,7 +73,7 @@ function AppNavigator() {
           />
         </View>
       ) : (
-        <Stack key={accountNavigationKey} screenOptions={{ headerShown: false }}>
+        <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="login" options={{ presentation: 'modal' }} />
         </Stack>

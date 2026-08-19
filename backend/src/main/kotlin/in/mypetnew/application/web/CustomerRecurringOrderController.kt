@@ -1,8 +1,10 @@
 package `in`.mypetnew.application.web
 
 import `in`.mypetnew.catalog.domain.InventoryService
+import `in`.mypetnew.commerce.domain.OrderService
 import `in`.mypetnew.common.auth.Authorizer
 import `in`.mypetnew.common.auth.Role
+import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.recurring.domain.RecurringOrderConfirmation
 import `in`.mypetnew.recurring.domain.RecurringOrderService
 import `in`.mypetnew.recurring.domain.RecurringOrderStatus
@@ -37,6 +39,8 @@ data class UpdateRecurringOrderRequest(
     val quantityMultiplier: Int? = null,
     val deliveryAddressId: UUID? = null,
 )
+
+data class CompleteRecurringProposalRequest(val orderId: UUID)
 
 data class RecurringOrderResponse(
     val subscriptionId: UUID,
@@ -105,6 +109,7 @@ data class RecurringOrderConfirmationResponse(
 @RequestMapping("/api/v1/customer/recurring-orders")
 class CustomerRecurringOrderController(
     private val recurring: RecurringOrderService,
+    private val orders: OrderService,
 ) {
     @GetMapping
     fun list(
@@ -188,6 +193,31 @@ class CustomerRecurringOrderController(
             currentTraceId(),
         ),
     )
+
+    @PostMapping("/{subscriptionId}/proposals/{proposalId}/complete")
+    fun complete(
+        authentication: Authentication,
+        @PathVariable subscriptionId: UUID,
+        @PathVariable proposalId: UUID,
+        @RequestHeader("Idempotency-Key") checkoutIdempotencyKey: String,
+        @RequestBody request: CompleteRecurringProposalRequest,
+    ): RenewalProposalResponse {
+        val customerId = customer(authentication)
+        recurring.getProposal(customerId, subscriptionId, proposalId)
+        val order = orders.get(request.orderId)
+        if (order.customerId != customerId) {
+            throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+        }
+        return proposalResponse(
+            recurring.completeWithOrder(
+                customerId,
+                proposalId,
+                order,
+                checkoutIdempotencyKey,
+                currentTraceId(),
+            ),
+        )
+    }
 
     private fun customer(authentication: Authentication): UUID {
         val principal = authentication.domainPrincipal()

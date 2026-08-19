@@ -66,6 +66,21 @@ describe('customer route destination regressions', () => {
     expect(bookingHub).toContain("router.push('/vet'");
     expect(bookingHub).toContain("router.push('/groom'");
     expect(bookingHub).toContain("router.replace('/appointments'");
-    expect(bookingHub).toContain('onBack={() => router.back()}');
+    expect(bookingHub).toContain('backOrReplace(router');
+    expect(bookingHub).toContain("BackHandler.addEventListener('hardwareBackPress'");
+  });
+
+  it('keeps appointment detail direct-entry, account and accessibility protections wired', () => {
+    const detail = source('src/app/appointments/[id].tsx');
+
+    expect(detail).toContain('singleRouteParam(params.id)');
+    expect(detail).toContain('backOrReplace(router');
+    expect(detail).toContain("router.replace('/appointments'");
+    expect(detail).toContain('apiClient.getAuthEpoch()');
+    expect(detail).toContain('cancelInFlightRef.current');
+    expect(detail).toContain('accessibilityRole="link"');
+    expect(detail).toContain('accessibilityLabel="Close appointment details"');
+    expect(detail).toContain('minHeight: touchTarget');
+    expect(detail).toContain('isSafeHttpsUrl');
   });
 });

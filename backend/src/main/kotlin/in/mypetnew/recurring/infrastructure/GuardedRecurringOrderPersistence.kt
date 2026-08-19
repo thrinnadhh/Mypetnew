@@ -30,6 +30,12 @@ class GuardedRecurringOrderPersistence(
     private val jdbc: JdbcClient,
     private val transactions: TransactionTemplate,
 ) : RecurringOrderPersistence by delegate {
+    private data class LockedProposalState(
+        val status: String,
+        val expiresAt: Instant,
+        val databaseNow: Instant,
+    )
+
     override fun <T> mutateProposal(
         customerId: UUID,
         subscriptionId: UUID,
@@ -72,9 +78,9 @@ class GuardedRecurringOrderPersistence(
 
             if (subscriptionStatus != RecurringOrderStatus.ACTIVE.name) invalidProposalState()
 
-            val proposalStatus = jdbc.sql(
+            val proposalState = jdbc.sql(
                 """
-                SELECT status
+                SELECT status, expires_at, CURRENT_TIMESTAMP AS database_now
                 FROM mypet.recurring_order_proposal
                 WHERE id = :proposalId
                   AND subscription_id = :subscriptionId
@@ -85,11 +91,19 @@ class GuardedRecurringOrderPersistence(
                 .param("proposalId", proposalId)
                 .param("subscriptionId", subscriptionId)
                 .param("customerId", customerId)
-                .query(String::class.java)
+                .query { result, _ ->
+                    LockedProposalState(
+                        status = result.getString("status"),
+                        expiresAt = result.getTimestamp("expires_at").toInstant(),
+                        databaseNow = result.getTimestamp("database_now").toInstant(),
+                    )
+                }
                 .optional()
                 .orElseThrow { unavailable() }
 
-            when (proposalStatus) {
+            if (!proposalState.expiresAt.isAfter(proposalState.databaseNow)) proposalExpired()
+
+            when (proposalState.status) {
                 RenewalProposalStatus.AWAITING_CONFIRMATION.name,
                 RenewalProposalStatus.REVALIDATION_FAILED.name,
                 -> Unit
@@ -199,5 +213,10 @@ class GuardedRecurringOrderPersistence(
     private fun invalidProposalState(): Nothing = throw DomainException(
         "PROPOSAL_STATE_INVALID",
         "The renewal proposal cannot perform that action",
+    )
+
+    private fun proposalExpired(): Nothing = throw DomainException(
+        "PROPOSAL_EXPIRED",
+        "The renewal proposal has expired",
     )
 }

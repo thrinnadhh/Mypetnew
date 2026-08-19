@@ -34,11 +34,8 @@ async function request<T>(path: string, accessToken: string, init: RequestInit =
 async function fetchAllPages<T>(path: string, id: (item: T) => string, accessToken: string): Promise<T[]> {
   const unique = new Map<string, T>();
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const separator = path.includes('?') ? '&' : '?';
-    const payload = await request<PageResponse<T> | T[]>(
-      `${path}${separator}page=${page}&pageSize=${PAGE_SIZE}`,
-      accessToken,
-    );
+    const requestPath = page === 0 ? path : `${path}${path.includes('?') ? '&' : '?'}page=${page}&pageSize=${PAGE_SIZE}`;
+    const payload = await request<PageResponse<T> | T[]>(requestPath, accessToken);
 
     // Historical P14 returned a single bounded array. Accept it only as a terminal
     // one-page compatibility response; current servers must use PageResponse.

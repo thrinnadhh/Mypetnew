@@ -7,6 +7,7 @@ const PUBLIC_PAGE_SIZE = 100;
 const MAX_PUBLIC_PAGES = 10;
 const TERMINAL_REPLAY_STATUSES = new Set(['CANCELLED', 'HOLD_EXPIRED', 'REJECTED']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PIN_PATTERN = /^[1-9][0-9]{5}$/;
 
 export const APPOINTMENT_DISPLAY_TIME_ZONE = 'Asia/Kolkata';
 
@@ -77,6 +78,7 @@ export interface HoldAppointmentInput {
   slot: AppointmentSlotOption;
   userId: string | null | undefined;
   petId: string;
+  pincode: string;
   /** Older callers remain Pay-at-Provider unless they explicitly opt into Cashfree. */
   paymentMethod?: AppointmentPaymentMethod;
   accessToken: string | null | undefined;
@@ -134,13 +136,14 @@ function formatSlotTime(value: string | undefined, options: Intl.DateTimeFormatO
   return date.toLocaleString('en-IN', { ...options, timeZone: APPOINTMENT_DISPLAY_TIME_ZONE });
 }
 
-function appointmentAttemptKey(slotId: string, petId: string, paymentMethod: AppointmentPaymentMethod): string {
-  // Preserve the released PAY_AT_PROVIDER retry key so older clients replay the
-  // same hold. ONLINE_PAYMENT needs a separate fingerprint/key because payment
-  // mode is part of the canonical appointment request.
-  return paymentMethod === 'PAY_AT_PROVIDER'
-    ? `appointment-${slotId}-${petId}`
-    : `appointment-${slotId}-${petId}-ONLINE_PAYMENT`;
+function appointmentAttemptKey(
+  slotId: string,
+  petId: string,
+  pincode: string,
+  paymentMethod: AppointmentPaymentMethod,
+): string {
+  const baseKey = `appointment-v2-${slotId}-${petId}-${pincode}`;
+  return paymentMethod === 'PAY_AT_PROVIDER' ? baseKey : `${baseKey}-ONLINE_PAYMENT`;
 }
 
 async function apiError(response: Response, fallback: string): Promise<Error> {
@@ -404,6 +407,7 @@ async function createAppointmentHold(
       serviceId: input.slot.offeringId,
       slotId: input.slot.id,
       petId: input.petId,
+      pincode: input.pincode,
       paymentMethod,
     }),
   });
@@ -415,11 +419,12 @@ async function createAppointmentHold(
 export async function holdAppointmentSlot(input: HoldAppointmentInput): Promise<string> {
   resolveBookingUserId(input.userId);
   if (!input.petId) throw new Error('Select a pet before booking.');
+  if (!PIN_PATTERN.test(input.pincode)) throw contractError('PIN_CODE_INVALID', 'Select a valid six-digit service PIN before booking.');
   if (!input.accessToken && !appConfig.allowDemoMode) throw new Error('Please sign in before booking an appointment.');
   if (appConfig.allowDemoMode && input.slot.id.startsWith('demo-slot-')) return `demo-appointment-${input.slot.id}`;
 
   const paymentMethod = input.paymentMethod ?? 'PAY_AT_PROVIDER';
-  const baseKey = appointmentAttemptKey(input.slot.id, input.petId, paymentMethod);
+  const baseKey = appointmentAttemptKey(input.slot.id, input.petId, input.pincode, paymentMethod);
   let data = await createAppointmentHold(input, paymentMethod, baseKey);
   if (data.status && TERMINAL_REPLAY_STATUSES.has(data.status)) {
     data = await createAppointmentHold(input, paymentMethod, `${baseKey}-retry-${Date.now().toString(36)}`);

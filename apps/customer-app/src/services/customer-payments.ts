@@ -78,6 +78,9 @@ export async function initiateAppointmentPayment(
     },
     { 'Idempotency-Key': idempotencyKey },
   );
+  if (payment.referenceType !== 'APPOINTMENT' || payment.referenceId !== appointmentId) {
+    throw new Error('Payment initiation returned a different appointment reference.');
+  }
   await rememberPendingAppointmentPayment(payment.paymentId, appointmentId, customerId);
   return payment;
 }

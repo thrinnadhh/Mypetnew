@@ -87,7 +87,7 @@ class CustomerAppointmentApiTest {
             header("Authorization", "Bearer ${customerA.accessToken}")
             header("Idempotency-Key", "appointment-api-hold")
             contentType = MediaType.APPLICATION_JSON
-            content = """{"outletId":"${outlet.id}","serviceId":"${service.id}","petId":"${petA.id}","slotId":"${slot.id}","paymentMethod":"PAY_AT_PROVIDER","notes":"Sensitive paws"}"""
+            content = """{"outletId":"${outlet.id}","serviceId":"${service.id}","petId":"${petA.id}","slotId":"${slot.id}","pincode":"517501","paymentMethod":"PAY_AT_PROVIDER","notes":"Sensitive paws"}"""
         }.andExpect {
             status { isCreated() }
             jsonPath("$.status") { value("HOLD") }
@@ -103,7 +103,7 @@ class CustomerAppointmentApiTest {
             header("Authorization", "Bearer ${customerA.accessToken}")
             header("Idempotency-Key", "appointment-api-hold")
             contentType = MediaType.APPLICATION_JSON
-            content = """{"outletId":"${outlet.id}","serviceId":"${service.id}","petId":"${petA.id}","slotId":"${slot.id}","paymentMethod":"PAY_AT_PROVIDER","notes":"Sensitive paws"}"""
+            content = """{"outletId":"${outlet.id}","serviceId":"${service.id}","petId":"${petA.id}","slotId":"${slot.id}","pincode":"517501","paymentMethod":"PAY_AT_PROVIDER","notes":"Sensitive paws"}"""
         }.andExpect {
             status { isCreated() }
             jsonPath("$.appointmentId") { value(appointmentId) }
@@ -142,9 +142,10 @@ class CustomerAppointmentApiTest {
     }
 
     @Test
-    fun `appointment API rejects unauthenticated and foreign pet requests`() {
+    fun `appointment API rejects unauthenticated foreign pet and stale PIN requests`() {
         val customerA = login("+919811100003")
         val customerB = login("+919811100004")
+        val ownedPet = customerData.createPet(customerA.accountId, "Bruno", PetSpecies.DOG, null, null)
         val foreignPet = customerData.createPet(customerB.accountId, "Luna", PetSpecies.CAT, null, null)
         val outlet = createOutlet()
         val merchant = Principal(UUID.randomUUID(), Role.MERCHANT, outlet.organizationId, setOf(outlet.id))
@@ -154,17 +155,37 @@ class CustomerAppointmentApiTest {
         mockMvc.post("/api/v1/customer/appointments") {
             header("Idempotency-Key", "missing-auth")
             contentType = MediaType.APPLICATION_JSON
-            content = """{"outletId":"${outlet.id}","serviceId":"${service.id}","petId":"${foreignPet.id}","slotId":"${slot.id}"}"""
+            content = """{"outletId":"${outlet.id}","serviceId":"${service.id}","petId":"${foreignPet.id}","slotId":"${slot.id}","pincode":"517501"}"""
         }.andExpect { status { isUnauthorized() } }
 
         mockMvc.post("/api/v1/customer/appointments") {
             header("Authorization", "Bearer ${customerA.accessToken}")
             header("Idempotency-Key", "foreign-pet-api")
             contentType = MediaType.APPLICATION_JSON
-            content = """{"outletId":"${outlet.id}","serviceId":"${service.id}","petId":"${foreignPet.id}","slotId":"${slot.id}"}"""
+            content = """{"outletId":"${outlet.id}","serviceId":"${service.id}","petId":"${foreignPet.id}","slotId":"${slot.id}","pincode":"517501"}"""
         }.andExpect {
             status { isNotFound() }
             jsonPath("$.code") { value("RESOURCE_NOT_FOUND") }
+        }
+
+        mockMvc.post("/api/v1/customer/appointments") {
+            header("Authorization", "Bearer ${customerA.accessToken}")
+            header("Idempotency-Key", "stale-service-pin")
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"outletId":"${outlet.id}","serviceId":"${service.id}","petId":"${ownedPet.id}","slotId":"${slot.id}","pincode":"517502"}"""
+        }.andExpect {
+            status { isConflict() }
+            jsonPath("$.code") { value("APPOINTMENT_PIN_NOT_SERVICEABLE") }
+        }
+
+        mockMvc.post("/api/v1/customer/appointments") {
+            header("Authorization", "Bearer ${customerA.accessToken}")
+            header("Idempotency-Key", "invalid-service-pin")
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"outletId":"${outlet.id}","serviceId":"${service.id}","petId":"${ownedPet.id}","slotId":"${slot.id}","pincode":"012345"}"""
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.code") { value("PIN_CODE_INVALID") }
         }
     }
 

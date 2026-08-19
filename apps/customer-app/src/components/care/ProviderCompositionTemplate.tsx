@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import React from 'react';
-import { Image, Linking, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Image, Linking, Pressable, StyleSheet, View } from 'react-native';
 
 import { AppIcon } from '@/components/app-icon';
 import { ScreenShell } from '@/components/foundation/screen-shell';
@@ -8,8 +8,9 @@ import { ThemedText } from '@/components/themed-text';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { radii, shadows, spacing, typography } from '@/design/tokens';
+import { radii, shadows, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
+import { safeTelephoneUrl } from '@/utils/customer-navigation-safety';
 
 export interface ProviderCompositionData {
   id: string;
@@ -46,6 +47,30 @@ export function ProviderCompositionTemplate({ provider }: { provider: ProviderCo
   const bookingRoute = isVet ? '/vet' : '/groom';
   const openLiveBooking = () => router.push(bookingRoute as never);
 
+  const callProvider = async () => {
+    const url = safeTelephoneUrl(provider.phone);
+    if (!url) {
+      Alert.alert('Phone number unavailable', 'The provider phone number is missing or invalid.');
+      return;
+    }
+    try {
+      if (!(await Linking.canOpenURL(url))) throw new Error('unsupported');
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('Calling unavailable', 'This device could not open the phone dialer.');
+    }
+  };
+
+  const openDirections = async () => {
+    const url = `https://maps.google.com/?q=${encodeURIComponent(provider.address)}`;
+    try {
+      if (!(await Linking.canOpenURL(url))) throw new Error('unsupported');
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('Directions unavailable', 'This device could not open directions for this provider.');
+    }
+  };
+
   return (
     <ScreenShell
       header={<ScreenHeader title={provider.name} subtitle={provider.tagline} />}
@@ -77,19 +102,21 @@ export function ProviderCompositionTemplate({ provider }: { provider: ProviderCo
 
       <View style={styles.actionRow}>
         <Pressable
-          onPress={() => void Linking.openURL(`tel:${provider.phone}`)}
+          onPress={() => void callProvider()}
           style={[styles.actionButton, { backgroundColor: theme.primarySoft }]}
           accessibilityRole="button"
           accessibilityLabel={`Call ${provider.name}`}
+          accessibilityHint="Opens the phone dialer"
         >
           <AppIcon name="paw" color={theme.primary} size={18} />
           <ThemedText style={[styles.actionLabel, { color: theme.primary }]}>Call</ThemedText>
         </Pressable>
         <Pressable
-          onPress={() => void Linking.openURL(`https://maps.google.com/?q=${encodeURIComponent(provider.address)}`)}
+          onPress={() => void openDirections()}
           style={[styles.actionButton, { backgroundColor: theme.primarySoft }]}
           accessibilityRole="button"
           accessibilityLabel={`Directions to ${provider.name}`}
+          accessibilityHint="Opens the provider address in your maps app"
         >
           <AppIcon name="location" color={theme.primary} size={18} />
           <ThemedText style={[styles.actionLabel, { color: theme.primary }]}>Directions</ThemedText>
@@ -184,7 +211,7 @@ const styles = StyleSheet.create({
   duration: { fontSize: 12, fontWeight: '700' },
   serviceAction: { alignItems: 'flex-end', gap: spacing.x2 },
   fee: { fontWeight: '900', fontSize: 16 },
-  bookButton: { minWidth: 82, minHeight: 38, paddingHorizontal: spacing.x3, borderRadius: radii.compact, alignItems: 'center', justifyContent: 'center' },
+  bookButton: { minWidth: 82, minHeight: touchTarget, paddingHorizontal: spacing.x3, borderRadius: radii.compact, alignItems: 'center', justifyContent: 'center' },
   bookLabel: { color: '#FFFFFF', fontWeight: '800', fontSize: 12 },
   chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x2 },
   rosterList: { gap: spacing.x2 },

@@ -34,12 +34,26 @@ export interface CustomerCase {
   resolvedAt?: string | null;
 }
 
+function currentAuthEpoch(): number {
+  const getter = (apiClient as typeof apiClient & { getAuthEpoch?: () => number }).getAuthEpoch;
+  return typeof getter === 'function' ? getter.call(apiClient) : 0;
+}
+
 function assertCurrentAuthEpoch(epoch: number): void {
-  if (apiClient.getAuthEpoch() !== epoch) throw new StaleAuthResponseError();
+  if (currentAuthEpoch() !== epoch) throw new StaleAuthResponseError();
+}
+
+function isTrustedUploadUrl(value: string): boolean {
+  if (!isSafeHttpsUrl(value) || !isSafeHttpsUrl(appConfig.apiBaseUrl)) return false;
+  try {
+    return new URL(value).origin === new URL(appConfig.apiBaseUrl).origin;
+  } catch {
+    return false;
+  }
 }
 
 async function request<T>(path: string, accessToken: string, init: RequestInit = {}): Promise<T> {
-  const epoch = apiClient.getAuthEpoch();
+  const epoch = currentAuthEpoch();
   const response = await fetch(`${appConfig.apiBaseUrl}${path}`, {
     ...init,
     headers: {
@@ -82,7 +96,7 @@ export async function uploadCustomerCaseEvidence(
     accessToken,
     { method: 'POST' },
   );
-  if (!isSafeHttpsUrl(reservation.uploadUrl)) {
+  if (!isTrustedUploadUrl(reservation.uploadUrl)) {
     throw new Error('Support evidence upload destination is invalid.');
   }
   const body = new FormData();
@@ -92,7 +106,7 @@ export async function uploadCustomerCaseEvidence(
     name: asset.name,
     type: asset.mimeType,
   } as unknown as Blob);
-  const epoch = apiClient.getAuthEpoch();
+  const epoch = currentAuthEpoch();
   const response = await fetch(reservation.uploadUrl, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },

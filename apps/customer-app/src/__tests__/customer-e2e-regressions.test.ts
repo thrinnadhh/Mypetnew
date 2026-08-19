@@ -63,12 +63,12 @@ describe('customer end-to-end regression contracts', () => {
     expect(payment).toMatch(/Provider confirmation required/);
     expect(payment).toMatch(/Pay online & send request/);
     expect(payment).toMatch(/Send booking request · Pay at provider/);
-    expect(payment).toMatch(/initiateAppointmentPayment\(appointmentId\)/);
+    expect(payment).toMatch(/initiateAppointmentPayment\(action\.appointmentId, action\.userId\)/);
     expect(payment).toMatch(/openCashfreeOrder\(payment\)/);
-    expect(payment).toMatch(/waitForPaymentOutcome\(payment\.paymentId\)/);
+    expect(payment).toMatch(/waitForPaymentOutcome\(payment\.paymentId, 30, 2_000, action\.userId\)/);
     expect(payment).toMatch(/Payment successful · waiting for provider/);
     expect(payment).toMatch(/refund workflow automatically/);
-    expect(payment).toMatch(/confirmAppointmentHold\(appointmentId, session\.accessToken\)/);
+    expect(payment).toMatch(/confirmAppointmentHold\(action\.appointmentId, action\.accessToken\)/);
     expect(payment).not.toMatch(/Appointment booked/);
 
     expect(history).toMatch(/case 'BOOKED': return 'PENDING_PROVIDER'/);
@@ -90,8 +90,13 @@ describe('customer end-to-end regression contracts', () => {
       payments.indexOf('export async function initiateAppointmentPayment'),
       payments.indexOf('export async function fetchPaymentStatus'),
     );
-    expect(appointmentPayment).toMatch(/referenceType: 'APPOINTMENT'/);
-    expect(appointmentPayment).not.toMatch(/amountPaise|customerId|userId|currency:/);
+    const appointmentRequest = appointmentPayment.slice(
+      appointmentPayment.indexOf('apiClient.post<CustomerPaymentView>'),
+      appointmentPayment.indexOf("{ 'Idempotency-Key': idempotencyKey }"),
+    );
+    expect(appointmentRequest).toMatch(/referenceType: 'APPOINTMENT'/);
+    expect(appointmentRequest).not.toMatch(/amountPaise|currency:|customerId:|userId:/);
+    expect(appointmentPayment).toMatch(/Payment initiation returned a different appointment reference/);
   });
 
   it('does not retain the obsolete mock appointment modal or timer hook', () => {

@@ -79,9 +79,11 @@ describe('MyPet customer journey contracts', () => {
 
     expectAll(payment, [
       'Provider confirmation required', 'PAYMENT FIRST · PROVIDER ACCEPTANCE NEXT', 'Pay online & send request',
-      'Send booking request · Pay at provider', 'initiateAppointmentPayment(appointmentId)', 'openCashfreeOrder(payment)',
-      'waitForPaymentOutcome(payment.paymentId)', 'Payment successful · waiting for provider', 'refund workflow automatically',
-      'confirmAppointmentHold(appointmentId, session.accessToken)',
+      'Send booking request · Pay at provider', 'initiateAppointmentPayment(action.appointmentId, action.userId)',
+      'openCashfreeOrder(payment)', 'waitForPaymentOutcome(payment.paymentId, 30, 2_000, action.userId)',
+      'Payment successful · waiting for provider', 'refund workflow automatically',
+      'confirmAppointmentHold(action.appointmentId, action.accessToken)',
+      "appointment.status !== 'SLOT_HELD'", 'samePaymentContext(paymentContextRef.current, action)',
     ]);
     expect(payment).not.toContain('Appointment booked');
 
@@ -92,10 +94,14 @@ describe('MyPet customer journey contracts', () => {
       payments.indexOf('export async function initiateAppointmentPayment'),
       payments.indexOf('export async function fetchPaymentStatus'),
     );
-    expect(appointmentInitiation).not.toContain('amountPaise');
-    expect(appointmentInitiation).not.toContain('currency:');
-    expect(appointmentInitiation).not.toContain('customerId');
-    expect(appointmentInitiation).not.toContain('userId');
+    const appointmentRequest = appointmentInitiation.slice(
+      appointmentInitiation.indexOf("apiClient.post<CustomerPaymentView>"),
+      appointmentInitiation.indexOf("{ 'Idempotency-Key': idempotencyKey }"),
+    );
+    expect(appointmentRequest).not.toContain('amountPaise');
+    expect(appointmentRequest).not.toContain('currency:');
+    expect(appointmentRequest).not.toContain('customerId:');
+    expect(appointmentRequest).not.toContain('userId:');
 
     expect(history).toContain("case 'BOOKED': return 'PENDING_PROVIDER'");
     expect(history).toContain("case 'REJECTED': return 'REJECTED'");
@@ -105,7 +111,7 @@ describe('MyPet customer journey contracts', () => {
   it('supports safe demo appointment requests without opening Cashfree', () => {
     const payment = source('src/app/appointments/payment.tsx');
     expectAll(payment, [
-      "appointmentId.startsWith('demo-appointment-')", 'confirmAppointmentHold(appointmentId, session.accessToken)',
+      "appointmentId.startsWith('demo-appointment-')", 'confirmAppointmentHold(action.appointmentId, action.accessToken)',
       'Development fixture only. No real provider or payment action is created.',
     ]);
     expect(payment).toContain("const online = paymentMethod === 'ONLINE_PAYMENT' && !demoAppointment");

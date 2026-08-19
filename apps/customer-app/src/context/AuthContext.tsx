@@ -5,6 +5,7 @@ import { validateServerRole, type OtpSessionResponse } from '@/auth/otp-auth';
 import { clearPersistedSession, loadPersistedSession, savePersistedSession } from '@/auth/session-storage';
 import type { CustomerAuthSession, CustomerAuthUser } from '@/auth/types';
 import { apiClient } from '@/services/api-client';
+import { clearPendingAppointmentPayment } from '@/services/appointment-payment-recovery';
 import { clearPendingPayment } from '@/services/payment-recovery';
 import { revokeDeviceRegistration } from '@/hooks/usePushNotifications';
 import { getOrCreateInstallationId } from '@/utils/installation-id';
@@ -44,13 +45,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSessionState(nextSession);
   }, []);
 
+  const clearAppointmentRecovery = useCallback(async (accountId: string | null | undefined) => {
+    if (!accountId) return;
+    await clearPendingAppointmentPayment(accountId).catch(() => undefined);
+  }, []);
+
   const setSession = useCallback(async (nextSession: CustomerAuthSession | null) => {
+    const previousAccountId = activeSessionRef.current?.accountId;
     if (!nextSession) {
       authEpochRef.current += 1;
       applySessionState(null);
       await Promise.all([
         runStorageMutation(clearPersistedSession),
         clearPendingPayment(),
+        clearAppointmentRecovery(previousAccountId),
       ]);
       return;
     }
@@ -60,11 +68,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error('CustomerAuthSession mobile is required');
     }
 
-    // A newly verified OTP/login is a new account generation. Do not carry a
-    // previous account's opaque pending-payment pointer into this session. Cold
-    // start refresh does not call setSession, so legitimate same-account payment
-    // recovery survives process restarts.
-    await clearPendingPayment();
+    // Product-order recovery predates account-scoped storage and must be cleared
+    // on each newly verified login. Appointment recovery is account-scoped; only
+    // the previous account's pointer is cleared when identity actually changes.
+    await Promise.all([
+      clearPendingPayment(),
+      previousAccountId && previousAccountId !== nextSession.accountId
+        ? clearAppointmentRecovery(previousAccountId)
+        : Promise.resolve(),
+    ]);
 
     // A newly established login is a new auth generation. Any older refresh/request must
     // become stale even if there was no intermediate sign-out call.
@@ -86,7 +98,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (authEpochRef.current !== sessionEpoch) return;
     applySessionState({ ...nextSession, role });
-  }, [applySessionState, runStorageMutation]);
+  }, [applySessionState, clearAppointmentRecovery, runStorageMutation]);
 
   const refreshActiveSession = useCallback(async (): Promise<string | null> => {
     const epochAtStart = authEpochRef.current;
@@ -96,8 +108,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (authEpochRef.current !== epochAtStart) return null;
 
       if (!persisted) {
+        const previousAccountId = activeSessionRef.current?.accountId;
         applySessionState(null);
-        await clearPendingPayment();
+        await Promise.all([
+          clearPendingPayment(),
+          clearAppointmentRecovery(previousAccountId),
+        ]);
         return null;
       }
 
@@ -142,24 +158,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // refresh failure must never destroy a newer login.
       if (authEpochRef.current === epochAtStart) {
         console.warn('Session refresh failed:', error);
+        const previousAccountId = activeSessionRef.current?.accountId;
         applySessionState(null);
         await Promise.all([
           runStorageMutation(clearPersistedSession),
           clearPendingPayment(),
+          clearAppointmentRecovery(previousAccountId),
         ]);
       }
       return null;
     }
-  }, [applySessionState, runStorageMutation]);
+  }, [applySessionState, clearAppointmentRecovery, runStorageMutation]);
 
   const clearAuthState = useCallback(() => {
     authEpochRef.current += 1;
     lastOtpVerifiedAtRef.current = null;
     setLastOtpVerifiedAt(null);
+    const previousAccountId = activeSessionRef.current?.accountId;
     applySessionState(null);
     void runStorageMutation(clearPersistedSession);
     void clearPendingPayment();
-  }, [applySessionState, runStorageMutation]);
+    void clearAppointmentRecovery(previousAccountId);
+  }, [applySessionState, clearAppointmentRecovery, runStorageMutation]);
 
   useEffect(() => {
     apiClient.setRefreshHandler(refreshActiveSession);
@@ -178,7 +198,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const persisted = await loadPersistedSession();
         if (!persisted) {
-          await clearPendingPayment();
+          const previousAccountId = activeSessionRef.current?.accountId;
+          await Promise.all([
+            clearPendingPayment(),
+            clearAppointmentRecovery(previousAccountId),
+          ]);
           if (active) {
             applySessionState(null);
             setLoading(false);
@@ -204,7 +228,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
-  }, [applySessionState, refreshActiveSession]);
+  }, [applySessionState, clearAppointmentRecovery, refreshActiveSession]);
 
   const markOtpVerified = useCallback(() => {
     const now = Date.now();
@@ -218,7 +242,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     authEpochRef.current += 1;
-    const currentToken = activeSessionRef.current?.accessToken;
+    const currentSession = activeSessionRef.current;
+    const currentToken = currentSession?.accessToken;
+    const currentAccountId = currentSession?.accountId;
     lastOtpVerifiedAtRef.current = null;
     setLastOtpVerifiedAt(null);
 
@@ -245,8 +271,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await Promise.all([
       runStorageMutation(clearPersistedSession),
       clearPendingPayment(),
+      clearAppointmentRecovery(currentAccountId),
     ]);
-  }, [applySessionState, runStorageMutation]);
+  }, [applySessionState, clearAppointmentRecovery, runStorageMutation]);
 
   const user = useMemo<CustomerAuthUser | null>(() => {
     if (!session) return null;

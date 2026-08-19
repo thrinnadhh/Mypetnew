@@ -89,13 +89,34 @@ class GuardedRecurringOrderPersistence(
                 .optional()
                 .orElseThrow { unavailable() }
 
-            if (proposalStatus !in setOf(
-                    RenewalProposalStatus.AWAITING_CONFIRMATION.name,
-                    RenewalProposalStatus.REVALIDATION_FAILED.name,
-                    RenewalProposalStatus.CONFIRMED.name,
-                )
-            ) {
-                invalidProposalState()
+            when (proposalStatus) {
+                RenewalProposalStatus.AWAITING_CONFIRMATION.name,
+                RenewalProposalStatus.REVALIDATION_FAILED.name,
+                -> Unit
+                RenewalProposalStatus.CONFIRMED.name -> {
+                    val exactReplay = jdbc.sql(
+                        """
+                        SELECT COUNT(*)
+                        FROM mypet.recurring_order_command
+                        WHERE customer_id = :customerId
+                          AND idempotency_key = :idempotencyKey
+                          AND request_fingerprint = :requestFingerprint
+                          AND command_type = :eventType
+                          AND subscription_id = :subscriptionId
+                          AND proposal_id = :proposalId
+                        """.trimIndent(),
+                    )
+                        .param("customerId", customerId)
+                        .param("idempotencyKey", idempotencyKey)
+                        .param("requestFingerprint", requestFingerprint)
+                        .param("eventType", eventType)
+                        .param("subscriptionId", subscriptionId)
+                        .param("proposalId", proposalId)
+                        .query(Int::class.java)
+                        .single()
+                    if (exactReplay != 1) invalidProposalState()
+                }
+                else -> invalidProposalState()
             }
 
             delegate.mutateProposal(
@@ -112,8 +133,6 @@ class GuardedRecurringOrderPersistence(
         } ?: throw IllegalStateException("Recurring confirmation transaction returned no result")
     }
 
-    // Explicitly repeat signatures below to keep the decorator's authority obvious
-    // to static analyzers and future refactors; all non-confirm paths delegate.
     override fun create(
         subscription: RecurringOrderSubscription,
         idempotencyKey: String,

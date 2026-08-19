@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { apiClient } from '@/services/api-client';
 import {
   cancelAppointment,
   fetchCustomerAppointments,
@@ -14,53 +15,85 @@ export type AppointmentsStateKind = 'idle' | 'loading' | 'ready' | 'error' | 'of
 
 const PROVIDER_DECISION_REFRESH_MS = 15_000;
 
+type AccountSnapshot = { userId: string; accessToken: string; authEpoch: number };
+
 export function useAppointments() {
   const { user, session } = useAuth();
+  const userId = user?.id ?? null;
+  const accessToken = session?.accessToken ?? null;
   const [appointments, setAppointments] = useState<CustomerAppointmentRecord[]>([]);
   const [state, setState] = useState<AppointmentsStateKind>('idle');
   const [activeTab, setActiveTab] = useState<AppointmentTabCategory>('upcoming');
   const [searchQuery, setSearchQuery] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const loadGenerationRef = useRef(0);
+  const actionInFlightRef = useRef(false);
+
+  const captureAccount = useCallback((): AccountSnapshot | null => {
+    if (!userId || !accessToken) return null;
+    return { userId, accessToken, authEpoch: apiClient.getAuthEpoch() };
+  }, [accessToken, userId]);
+
+  const accountStillCurrent = useCallback((captured: AccountSnapshot) => (
+    userId === captured.userId
+    && accessToken === captured.accessToken
+    && apiClient.getAuthEpoch() === captured.authEpoch
+  ), [accessToken, userId]);
 
   const load = useCallback(async () => {
-    if (!user || !session) return;
+    const captured = captureAccount();
+    const generation = ++loadGenerationRef.current;
+    if (!captured) {
+      setAppointments([]);
+      setState('idle');
+      return;
+    }
     setState('loading');
     try {
-      const data = await fetchCustomerAppointments(user.id, session.accessToken);
+      const data = await fetchCustomerAppointments(captured.userId, captured.accessToken);
+      if (!accountStillCurrent(captured) || loadGenerationRef.current !== generation) return;
       setAppointments(data);
       setState('ready');
     } catch (error) {
+      if (!accountStillCurrent(captured) || loadGenerationRef.current !== generation) return;
       setState(isOfflineError(error) ? 'offline' : 'error');
     }
-  }, [session, user]);
+  }, [accountStillCurrent, captureAccount]);
 
   const refreshProviderDecision = useCallback(async () => {
-    if (!user || !session) return;
+    const captured = captureAccount();
+    if (!captured) return;
+    const generation = loadGenerationRef.current;
     try {
-      const data = await fetchCustomerAppointments(user.id, session.accessToken);
+      const data = await fetchCustomerAppointments(captured.userId, captured.accessToken);
+      if (!accountStillCurrent(captured) || loadGenerationRef.current !== generation) return;
       setAppointments(data);
       setState('ready');
     } catch (error) {
-      // Background provider-decision polling must never replace usable appointment
-      // state with a transient error. The normal retry/reload path remains visible
-      // if the user explicitly refreshes while offline or the API is unavailable.
-      if (!isOfflineError(error)) return;
+      // Keep the last server-authoritative projection during transient background failures.
+      if (!accountStillCurrent(captured) || isOfflineError(error)) return;
     }
-  }, [session, user]);
+  }, [accountStillCurrent, captureAccount]);
 
   useEffect(() => {
-    if (user && session) void load();
-  }, [load, session, user]);
+    loadGenerationRef.current += 1;
+    actionInFlightRef.current = false;
+    setActionLoading(false);
+    setAppointments([]);
+    setState(userId && accessToken ? 'loading' : 'idle');
+    if (userId && accessToken) void load();
+    return () => { loadGenerationRef.current += 1; };
+  }, [accessToken, load, userId]);
 
   const hasPendingProviderDecision = appointments.some((appointment) => appointment.status === 'PENDING_PROVIDER');
 
   useEffect(() => {
-    if (!hasPendingProviderDecision || !user || !session) return undefined;
+    if (!hasPendingProviderDecision || !userId || !accessToken) return undefined;
     const timer = setInterval(() => {
       void refreshProviderDecision();
     }, PROVIDER_DECISION_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [hasPendingProviderDecision, refreshProviderDecision, session, user]);
+  }, [accessToken, hasPendingProviderDecision, refreshProviderDecision, userId]);
 
   const filteredAppointments = useMemo(() => {
     return appointments.filter((appt) => {
@@ -83,54 +116,50 @@ export function useAppointments() {
     });
   }, [activeTab, appointments, searchQuery]);
 
+  const runAction = useCallback(async <T,>(operation: (captured: AccountSnapshot) => Promise<T>): Promise<T | null> => {
+    const captured = captureAccount();
+    if (!captured || actionInFlightRef.current) return null;
+    actionInFlightRef.current = true;
+    setActionLoading(true);
+    try {
+      const result = await operation(captured);
+      if (!accountStillCurrent(captured)) return null;
+      await load();
+      if (!accountStillCurrent(captured)) return null;
+      return result;
+    } finally {
+      actionInFlightRef.current = false;
+      if (accountStillCurrent(captured)) setActionLoading(false);
+    }
+  }, [accountStillCurrent, captureAccount, load]);
+
   const cancel = useCallback(
     async (appointmentId: string, reason: string) => {
-      if (!session) return;
-      setActionLoading(true);
-      try {
-        await cancelAppointment(appointmentId, reason, session.accessToken);
-        await load();
-      } finally {
-        setActionLoading(false);
-      }
+      await runAction((captured) => cancelAppointment(appointmentId, reason, captured.accessToken));
     },
-    [load, session],
+    [runAction],
   );
 
   const reschedule = useCallback(
     async (appointmentId: string, newSlotId: string) => {
-      if (!session) return;
-      setActionLoading(true);
-      try {
-        await rescheduleAppointment(appointmentId, newSlotId, session.accessToken);
-        await load();
-      } finally {
-        setActionLoading(false);
-      }
+      await runAction((captured) => rescheduleAppointment(appointmentId, newSlotId, captured.accessToken));
     },
-    [load, session],
+    [runAction],
   );
 
   const submitReview = useCallback(
     async (input: { providerId: string; targetId: string; rating: number; comment: string }) => {
-      if (!user || !session) return 'error';
-      setActionLoading(true);
-      try {
-        const result = await submitAppointmentReview({
-          customerId: user.id,
-          providerId: input.providerId,
-          targetId: input.targetId,
-          rating: input.rating,
-          comment: input.comment,
-          accessToken: session.accessToken,
-        });
-        await load();
-        return result;
-      } finally {
-        setActionLoading(false);
-      }
+      const result = await runAction((captured) => submitAppointmentReview({
+        customerId: captured.userId,
+        providerId: input.providerId,
+        targetId: input.targetId,
+        rating: input.rating,
+        comment: input.comment,
+        accessToken: captured.accessToken,
+      }));
+      return result ?? 'error';
     },
-    [load, session, user],
+    [runAction],
   );
 
   return {

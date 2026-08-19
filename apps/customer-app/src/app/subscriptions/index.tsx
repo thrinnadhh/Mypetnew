@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, BackHandler, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
 import { AppBar, FilterChip, PrimaryAction, SectionHeader, StateView, StatusBadge } from '@/components/foundation/primitives';
 import { ScreenShell } from '@/components/foundation/screen-shell';
@@ -17,7 +17,8 @@ import { apiErrorMessage } from '@/contracts/api-error';
 import { useAuth } from '@/context/AuthContext';
 import { useAuthIntent } from '@/context/AuthIntentContext';
 import { useCart } from '@/context/CartContext';
-import { spacing, typography } from '@/design/tokens';
+import { spacing, touchTarget, typography } from '@/design/tokens';
+import { useTheme } from '@/hooks/use-theme';
 import { apiClient } from '@/services/api-client';
 import {
   completeRecurringHandoff,
@@ -33,6 +34,9 @@ import {
   updateRecurringOrder,
 } from '@/services/recurring-orders';
 import { buildCartFromRevalidation } from '@/services/revalidated-cart';
+import { backOrReplace, formatIndiaDateTime, singleRouteParam } from '@/utils/customer-navigation-safety';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function subscriptionTone(status: RecurringOrderSubscription['status']): 'success' | 'warning' | 'error' | 'neutral' {
   if (status === 'ACTIVE') return 'success';
@@ -48,17 +52,14 @@ function proposalTone(status: RenewalProposal['status']): 'success' | 'warning' 
   return 'neutral';
 }
 
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat('en-IN', {
-    day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata',
-  }).format(new Date(value));
-}
-
 type AccountContext = { userId: string; accessToken: string; authEpoch: number };
 
 export default function RecurringOrdersScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ sourceOrderId?: string }>();
+  const theme = useTheme();
+  const params = useLocalSearchParams<{ sourceOrderId?: string | string[] }>();
+  const sourceOrderId = singleRouteParam(params.sourceOrderId);
+  const sourceOrderIdValid = !sourceOrderId || UUID_PATTERN.test(sourceOrderId);
   const { user, session } = useAuth();
   const { requireAuth } = useAuthIntent();
   const { replaceCart, providerId: cartProviderId } = useCart();
@@ -74,6 +75,20 @@ export default function RecurringOrdersScreen() {
   const cartProviderRef = useRef<string | null>(cartProviderId);
   const busyTokenRef = useRef<string | null>(null);
   const commandKeysRef = useRef(new Map<string, string>());
+
+  const handleBack = useCallback(() => {
+    backOrReplace(router, '/(tabs)/profile');
+  }, [router]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (router.canGoBack()) return false;
+      router.replace('/(tabs)/profile' as never);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [router]);
 
   useEffect(() => {
     accountRef.current = {
@@ -155,14 +170,14 @@ export default function RecurringOrdersScreen() {
 
   const create = useCallback(async () => {
     const captured = captureAccount();
-    if (!captured || !params.sourceOrderId || busyTokenRef.current) return;
-    const identity = `create:${params.sourceOrderId}:${cadence}:${quantityMultiplier}`;
+    if (!captured || !sourceOrderId || !sourceOrderIdValid || busyTokenRef.current) return;
+    const identity = `create:${sourceOrderId}:${cadence}:${quantityMultiplier}`;
     const token = `${identity}:${Date.now()}`;
     busyTokenRef.current = token;
     setBusyId('create');
     try {
       const created = await createRecurringOrder(
-        params.sourceOrderId, cadence, quantityMultiplier, captured.accessToken, commandKey(identity, captured),
+        sourceOrderId, cadence, quantityMultiplier, captured.accessToken, commandKey(identity, captured),
       );
       if (!accountStillCurrent(captured)) return;
       commandKeysRef.current.delete(identity);
@@ -176,7 +191,7 @@ export default function RecurringOrdersScreen() {
         if (accountStillCurrent(captured)) setBusyId(null);
       }
     }
-  }, [accountStillCurrent, cadence, captureAccount, commandKey, params.sourceOrderId, quantityMultiplier]);
+  }, [accountStillCurrent, cadence, captureAccount, commandKey, quantityMultiplier, sourceOrderId, sourceOrderIdValid]);
 
   const action = useCallback(async (
     subscription: RecurringOrderSubscription,
@@ -205,6 +220,18 @@ export default function RecurringOrdersScreen() {
       }
     }
   }, [accountStillCurrent, captureAccount, commandKey, load]);
+
+  const confirmCancel = useCallback((subscription: RecurringOrderSubscription) => {
+    if (busyTokenRef.current) return;
+    Alert.alert(
+      'Cancel recurring reminder?',
+      'Future renewal proposals will stop. Existing orders are not cancelled.',
+      [
+        { text: 'Keep reminder', style: 'cancel' },
+        { text: 'Cancel reminder', style: 'destructive', onPress: () => { void action(subscription, 'CANCEL'); } },
+      ],
+    );
+  }, [action]);
 
   const installConfirmedCart = useCallback(async (result: RecurringOrderConfirmation, captured: AccountContext) => {
     const nextItems = await buildCartFromRevalidation(result.reorder);
@@ -268,9 +295,20 @@ export default function RecurringOrdersScreen() {
     }
   }, [accountStillCurrent, captureAccount, commandKey, installConfirmedCart, load]);
 
+  const backAction = (
+    <Pressable
+      onPress={handleBack}
+      style={styles.backButton}
+      accessibilityRole="button"
+      accessibilityLabel="Back from recurring orders"
+    >
+      <ThemedText style={{ color: theme.primary, fontWeight: '800' }}>←</ThemedText>
+    </Pressable>
+  );
+
   if (!user || !session) {
     return (
-      <ScreenShell scroll={false} header={<AppBar title="Recurring orders" subtitle="Scheduled proposals with confirmation" />}>
+      <ScreenShell scroll={false} header={<AppBar title="Recurring orders" subtitle="Scheduled proposals with confirmation" action={backAction} />}>
         <StateView kind="unauthenticated" title="Sign in to manage subscriptions"
           message="MyPet revalidates stock, price and serviceability before every renewal." actionLabel="Sign in"
           onAction={() => void requireAuth({ action: 'ORDER_HISTORY', returnTo: '/subscriptions' })} />
@@ -279,22 +317,24 @@ export default function RecurringOrdersScreen() {
   }
 
   if (loading) {
-    return <ScreenShell scroll={false} header={<AppBar title="Recurring orders" />}><StateView kind="loading" title="Loading subscriptions" /></ScreenShell>;
+    return <ScreenShell scroll={false} header={<AppBar title="Recurring orders" action={backAction} />}><StateView kind="loading" title="Loading subscriptions" /></ScreenShell>;
   }
 
   const openProposals = proposals.filter((proposal) => !['ORDER_CREATED', 'SKIPPED', 'EXPIRED'].includes(proposal.status));
   return (
-    <ScreenShell header={<AppBar title="Recurring orders" subtitle="No silent order or charge—every renewal requires you" />}
+    <ScreenShell header={<AppBar title="Recurring orders" subtitle="No silent order or charge—every renewal requires you" action={backAction} />}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />} testID="recurring-orders-screen">
-      {params.sourceOrderId ? (
+      {sourceOrderId && !sourceOrderIdValid ? (
+        <StateView kind="error" title="Source order link is invalid" message="Return to your order history and open Subscribe from a valid order." />
+      ) : sourceOrderId ? (
         <AppCard style={styles.card}>
           <SectionHeader title="Subscribe to this order" />
-          <ThemedText type="small" themeColor="textSecondary">Source order #{params.sourceOrderId.slice(0, 8).toUpperCase()}. Due cycles create proposals only; checkout remains authoritative.</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">Source order #{sourceOrderId.slice(0, 8).toUpperCase()}. Due cycles create proposals only; checkout remains authoritative.</ThemedText>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
-            {RECURRING_CADENCES.map((days) => <FilterChip key={days} label={`${days} days`} selected={cadence === days} onPress={() => setCadence(days)} />)}
+            {RECURRING_CADENCES.map((days) => <FilterChip key={days} label={`${days} days`} selected={cadence === days} disabled={busyId !== null} onPress={() => setCadence(days)} />)}
           </ScrollView>
-          <View style={styles.row}>{[1, 2, 3, 4].map((quantity) => <FilterChip key={quantity} label={`${quantity}× quantity`} selected={quantityMultiplier === quantity} onPress={() => setQuantityMultiplier(quantity)} />)}</View>
-          <PrimaryAction label="Create recurring reminder" loading={busyId === 'create'} onPress={() => void create()} />
+          <View style={styles.row}>{[1, 2, 3, 4].map((quantity) => <FilterChip key={quantity} label={`${quantity}× quantity`} selected={quantityMultiplier === quantity} disabled={busyId !== null} onPress={() => setQuantityMultiplier(quantity)} />)}</View>
+          <PrimaryAction label="Create recurring reminder" loading={busyId === 'create'} disabled={busyId !== null && busyId !== 'create'} onPress={() => void create()} />
         </AppCard>
       ) : null}
 
@@ -306,11 +346,11 @@ export default function RecurringOrdersScreen() {
           {openProposals.map((proposal) => (
             <AppCard key={proposal.proposalId} style={styles.card}>
               <View style={styles.headerRow}>
-                <View style={styles.flex}><ThemedText style={styles.title}>Renewal due {formatDate(proposal.dueCycleAt)}</ThemedText><ThemedText type="small" themeColor="textSecondary">Expires {formatDate(proposal.expiresAt)}</ThemedText></View>
+                <View style={styles.flex}><ThemedText style={styles.title}>Renewal due {formatIndiaDateTime(proposal.dueCycleAt)}</ThemedText><ThemedText type="small" themeColor="textSecondary">Expires {formatIndiaDateTime(proposal.expiresAt)}</ThemedText></View>
                 <StatusBadge label={proposal.status.replaceAll('_', ' ')} tone={proposalTone(proposal.status)} />
               </View>
               {(proposal.status === 'AWAITING_CONFIRMATION' || proposal.status === 'REVALIDATION_FAILED') ? (
-                <PrimaryAction label="Revalidate and continue" loading={busyId === proposal.proposalId} onPress={() => void confirm(proposal)} />
+                <PrimaryAction label="Revalidate and continue" loading={busyId === proposal.proposalId} disabled={busyId !== null && busyId !== proposal.proposalId} onPress={() => void confirm(proposal)} />
               ) : proposal.status === 'CONFIRMED' ? <ThemedText type="small" themeColor="textSecondary">Confirmed intent is waiting for normal cart → quote → checkout. No order has been created yet.</ThemedText> : null}
             </AppCard>
           ))}
@@ -328,12 +368,12 @@ export default function RecurringOrdersScreen() {
                 <View style={styles.flex}><ThemedText style={styles.title}>Every {subscription.cadenceDays} days</ThemedText><ThemedText type="small" themeColor="textSecondary">Order #{subscription.sourceOrderId.slice(0, 8).toUpperCase()} · {subscription.quantityMultiplier}× quantity</ThemedText></View>
                 <StatusBadge label={subscription.status.replaceAll('_', ' ')} tone={subscriptionTone(subscription.status)} />
               </View>
-              <ThemedText type="small" themeColor="textSecondary">Next cycle {formatDate(subscription.nextOrderAt)}</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">Next cycle {formatIndiaDateTime(subscription.nextOrderAt)}</ThemedText>
               {subscription.status !== 'CANCELLED' ? (
                 <View style={styles.actions}>
-                  {subscription.status === 'PAUSED' ? <FilterChip label="Resume" selected={false} onPress={() => void action(subscription, 'RESUME')} /> : <FilterChip label="Pause" selected={false} onPress={() => void action(subscription, 'PAUSE')} />}
-                  <FilterChip label="Skip next" selected={false} onPress={() => void action(subscription, 'SKIP')} />
-                  <FilterChip label="Cancel" selected={false} onPress={() => void action(subscription, 'CANCEL')} />
+                  {subscription.status === 'PAUSED' ? <FilterChip label="Resume" selected={false} disabled={busyId !== null} onPress={() => void action(subscription, 'RESUME')} /> : <FilterChip label="Pause" selected={false} disabled={busyId !== null} onPress={() => void action(subscription, 'PAUSE')} />}
+                  <FilterChip label="Skip next" selected={false} disabled={busyId !== null} onPress={() => void action(subscription, 'SKIP')} />
+                  <FilterChip label="Cancel" selected={false} disabled={busyId !== null} onPress={() => confirmCancel(subscription)} />
                 </View>
               ) : null}
             </AppCard>
@@ -348,5 +388,6 @@ const styles = StyleSheet.create({
   list: { gap: spacing.x4 }, card: { gap: spacing.x3 }, row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x2 },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x2 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.x3 },
+  backButton: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
   flex: { flex: 1 }, title: { ...typography.title },
 });

@@ -19,6 +19,7 @@ import {
   uploadMedicalDocument,
   type MedicalDocument,
 } from '@/services/medical-documents';
+import { isSafeHttpsUrl } from '@/utils/customer-navigation-safety';
 
 type ReportFilter = 'ALL' | 'PROVIDER' | 'UPLOADED';
 
@@ -47,7 +48,14 @@ type UploadedReport = {
 type ReportItem = ProviderReport | UploadedReport;
 
 function formatReportDate(value: string): string {
-  return new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(value));
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Date unavailable';
+  return new Intl.DateTimeFormat('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Asia/Kolkata',
+  }).format(date);
 }
 
 function fileNameForAsset(uri: string, fileName?: string | null): string {
@@ -68,9 +76,11 @@ export default function MedicalReportsScreen() {
 
   const loadDocuments = useCallback(async () => {
     if (!session) {
+      setUploadedDocuments([]);
       setDocumentLoading(false);
       return;
     }
+    setDocumentLoading(true);
     setDocumentError(null);
     try {
       setUploadedDocuments(await fetchMedicalDocuments(session.accessToken));
@@ -134,6 +144,7 @@ export default function MedicalReportsScreen() {
       const url = report.kind === 'uploaded'
         ? await getMedicalDocumentLink(report.document.documentId, session.accessToken, disposition)
         : report.documentUrl;
+      if (!isSafeHttpsUrl(url)) throw new Error('This medical report link is invalid.');
       const supported = await Linking.canOpenURL(url);
       if (!supported) throw new Error('This report cannot be opened on this device.');
       await Linking.openURL(url);
@@ -143,7 +154,7 @@ export default function MedicalReportsScreen() {
   }, [session]);
 
   const chooseAndUpload = useCallback(async () => {
-    if (!session || !selectedAppointmentId) return;
+    if (!session || !selectedAppointmentId || uploading) return;
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       Alert.alert('Photo permission required', 'Allow photo access to upload a scanned prescription or medical report.');
@@ -175,7 +186,7 @@ export default function MedicalReportsScreen() {
     } finally {
       setUploading(false);
     }
-  }, [selectedAppointmentId, session]);
+  }, [selectedAppointmentId, session, uploading]);
 
   if (!user || !session) {
     return (
@@ -245,12 +256,22 @@ export default function MedicalReportsScreen() {
                   <StatusBadge label={report.kind === 'uploaded' ? 'Private signed access' : 'Provider issued'} color={theme.primary} />
                 </View>
                 <View style={styles.actionRow}>
-                  <Pressable onPress={() => void openReport(report)} accessibilityRole="button" style={({ pressed }) => [styles.textAction, pressed && styles.pressed]}>
+                  <Pressable
+                    onPress={() => void openReport(report)}
+                    accessibilityRole="link"
+                    accessibilityLabel={`View ${report.title}`}
+                    style={({ pressed }) => [styles.textAction, pressed && styles.pressed]}
+                  >
                     <AppIcon name="eye" color={theme.primary} size={20} />
                     <ThemedText type="smallBold" style={{ color: theme.primary }}>View</ThemedText>
                   </Pressable>
                   {report.kind === 'uploaded' ? (
-                    <Pressable onPress={() => void openReport(report, 'attachment')} accessibilityRole="button" style={({ pressed }) => [styles.textAction, pressed && styles.pressed]}>
+                    <Pressable
+                      onPress={() => void openReport(report, 'attachment')}
+                      accessibilityRole="link"
+                      accessibilityLabel={`Download ${report.title}`}
+                      style={({ pressed }) => [styles.textAction, pressed && styles.pressed]}
+                    >
                       <AppIcon name="download" color={theme.textSecondary} size={20} />
                       <ThemedText type="smallBold" themeColor="textSecondary">Download</ThemedText>
                     </Pressable>

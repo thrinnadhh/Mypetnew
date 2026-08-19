@@ -1,14 +1,28 @@
 import { useRouter } from 'expo-router';
-import React from 'react';
-import { View } from 'react-native';
+import React, { useCallback, useEffect } from 'react';
+import { BackHandler, Platform, View } from 'react-native';
 
 import { EntityCard } from '@/components/foundation/primitives';
 import { ScreenShell } from '@/components/foundation/screen-shell';
 import { ScreenHeader } from '@/components/ui/screen-header';
 import { spacing } from '@/design/tokens';
+import { backOrReplace } from '@/utils/customer-navigation-safety';
 
 export default function AppointmentBookingScreen() {
   const router = useRouter();
+  const handleBack = useCallback(() => {
+    backOrReplace(router, '/appointments');
+  }, [router]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (router.canGoBack()) return false;
+      router.replace('/appointments' as never);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [router]);
 
   return (
     <ScreenShell
@@ -16,7 +30,7 @@ export default function AppointmentBookingScreen() {
         <ScreenHeader
           title="Book an appointment"
           subtitle="Choose veterinary care or grooming"
-          onBack={() => router.back()}
+          onBack={handleBack}
         />
       )}
       testID="appointment-booking-screen"

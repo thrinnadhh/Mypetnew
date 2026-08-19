@@ -1,6 +1,6 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
 import {
@@ -27,6 +27,9 @@ import {
   type CustomerCase,
   type CustomerCaseType,
 } from '@/services/customer-cases';
+import { singleRouteParam } from '@/utils/customer-navigation-safety';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const CASE_TYPES: Array<{ value: CustomerCaseType; label: string }> = [
   { value: 'MISSING_ITEM', label: 'Missing item' },
@@ -42,13 +45,16 @@ function fileName(uri: string, value?: string | null): string {
 }
 
 function dateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Date unavailable';
   return new Intl.DateTimeFormat('en-IN', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-  }).format(new Date(value));
+    timeZone: 'Asia/Kolkata',
+  }).format(date);
 }
 
 function tone(status: CustomerCase['status']): 'success' | 'warning' | 'error' | 'neutral' {
@@ -59,7 +65,10 @@ function tone(status: CustomerCase['status']): 'success' | 'warning' | 'error' |
 }
 
 export default function CustomerSupportScreen() {
-  const params = useLocalSearchParams<{ orderId?: string }>();
+  const params = useLocalSearchParams<{ orderId?: string | string[] }>();
+  const orderId = singleRouteParam(params.orderId);
+  const hasOrderParam = params.orderId !== undefined;
+  const validOrderId = orderId && UUID_PATTERN.test(orderId) ? orderId : null;
   const { user, session } = useAuth();
   const { requireAuth } = useAuthIntent();
   const [cases, setCases] = useState<CustomerCase[]>([]);
@@ -69,12 +78,20 @@ export default function CustomerSupportScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const busyRef = useRef<string | null>(null);
+
+  const setBusy = useCallback((value: string | null) => {
+    busyRef.current = value;
+    setBusyId(value);
+  }, []);
 
   const load = useCallback(async () => {
     if (!session) {
+      setCases([]);
       setLoading(false);
       return;
     }
+    setLoading(true);
     setError(null);
     try {
       setCases(await fetchCustomerCases(session.accessToken));
@@ -96,26 +113,26 @@ export default function CustomerSupportScreen() {
   }, [load]);
 
   const create = useCallback(async () => {
-    if (!session || !params.orderId) return;
+    if (!session || !validOrderId || busyRef.current) return;
     if (description.trim().length < 10) {
       Alert.alert('Add more detail', 'Describe the problem using at least 10 characters.');
       return;
     }
-    setBusyId('create');
+    setBusy('create');
     try {
-      const created = await createCustomerCase(params.orderId, caseType, description, session.accessToken);
+      const created = await createCustomerCase(validOrderId, caseType, description, session.accessToken);
       setCases((current) => [created, ...current]);
       setDescription('');
       Alert.alert('Support case created', 'MyPet recorded the order, issue type and customer ownership. You may attach private evidence now.');
     } catch (nextError) {
       Alert.alert('Could not create case', apiErrorMessage(nextError));
     } finally {
-      setBusyId(null);
+      setBusy(null);
     }
-  }, [caseType, description, params.orderId, session]);
+  }, [caseType, description, session, setBusy, validOrderId]);
 
   const addEvidence = useCallback(async (customerCase: CustomerCase) => {
-    if (!session) return;
+    if (!session || busyRef.current) return;
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       Alert.alert('Photo permission required', 'Allow photo access to attach private order evidence.');
@@ -127,8 +144,8 @@ export default function CustomerSupportScreen() {
       quality: 1,
     });
     const asset = result.canceled ? null : result.assets[0];
-    if (!asset) return;
-    setBusyId(customerCase.caseId);
+    if (!asset || busyRef.current) return;
+    setBusy(customerCase.caseId);
     try {
       const evidence = await uploadCustomerCaseEvidence(
         customerCase,
@@ -146,14 +163,15 @@ export default function CustomerSupportScreen() {
     } catch (nextError) {
       Alert.alert('Evidence upload failed', apiErrorMessage(nextError));
     } finally {
-      setBusyId(null);
+      setBusy(null);
     }
-  }, [session]);
+  }, [session, setBusy]);
 
   const openEvidence = useCallback(async (customerCase: CustomerCase, evidenceId: string) => {
     if (!session) return;
     try {
       const url = await getCustomerCaseEvidenceLink(customerCase.caseId, evidenceId, session.accessToken);
+      if (!(await Linking.canOpenURL(url))) throw new Error('This evidence link cannot be opened on this device.');
       await Linking.openURL(url);
     } catch (nextError) {
       Alert.alert('Evidence unavailable', apiErrorMessage(nextError));
@@ -188,15 +206,15 @@ export default function CustomerSupportScreen() {
       header={<AppBar title="Support and disputes" subtitle="Missing, damaged, wrong, late or payment-related orders" />}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
     >
-      {params.orderId ? (
+      {validOrderId ? (
         <AppCard style={styles.card}>
           <SectionHeader title="Create a case" />
           <ThemedText type="small" themeColor="textSecondary">
-            Order #{params.orderId.slice(0, 8).toUpperCase()}
+            Order #{validOrderId.slice(0, 8).toUpperCase()}
           </ThemedText>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
             {CASE_TYPES.map((item) => (
-              <FilterChip key={item.value} label={item.label} selected={caseType === item.value} onPress={() => setCaseType(item.value)} />
+              <FilterChip key={item.value} label={item.label} selected={caseType === item.value} disabled={busyId !== null} onPress={() => setCaseType(item.value)} />
             ))}
           </ScrollView>
           <TextField
@@ -206,10 +224,14 @@ export default function CustomerSupportScreen() {
             multiline
             placeholder="Include which item, what was wrong and what resolution you need."
           />
-          <PrimaryAction label="Create support case" loading={busyId === 'create'} onPress={() => void create()} />
+          <PrimaryAction label="Create support case" loading={busyId === 'create'} disabled={busyId !== null && busyId !== 'create'} onPress={() => void create()} />
         </AppCard>
       ) : (
-        <StateView kind="empty" title="Choose an order first" message="Open an order and select Get help to start an order-specific case." />
+        <StateView
+          kind={hasOrderParam ? 'error' : 'empty'}
+          title={hasOrderParam ? 'Order link is invalid' : 'Choose an order first'}
+          message={hasOrderParam ? 'Return to your orders and open support from a valid order.' : 'Open an order and select Get help to start an order-specific case.'}
+        />
       )}
 
       {error ? (
@@ -244,6 +266,7 @@ export default function CustomerSupportScreen() {
               key={evidence.evidenceId}
               label={`View ${evidence.originalFilename}`}
               selected={false}
+              disabled={busyId !== null}
               onPress={() => void openEvidence(customerCase, evidence.evidenceId)}
             />
           ))}
@@ -251,6 +274,7 @@ export default function CustomerSupportScreen() {
             <PrimaryAction
               label="Attach private evidence"
               loading={busyId === customerCase.caseId}
+              disabled={busyId !== null && busyId !== customerCase.caseId}
               onPress={() => void addEvidence(customerCase)}
             />
           ) : null}

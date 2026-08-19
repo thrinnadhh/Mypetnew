@@ -1,2 +1,7 @@
 import AppTabs from '@/components/app-tabs';
-export default AppTabs;
+import { useAuth } from '@/context/AuthContext';
+
+export default function CustomerTabsLayout() {
+  const { user } = useAuth();
+  return <AppTabs key={user?.id ?? 'guest'} />;
+}

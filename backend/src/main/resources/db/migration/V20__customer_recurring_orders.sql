@@ -13,7 +13,8 @@ CREATE TABLE mypet.recurring_order_subscription (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
     CHECK (cadence_days IN (7, 15, 25, 30, 35)),
     CHECK (quantity_multiplier BETWEEN 1 AND 20),
-    CHECK (status IN ('ACTIVE', 'PAUSED', 'AWAITING_CONFIRMATION', 'CANCELLED'))
+    CHECK (status IN ('ACTIVE', 'PAUSED', 'AWAITING_CONFIRMATION', 'CANCELLED')),
+    UNIQUE (customer_id, source_order_id)
 );
 
 CREATE INDEX idx_recurring_order_customer_created
@@ -21,7 +22,3 @@ CREATE INDEX idx_recurring_order_customer_created
 
 CREATE INDEX idx_recurring_order_due
     ON mypet.recurring_order_subscription(status, next_order_at);
-
-CREATE UNIQUE INDEX uq_recurring_order_active_source
-    ON mypet.recurring_order_subscription(customer_id, source_order_id)
-    WHERE status <> 'CANCELLED';

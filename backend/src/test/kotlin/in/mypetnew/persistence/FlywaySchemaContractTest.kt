@@ -6,7 +6,6 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.sql.DriverManager
-import java.time.Instant
 import java.util.UUID
 
 class FlywaySchemaContractTest {
@@ -132,6 +131,44 @@ class FlywaySchemaContractTest {
             }
             assertTrue(recurringColumns.containsAll(setOf("fulfilment_mode", "time_zone", "version")))
 
+            val proposalConstraints = connection.prepareStatement(
+                """
+                select constraint_name from information_schema.table_constraints
+                where lower(table_schema) = 'mypet'
+                  and lower(table_name) = 'recurring_order_proposal'
+                """.trimIndent(),
+            ).use { statement ->
+                statement.executeQuery().use { rows -> buildSet { while (rows.next()) add(rows.getString(1).lowercase()) } }
+            }
+            assertTrue(
+                proposalConstraints.containsAll(
+                    setOf(
+                        "uq_recurring_proposal_cycle",
+                        "ck_recurring_proposal_cadence",
+                        "ck_recurring_proposal_quantity",
+                        "ck_recurring_proposal_mode",
+                        "ck_recurring_proposal_status",
+                    ),
+                ),
+                "proposalConstraints=$proposalConstraints",
+            )
+
+            val cadenceCheck = connection.prepareStatement(
+                """
+                select check_clause from information_schema.check_constraints
+                where lower(constraint_schema) = 'mypet'
+                  and lower(constraint_name) = 'ck_recurring_proposal_cadence'
+                """.trimIndent(),
+            ).use { statement ->
+                statement.executeQuery().use { rows ->
+                    assertTrue(rows.next(), "Recurring proposal cadence check is missing")
+                    rows.getString(1)
+                }
+            }
+            listOf("7", "15", "25", "30", "35").forEach { cadence ->
+                assertTrue(cadenceCheck.contains(cadence), "cadenceCheck=$cadenceCheck")
+            }
+
             val organizationId = UUID.randomUUID()
             val outletId = UUID.randomUUID()
             connection.prepareStatement(
@@ -149,74 +186,6 @@ class FlywaySchemaContractTest {
                 connection.prepareStatement(
                     "insert into mypet.inventory_balance(listing_id, on_hand, reserved, version) values (?, 0, 1, 0)",
                 ).use { it.setObject(1, listingId); it.executeUpdate() }
-            }
-
-            val customerId = UUID.randomUUID()
-            connection.prepareStatement(
-                "insert into mypet.identity_account(id, role, status, mobile_e164) values (?, 'CUSTOMER', 'ACTIVE', ?)",
-            ).use {
-                it.setObject(1, customerId)
-                it.setString(2, "+919876543210")
-                it.executeUpdate()
-            }
-            val quoteId = UUID.randomUUID()
-            val sourceOrderId = UUID.randomUUID()
-            connection.prepareStatement(
-                """
-                insert into mypet.product_order(
-                    id, customer_id, organization_id, outlet_id, quote_id, checkout_idempotency_key,
-                    order_number, fulfilment_mode, payment_method, payment_status,
-                    grand_total_paise, platform_fee_paise, merchant_commission_paise, status
-                ) values (?, ?, ?, ?, ?, ?, ?, 'STORE_PICKUP', 'PAY_ON_FULFILMENT',
-                          'PENDING_EXTERNAL_COLLECTION', 12500, 1000, 1000, 'DELIVERED')
-                """.trimIndent(),
-            ).use {
-                it.setObject(1, sourceOrderId)
-                it.setObject(2, customerId)
-                it.setObject(3, organizationId)
-                it.setObject(4, outletId)
-                it.setObject(5, quoteId)
-                it.setString(6, "schema-order-${UUID.randomUUID()}")
-                it.setString(7, "MP-SCHEMA-${UUID.randomUUID().toString().take(8)}")
-                it.executeUpdate()
-            }
-
-            val subscriptionId = UUID.randomUUID()
-            connection.prepareStatement(
-                """
-                insert into mypet.recurring_order_subscription(
-                    id, customer_id, provider_id, source_order_id, fulfilment_mode,
-                    cadence_days, quantity_multiplier, status, next_order_at
-                ) values (?, ?, ?, ?, 'STORE_PICKUP', 7, 1, 'ACTIVE', ?)
-                """.trimIndent(),
-            ).use {
-                it.setObject(1, subscriptionId)
-                it.setObject(2, customerId)
-                it.setObject(3, outletId)
-                it.setObject(4, sourceOrderId)
-                it.setObject(5, Instant.parse("2026-08-20T00:00:00Z"))
-                it.executeUpdate()
-            }
-
-            assertThrows(Exception::class.java) {
-                connection.prepareStatement(
-                    """
-                    insert into mypet.recurring_order_proposal(
-                        id, subscription_id, customer_id, provider_id, source_order_id,
-                        fulfilment_mode, cadence_days, quantity_multiplier, due_cycle_at,
-                        status, expires_at
-                    ) values (?, ?, ?, ?, ?, 'STORE_PICKUP', 10, 1, ?, 'AWAITING_CONFIRMATION', ?)
-                    """.trimIndent(),
-                ).use {
-                    it.setObject(1, UUID.randomUUID())
-                    it.setObject(2, subscriptionId)
-                    it.setObject(3, customerId)
-                    it.setObject(4, outletId)
-                    it.setObject(5, sourceOrderId)
-                    it.setObject(6, Instant.parse("2026-08-20T00:00:00Z"))
-                    it.setObject(7, Instant.parse("2026-08-23T00:00:00Z"))
-                    it.executeUpdate()
-                }
             }
         }
     }

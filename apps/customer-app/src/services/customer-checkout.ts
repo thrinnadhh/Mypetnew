@@ -76,7 +76,7 @@ export async function createProductOrder(
   const order = await apiClient.post<ProductOrderDto>(
     '/api/v1/customer/orders',
     { quoteId: input.quoteId, cartSignature: input.cartSignature },
-    { 'Idempotency-Key': checkoutIdempotencyKey },
+    { 'Idempotency-Key': `checkout:${input.quoteId}` },
   );
 
   if (

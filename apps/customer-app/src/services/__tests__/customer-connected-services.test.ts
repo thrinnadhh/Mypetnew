@@ -215,6 +215,8 @@ describe('connected customer services', () => {
     petId: '88888888-8888-4888-8888-888888888888',
     pincode: '517501',
     paymentMethod: 'PAY_AT_PROVIDER',
+    slotStartsAt: '2026-08-20T10:00:00Z',
+    slotEndsAt: '2026-08-20T10:30:00Z',
   });
   expect(mockedFetch.mock.calls[3][0]).toContain(
     '/api/v1/customer/appointments/66666666-6666-4666-8666-666666666666/confirm',

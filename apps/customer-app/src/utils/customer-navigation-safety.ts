@@ -20,7 +20,7 @@ export function singleRouteParam(value?: string | string[] | null): string | nul
   return normalized || null;
 }
 
-export function isSafeHttpsUrl(value?: string | null): boolean {
+export function isSafeHttpsUrl(value?: string | null): value is string {
   if (!value) return false;
   try {
     const parsed = new URL(value.trim());

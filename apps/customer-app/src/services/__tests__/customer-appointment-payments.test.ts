@@ -19,6 +19,8 @@ jest.mock('../api-client', () => ({
 }));
 
 const mockedApiClient = apiClient as jest.Mocked<typeof apiClient>;
+const CUSTOMER_A = '11111111-1111-4111-8111-111111111111';
+const CUSTOMER_B = '22222222-2222-4222-8222-222222222222';
 
 const pendingPayment = {
   paymentId: 'payment-1',
@@ -37,13 +39,18 @@ const pendingPayment = {
 describe('customer appointment Cashfree client', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
-    await clearPendingAppointmentPayment();
+    await Promise.all([
+      clearPendingAppointmentPayment(CUSTOMER_A),
+      clearPendingAppointmentPayment(CUSTOMER_B),
+    ]);
   });
 
-  it('initiates an APPOINTMENT payment without client-authored amount or identity and persists recovery', async () => {
+  it('initiates an APPOINTMENT payment without client-authored amount or identity and persists account-scoped recovery', async () => {
     mockedApiClient.post.mockResolvedValueOnce(pendingPayment);
 
-    await expect(initiateAppointmentPayment('appointment/1', 'appointment-payment-key')).resolves.toEqual(pendingPayment);
+    await expect(
+      initiateAppointmentPayment('appointment/1', CUSTOMER_A, 'appointment-payment-key'),
+    ).resolves.toEqual(pendingPayment);
 
     expect(mockedApiClient.post).toHaveBeenCalledWith(
       '/api/v1/customer/payments',
@@ -56,10 +63,22 @@ describe('customer appointment Cashfree client', () => {
     );
     const body = mockedApiClient.post.mock.calls[0][1];
     expect(JSON.stringify(body)).not.toMatch(/amountPaise|currency|customerId|userId|phone|email/);
-    await expect(loadPendingAppointmentPayment()).resolves.toEqual({
+    await expect(loadPendingAppointmentPayment(CUSTOMER_A)).resolves.toEqual({
       paymentId: 'payment-1',
       appointmentId: 'appointment/1',
+      customerId: CUSTOMER_A,
     });
+  });
+
+  it('never exposes one customers pending appointment payment to another account', async () => {
+    mockedApiClient.post.mockResolvedValueOnce(pendingPayment);
+    await initiateAppointmentPayment('appointment/1', CUSTOMER_A, 'appointment-payment-account-isolation');
+
+    await expect(loadPendingAppointmentPayment(CUSTOMER_A)).resolves.toMatchObject({
+      paymentId: 'payment-1',
+      customerId: CUSTOMER_A,
+    });
+    await expect(loadPendingAppointmentPayment(CUSTOMER_B)).resolves.toBeNull();
   });
 
   it('loads canonical backend payment state by payment ID', async () => {
@@ -69,20 +88,29 @@ describe('customer appointment Cashfree client', () => {
     expect(mockedApiClient.get).toHaveBeenCalledWith('/api/v1/customer/payments/payment%2F1');
   });
 
-  it('polls backend state until the appointment payment becomes captured and clears recovery', async () => {
+  it('polls backend state until the appointment payment becomes captured and clears only that accounts recovery', async () => {
     mockedApiClient.post.mockResolvedValueOnce(pendingPayment);
-    await initiateAppointmentPayment('appointment/1', 'appointment-payment-key');
+    await initiateAppointmentPayment('appointment/1', CUSTOMER_A, 'appointment-payment-key');
 
     mockedApiClient.get
       .mockResolvedValueOnce(pendingPayment)
       .mockResolvedValueOnce({ ...pendingPayment, status: 'CAPTURED' as const });
 
-    await expect(waitForPaymentOutcome('payment-1', 2, 0)).resolves.toMatchObject({
+    await expect(waitForPaymentOutcome('payment-1', 2, 0, CUSTOMER_A)).resolves.toMatchObject({
       referenceType: 'APPOINTMENT',
       status: 'CAPTURED',
     });
     expect(mockedApiClient.get).toHaveBeenCalledTimes(2);
-    await expect(loadPendingAppointmentPayment()).resolves.toBeNull();
+    await expect(loadPendingAppointmentPayment(CUSTOMER_A)).resolves.toBeNull();
+  });
+
+  it('fails closed when appointment verification has no current customer identity', async () => {
+    mockedApiClient.get.mockResolvedValueOnce(pendingPayment);
+
+    await expect(waitForPaymentOutcome('payment-1', 1, 0)).rejects.toThrow(
+      'Current customer identity is required to verify an appointment payment.',
+    );
+    expect(mockedApiClient.post).not.toHaveBeenCalled();
   });
 
   it('keeps reference-only payment success checks fail closed', async () => {

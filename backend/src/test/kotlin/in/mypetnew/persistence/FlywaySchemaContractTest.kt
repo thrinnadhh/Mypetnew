@@ -164,7 +164,7 @@ class FlywaySchemaContractTest {
             connection.prepareStatement(
                 """
                 insert into mypet.product_order(
-                    id, customer_id, organization_id, outlet_id, quote_id, idempotency_key,
+                    id, customer_id, organization_id, outlet_id, quote_id, checkout_idempotency_key,
                     order_number, fulfilment_mode, payment_method, payment_status,
                     grand_total_paise, platform_fee_paise, merchant_commission_paise, status
                 ) values (?, ?, ?, ?, ?, ?, ?, 'STORE_PICKUP', 'PAY_ON_FULFILMENT',

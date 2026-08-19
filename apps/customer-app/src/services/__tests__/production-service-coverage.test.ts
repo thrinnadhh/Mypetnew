@@ -391,7 +391,8 @@ describe('appointment history production paths', () => {
 describe('appointment booking production paths', () => {
   const slot = {
     id: 'slot-1', providerId: 'provider-1', offeringId: 'offering-1',
-    serviceName: 'Consultation', startTime: 'start', endTime: 'end', price: 650,
+    serviceName: 'Consultation', startTime: 'start', endTime: 'end',
+    startsAt: '2026-08-20T10:00:00Z', endsAt: '2026-08-20T10:30:00Z', price: 650,
   };
 
   const servicesPage = {
@@ -463,6 +464,7 @@ describe('appointment booking production paths', () => {
     expect(JSON.parse(holdRequest?.body as string)).toEqual({
       outletId: 'provider-1', serviceId: 'offering-1', slotId: 'slot-1', petId: 'pet-1',
       pincode: '517501', paymentMethod: 'PAY_AT_PROVIDER',
+      slotStartsAt: '2026-08-20T10:00:00Z', slotEndsAt: '2026-08-20T10:30:00Z',
     });
 
     await expect(confirmAppointmentHold('appointment/1', token)).resolves.toBeUndefined();

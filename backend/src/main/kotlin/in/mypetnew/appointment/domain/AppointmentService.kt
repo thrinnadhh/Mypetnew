@@ -308,6 +308,7 @@ class AppointmentService(
         paymentMethod: AppointmentPaymentMethod,
         notes: String?,
         idempotencyKey: String,
+        servicePincode: String? = null,
     ): CustomerAppointment {
         Authorizer.requireRole(customer, Role.CUSTOMER)
         validateIdempotencyKey(idempotencyKey)
@@ -318,6 +319,11 @@ class AppointmentService(
         if (!slot.startsAt.isAfter(now)) slotUnavailable()
         val pet = customerData.getPet(customer.actorId, petId)
         val outlet = providers.getOutlet(outletId).takeIf { it.status == ProviderStatus.ACTIVE } ?: unavailable()
+        if (outlet.organizationId != offering.organizationId) unavailable()
+        if (servicePincode != null) {
+            validateServicePincode(servicePincode)
+            if (servicePincode !in outlet.servicePinCodes) appointmentPincodeUnavailable()
+        }
         val cleanNotes = notes?.trim()?.takeIf { it.isNotEmpty() }
         if (cleanNotes != null && cleanNotes.length > 1_000) invalidAppointment()
         val appointment = CustomerAppointment(
@@ -347,7 +353,7 @@ class AppointmentService(
             now,
         )
         val fingerprint = fingerprint(
-            "${customer.actorId}:$outletId:$serviceId:$petId:$slotId:$paymentMethod:$cleanNotes",
+            "${customer.actorId}:$outletId:$serviceId:$petId:$slotId:$paymentMethod:${servicePincode ?: ""}:$cleanNotes",
         )
         return persistence.hold(appointment, idempotencyKey, fingerprint, now)
     }
@@ -433,6 +439,12 @@ class AppointmentService(
         }
     }
 
+    private fun validateServicePincode(pincode: String) {
+        if (!pincode.matches(Regex("[1-9][0-9]{5}"))) {
+            throw DomainException("PIN_CODE_INVALID", "PIN code must contain exactly six digits")
+        }
+    }
+
     private fun fingerprint(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(StandardCharsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
@@ -441,6 +453,10 @@ class AppointmentService(
     private fun invalidSlot(): Nothing = throw DomainException("SERVICE_SLOT_INVALID", "The service slot is invalid")
     private fun invalidAppointment(): Nothing = throw DomainException("APPOINTMENT_INVALID", "The appointment request is invalid")
     private fun unavailable(): Nothing = throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+    private fun appointmentPincodeUnavailable(): Nothing = throw DomainException(
+        "APPOINTMENT_PIN_NOT_SERVICEABLE",
+        "The selected provider no longer serves this PIN code",
+    )
 }
 
 private val OCCUPYING_STATUSES = setOf(

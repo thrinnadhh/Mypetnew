@@ -4,10 +4,11 @@ import java.sql.Timestamp
 import java.time.Instant
 
 /**
- * Package-visible JDBC binding helper for appointment-payment persistence.
+ * JDBC binding fallback for appointment-payment persistence.
  *
- * JdbcPaymentPersistence keeps its own file-private helper; this helper exists
- * because JdbcAppointmentOnlinePaymentService must bind canonical instants as
- * JDBC timestamps without depending on another file's private declaration.
+ * Product payment persistence has a file-private non-null Instant extension.
+ * Keeping this fallback nullable makes that existing exact overload strictly
+ * more specific while still supporting the appointment service's non-null and
+ * safe-call timestamp bindings.
  */
-internal fun Instant.jdbcTimestamp(): Timestamp = Timestamp.from(this)
+internal fun Instant?.jdbcTimestamp(): Timestamp = Timestamp.from(requireNotNull(this))

@@ -20,18 +20,28 @@ describe('recurring order contract', () => {
     expect(screen).toMatch(/No silent charging/);
     expect(screen).toMatch(/Revalidate and confirm/);
     expect(screen).toMatch(/router\.push\('\/cart'/);
-    expect(service).toMatch(/\/api\/v1\/orders\/subscriptions/);
+    expect(service).toMatch(/\/api\/v1\/customer\/recurring-orders/);
+    expect(service).not.toMatch(/\/api\/v1\/orders\/subscriptions/);
   });
 
-  it('verifies recurring order specification D-019 requires explicit customer confirmation and limits cadences', () => {
-    const decisions = source('../../docs/product/DECISIONS.md');
-    const matrix = source('../../docs/architecture/CUSTOMER_API_COMPATIBILITY_MATRIX.md');
+  it('keeps the server authoritative for ownership, cadence and current-price revalidation', () => {
+    const controller = source('../../backend/src/main/kotlin/in/mypetnew/application/web/CustomerRecurringOrderController.kt');
+    const backend = source('../../backend/src/main/kotlin/in/mypetnew/recurring/domain/RecurringOrderService.kt');
+    const migration = source('../../backend/src/main/resources/db/migration/V20__customer_recurring_orders.sql');
 
-    expect(RECURRING_CADENCES).toEqual([7, 15, 25, 30, 35]);
+    expect(controller).toContain('Authorizer.requireRole(principal, Role.CUSTOMER)');
+    expect(controller).toContain('customer(authentication)');
+    expect(backend).toContain('orders.detail(customerId, sourceOrderId)');
+    expect(backend).toContain('ALLOWED_CADENCES = setOf(7, 15, 25, 30, 35)');
+    expect(backend).toContain('listing?.sellingPricePaise ?: line.unitPricePaise');
+    expect(backend).toContain('status = RecurringOrderStatus.AWAITING_CONFIRMATION');
+    expect(migration).toContain("WHERE status <> 'CANCELLED'");
+  });
+
+  it('preserves D-019 explicit confirmation and no automatic charging', () => {
+    const decisions = source('../../docs/product/DECISIONS.md');
     expect(decisions).toContain('D-019');
     expect(decisions).toContain('7, 15, 25, 30, and 35 days');
     expect(decisions).toContain('No automatic COD placement or payment mandate charge occurs');
-    expect(matrix).toContain('- **2.6.2 Recurring Orders & Subscriptions (`DEFERRED`)**:');
-    expect(matrix).toContain('| Recurring Subscriptions | POST | `/api/v1/orders/subscriptions` (Legacy client route) | N/A (Sprint 1 uses single-order pickup) | **DEFERRED** | Post-Sprint 1 |');
   });
 });

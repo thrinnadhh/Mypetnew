@@ -364,7 +364,7 @@ describe('appointment history production paths', () => {
     });
     expect(await AsyncStorage.getItem('@mypet_appointments_cache_v1_customer-1')).not.toBeNull();
     expect(mockedFetch.mock.calls[0][0]).toBe(
-      'https://api.mypet.test/api/v1/customer/appointments?page=0&pageSize=100',
+      'https://api.mypet.test/api/v1/customer/appointments?page=0&pageSize=20',
     );
   });
 

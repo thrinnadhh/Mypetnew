@@ -70,6 +70,18 @@ describe('customer appointment Cashfree client', () => {
     });
   });
 
+  it('rejects a mismatched appointment reference before writing recovery', async () => {
+    mockedApiClient.post.mockResolvedValueOnce({
+      ...pendingPayment,
+      referenceId: 'appointment/other',
+    });
+
+    await expect(
+      initiateAppointmentPayment('appointment/1', CUSTOMER_A, 'appointment-reference-mismatch'),
+    ).rejects.toThrow('Payment initiation returned a different appointment reference.');
+    await expect(loadPendingAppointmentPayment(CUSTOMER_A)).resolves.toBeNull();
+  });
+
   it('never exposes one customers pending appointment payment to another account', async () => {
     mockedApiClient.post.mockResolvedValueOnce(pendingPayment);
     await initiateAppointmentPayment('appointment/1', CUSTOMER_A, 'appointment-payment-account-isolation');

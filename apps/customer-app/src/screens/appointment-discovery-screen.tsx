@@ -126,14 +126,18 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
   const bookingRequestGeneration = useRef(0);
   const bookingInFlightRef = useRef(false);
   const bookingContextRef = useRef<BookingContext | null>(null);
-  bookingContextRef.current = {
-    userId: user?.id ?? null,
-    accessToken: session?.accessToken ?? null,
-    petId: selectedPetId,
-    paymentMethod,
-    pincode: selectedPincode,
-    providerId: provider?.id ?? null,
-  };
+
+  useEffect(() => {
+    bookingContextRef.current = {
+      userId: user?.id ?? null,
+      accessToken: session?.accessToken ?? null,
+      petId: selectedPetId,
+      paymentMethod,
+      pincode: selectedPincode,
+      providerId: provider?.id ?? null,
+    };
+    bookingRequestGeneration.current += 1;
+  }, [paymentMethod, provider?.id, selectedPetId, selectedPincode, session?.accessToken, user?.id]);
 
   useEffect(() => () => {
     bookingRequestGeneration.current += 1;

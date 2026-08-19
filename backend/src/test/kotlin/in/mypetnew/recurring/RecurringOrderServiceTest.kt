@@ -3,7 +3,9 @@ package `in`.mypetnew.recurring
 import `in`.mypetnew.catalog.domain.BarcodeType
 import `in`.mypetnew.catalog.domain.CatalogService
 import `in`.mypetnew.catalog.domain.CreateListingCommand
+import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.catalog.domain.ListingKind
+import `in`.mypetnew.catalog.domain.StockReason
 import `in`.mypetnew.commerce.domain.CustomerOrderCategory
 import `in`.mypetnew.commerce.domain.CustomerOrderCursor
 import `in`.mypetnew.commerce.domain.CustomerOrderDetailSnapshot
@@ -11,11 +13,11 @@ import `in`.mypetnew.commerce.domain.CustomerOrderLineSnapshot
 import `in`.mypetnew.commerce.domain.CustomerOrderQuery
 import `in`.mypetnew.commerce.domain.CustomerOrderSummaryPage
 import `in`.mypetnew.commerce.domain.OrderStatus
+import `in`.mypetnew.commerce.domain.ProductOrder
 import `in`.mypetnew.common.auth.AdminPermission
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
-import `in`.mypetnew.customer.domain.CustomerAddressInput
 import `in`.mypetnew.customer.domain.CustomerDataService
 import `in`.mypetnew.customer.domain.InMemoryCustomerDataPersistence
 import `in`.mypetnew.provider.domain.ProviderCapability
@@ -23,6 +25,7 @@ import `in`.mypetnew.provider.domain.ProviderService
 import `in`.mypetnew.recurring.domain.InMemoryRecurringOrderPersistence
 import `in`.mypetnew.recurring.domain.RecurringOrderService
 import `in`.mypetnew.recurring.domain.RecurringOrderStatus
+import `in`.mypetnew.recurring.domain.RenewalProposalStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -35,74 +38,195 @@ import java.util.UUID
 
 class RecurringOrderServiceTest {
     @Test
-    fun `create derives owned source provider address and blocks foreign or duplicate sources`() {
+    fun `create is pickup-safe customer-owned idempotent and cadence bounded`() {
         val fixture = fixture()
-        val created = fixture.service.create(fixture.customerId, fixture.orderId, 30, 2)
+        val key = "create-stable-key"
+        val created = fixture.service.create(fixture.customerId, fixture.orderId, 30, 2, key)
+        val replay = fixture.service.create(fixture.customerId, fixture.orderId, 30, 2, key)
 
+        assertEquals(created.id, replay.id)
         assertEquals(fixture.customerId, created.customerId)
         assertEquals(fixture.outletId, created.providerId)
-        assertEquals(fixture.addressId, created.deliveryAddressId)
+        assertEquals(null, created.deliveryAddressId)
+        assertEquals("STORE_PICKUP", created.fulfilmentMode)
         assertEquals(RecurringOrderStatus.ACTIVE, created.status)
         assertEquals(Instant.parse("2026-09-18T00:00:00Z"), created.nextOrderAt)
 
+        assertEquals("IDEMPOTENCY_FINGERPRINT_MISMATCH", codeOf {
+            fixture.service.create(fixture.customerId, fixture.orderId, 15, 2, key)
+        })
         assertEquals("RECURRING_ALREADY_EXISTS", codeOf {
-            fixture.service.create(fixture.customerId, fixture.orderId, 30, 1)
+            fixture.service.create(fixture.customerId, fixture.orderId, 30, 1, "different-key")
         })
         assertEquals("RESOURCE_NOT_FOUND", codeOf {
-            fixture.service.create(UUID.randomUUID(), fixture.orderId, 30, 1)
+            fixture.service.create(UUID.randomUUID(), fixture.orderId, 30, 1, "foreign-customer")
         })
         assertEquals("RECURRING_CADENCE_INVALID", codeOf {
-            fixture.service.create(fixture.customerId, UUID.randomUUID(), 10, 1)
+            fixture.service.create(fixture.customerId, UUID.randomUUID(), 10, 1, "invalid-cadence")
+        })
+        assertEquals("RECURRING_QUANTITY_INVALID", codeOf {
+            fixture.service.create(fixture.customerId, fixture.orderId, 30, 21, "invalid-quantity")
         })
     }
 
     @Test
-    fun `due reminder requires confirmation and returns current server price without creating an order`() {
+    fun `GET does not promote due schedule and scheduler creates one durable proposal per cycle`() {
         val fixture = fixture()
-        val created = fixture.service.create(fixture.customerId, fixture.orderId, 7, 3)
-        val dueService = fixture.serviceAt("2026-08-27T00:00:00Z")
+        val created = fixture.service.create(fixture.customerId, fixture.orderId, 7, 3, "create-seven")
+        val dueService = fixture.serviceAt("2026-08-26T00:00:00Z")
 
-        val due = dueService.list(fixture.customerId, 0, 20).items.single()
-        assertEquals(RecurringOrderStatus.AWAITING_CONFIRMATION, due.status)
+        val read = dueService.list(fixture.customerId, 0, 20).items.single()
+        assertEquals(RecurringOrderStatus.ACTIVE, read.status)
+        assertEquals(created.nextOrderAt, read.nextOrderAt)
+        assertTrue(dueService.listProposals(fixture.customerId, 0, 20).items.isEmpty())
 
-        val confirmation = dueService.confirm(fixture.customerId, created.id)
+        assertEquals(1, dueService.runScheduler().proposalsCreated)
+        assertEquals(0, dueService.runScheduler().proposalsCreated)
+        val proposals = dueService.listProposals(fixture.customerId, 0, 20).items
+        assertEquals(1, proposals.size)
+        assertEquals(created.id, proposals.single().subscriptionId)
+        assertEquals(created.nextOrderAt, proposals.single().dueCycleAt)
+        assertEquals(RenewalProposalStatus.AWAITING_CONFIRMATION, proposals.single().status)
+
+        val afterScheduler = dueService.list(fixture.customerId, 0, 20).items.single()
+        assertEquals(created.nextOrderAt, afterScheduler.nextOrderAt)
+        assertEquals(RecurringOrderStatus.ACTIVE, afterScheduler.status)
+    }
+
+    @Test
+    fun `proposal confirmation revalidates current price and stock but schedule advances only after normal order`() {
+        val fixture = fixture()
+        val created = fixture.service.create(fixture.customerId, fixture.orderId, 7, 3, "create-confirm")
+        val dueService = fixture.serviceAt("2026-08-26T00:00:00Z")
+        dueService.runScheduler()
+        val proposal = dueService.listProposals(fixture.customerId, 0, 20).items.single()
+
+        val confirmation = dueService.confirm(
+            fixture.customerId,
+            created.id,
+            proposal.id,
+            "confirm-proposal",
+        )
         assertTrue(confirmation.canReorder)
         assertTrue(confirmation.providerServiceable)
         assertEquals(fixture.orderId, confirmation.originalOrderId)
         assertEquals(3, confirmation.items.single().quantity)
-        assertEquals(9000, confirmation.items.single().unitPricePaise)
-        assertEquals(RecurringOrderStatus.ACTIVE, confirmation.subscription.status)
-        assertEquals(Instant.parse("2026-09-03T00:00:00Z"), confirmation.subscription.nextOrderAt)
+        assertEquals(9000L, confirmation.items.single().unitPricePaise)
+        assertEquals(RenewalProposalStatus.CONFIRMED, confirmation.proposal.status)
+        assertEquals(created.nextOrderAt, confirmation.subscription.nextOrderAt)
+
+        val normalOrder = ProductOrder(
+            id = UUID.randomUUID(),
+            customerId = fixture.customerId,
+            outletId = fixture.outletId,
+            lines = mapOf(fixture.listingId to 3),
+            grandTotalPaise = 27_000,
+            status = OrderStatus.PLACED,
+            history = emptyList(),
+            fulfilmentMode = "STORE_PICKUP",
+        )
+        val completed = dueService.completeWithOrder(
+            fixture.customerId,
+            proposal.id,
+            normalOrder,
+            "checkout:${normalOrder.id}",
+            "test",
+        )
+        assertEquals(RenewalProposalStatus.ORDER_CREATED, completed.status)
+        assertEquals(normalOrder.id, completed.orderId)
+        assertEquals(
+            Instant.parse("2026-09-02T00:00:00Z"),
+            dueService.list(fixture.customerId, 0, 20).items.single().nextOrderAt,
+        )
     }
 
     @Test
-    fun `update is customer isolated and cancelled reminders cannot be resumed`() {
+    fun `stock changes fail revalidation and never advance schedule`() {
+        val fixture = fixture(stock = 2)
+        val created = fixture.service.create(fixture.customerId, fixture.orderId, 7, 3, "create-low-stock")
+        val dueService = fixture.serviceAt("2026-08-26T00:00:00Z")
+        dueService.runScheduler()
+        val proposal = dueService.listProposals(fixture.customerId, 0, 20).items.single()
+
+        val confirmation = dueService.confirm(
+            fixture.customerId,
+            created.id,
+            proposal.id,
+            "confirm-low-stock",
+        )
+        assertFalse(confirmation.canReorder)
+        assertEquals("INSUFFICIENT_STOCK", confirmation.items.single().failureReason)
+        assertEquals(RenewalProposalStatus.REVALIDATION_FAILED, confirmation.proposal.status)
+        assertEquals(created.nextOrderAt, dueService.list(fixture.customerId, 0, 20).items.single().nextOrderAt)
+    }
+
+    @Test
+    fun `pause skip cancel are retry safe and foreign customer cannot mutate or read proposal`() {
         val fixture = fixture()
-        val created = fixture.service.create(fixture.customerId, fixture.orderId, 15, 1)
+        val created = fixture.service.create(fixture.customerId, fixture.orderId, 15, 1, "create-actions")
+        val foreign = UUID.randomUUID()
 
         assertEquals("RESOURCE_NOT_FOUND", codeOf {
-            fixture.service.update(UUID.randomUUID(), created.id, "PAUSE", null, null, null)
+            fixture.service.update(foreign, created.id, "PAUSE", null, null, null, "foreign-pause")
         })
-        val paused = fixture.service.update(fixture.customerId, created.id, "PAUSE", null, null, null)
+        val skipped = fixture.service.update(
+            fixture.customerId,
+            created.id,
+            "SKIP",
+            null,
+            null,
+            null,
+            "skip-once",
+        )
+        val skipReplay = fixture.service.update(
+            fixture.customerId,
+            created.id,
+            "SKIP",
+            null,
+            null,
+            null,
+            "skip-once",
+        )
+        assertEquals(skipped.nextOrderAt, skipReplay.nextOrderAt)
+        assertEquals(Instant.parse("2026-09-18T00:00:00Z"), skipped.nextOrderAt)
+
+        val paused = fixture.service.update(
+            fixture.customerId, created.id, "PAUSE", null, null, null, "pause-once",
+        )
         assertEquals(RecurringOrderStatus.PAUSED, paused.status)
-        val resumed = fixture.service.update(fixture.customerId, created.id, "RESUME", null, null, null)
+        val resumed = fixture.service.update(
+            fixture.customerId, created.id, "RESUME", null, null, null, "resume-once",
+        )
         assertEquals(RecurringOrderStatus.ACTIVE, resumed.status)
-        val cancelled = fixture.service.update(fixture.customerId, created.id, "CANCEL", null, null, null)
+        val cancelled = fixture.service.update(
+            fixture.customerId, created.id, "CANCEL", null, null, null, "cancel-once",
+        )
         assertEquals(RecurringOrderStatus.CANCELLED, cancelled.status)
         assertEquals("RECURRING_STATE_INVALID", codeOf {
-            fixture.service.update(fixture.customerId, created.id, "RESUME", null, null, null)
+            fixture.service.update(fixture.customerId, created.id, "RESUME", null, null, null, "resume-cancelled")
         })
+
+        val dueFixture = fixture()
+        val due = dueFixture.service.create(dueFixture.customerId, dueFixture.orderId, 7, 1, "create-idor")
+        val scheduler = dueFixture.serviceAt("2026-08-26T00:00:00Z")
+        scheduler.runScheduler()
+        val proposal = scheduler.listProposals(dueFixture.customerId, 0, 20).items.single()
+        assertEquals("RESOURCE_NOT_FOUND", codeOf { scheduler.getProposal(foreign, due.id, proposal.id) })
     }
 
     @Test
-    fun `list pagination is bounded`() {
+    fun `pagination is bounded and transition history is durable projection`() {
         val fixture = fixture()
+        val created = fixture.service.create(fixture.customerId, fixture.orderId, 30, 1, "history-create")
+        fixture.service.update(fixture.customerId, created.id, "PAUSE", null, null, null, "history-pause")
+
         assertEquals("PAGE_SIZE_INVALID", codeOf { fixture.service.list(fixture.customerId, -1, 20) })
         assertEquals("PAGE_SIZE_INVALID", codeOf { fixture.service.list(fixture.customerId, 0, 101) })
         assertFalse(fixture.service.list(fixture.customerId, 0, 20).hasNext)
+        assertEquals(listOf("SUBSCRIPTION_CREATED", "PAUSED"), fixture.service.history(fixture.customerId, created.id).map { it.eventType })
     }
 
-    private fun fixture(): Fixture {
+    private fun fixture(stock: Int = 100): Fixture {
         val customerId = UUID.randomUUID()
         val providers = ProviderService()
         val merchant = Principal(UUID.randomUUID(), Role.MERCHANT)
@@ -128,39 +252,27 @@ class RecurringOrderServiceTest {
                 organizationId = outlet.organizationId,
                 outletId = outlet.id,
                 barcodeType = BarcodeType.INTERNAL,
-                barcode = "RECURRING-DOG-FOOD",
+                barcode = "RECURRING-DOG-FOOD-${UUID.randomUUID()}",
                 name = "Dog Food",
                 kind = ListingKind.PRODUCT,
-                mrpPaise = 10000,
-                sellingPricePaise = 9000,
+                mrpPaise = 10_000,
+                sellingPricePaise = 9_000,
                 capabilities = outlet.capabilities,
                 category = "food",
             ),
             "create-recurring-listing",
         )
+        val inventory = InventoryService()
+        inventory.adjust(listing.id, stock, StockReason.RECEIPT, "recurring-stock-$stock")
         val customerData = CustomerDataService(InMemoryCustomerDataPersistence(), fixedClock("2026-08-19T00:00:00Z"))
-        val address = customerData.createAddress(
-            customerId,
-            CustomerAddressInput(
-                label = "Home",
-                recipientName = "Customer",
-                phoneNumber = "+919876543210",
-                line1 = "Main Road 1",
-                line2 = null,
-                city = "Tirupati",
-                state = "Andhra Pradesh",
-                pincode = "517501",
-                isDefault = true,
-            ),
-        )
         val orderId = UUID.randomUUID()
         val snapshot = CustomerOrderDetailSnapshot(
             orderId = orderId,
             orderNumber = "MP-1001",
             outletId = outlet.id,
             quoteId = UUID.randomUUID(),
-            items = listOf(CustomerOrderLineSnapshot(listing.id, listing.name, 1, 8500)),
-            grandTotalPaise = 8500,
+            items = listOf(CustomerOrderLineSnapshot(listing.id, listing.name, 1, 8_500)),
+            grandTotalPaise = 8_500,
             platformFeePaise = 0,
             paymentMethod = "PAY_ON_FULFILMENT",
             paymentStatus = "NOT_REQUIRED",
@@ -177,9 +289,22 @@ class RecurringOrderServiceTest {
             catalog,
             providers,
             customerData,
+            inventory,
             fixedClock("2026-08-19T00:00:00Z"),
         )
-        return Fixture(customerId, orderId, outlet.id, address.id, persistence, query, catalog, providers, customerData, service)
+        return Fixture(
+            customerId,
+            orderId,
+            outlet.id,
+            listing.id,
+            persistence,
+            query,
+            catalog,
+            providers,
+            customerData,
+            inventory,
+            service,
+        )
     }
 
     private fun Fixture.serviceAt(value: String) = RecurringOrderService(
@@ -188,6 +313,7 @@ class RecurringOrderServiceTest {
         catalog,
         providers,
         customerData,
+        inventory,
         fixedClock(value),
     )
 
@@ -199,12 +325,13 @@ class RecurringOrderServiceTest {
         val customerId: UUID,
         val orderId: UUID,
         val outletId: UUID,
-        val addressId: UUID,
+        val listingId: UUID,
         val persistence: InMemoryRecurringOrderPersistence,
         val query: FakeOrderQuery,
         val catalog: CatalogService,
         val providers: ProviderService,
         val customerData: CustomerDataService,
+        val inventory: InventoryService,
         val service: RecurringOrderService,
     )
 

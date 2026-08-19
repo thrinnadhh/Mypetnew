@@ -308,7 +308,7 @@ class AppointmentService(
         paymentMethod: AppointmentPaymentMethod,
         notes: String?,
         idempotencyKey: String,
-        servicePincode: String? = null,
+        servicePincode: String,
     ): CustomerAppointment {
         Authorizer.requireRole(customer, Role.CUSTOMER)
         validateIdempotencyKey(idempotencyKey)
@@ -320,10 +320,8 @@ class AppointmentService(
         val pet = customerData.getPet(customer.actorId, petId)
         val outlet = providers.getOutlet(outletId).takeIf { it.status == ProviderStatus.ACTIVE } ?: unavailable()
         if (outlet.organizationId != offering.organizationId) unavailable()
-        if (servicePincode != null) {
-            validateServicePincode(servicePincode)
-            if (servicePincode !in outlet.servicePinCodes) appointmentPincodeUnavailable()
-        }
+        validateServicePincode(servicePincode)
+        if (servicePincode !in outlet.servicePinCodes) appointmentPincodeUnavailable()
         val cleanNotes = notes?.trim()?.takeIf { it.isNotEmpty() }
         if (cleanNotes != null && cleanNotes.length > 1_000) invalidAppointment()
         val appointment = CustomerAppointment(
@@ -353,7 +351,7 @@ class AppointmentService(
             now,
         )
         val fingerprint = fingerprint(
-            "${customer.actorId}:$outletId:$serviceId:$petId:$slotId:$paymentMethod:${servicePincode ?: ""}:$cleanNotes",
+            "${customer.actorId}:$outletId:$serviceId:$petId:$slotId:$paymentMethod:$servicePincode:$cleanNotes",
         )
         return persistence.hold(appointment, idempotencyKey, fingerprint, now)
     }

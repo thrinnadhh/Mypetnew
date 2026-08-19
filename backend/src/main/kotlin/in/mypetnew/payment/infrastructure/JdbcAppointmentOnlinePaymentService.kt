@@ -102,6 +102,7 @@ class JdbcAppointmentOnlinePaymentService(
             if (existing > 0) return@transaction false
 
             val inboxId = UUID.randomUUID()
+            val receivedAt = clock.instant()
             try {
                 jdbc.update(
                     """
@@ -111,15 +112,15 @@ class JdbcAppointmentOnlinePaymentService(
                         order_amount_paise, order_currency, payment_amount_paise,
                         payment_currency, provider_payment_time, provider_event_time,
                         payload_sha256, safe_error_code, safe_error_reason,
-                        processing_status, retry_count, next_attempt_at, created_at, updated_at
+                        processing_status, retry_count, received_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                              'RECEIVED', 0, ?, ?, ?)
+                              'RECEIVED', 0, ?, ?)
                     """.trimIndent(),
                     inboxId,
                     event.provider.name,
                     event.deliveryIdentity,
                     event.webhookVersion,
-                    event.eventType.take(96),
+                    event.eventType.take(80),
                     event.providerOrderReference,
                     event.providerPaymentId,
                     event.attemptOutcome?.name,
@@ -132,9 +133,8 @@ class JdbcAppointmentOnlinePaymentService(
                     event.payloadSha256,
                     event.safeErrorCode?.take(64),
                     event.safeErrorReason?.take(240),
-                    clock.instant().jdbcTimestamp(),
-                    clock.instant().jdbcTimestamp(),
-                    clock.instant().jdbcTimestamp(),
+                    receivedAt.jdbcTimestamp(),
+                    receivedAt.jdbcTimestamp(),
                 )
             } catch (_: DuplicateKeyException) {
                 return@transaction false
@@ -897,5 +897,3 @@ class JdbcAppointmentOnlinePaymentService(
         private const val APPOINTMENT_PROVIDER_PREFIX = "ma_"
     }
 }
-
-private fun Instant.jdbcTimestamp(): Timestamp = Timestamp.from(this)

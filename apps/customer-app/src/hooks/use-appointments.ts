@@ -19,6 +19,8 @@ type AccountSnapshot = { userId: string; accessToken: string; authEpoch: number 
 
 export function useAppointments() {
   const { user, session } = useAuth();
+  const userId = user?.id ?? null;
+  const accessToken = session?.accessToken ?? null;
   const [appointments, setAppointments] = useState<CustomerAppointmentRecord[]>([]);
   const [state, setState] = useState<AppointmentsStateKind>('idle');
   const [activeTab, setActiveTab] = useState<AppointmentTabCategory>('upcoming');
@@ -26,27 +28,17 @@ export function useAppointments() {
   const [actionLoading, setActionLoading] = useState(false);
   const loadGenerationRef = useRef(0);
   const actionInFlightRef = useRef(false);
-  const accountRef = useRef<{ userId: string | null; accessToken: string | null; authEpoch: number }>({ userId: null, accessToken: null, authEpoch: apiClient.getAuthEpoch() });
-
-  accountRef.current = {
-    userId: user?.id ?? null,
-    accessToken: session?.accessToken ?? null,
-    authEpoch: apiClient.getAuthEpoch(),
-  };
 
   const captureAccount = useCallback((): AccountSnapshot | null => {
-    const current = accountRef.current;
-    if (!current.userId || !current.accessToken) return null;
-    return { userId: current.userId, accessToken: current.accessToken, authEpoch: current.authEpoch };
-  }, []);
+    if (!userId || !accessToken) return null;
+    return { userId, accessToken, authEpoch: apiClient.getAuthEpoch() };
+  }, [accessToken, userId]);
 
-  const accountStillCurrent = useCallback((captured: AccountSnapshot) => {
-    const current = accountRef.current;
-    return current.userId === captured.userId
-      && current.accessToken === captured.accessToken
-      && current.authEpoch === captured.authEpoch
-      && apiClient.getAuthEpoch() === captured.authEpoch;
-  }, []);
+  const accountStillCurrent = useCallback((captured: AccountSnapshot) => (
+    userId === captured.userId
+    && accessToken === captured.accessToken
+    && apiClient.getAuthEpoch() === captured.authEpoch
+  ), [accessToken, userId]);
 
   const load = useCallback(async () => {
     const captured = captureAccount();
@@ -88,20 +80,20 @@ export function useAppointments() {
     actionInFlightRef.current = false;
     setActionLoading(false);
     setAppointments([]);
-    setState(user && session ? 'loading' : 'idle');
-    if (user && session) void load();
+    setState(userId && accessToken ? 'loading' : 'idle');
+    if (userId && accessToken) void load();
     return () => { loadGenerationRef.current += 1; };
-  }, [load, session?.accessToken, user?.id]);
+  }, [accessToken, load, userId]);
 
   const hasPendingProviderDecision = appointments.some((appointment) => appointment.status === 'PENDING_PROVIDER');
 
   useEffect(() => {
-    if (!hasPendingProviderDecision || !user || !session) return undefined;
+    if (!hasPendingProviderDecision || !userId || !accessToken) return undefined;
     const timer = setInterval(() => {
       void refreshProviderDecision();
     }, PROVIDER_DECISION_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [hasPendingProviderDecision, refreshProviderDecision, session, user]);
+  }, [accessToken, hasPendingProviderDecision, refreshProviderDecision, userId]);
 
   const filteredAppointments = useMemo(() => {
     return appointments.filter((appt) => {

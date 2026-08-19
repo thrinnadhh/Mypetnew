@@ -43,6 +43,15 @@ interface Props {
 
 type LoadState = 'loading' | 'ready' | 'offline' | 'error';
 
+interface BookingContext {
+  userId: string | null;
+  accessToken: string | null;
+  petId: string | null;
+  paymentMethod: AppointmentPaymentMethod;
+  pincode: string;
+  providerId: string | null;
+}
+
 function single(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -56,6 +65,16 @@ function sameHandoffSlot(
   return slot.id === slotId
     && (!startsAt || slot.startsAt === startsAt)
     && (!endsAt || slot.endsAt === endsAt);
+}
+
+function sameBookingContext(left: BookingContext | null, right: BookingContext): boolean {
+  return left !== null
+    && left.userId === right.userId
+    && left.accessToken === right.accessToken
+    && left.petId === right.petId
+    && left.paymentMethod === right.paymentMethod
+    && left.pincode === right.pincode
+    && left.providerId === right.providerId;
 }
 
 export default function AppointmentDiscoveryScreen({ providerType, route, titleKey }: Props) {
@@ -104,6 +123,22 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
   const [petSpecies, setPetSpecies] = useState<'DOG' | 'CAT'>('DOG');
   const [creatingPet, setCreatingPet] = useState(false);
   const [bookingSlotId, setBookingSlotId] = useState<string | null>(null);
+  const bookingRequestGeneration = useRef(0);
+  const bookingInFlightRef = useRef(false);
+  const bookingContextRef = useRef<BookingContext | null>(null);
+  bookingContextRef.current = {
+    userId: user?.id ?? null,
+    accessToken: session?.accessToken ?? null,
+    petId: selectedPetId,
+    paymentMethod,
+    pincode: selectedPincode,
+    providerId: provider?.id ?? null,
+  };
+
+  useEffect(() => () => {
+    bookingRequestGeneration.current += 1;
+    bookingInFlightRef.current = false;
+  }, []);
 
   const loadProviders = useCallback(async () => {
     const generation = providerRequestGeneration.current + 1;
@@ -281,7 +316,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
   }, [chooseProvider, preferredProviderId, preferredServiceId, provider, providers, state]);
 
   const createPet = useCallback(async () => {
-    if (!session || petName.trim().length < 2) return;
+    if (!session || petName.trim().length < 2 || bookingSlotId) return;
     setCreatingPet(true);
     try {
       const created = await createCustomerPet(
@@ -296,32 +331,58 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
     } finally {
       setCreatingPet(false);
     }
-  }, [petName, petSpecies, session]);
+  }, [bookingSlotId, petName, petSpecies, session]);
 
   const requestBooking = useCallback(async (slot: AppointmentSlotOption) => {
-    const authenticated = await requireAuth({ action: 'BOOKING', returnTo: route });
-    if (!authenticated || !user || !session) return;
-    if (!selectedPetId) {
-      Alert.alert('Select a pet', 'Choose or add the pet attending this appointment.');
-      return;
-    }
+    if (bookingInFlightRef.current) return;
+    bookingInFlightRef.current = true;
+    let generation = 0;
+    let expectedContext: BookingContext | null = null;
+    const isCurrentRequest = () => expectedContext !== null
+      && bookingRequestGeneration.current === generation
+      && sameBookingContext(bookingContextRef.current, expectedContext);
 
-    setBookingSlotId(slot.id);
     try {
+      const authenticated = await requireAuth({ action: 'BOOKING', returnTo: route });
+      if (!authenticated || !user || !session) return;
+      if (!selectedPetId) {
+        Alert.alert('Select a pet', 'Choose or add the pet attending this appointment.');
+        return;
+      }
+      if (provider?.id !== slot.providerId) {
+        Alert.alert('Booking changed', 'Reload this provider before reserving the selected slot.');
+        return;
+      }
+
+      generation = bookingRequestGeneration.current + 1;
+      bookingRequestGeneration.current = generation;
+      expectedContext = {
+        userId: user.id,
+        accessToken: session.accessToken,
+        petId: selectedPetId,
+        paymentMethod,
+        pincode: selectedPincode,
+        providerId: provider.id,
+      };
+      setBookingSlotId(slot.id);
+
       const appointmentId = await holdAppointmentSlot({
         slot,
         userId: user.id,
         petId: selectedPetId,
+        pincode: selectedPincode,
         paymentMethod,
         accessToken: session.accessToken,
       });
+      if (!isCurrentRequest()) return;
+
       const selectedPet = pets.find((pet) => pet.petId === selectedPetId);
       router.push({
         pathname: '/appointments/payment',
         params: {
           appointmentId,
           serviceName: slot.serviceName,
-          providerName: provider?.name ?? 'MyPet provider',
+          providerName: provider.name,
           petName: selectedPet?.name ?? 'Your pet',
           slotStart: slot.startTime,
           slotEnd: slot.endTime,
@@ -332,14 +393,16 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
       setProvider(null);
       setSlots([]);
     } catch (error) {
+      if (!isCurrentRequest()) return;
       Alert.alert('Booking failed', error instanceof Error ? error.message : 'Could not reserve this appointment.');
       if (provider) {
         await chooseProvider(provider, provider.id === preferredProviderId ? preferredServiceId : undefined);
       }
     } finally {
-      setBookingSlotId(null);
+      if (generation === 0 || bookingRequestGeneration.current === generation) setBookingSlotId(null);
+      bookingInFlightRef.current = false;
     }
-  }, [chooseProvider, paymentMethod, pets, preferredProviderId, preferredServiceId, provider, requireAuth, route, router, selectedPetId, session, user]);
+  }, [chooseProvider, paymentMethod, pets, preferredProviderId, preferredServiceId, provider, requireAuth, route, router, selectedPetId, selectedPincode, session, user]);
 
   const close = () => {
     if (bookingSlotId) return;
@@ -420,7 +483,9 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
                     key={pet.petId}
                     label={`${pet.name} · ${pet.species}`}
                     selected={selectedPetId === pet.petId}
-                    onPress={() => setSelectedPetId(pet.petId)}
+                    onPress={() => {
+                      if (!bookingSlotId) setSelectedPetId(pet.petId);
+                    }}
                   />
                 ))}
               </View>
@@ -440,7 +505,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
                 </View>
                 <PrimaryAction
                   label="Save pet"
-                  disabled={petName.trim().length < 2}
+                  disabled={petName.trim().length < 2 || Boolean(bookingSlotId)}
                   loading={creatingPet}
                   onPress={() => void createPet()}
                 />
@@ -454,12 +519,16 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
             <FilterChip
               label="Pay online"
               selected={paymentMethod === 'ONLINE_PAYMENT'}
-              onPress={() => setPaymentMethod('ONLINE_PAYMENT')}
+              onPress={() => {
+                if (!bookingSlotId) setPaymentMethod('ONLINE_PAYMENT');
+              }}
             />
             <FilterChip
               label="Pay at provider"
               selected={paymentMethod === 'PAY_AT_PROVIDER'}
-              onPress={() => setPaymentMethod('PAY_AT_PROVIDER')}
+              onPress={() => {
+                if (!bookingSlotId) setPaymentMethod('PAY_AT_PROVIDER');
+              }}
             />
           </View>
         </View>

@@ -54,7 +54,7 @@ data class RecurringOrderConfirmation(
 interface RecurringOrderPersistence {
     fun save(subscription: RecurringOrderSubscription): RecurringOrderSubscription
     fun get(customerId: UUID, subscriptionId: UUID): RecurringOrderSubscription?
-    fun findActiveBySource(customerId: UUID, sourceOrderId: UUID): RecurringOrderSubscription?
+    fun findBySource(customerId: UUID, sourceOrderId: UUID): RecurringOrderSubscription?
     fun list(customerId: UUID, page: Int, pageSize: Int): RecurringOrderPage
 }
 
@@ -69,10 +69,8 @@ class InMemoryRecurringOrderPersistence : RecurringOrderPersistence {
         values[subscriptionId]?.takeIf { it.customerId == customerId }
 
     @Synchronized
-    override fun findActiveBySource(customerId: UUID, sourceOrderId: UUID): RecurringOrderSubscription? =
-        values.values.firstOrNull {
-            it.customerId == customerId && it.sourceOrderId == sourceOrderId && it.status != RecurringOrderStatus.CANCELLED
-        }
+    override fun findBySource(customerId: UUID, sourceOrderId: UUID): RecurringOrderSubscription? =
+        values.values.firstOrNull { it.customerId == customerId && it.sourceOrderId == sourceOrderId }
 
     @Synchronized
     override fun list(customerId: UUID, page: Int, pageSize: Int): RecurringOrderPage {
@@ -100,12 +98,13 @@ class RecurringOrderService(
         if (source.status != OrderStatus.DELIVERED) {
             throw DomainException("RECURRING_SOURCE_INELIGIBLE", "Only delivered orders can become recurring reminders")
         }
-        if (persistence.findActiveBySource(customerId, sourceOrderId) != null) {
-            throw DomainException("RECURRING_ALREADY_EXISTS", "An active recurring reminder already exists for this order")
+        if (persistence.findBySource(customerId, sourceOrderId) != null) {
+            throw DomainException("RECURRING_ALREADY_EXISTS", "A recurring reminder already exists for this order")
         }
         requireProvider(source.outletId)
-        val address = customerData.listAddresses(customerId).firstOrNull { it.isDefault }
-            ?: customerData.listAddresses(customerId).firstOrNull()
+        val addresses = customerData.listAddresses(customerId)
+        val address = addresses.firstOrNull { it.isDefault }
+            ?: addresses.firstOrNull()
             ?: throw DomainException("RECURRING_ADDRESS_REQUIRED", "Add a delivery address before creating a recurring reminder")
         if (source.items.isEmpty()) {
             throw DomainException("RECURRING_SOURCE_INELIGIBLE", "The source order has no reusable items")

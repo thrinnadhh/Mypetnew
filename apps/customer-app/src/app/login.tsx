@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { parseAuthIntent } from '@/auth/auth-intent';
@@ -35,6 +35,15 @@ export default function LoginScreen() {
   const [seconds, setSeconds] = useState(0);
   const [loading, setLoading] = useState(false);
   const [errorCode, setErrorCode] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
+  const flowGenerationRef = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      flowGenerationRef.current += 1;
+      inFlightRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (seconds <= 0) return;
@@ -58,6 +67,8 @@ export default function LoginScreen() {
   }, [errorCode, t]);
 
   const run = useCallback(async (operation: () => Promise<void>) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setLoading(true);
     setErrorCode(null);
     try {
@@ -66,6 +77,7 @@ export default function LoginScreen() {
       if (error instanceof OtpAuthError && error.code === 'CANCELLED') return;
       setErrorCode(error instanceof OtpAuthError ? error.code : 'UNKNOWN');
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
     }
   }, []);
@@ -75,8 +87,10 @@ export default function LoginScreen() {
   }, [parsedIntent, resumePendingIntent]);
 
   const send = useCallback(() => run(async () => {
+    const generation = flowGenerationRef.current;
     const deviceId = await getOrCreateInstallationId();
     const { mobile, challenge } = await requestOtp(identifierInput, deviceId);
+    if (generation !== flowGenerationRef.current) return;
     setIdentifier(mobile);
     setChallengeId(challenge.challengeId);
     setCode('');
@@ -85,21 +99,28 @@ export default function LoginScreen() {
   }), [identifierInput, run]);
 
   const verify = useCallback(() => run(async () => {
+    const generation = flowGenerationRef.current;
     const newSession = await verifyOtpCode(challengeId, identifier, code, adultEligibilityAttested);
+    if (generation !== flowGenerationRef.current) return;
     await setSession(newSession);
+    if (generation !== flowGenerationRef.current) return;
     markOtpVerified();
     await finish();
   }), [adultEligibilityAttested, challengeId, code, finish, identifier, markOtpVerified, run, setSession]);
 
   const resend = useCallback(() => run(async () => {
     if (seconds > 0) return;
+    const generation = flowGenerationRef.current;
     const deviceId = await getOrCreateInstallationId();
     const challenge = await resendOtpCode(identifier, deviceId);
+    if (generation !== flowGenerationRef.current) return;
     setChallengeId(challenge.challengeId);
     setSeconds(challenge.resendAfterSeconds);
   }), [identifier, run, seconds]);
 
   const reset = useCallback(() => {
+    if (inFlightRef.current) return;
+    flowGenerationRef.current += 1;
     setStep('identifier');
     setIdentifier('');
     setIdentifierInput('');
@@ -111,6 +132,8 @@ export default function LoginScreen() {
   }, []);
 
   const cancel = useCallback(() => {
+    if (inFlightRef.current) return;
+    flowGenerationRef.current += 1;
     clearPendingIntent();
     if (router.canGoBack()) router.back();
     else router.replace('/(tabs)/home' as never);
@@ -156,8 +179,9 @@ export default function LoginScreen() {
           <Pressable
             style={styles.attestation}
             onPress={() => setAdultEligibilityAttested((current) => !current)}
+            disabled={loading}
             accessibilityRole="checkbox"
-            accessibilityState={{ checked: adultEligibilityAttested }}
+            accessibilityState={{ checked: adultEligibilityAttested, disabled: loading }}
             accessibilityLabel={t('auth.adultEligibility')}
           >
             <View style={[styles.checkbox, { borderColor: theme.border, backgroundColor: adultEligibilityAttested ? theme.primary : theme.backgroundElement }]}>
@@ -166,12 +190,18 @@ export default function LoginScreen() {
             <ThemedText style={styles.attestationText}>{t('auth.adultEligibility')}</ThemedText>
           </Pressable>
           <PrimaryAction label={t('auth.verify')} onPress={() => void verify()} loading={loading} disabled={code.length !== 6 || !adultEligibilityAttested} />
-          <Pressable style={styles.link} disabled={seconds > 0 || loading} onPress={() => void resend()} accessibilityRole="button">
+          <Pressable
+            style={styles.link}
+            disabled={seconds > 0 || loading}
+            onPress={() => void resend()}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: seconds > 0 || loading }}
+          >
             <ThemedText style={{ color: seconds > 0 ? theme.textSecondary : theme.primary, fontWeight: '700' }}>
               {seconds > 0 ? t('auth.resendIn', { seconds }) : t('auth.resend')}
             </ThemedText>
           </Pressable>
-          <Pressable style={styles.link} onPress={reset} accessibilityRole="button">
+          <Pressable style={styles.link} disabled={loading} onPress={reset} accessibilityRole="button" accessibilityState={{ disabled: loading }}>
             <ThemedText style={{ color: theme.primary }}>{t('auth.changeIdentifier')}</ThemedText>
           </Pressable>
         </View>
@@ -183,11 +213,11 @@ export default function LoginScreen() {
         </View>
       ) : null}
       {errorCode ? (
-        <Pressable style={styles.link} onPress={reset} accessibilityRole="button">
+        <Pressable style={styles.link} disabled={loading} onPress={reset} accessibilityRole="button" accessibilityState={{ disabled: loading }}>
           <ThemedText style={{ color: theme.primary }}>{t('auth.recovery')}</ThemedText>
         </Pressable>
       ) : null}
-      <Pressable style={styles.cancel} onPress={cancel} accessibilityRole="button">
+      <Pressable style={styles.cancel} disabled={loading} onPress={cancel} accessibilityRole="button" accessibilityState={{ disabled: loading }}>
         <ThemedText themeColor="textSecondary">{t('auth.cancel')}</ThemedText>
       </Pressable>
     </ScreenShell>
@@ -203,7 +233,7 @@ const styles = StyleSheet.create({
   checkbox: { width: 24, height: 24, borderWidth: 1, borderRadius: radii.compact, alignItems: 'center', justifyContent: 'center' },
   checkmark: { color: '#FFFFFF', fontWeight: '800' },
   attestationText: { flex: 1 },
-  link: { minHeight: 44, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.x2 },
+  link: { minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.x2 },
   error: { borderRadius: radii.compact, padding: spacing.x4 },
-  cancel: { minHeight: 48, alignItems: 'center', justifyContent: 'center' },
+  cancel: { minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
 });

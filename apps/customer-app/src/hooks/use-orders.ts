@@ -31,23 +31,17 @@ export function useOrders() {
   const [hasNext, setHasNext] = useState(false);
   const loadGenerationRef = useRef(0);
   const actionInFlightRef = useRef(false);
-  const accountRef = useRef<{ accountId: string | null; accessToken: string | null; authEpoch: number }>({ accountId: null, accessToken: null, authEpoch: apiClient.getAuthEpoch() });
-
-  accountRef.current = { accountId, accessToken, authEpoch: apiClient.getAuthEpoch() };
 
   const captureAccount = useCallback((): AccountSnapshot | null => {
-    const current = accountRef.current;
-    if (!current.accountId || !current.accessToken) return null;
-    return { accountId: current.accountId, accessToken: current.accessToken, authEpoch: current.authEpoch };
-  }, []);
+    if (!accountId || !accessToken) return null;
+    return { accountId, accessToken, authEpoch: apiClient.getAuthEpoch() };
+  }, [accessToken, accountId]);
 
-  const accountStillCurrent = useCallback((captured: AccountSnapshot) => {
-    const current = accountRef.current;
-    return current.accountId === captured.accountId
-      && current.accessToken === captured.accessToken
-      && current.authEpoch === captured.authEpoch
-      && apiClient.getAuthEpoch() === captured.authEpoch;
-  }, []);
+  const accountStillCurrent = useCallback((captured: AccountSnapshot) => (
+    accountId === captured.accountId
+    && accessToken === captured.accessToken
+    && apiClient.getAuthEpoch() === captured.authEpoch
+  ), [accessToken, accountId]);
 
   const load = useCallback(async () => {
     const captured = captureAccount();

@@ -119,10 +119,10 @@ class JdbcRecurringOrderPersistenceConcurrencyTest {
         assertEquals(1, commandCount(database, customerId, "same-key"))
     }
 
-    private fun race(
-        first: () -> List<Any>,
-        second: () -> List<Any>,
-    ): List<Result<List<Any>>> = raceInternal(first, second)
+    private fun <T> race(
+        first: () -> List<T>,
+        second: () -> List<T>,
+    ): List<Result<List<T>>> = raceInternal(first, second)
 
     private fun raceAny(first: () -> Any, second: () -> Any): List<Result<Any>> = raceInternal(first, second)
 

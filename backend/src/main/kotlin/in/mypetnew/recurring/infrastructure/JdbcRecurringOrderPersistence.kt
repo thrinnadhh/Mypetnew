@@ -79,14 +79,12 @@ class JdbcRecurringOrderPersistence(
             .optional()
             .orElse(null)
 
-    override fun findActiveBySource(customerId: UUID, sourceOrderId: UUID): RecurringOrderSubscription? =
+    override fun findBySource(customerId: UUID, sourceOrderId: UUID): RecurringOrderSubscription? =
         jdbc.sql(
             """
             SELECT * FROM mypet.recurring_order_subscription
             WHERE customer_id = :customerId
               AND source_order_id = :sourceOrderId
-              AND status <> 'CANCELLED'
-            ORDER BY created_at DESC, id DESC
             LIMIT 1
             """.trimIndent(),
         )

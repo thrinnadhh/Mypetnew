@@ -165,6 +165,7 @@ class AppointmentMerchantLifecycleTest {
             AppointmentPaymentMethod.PAY_AT_PROVIDER,
             null,
             key,
+            "517501",
         ).id,
     )
 }

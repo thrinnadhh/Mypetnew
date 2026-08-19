@@ -10,13 +10,21 @@ import { spacing } from '@/design/tokens';
 export default function AppointmentBookingScreen() {
   const router = useRouter();
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/appointments' as never);
+  };
+
   return (
     <ScreenShell
       header={(
         <ScreenHeader
           title="Book an appointment"
           subtitle="Choose veterinary care or grooming"
-          onBack={() => router.back()}
+          onBack={handleBack}
         />
       )}
       testID="appointment-booking-screen"

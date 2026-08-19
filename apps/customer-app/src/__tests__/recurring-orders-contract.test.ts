@@ -39,7 +39,7 @@ describe('recurring order contract', () => {
     expect(backend).toContain('listing == null -> "LISTING_UNAVAILABLE"');
     expect(backend).toContain('status = RenewalProposalStatus.AWAITING_CONFIRMATION');
     expect(migration).toContain('UNIQUE (customer_id, source_order_id)');
-    expect(proposalMigration).toContain('UNIQUE (subscription_id, due_cycle_at)');
+    expect(proposalMigration).toContain('CONSTRAINT uq_recurring_proposal_cycle UNIQUE(subscription_id, due_cycle_at)');
     expect(proposalMigration).toContain('recurring_order_command');
   });
 

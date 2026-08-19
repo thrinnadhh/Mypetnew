@@ -61,9 +61,20 @@ for template in .env.example .env.staging.example; do
 done
 
 client_pattern='SUPABASE_SERVICE_ROLE_KEY|DATABASE_PASSWORD|FIREBASE_PRIVATE_KEY|GOOGLE_APPLICATION_CREDENTIALS'
-if rg -n --glob '!**/node_modules/**' --glob '!**/dist/**' --glob '!**/dist-ci/**' -- "$client_pattern" apps; then
-  echo "Privileged server configuration referenced by a client package." >&2
-  exit 1
+if command -v rg >/dev/null 2>&1; then
+  if rg -n --glob '!**/node_modules/**' --glob '!**/dist/**' --glob '!**/dist-ci/**' -- "$client_pattern" apps; then
+    echo "Privileged server configuration referenced by a client package." >&2
+    exit 1
+  fi
+else
+  if grep -RInE \
+    --exclude-dir=node_modules \
+    --exclude-dir=dist \
+    --exclude-dir=dist-ci \
+    -- "$client_pattern" apps; then
+    echo "Privileged server configuration referenced by a client package." >&2
+    exit 1
+  fi
 fi
 
 echo "Secret-boundary scan passed."

@@ -83,4 +83,16 @@ describe('customer route destination regressions', () => {
     expect(detail).toContain('minHeight: touchTarget');
     expect(detail).toContain('isSafeHttpsUrl');
   });
+
+  it('keeps recurring subscriptions and proposal surface safe for direct entry and malformed source orders', () => {
+    const subscriptions = source('src/app/subscriptions/index.tsx');
+
+    expect(subscriptions).toContain('singleRouteParam(params.sourceOrderId)');
+    expect(subscriptions).toContain('sourceOrderIdValid');
+    expect(subscriptions).toContain("backOrReplace(router, '/(tabs)/profile')");
+    expect(subscriptions).toContain("BackHandler.addEventListener('hardwareBackPress'");
+    expect(subscriptions).toContain('confirmCancel(subscription)');
+    expect(subscriptions).toContain('formatIndiaDateTime(proposal.dueCycleAt)');
+    expect(subscriptions).toContain('busyTokenRef.current');
+  });
 });

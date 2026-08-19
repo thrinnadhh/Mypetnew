@@ -8,6 +8,7 @@ import `in`.mypetnew.provider.domain.ProviderService
 import `in`.mypetnew.recurring.domain.InMemoryRecurringOrderPersistence
 import `in`.mypetnew.recurring.domain.RecurringOrderPersistence
 import `in`.mypetnew.recurring.domain.RecurringOrderService
+import `in`.mypetnew.recurring.infrastructure.GuardedRecurringOrderPersistence
 import `in`.mypetnew.recurring.infrastructure.JdbcRecurringOrderPersistence
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -26,7 +27,10 @@ class RecurringOrderConfiguration {
     fun jdbcRecurringOrderPersistence(
         jdbc: JdbcClient,
         transactions: TransactionTemplate,
-    ): RecurringOrderPersistence = JdbcRecurringOrderPersistence(jdbc, transactions)
+    ): RecurringOrderPersistence {
+        val jdbcPersistence = JdbcRecurringOrderPersistence(jdbc, transactions)
+        return GuardedRecurringOrderPersistence(jdbcPersistence, jdbc, transactions)
+    }
 
     @Bean
     fun recurringOrderService(

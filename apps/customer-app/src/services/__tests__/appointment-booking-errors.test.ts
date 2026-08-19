@@ -100,19 +100,40 @@ describe('appointment booking API failure handling', () => {
       },
       userId: 'customer-rebook',
       petId: 'pet-rebook',
+      pincode: '517501',
       accessToken: 'token',
     });
 
     expect(appointmentId).toBe('new-appointment');
     expect(mockedFetch).toHaveBeenCalledTimes(2);
     expect(mockedFetch.mock.calls[0][1]?.headers).toMatchObject({
-      'Idempotency-Key': 'appointment-slot-rebook-pet-rebook',
+      'Idempotency-Key': 'appointment-v2-slot-rebook-pet-rebook-517501',
     });
     expect(mockedFetch.mock.calls[1][1]?.headers).toMatchObject({
-      'Idempotency-Key': 'appointment-slot-rebook-pet-rebook-retry-loyw3v28',
+      'Idempotency-Key': 'appointment-v2-slot-rebook-pet-rebook-517501-retry-loyw3v28',
     });
     expect(mockedFetch.mock.calls[1][1]?.body).toBe(mockedFetch.mock.calls[0][1]?.body);
+    expect(JSON.parse(String(mockedFetch.mock.calls[0][1]?.body))).toMatchObject({ pincode: '517501' });
 
     nowSpy.mockRestore();
+  });
+
+  it('rejects malformed service PIN before issuing a hold request', async () => {
+    await expect(holdAppointmentSlot({
+      slot: {
+        id: 'slot-invalid-pin',
+        providerId: 'provider-invalid-pin',
+        offeringId: 'service-invalid-pin',
+        serviceName: 'Service',
+        startTime: 'Tomorrow',
+        endTime: 'Later',
+        price: 500,
+      },
+      userId: 'customer',
+      petId: 'pet',
+      pincode: '012345',
+      accessToken: 'token',
+    })).rejects.toMatchObject({ name: 'PIN_CODE_INVALID' });
+    expect(mockedFetch).not.toHaveBeenCalled();
   });
 });

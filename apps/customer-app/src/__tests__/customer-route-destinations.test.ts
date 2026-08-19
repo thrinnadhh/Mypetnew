@@ -60,12 +60,25 @@ describe('customer route destination regressions', () => {
     expect(screenHeader).toContain('accessibilityLabel={backLabel}');
   });
 
-  it('keeps the appointment booking hub connected to veterinary, grooming and history destinations', () => {
+  it('keeps the appointment booking hub connected and deterministic on direct entry', () => {
     const bookingHub = source('src/app/appointments/book.tsx');
 
     expect(bookingHub).toContain("router.push('/vet'");
     expect(bookingHub).toContain("router.push('/groom'");
+    expect(bookingHub).toContain('router.canGoBack()');
     expect(bookingHub).toContain("router.replace('/appointments'");
-    expect(bookingHub).toContain('onBack={() => router.back()}');
+    expect(bookingHub).toContain('onBack={handleBack}');
+  });
+
+  it('keeps appointment detail direct-entry exits safe and interactive controls at least 48dp', () => {
+    const detail = source('src/app/appointments/[id].tsx');
+
+    expect(detail).toContain('router.canGoBack()');
+    expect(detail).toContain("router.replace('/appointments'");
+    expect(detail).toContain('onAction={handleBack}');
+    expect(detail).toContain('accessibilityLabel="Close appointment details"');
+    expect(detail).toContain('backBtn: { minWidth: 48, minHeight: 48');
+    expect(detail).toContain('actionBtn: { flex: 1, height: 48');
+    expect(detail).toContain('docRow: { minHeight: 48');
   });
 });

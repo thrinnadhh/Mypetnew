@@ -308,16 +308,34 @@ class AppointmentService(
         paymentMethod: AppointmentPaymentMethod,
         notes: String?,
         idempotencyKey: String,
+        servicePincode: String,
+        expectedSlotStartsAt: Instant? = null,
+        expectedSlotEndsAt: Instant? = null,
     ): CustomerAppointment {
         Authorizer.requireRole(customer, Role.CUSTOMER)
         validateIdempotencyKey(idempotencyKey)
         val offering = activeOffering(serviceId)
         if (offering.outletId != outletId) unavailable()
         val slot = persistence.getSlot(slotId)?.takeIf { it.serviceId == serviceId && it.active } ?: unavailable()
+        if (
+            expectedSlotStartsAt != null || expectedSlotEndsAt != null
+        ) {
+            if (
+                expectedSlotStartsAt == null ||
+                expectedSlotEndsAt == null ||
+                slot.startsAt != expectedSlotStartsAt ||
+                slot.endsAt != expectedSlotEndsAt
+            ) {
+                staleSlot()
+            }
+        }
         val now = clock.instant()
         if (!slot.startsAt.isAfter(now)) slotUnavailable()
         val pet = customerData.getPet(customer.actorId, petId)
         val outlet = providers.getOutlet(outletId).takeIf { it.status == ProviderStatus.ACTIVE } ?: unavailable()
+        if (outlet.organizationId != offering.organizationId) unavailable()
+        validateServicePincode(servicePincode)
+        if (servicePincode !in outlet.servicePinCodes) appointmentPincodeUnavailable()
         val cleanNotes = notes?.trim()?.takeIf { it.isNotEmpty() }
         if (cleanNotes != null && cleanNotes.length > 1_000) invalidAppointment()
         val appointment = CustomerAppointment(
@@ -347,7 +365,8 @@ class AppointmentService(
             now,
         )
         val fingerprint = fingerprint(
-            "${customer.actorId}:$outletId:$serviceId:$petId:$slotId:$paymentMethod:$cleanNotes",
+            "${customer.actorId}:$outletId:$serviceId:$petId:$slotId:$paymentMethod:$servicePincode:" +
+                "${expectedSlotStartsAt ?: slot.startsAt}:${expectedSlotEndsAt ?: slot.endsAt}:$cleanNotes",
         )
         return persistence.hold(appointment, idempotencyKey, fingerprint, now)
     }
@@ -433,6 +452,12 @@ class AppointmentService(
         }
     }
 
+    private fun validateServicePincode(pincode: String) {
+        if (!pincode.matches(Regex("[1-9][0-9]{5}"))) {
+            throw DomainException("PIN_CODE_INVALID", "PIN code must contain exactly six digits")
+        }
+    }
+
     private fun fingerprint(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(StandardCharsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
@@ -441,6 +466,14 @@ class AppointmentService(
     private fun invalidSlot(): Nothing = throw DomainException("SERVICE_SLOT_INVALID", "The service slot is invalid")
     private fun invalidAppointment(): Nothing = throw DomainException("APPOINTMENT_INVALID", "The appointment request is invalid")
     private fun unavailable(): Nothing = throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+    private fun appointmentPincodeUnavailable(): Nothing = throw DomainException(
+        "APPOINTMENT_PIN_NOT_SERVICEABLE",
+        "The selected provider no longer serves this PIN code",
+    )
+    private fun staleSlot(): Nothing = throw DomainException(
+        "APPOINTMENT_SLOT_STALE",
+        "The selected appointment time has changed. Choose a current slot before booking.",
+    )
 }
 
 private val OCCUPYING_STATUSES = setOf(

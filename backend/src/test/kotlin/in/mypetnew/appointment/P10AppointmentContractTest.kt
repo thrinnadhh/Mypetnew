@@ -93,6 +93,7 @@ class P10AppointmentContractTest {
                 AppointmentPaymentMethod.PAY_AT_PROVIDER,
                 null,
                 "p10-cross-provider",
+                "517501",
             )
         }
         assertEquals("RESOURCE_NOT_FOUND", mismatch.code)
@@ -135,6 +136,7 @@ class P10AppointmentContractTest {
             AppointmentPaymentMethod.PAY_AT_PROVIDER,
             null,
             "p10-stale-slot",
+            "517501",
         )
         assertTrue(appointments.availability(offering.id, now, now.plusSeconds(86_400)).isEmpty())
     }

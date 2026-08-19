@@ -29,10 +29,11 @@ describe('P12 appointment booking contract', () => {
     expect(screen).toContain('holdAppointmentSlot({');
     expect(screen).toContain('userId: user.id');
     expect(screen).toContain('petId: selectedPetId');
+    expect(screen).toContain('pincode: selectedPincode');
     expect(screen).toContain('accessToken: session.accessToken');
   });
 
-  it('keeps appointment creation server authoritative and idempotent', () => {
+  it('keeps appointment creation server authoritative PIN-bound and idempotent', () => {
     const booking = source('src/services/appointment-booking.ts');
     const backend = source('../../backend/src/main/kotlin/in/mypetnew/appointment/domain/AppointmentService.kt');
     const controller = source('../../backend/src/main/kotlin/in/mypetnew/application/web/AppointmentControllers.kt');
@@ -41,26 +42,43 @@ describe('P12 appointment booking contract', () => {
     expect(booking).toContain('outletId: input.slot.providerId');
     expect(booking).toContain('serviceId: input.slot.offeringId');
     expect(booking).toContain('slotId: input.slot.id');
+    expect(booking).toContain('pincode: input.pincode');
     expect(booking).not.toContain('pricePaise: input.slot');
 
     expect(controller).toContain('@RequestHeader("Idempotency-Key") idempotencyKey: String');
+    expect(controller).toContain('servicePincode = request.pincode');
     expect(backend).toContain('val offering = activeOffering(serviceId)');
     expect(backend).toContain('if (offering.outletId != outletId) unavailable()');
-    expect(backend).toContain('it.serviceId == serviceId && it.active');
+    expect(backend).toContain('if (outlet.organizationId != offering.organizationId) unavailable()');
+    expect(backend).toContain('servicePincode !in outlet.servicePinCodes');
     expect(backend).toContain('customerData.getPet(customer.actorId, petId)');
     expect(backend).toContain('offering.pricePaise');
     expect(backend).toContain('persistence.hold(appointment, idempotencyKey, fingerprint, now)');
   });
 
-  it('prevents slot oversell and replays the same successful request', () => {
-    const backend = source('../../backend/src/main/kotlin/in/mypetnew/appointment/domain/AppointmentService.kt');
-    const apiTest = source('../../backend/src/test/kotlin/in/mypetnew/api/CustomerAppointmentApiTest.kt');
+  it('uses shared database serialization for slot occupancy and executable concurrency proof', () => {
+    const jdbc = source('../../backend/src/main/kotlin/in/mypetnew/appointment/infrastructure/JdbcAppointmentPersistence.kt');
+    const migration = source('../../backend/src/main/resources/db/migration/V17__service_appointments.sql');
+    const concurrencyTest = source('../../backend/src/test/kotlin/in/mypetnew/appointment/JdbcAppointmentPersistenceConcurrencyTest.kt');
 
-    expect(backend).toContain('if (appointments.values.any { it.slotId == appointment.slotId && it.status in OCCUPYING_STATUSES }) slotUnavailable()');
-    expect(backend).toContain('holds.execute("appointment:${appointment.customerId}", idempotencyKey, requestFingerprint)');
-    expect(apiTest).toContain('header("Idempotency-Key", "appointment-api-hold")');
-    expect(apiTest).toContain('jsonPath("$.appointmentId") { value(appointmentId) }');
-    expect(apiTest).toContain('foreign pet requests');
+    expect(jdbc).toContain('SELECT id FROM mypet.service_slot');
+    expect(jdbc).toContain('FOR UPDATE');
+    expect(jdbc).toContain("status IN ('HOLD','BOOKED','CONFIRMED','CHECKED_IN','IN_SERVICE')");
+    expect(migration).toContain('UNIQUE (customer_id, idempotency_key)');
+    expect(concurrencyTest).toContain('two persistence instances cannot acquire the same slot for different customers');
+    expect(concurrencyTest).toContain('concurrent same customer idempotency replay returns one stored appointment');
+    expect(concurrencyTest).toContain('CountDownLatch(2)');
+    expect(concurrencyTest).toContain('assertEquals(1, activeOccupancyCount(database, slotId))');
+  });
+
+  it('prevents stale async hold responses from navigating after booking intent changes', () => {
+    const screen = source('src/screens/appointment-discovery-screen.tsx');
+
+    expect(screen).toContain('bookingRequestGeneration');
+    expect(screen).toContain('bookingInFlightRef');
+    expect(screen).toContain('sameBookingContext');
+    expect(screen).toContain('if (!isCurrentRequest()) return;');
+    expect(screen).toContain('if (bookingInFlightRef.current) return;');
   });
 
   it('preserves a clean P13 boundary after the authoritative appointment hold', () => {

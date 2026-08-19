@@ -118,6 +118,7 @@ class AppointmentServiceTest {
             AppointmentPaymentMethod.PAY_AT_PROVIDER,
             "Sensitive paws",
             "hold-one",
+            "517501",
         )
         val replay = service.hold(
             customerA,
@@ -128,6 +129,7 @@ class AppointmentServiceTest {
             AppointmentPaymentMethod.PAY_AT_PROVIDER,
             "Sensitive paws",
             "hold-one",
+            "517501",
         )
         assertEquals(first.id, replay.id)
         assertEquals(129_900, first.pricePaise)
@@ -145,6 +147,7 @@ class AppointmentServiceTest {
                 AppointmentPaymentMethod.PAY_AT_PROVIDER,
                 null,
                 "hold-two",
+                "517501",
             )
         }
         assertEquals("APPOINTMENT_SLOT_UNAVAILABLE", conflict.code)
@@ -158,7 +161,7 @@ class AppointmentServiceTest {
     }
 
     @Test
-    fun `foreign pet and idempotency mismatch fail closed`() {
+    fun `foreign pet stale PIN and idempotency mismatch fail closed`() {
         val offering = service.createOffering(
             merchant,
             outletId,
@@ -181,9 +184,25 @@ class AppointmentServiceTest {
                 AppointmentPaymentMethod.PAY_AT_PROVIDER,
                 null,
                 "foreign-pet",
+                "517501",
             )
         }
         assertEquals("RESOURCE_NOT_FOUND", foreignPet.code)
+
+        val stalePin = assertThrows(DomainException::class.java) {
+            service.hold(
+                customerA,
+                outletId,
+                offering.id,
+                petA,
+                firstSlot.id,
+                AppointmentPaymentMethod.PAY_AT_PROVIDER,
+                null,
+                "stale-pin",
+                "517502",
+            )
+        }
+        assertEquals("APPOINTMENT_PIN_NOT_SERVICEABLE", stalePin.code)
 
         service.hold(
             customerA,
@@ -194,6 +213,7 @@ class AppointmentServiceTest {
             AppointmentPaymentMethod.PAY_AT_PROVIDER,
             null,
             "same-key",
+            "517501",
         )
         val mismatch = assertThrows(DomainException::class.java) {
             service.hold(
@@ -205,6 +225,7 @@ class AppointmentServiceTest {
                 AppointmentPaymentMethod.PAY_AT_PROVIDER,
                 null,
                 "same-key",
+                "517501",
             )
         }
         assertEquals("IDEMPOTENCY_FINGERPRINT_MISMATCH", mismatch.code)
@@ -231,6 +252,7 @@ class AppointmentServiceTest {
             AppointmentPaymentMethod.PAY_AT_PROVIDER,
             null,
             "expires",
+            "517501",
         )
 
         val later = AppointmentService(

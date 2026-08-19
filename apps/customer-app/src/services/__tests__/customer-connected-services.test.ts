@@ -197,6 +197,7 @@ describe('connected customer services', () => {
     slot: slots[0],
     userId: '77777777-7777-4777-8777-777777777777',
     petId: '88888888-8888-4888-8888-888888888888',
+    pincode: '517501',
     accessToken: 'token',
   });
   await confirmAppointmentHold(appointmentId, 'token');
@@ -205,14 +206,17 @@ describe('connected customer services', () => {
   expect(mockedFetch.mock.calls[2][0]).toContain('/api/v1/customer/appointments');
   expect(mockedFetch.mock.calls[2][1]?.headers).toMatchObject({
     Authorization: 'Bearer token',
-    'Idempotency-Key': 'appointment-55555555-5555-4555-8555-555555555555-88888888-8888-4888-8888-888888888888',
+    'Idempotency-Key': 'appointment-v2-55555555-5555-4555-8555-555555555555-88888888-8888-4888-8888-888888888888-517501',
   });
   expect(JSON.parse(mockedFetch.mock.calls[2][1]?.body as string)).toEqual({
     outletId: '44444444-4444-4444-8444-444444444444',
     serviceId: '33333333-3333-4333-8333-333333333333',
     slotId: '55555555-5555-4555-8555-555555555555',
     petId: '88888888-8888-4888-8888-888888888888',
+    pincode: '517501',
     paymentMethod: 'PAY_AT_PROVIDER',
+    slotStartsAt: '2026-08-20T10:00:00Z',
+    slotEndsAt: '2026-08-20T10:30:00Z',
   });
   expect(mockedFetch.mock.calls[3][0]).toContain(
     '/api/v1/customer/appointments/66666666-6666-4666-8666-666666666666/confirm',

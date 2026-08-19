@@ -391,7 +391,8 @@ describe('appointment history production paths', () => {
 describe('appointment booking production paths', () => {
   const slot = {
     id: 'slot-1', providerId: 'provider-1', offeringId: 'offering-1',
-    serviceName: 'Consultation', startTime: 'start', endTime: 'end', price: 650,
+    serviceName: 'Consultation', startTime: 'start', endTime: 'end',
+    startsAt: '2026-08-20T10:00:00Z', endsAt: '2026-08-20T10:30:00Z', price: 650,
   };
 
   const servicesPage = {
@@ -434,11 +435,11 @@ describe('appointment booking production paths', () => {
   });
 
   it('enforces booking validation, idempotent secure payloads, API failures and confirmation', async () => {
-    await expect(holdAppointmentSlot({ slot, userId: null, petId: 'pet-1', accessToken: token }))
+    await expect(holdAppointmentSlot({ slot, userId: null, petId: 'pet-1', pincode: '517501', accessToken: token }))
       .rejects.toThrow('sign in');
-    await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: '', accessToken: token }))
+    await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: '', pincode: '517501', accessToken: token }))
       .rejects.toThrow('Select a pet');
-    await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', accessToken: null }))
+    await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', pincode: '517501', accessToken: null }))
       .rejects.toThrow('sign in');
 
     mockedFetch
@@ -448,21 +449,22 @@ describe('appointment booking production paths', () => {
       .mockResolvedValueOnce(response({}, 204))
       .mockResolvedValueOnce(response({ message: 'Expired hold' }, 409));
 
-    await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', accessToken: token }))
+    await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', pincode: '517501', accessToken: token }))
       .rejects.toThrow('Slot occupied');
-    await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', accessToken: token }))
+    await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', pincode: '517501', accessToken: token }))
       .rejects.toThrow('no appointment ID');
-    await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', accessToken: token }))
+    await expect(holdAppointmentSlot({ slot, userId: 'customer-1', petId: 'pet-1', pincode: '517501', accessToken: token }))
       .resolves.toBe('appointment-1');
 
     const holdRequest = mockedFetch.mock.calls[2][1];
     expect(holdRequest?.headers).toMatchObject({
       Authorization: 'Bearer access-token',
-      'Idempotency-Key': 'appointment-slot-1-pet-1',
+      'Idempotency-Key': 'appointment-v2-slot-1-pet-1-517501',
     });
     expect(JSON.parse(holdRequest?.body as string)).toEqual({
       outletId: 'provider-1', serviceId: 'offering-1', slotId: 'slot-1', petId: 'pet-1',
-      paymentMethod: 'PAY_AT_PROVIDER',
+      pincode: '517501', paymentMethod: 'PAY_AT_PROVIDER',
+      slotStartsAt: '2026-08-20T10:00:00Z', slotEndsAt: '2026-08-20T10:30:00Z',
     });
 
     await expect(confirmAppointmentHold('appointment/1', token)).resolves.toBeUndefined();

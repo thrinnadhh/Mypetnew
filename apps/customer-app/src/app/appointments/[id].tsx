@@ -89,13 +89,13 @@ export default function AppointmentDetailRoute() {
   const accountSnapshot = useCallback((): AccountSnapshot | null => {
     if (!user?.id || !session?.accessToken) return null;
     return { userId: user.id, accessToken: session.accessToken, authEpoch: apiClient.getAuthEpoch() };
-  }, [session?.accessToken, user?.id]);
+  }, [session, user]);
 
   const accountStillCurrent = useCallback((captured: AccountSnapshot) => (
     user?.id === captured.userId
     && session?.accessToken === captured.accessToken
     && apiClient.getAuthEpoch() === captured.authEpoch
-  ), [session?.accessToken, user?.id]);
+  ), [session, user]);
 
   const handleBack = useCallback(() => {
     backOrReplace(router, '/appointments');
@@ -196,7 +196,7 @@ export default function AppointmentDetailRoute() {
     } catch {
       Alert.alert('Directions unavailable', 'This device could not open directions for the provider address.');
     }
-  }, [appt?.address]);
+  }, [appt]);
 
   const callProvider = useCallback(async () => {
     const url = safeTelephoneUrl(appt?.providerPhone);
@@ -210,7 +210,7 @@ export default function AppointmentDetailRoute() {
     } catch {
       Alert.alert('Calling unavailable', 'This device could not open the phone dialer.');
     }
-  }, [appt?.providerPhone]);
+  }, [appt]);
 
   const openPrescription = useCallback(async () => {
     const url = appt?.prescriptionDocUrl;
@@ -224,7 +224,7 @@ export default function AppointmentDetailRoute() {
     } catch {
       Alert.alert('Document unavailable', 'This device could not open the medical document.');
     }
-  }, [appt?.prescriptionDocUrl]);
+  }, [appt]);
 
   if (!user || !session) {
     return (

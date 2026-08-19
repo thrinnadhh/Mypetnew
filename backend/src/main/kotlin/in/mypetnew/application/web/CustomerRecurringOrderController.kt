@@ -171,9 +171,6 @@ class CustomerRecurringOrderController(
     ): RecurringOrderResponse {
         val customerId = customer(authentication)
         if (request.action.trim().equals("CHANGE", ignoreCase = true) && request.deliveryAddressId != null) {
-            // Resolve through the customer-owned address service before the recurring
-            // aggregate sees the identifier. A foreign/random ID is therefore never
-            // accepted even when the current schedule is STORE_PICKUP.
             customerData.getAddress(customerId, request.deliveryAddressId)
         }
         return response(
@@ -204,6 +201,15 @@ class CustomerRecurringOrderController(
             idempotencyKey,
             currentTraceId(),
         ),
+    )
+
+    @PostMapping("/{subscriptionId}/confirm")
+    fun confirmLegacy(
+        authentication: Authentication,
+        @PathVariable subscriptionId: UUID,
+        @RequestHeader("Idempotency-Key") @Suppress("UNUSED_PARAMETER") idempotencyKey: String,
+    ): RecurringOrderConfirmationResponse = confirmation(
+        recurring.confirm(customer(authentication), subscriptionId),
     )
 
     @PostMapping("/{subscriptionId}/proposals/{proposalId}/complete")

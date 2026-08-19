@@ -2,6 +2,7 @@ package `in`.mypetnew.application.web
 
 import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.commerce.domain.OrderService
+import `in`.mypetnew.commerce.domain.OrderStatus
 import `in`.mypetnew.common.auth.Authorizer
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
@@ -207,6 +208,15 @@ class CustomerRecurringOrderController(
         val order = orders.get(request.orderId)
         if (order.customerId != customerId) {
             throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+        }
+        if (order.status == OrderStatus.CANCELLED || order.status == OrderStatus.REJECTED) {
+            throw DomainException("ORDER_NOT_ELIGIBLE", "A cancelled or rejected order cannot complete a recurring cycle")
+        }
+        if (order.paymentMethod == "ONLINE_PAYMENT" && order.paymentStatus != "PAID") {
+            throw DomainException(
+                "PAYMENT_NOT_CONFIRMED",
+                "Online payment must be confirmed before the recurring cycle can advance",
+            )
         }
         return proposalResponse(
             recurring.completeWithOrder(

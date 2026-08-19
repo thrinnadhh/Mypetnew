@@ -21,7 +21,7 @@ class FlywaySchemaContractTest {
             .load()
 
         val result = flyway.migrate()
-        assertEquals(20, result.migrationsExecuted)
+        assertEquals(21, result.migrationsExecuted)
 
         DriverManager.getConnection(url, "sa", "").use { connection ->
             val tables = connection.prepareStatement(
@@ -71,6 +71,9 @@ class FlywaySchemaContractTest {
                 "service_region_pincode",
                 "service_region_launch_request",
                 "recurring_order_subscription",
+                "recurring_order_proposal",
+                "recurring_order_command",
+                "recurring_order_history",
             )), "tables=$tables")
 
             val serviceRegionCount = connection.prepareStatement(
@@ -114,11 +117,57 @@ class FlywaySchemaContractTest {
                 statement.executeQuery().use { rows -> buildSet { while (rows.next()) add(rows.getString(1).lowercase()) } }
             }
             assertTrue(
-                appointmentChecks.containsAll(
-                    setOf("ck_appointment_payment_mode_v2", "ck_appointment_payment_state_v2"),
-                ),
+                appointmentChecks.containsAll(setOf("ck_appointment_payment_mode_v2", "ck_appointment_payment_state_v2")),
                 "appointmentChecks=$appointmentChecks",
             )
+
+            val recurringColumns = connection.prepareStatement(
+                """
+                select column_name from information_schema.columns
+                where lower(table_schema) = 'mypet' and lower(table_name) = 'recurring_order_subscription'
+                """.trimIndent(),
+            ).use { statement ->
+                statement.executeQuery().use { rows -> buildSet { while (rows.next()) add(rows.getString(1).lowercase()) } }
+            }
+            assertTrue(recurringColumns.containsAll(setOf("fulfilment_mode", "time_zone", "version")))
+
+            val proposalConstraints = connection.prepareStatement(
+                """
+                select constraint_name from information_schema.table_constraints
+                where lower(table_schema) = 'mypet'
+                  and lower(table_name) = 'recurring_order_proposal'
+                """.trimIndent(),
+            ).use { statement ->
+                statement.executeQuery().use { rows -> buildSet { while (rows.next()) add(rows.getString(1).lowercase()) } }
+            }
+            assertTrue(
+                proposalConstraints.containsAll(
+                    setOf(
+                        "uq_recurring_proposal_cycle",
+                        "ck_recurring_proposal_cadence",
+                        "ck_recurring_proposal_quantity",
+                        "ck_recurring_proposal_mode",
+                        "ck_recurring_proposal_status",
+                    ),
+                ),
+                "proposalConstraints=$proposalConstraints",
+            )
+
+            val cadenceCheck = connection.prepareStatement(
+                """
+                select check_clause from information_schema.check_constraints
+                where lower(constraint_schema) = 'mypet'
+                  and lower(constraint_name) = 'ck_recurring_proposal_cadence'
+                """.trimIndent(),
+            ).use { statement ->
+                statement.executeQuery().use { rows ->
+                    assertTrue(rows.next(), "Recurring proposal cadence check is missing")
+                    rows.getString(1)
+                }
+            }
+            listOf("7", "15", "25", "30", "35").forEach { cadence ->
+                assertTrue(cadenceCheck.contains(cadence), "cadenceCheck=$cadenceCheck")
+            }
 
             val organizationId = UUID.randomUUID()
             val outletId = UUID.randomUUID()

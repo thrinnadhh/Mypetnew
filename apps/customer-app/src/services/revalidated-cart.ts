@@ -1,10 +1,20 @@
 import type { CartItem } from '@/context/CartContext';
 import { isCommerceEligible } from '@/services/commerce-eligibility';
 import { fetchCommerceProduct } from '@/services/customer-catalog';
-import type { ReorderValidationResult } from '@/services/customer-orders';
+
+interface CartRevalidationResult {
+  providerId: string;
+  isProviderServiceable: boolean;
+  canReorder: boolean;
+  items: Array<{
+    offeringId: string;
+    quantity: number;
+    isAvailable: boolean;
+  }>;
+}
 
 export async function buildCartFromRevalidation(
-  result: ReorderValidationResult,
+  result: CartRevalidationResult,
 ): Promise<CartItem[]> {
   if (!result.canReorder || !result.isProviderServiceable) {
     throw new Error('The provider or one of the selected items is currently unavailable.');

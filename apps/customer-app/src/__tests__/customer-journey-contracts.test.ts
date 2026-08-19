@@ -198,10 +198,10 @@ describe('MyPet customer journey contracts', () => {
     expect(RECURRING_CADENCES).toEqual([7, 15, 25, 30, 35]);
     for (const cadence of RECURRING_CADENCES) expect(isRecurringCadence(cadence)).toBe(true);
     expect(isRecurringCadence(10)).toBe(false);
-    expectAll(subscriptions, ['No silent charging', 'Revalidate and confirm']);
+    expectAll(subscriptions, ['No silent order or charge', 'Revalidate and continue']);
     expect(service).toContain('/api/v1/customer/recurring-orders');
     expect(service).not.toContain('/api/v1/orders/subscriptions');
-    expectAll(backend, ['AWAITING_CONFIRMATION', 'ALLOWED_CADENCES = setOf(7, 15, 25, 30, 35)', 'sellingPricePaise']);
+    expectAll(backend, ['RenewalProposalStatus.AWAITING_CONFIRMATION', 'ALLOWED_CADENCES = setOf(7, 15, 25, 30, 35)', 'sellingPricePaise']);
     expectAll(decisions, [
       'Recurring product orders support fixed cadences of 7, 15, 25, 30, and 35 days',
       'No automatic COD placement or payment mandate charge occurs',

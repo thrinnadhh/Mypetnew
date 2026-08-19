@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Alert, StyleSheet, TextInput, View } from 'react-native';
 
 import { BottomSheet, EntityCard, FilterChip, PrimaryAction, StateView } from '@/components/foundation/primitives';
@@ -127,7 +127,7 @@ export default function AppointmentDiscoveryScreen({ providerType, route, titleK
   const bookingInFlightRef = useRef(false);
   const bookingContextRef = useRef<BookingContext | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     bookingContextRef.current = {
       userId: user?.id ?? null,
       accessToken: session?.accessToken ?? null,

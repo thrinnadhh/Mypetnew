@@ -22,23 +22,45 @@ describe('P13 appointment payment and history contract', () => {
     const payment = source('src/app/appointments/payment.tsx');
     const service = source('src/services/customer-payments.ts');
 
-    expect(payment).toContain('waitForPaymentOutcome(payment.paymentId)');
+    expect(payment).toContain('waitForPaymentOutcome(payment.paymentId, 30, 2_000, action.userId)');
     expect(payment).toContain("verified.referenceType !== 'APPOINTMENT'");
-    expect(payment).toContain('verified.referenceId !== appointmentId');
+    expect(payment).toContain('verified.referenceId !== action.appointmentId');
     expect(service).toContain('The Cashfree native callback is never payment truth');
     expect(service).toContain('fetchPaymentStatus(paymentId)');
     expect(service).toContain("latest.status === 'CAPTURED'");
   });
 
-  it('recovers an existing appointment payment rather than creating a duplicate provider payment', () => {
+  it('recovers an existing appointment payment only for the current account', () => {
     const payment = source('src/app/appointments/payment.tsx');
     const service = source('src/services/customer-payments.ts');
+    const recovery = source('src/services/appointment-payment-recovery.ts');
+    const auth = source('src/context/AuthContext.tsx');
 
-    expect(payment).toContain('loadPendingAppointmentPayment()');
-    expect(payment).toContain('fetchPaymentStatus(pendingRecovery.paymentId)');
+    expect(payment).toContain('loadPendingAppointmentPayment(expectedUserId)');
+    expect(payment).toContain('recovery?.customerId === expectedUserId');
+    expect(payment).toContain('fetchPaymentStatus(recoveryAtStart.paymentId)');
     expect(payment).toContain('Resume payment');
-    expect(service).toContain('rememberPendingAppointmentPayment(payment.paymentId, appointmentId)');
-    expect(service).toContain("referenceType: 'APPOINTMENT'");
+    expect(service).toContain('rememberPendingAppointmentPayment(payment.paymentId, appointmentId, customerId)');
+    expect(recovery).toContain("RECOVERY_PREFIX = 'mypet.customer.pending-appointment-payment.v2.'");
+    expect(recovery).toContain('parsed.customerId !== customerId');
+    expect(auth).toContain('clearAppointmentRecovery(previousAccountId)');
+  });
+
+  it('invalidates in-flight payment actions when account, token or appointment identity changes', () => {
+    const payment = source('src/app/appointments/payment.tsx');
+
+    expect(payment).toContain('paymentGenerationRef.current += 1');
+    expect(payment).toContain('samePaymentContext(paymentContextRef.current, action)');
+    expect(payment).toContain('if (!isCurrentPaymentAction(action)) return;');
+    expect(payment).toContain('paymentInFlightRef.current');
+  });
+
+  it('does not relaunch payment for an appointment already beyond the hold step', () => {
+    const payment = source('src/app/appointments/payment.tsx');
+
+    expect(payment).toContain("appointment.status !== 'SLOT_HELD'");
+    expect(payment).toContain('Appointment is no longer payable');
+    expect(payment).toContain("appointment.paymentStatus !== 'PENDING'");
   });
 
   it('loads complete bounded appointment history page-by-page with account-scoped caching', () => {

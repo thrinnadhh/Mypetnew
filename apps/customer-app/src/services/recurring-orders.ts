@@ -48,6 +48,12 @@ async function fetchAllPages<T>(path: string, id: (item: T) => string, accessTok
   throw new Error('Recurring-order history exceeded the supported bounded pagination window.');
 }
 
+function compatibilityCommandKey(operation: string, resource: string): string {
+  const safeOperation = operation.replace(/[^A-Za-z0-9._:-]/g, '-').slice(0, 24);
+  const safeResource = resource.replace(/[^A-Za-z0-9._:-]/g, '-').slice(0, 72);
+  return `recurring:compat:${safeOperation}:${safeResource}:${Date.now()}`.slice(0, 128);
+}
+
 export function fetchRecurringOrders(accessToken: string): Promise<RecurringOrderSubscription[]> {
   return fetchAllPages('/api/v1/customer/recurring-orders', (item: RecurringOrderSubscription) => item.subscriptionId, accessToken);
 }
@@ -72,7 +78,7 @@ export function createRecurringOrder(
   cadenceDays: RecurringCadence,
   quantityMultiplier: number,
   accessToken: string,
-  idempotencyKey: string,
+  idempotencyKey = compatibilityCommandKey('create', `${sourceOrderId}:${cadenceDays}:${quantityMultiplier}`),
 ): Promise<RecurringOrderSubscription> {
   return request('/api/v1/customer/recurring-orders', accessToken, {
     method: 'POST',
@@ -85,7 +91,7 @@ export function updateRecurringOrder(
   subscriptionId: string,
   action: 'PAUSE' | 'RESUME' | 'SKIP' | 'SKIP_NEXT' | 'CANCEL' | 'CHANGE',
   accessToken: string,
-  idempotencyKey: string,
+  idempotencyKey = compatibilityCommandKey(action, subscriptionId),
   changes: { cadenceDays?: RecurringCadence; quantityMultiplier?: number; deliveryAddressId?: string } = {},
 ): Promise<RecurringOrderSubscription> {
   return request(`/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}`, accessToken, {
@@ -106,6 +112,22 @@ export function confirmRecurringProposal(
     accessToken,
     { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey } },
   );
+}
+
+/**
+ * Historical P14 client compatibility. The backend resolves the customer's current
+ * open durable proposal; it does not promote due state and cannot create an order.
+ * New code must use confirmRecurringProposal with an explicit proposalId.
+ */
+export function confirmRecurringOrder(
+  subscriptionId: string,
+  accessToken: string,
+  idempotencyKey = compatibilityCommandKey('confirm', subscriptionId),
+): Promise<RecurringOrderConfirmation> {
+  return request(`/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}/confirm`, accessToken, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+  });
 }
 
 export function completeRecurringProposal(

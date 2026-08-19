@@ -71,7 +71,22 @@ describe('P11 veterinary discovery, services and slot contract', () => {
     expect(slots).toContain('slotStartsAt: current.startsAt');
     expect(slots).toContain('slotEndsAt: current.endsAt');
     expect(slots).toContain('Selecting a time does not reserve or create an appointment.');
+    expect(slots).toContain('The booking flow revalidates availability before requesting this slot.');
+    expect(slots).not.toContain('Booking is confirmed in the next step.');
     expect(slots).not.toContain('holdAppointmentSlot');
+  });
+
+  it('locks selection during final freshness validation and rechecks serviceability after slot refresh', () => {
+    const slots = source('src/screens/veterinary-slot-discovery-screen.tsx');
+
+    expect(slots).toContain('handoffGeneration.current += 1;\n    setCheckingFreshness(false);');
+    expect(slots).toContain('if (checkingFreshness) return;\n    setSelectedDate(date);');
+    expect(slots).toContain('if (checkingFreshness) return;\n    if (slot.providerId !== providerId');
+    expect(slots).toContain('disabled={checkingFreshness}');
+    expect(slots).toContain('accessibilityState={{ selected: selectedDate === date.key, disabled: checkingFreshness }}');
+    expect(slots).toContain('accessibilityState={{ selected: selectedSlot?.id === slot.id, disabled: checkingFreshness }}');
+    expect(slots).toContain("const current = latest.find((slot) => slot.id === chosen.id);");
+    expect(slots).toContain("await fetchProviderProfile(providerId, { kind: 'vet', pincode: selectedPincode });\n      if (handoffGeneration.current !== generation) return;\n      router.push({");
   });
 
   it('keeps P11 controls accessible and makes no rating/distance/ETA claims', () => {

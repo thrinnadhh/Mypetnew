@@ -33,6 +33,21 @@ export function isSafeHttpsUrl(value?: string | null): value is string {
   }
 }
 
+export function isTrustedBearerUploadUrl(value: string, apiBaseUrl: string): boolean {
+  if (!isSafeHttpsUrl(value) || !isSafeHttpsUrl(apiBaseUrl)) return false;
+  try {
+    const upload = new URL(value);
+    const api = new URL(apiBaseUrl);
+    if (upload.origin === api.origin) return true;
+    if (!api.hostname.startsWith('api.')) return false;
+    return upload.protocol === api.protocol
+      && upload.port === api.port
+      && upload.hostname === `uploads.${api.hostname.slice(4)}`;
+  } catch {
+    return false;
+  }
+}
+
 export function safeTelephoneUrl(value?: string | null): string | null {
   if (!value) return null;
   const trimmed = value.trim();

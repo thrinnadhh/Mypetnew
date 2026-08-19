@@ -130,7 +130,7 @@ class GuardedRecurringOrderPersistence(
                 traceId,
                 mutation,
             )
-        } ?: throw IllegalStateException("Recurring confirmation transaction returned no result")
+        }
     }
 
     override fun create(

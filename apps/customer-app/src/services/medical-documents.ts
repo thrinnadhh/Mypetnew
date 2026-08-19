@@ -1,5 +1,7 @@
 import { apiErrorFromResponse } from '@/contracts/api-error';
+import { apiClient, StaleAuthResponseError } from '@/services/api-client';
 import { appConfig } from '@/utils/app-config';
+import { isSafeHttpsUrl } from '@/utils/customer-navigation-safety';
 
 export interface MedicalDocument {
   documentId: string;
@@ -17,7 +19,12 @@ interface UploadReservation {
   expiresAt: string;
 }
 
+function assertCurrentAuthEpoch(epoch: number): void {
+  if (apiClient.getAuthEpoch() !== epoch) throw new StaleAuthResponseError();
+}
+
 async function authenticated<T>(path: string, accessToken: string, init: RequestInit = {}): Promise<T> {
+  const epoch = apiClient.getAuthEpoch();
   const response = await fetch(`${appConfig.apiBaseUrl}${path}`, {
     ...init,
     headers: {
@@ -27,8 +34,11 @@ async function authenticated<T>(path: string, accessToken: string, init: Request
       ...((init.headers as Record<string, string> | undefined) ?? {}),
     },
   });
+  assertCurrentAuthEpoch(epoch);
   if (!response.ok) throw await apiErrorFromResponse(response);
-  return (await response.json()) as T;
+  const body = (await response.json()) as T;
+  assertCurrentAuthEpoch(epoch);
+  return body;
 }
 
 export function fetchMedicalDocuments(accessToken: string): Promise<MedicalDocument[]> {
@@ -45,6 +55,9 @@ export async function uploadMedicalDocument(
     accessToken,
     { method: 'POST' },
   );
+  if (!isSafeHttpsUrl(reservation.uploadUrl)) {
+    throw new Error('Medical document upload destination is invalid.');
+  }
   const body = new FormData();
   body.append('uploadToken', reservation.uploadToken);
   body.append('file', {
@@ -52,13 +65,17 @@ export async function uploadMedicalDocument(
     name: asset.name,
     type: asset.mimeType,
   } as unknown as Blob);
+  const epoch = apiClient.getAuthEpoch();
   const response = await fetch(reservation.uploadUrl, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
     body,
   });
+  assertCurrentAuthEpoch(epoch);
   if (!response.ok) throw await apiErrorFromResponse(response);
-  return (await response.json()) as MedicalDocument;
+  const document = (await response.json()) as MedicalDocument;
+  assertCurrentAuthEpoch(epoch);
+  return document;
 }
 
 export async function getMedicalDocumentLink(
@@ -71,5 +88,6 @@ export async function getMedicalDocumentLink(
     accessToken,
     { method: 'POST' },
   );
+  if (!isSafeHttpsUrl(link.url)) throw new Error('Medical document link is invalid.');
   return link.url;
 }

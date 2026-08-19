@@ -60,6 +60,7 @@ data class CustomerAppointmentCreateRequest(
     val serviceId: UUID,
     val petId: UUID,
     val slotId: UUID,
+    val pincode: String,
     val paymentMethod: AppointmentPaymentMethod? = null,
     val notes: String? = null,
 )
@@ -174,14 +175,15 @@ class CustomerAppointmentApiController(private val appointments: AppointmentServ
         @RequestBody request: CustomerAppointmentCreateRequest,
     ): CustomerAppointmentResponse = appointmentResponse(
         appointments.hold(
-            customer(authentication),
-            request.outletId,
-            request.serviceId,
-            request.petId,
-            request.slotId,
-            request.paymentMethod ?: AppointmentPaymentMethod.PAY_AT_PROVIDER,
-            request.notes,
-            idempotencyKey,
+            customer = customer(authentication),
+            outletId = request.outletId,
+            serviceId = request.serviceId,
+            petId = request.petId,
+            slotId = request.slotId,
+            paymentMethod = request.paymentMethod ?: AppointmentPaymentMethod.PAY_AT_PROVIDER,
+            notes = request.notes,
+            idempotencyKey = idempotencyKey,
+            servicePincode = request.pincode,
         ),
     )
 

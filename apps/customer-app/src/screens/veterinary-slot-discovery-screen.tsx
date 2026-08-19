@@ -95,6 +95,7 @@ export default function VeterinarySlotDiscoveryScreen() {
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
     handoffGeneration.current += 1;
+    setCheckingFreshness(false);
     setProvider(null);
     setService(null);
     setSlots([]);
@@ -172,16 +173,18 @@ export default function VeterinarySlotDiscoveryScreen() {
   );
 
   const chooseDate = useCallback((date: string) => {
+    if (checkingFreshness) return;
     setSelectedDate(date);
     setSelectedSlot(null);
     setSlotStale(false);
-  }, []);
+  }, [checkingFreshness]);
 
   const chooseSlot = useCallback((slot: AppointmentSlotOption) => {
+    if (checkingFreshness) return;
     if (slot.providerId !== providerId || slot.offeringId !== serviceId || !slot.startsAt || !slot.endsAt) return;
     setSelectedSlot(slot);
     setSlotStale(false);
-  }, [providerId, serviceId]);
+  }, [checkingFreshness, providerId, serviceId]);
 
   const continueToBooking = useCallback(async () => {
     if (!providerId || !serviceId || !selectedSlot || !selectedSlot.startsAt || !selectedSlot.endsAt || !SERVICE_PIN_PATTERN.test(selectedPincode) || checkingFreshness) return;
@@ -202,6 +205,8 @@ export default function VeterinarySlotDiscoveryScreen() {
         setSlotStale(true);
         return;
       }
+      await fetchProviderProfile(providerId, { kind: 'vet', pincode: selectedPincode });
+      if (handoffGeneration.current !== generation) return;
       router.push({
         pathname: '/vet',
         params: {
@@ -250,15 +255,15 @@ export default function VeterinarySlotDiscoveryScreen() {
             <>
               <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Choose a date</ThemedText>
               <View style={styles.wrap}>
-                {dates.map((date) => <Pressable key={date.key} onPress={() => chooseDate(date.key)} accessibilityRole="button" accessibilityState={{ selected: selectedDate === date.key }} style={[styles.choice, { borderColor: selectedDate === date.key ? theme.primary : theme.border, backgroundColor: theme.backgroundElement }]}><ThemedText style={{ color: theme.text }}>{date.label}</ThemedText></Pressable>)}
+                {dates.map((date) => <Pressable key={date.key} disabled={checkingFreshness} onPress={() => chooseDate(date.key)} accessibilityRole="button" accessibilityState={{ selected: selectedDate === date.key, disabled: checkingFreshness }} style={[styles.choice, { borderColor: selectedDate === date.key ? theme.primary : theme.border, backgroundColor: theme.backgroundElement }]}><ThemedText style={{ color: theme.text }}>{date.label}</ThemedText></Pressable>)}
               </View>
               <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Available times</ThemedText>
               <View style={styles.wrap}>
-                {visibleSlots.map((slot) => <Pressable key={slot.id} onPress={() => chooseSlot(slot)} accessibilityRole="button" accessibilityState={{ selected: selectedSlot?.id === slot.id }} accessibilityLabel={`${timeLabel(slot.startsAt as string)} veterinary appointment slot`} style={[styles.choice, { borderColor: selectedSlot?.id === slot.id ? theme.primary : theme.border, backgroundColor: theme.backgroundElement }]}><ThemedText style={{ color: theme.text }}>{timeLabel(slot.startsAt as string)}</ThemedText></Pressable>)}
+                {visibleSlots.map((slot) => <Pressable key={slot.id} disabled={checkingFreshness} onPress={() => chooseSlot(slot)} accessibilityRole="button" accessibilityState={{ selected: selectedSlot?.id === slot.id, disabled: checkingFreshness }} accessibilityLabel={`${timeLabel(slot.startsAt as string)} veterinary appointment slot`} style={[styles.choice, { borderColor: selectedSlot?.id === slot.id ? theme.primary : theme.border, backgroundColor: theme.backgroundElement }]}><ThemedText style={{ color: theme.text }}>{timeLabel(slot.startsAt as string)}</ThemedText></Pressable>)}
               </View>
               {slotStale ? <StateView kind="error" title="That slot changed" message="The selected time is no longer available. Choose another current slot." /> : null}
-              <PrimaryButton label="Continue to booking" disabled={!selectedSlot} loading={checkingFreshness} onPress={() => void continueToBooking()} />
-              <ThemedText style={[styles.boundary, { color: theme.textSecondary }]}>Selecting a time does not reserve or create an appointment. Booking is confirmed in the next step.</ThemedText>
+              <PrimaryButton label="Continue to booking" disabled={!selectedSlot || checkingFreshness} loading={checkingFreshness} onPress={() => void continueToBooking()} />
+              <ThemedText style={[styles.boundary, { color: theme.textSecondary }]}>Selecting a time does not reserve or create an appointment. The booking flow revalidates availability before requesting this slot.</ThemedText>
             </>
           )}
         </>

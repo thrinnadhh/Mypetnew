@@ -60,6 +60,8 @@ data class CustomerAppointmentCreateRequest(
     val serviceId: UUID,
     val petId: UUID,
     val slotId: UUID,
+    val slotStartsAt: Instant,
+    val slotEndsAt: Instant,
     val pincode: String,
     val paymentMethod: AppointmentPaymentMethod? = null,
     val notes: String? = null,
@@ -184,6 +186,8 @@ class CustomerAppointmentApiController(private val appointments: AppointmentServ
             notes = request.notes,
             idempotencyKey = idempotencyKey,
             servicePincode = request.pincode,
+            expectedSlotStartsAt = request.slotStartsAt,
+            expectedSlotEndsAt = request.slotEndsAt,
         ),
     )
 

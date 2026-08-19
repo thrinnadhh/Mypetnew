@@ -406,6 +406,8 @@ async function createAppointmentHold(
       outletId: input.slot.providerId,
       serviceId: input.slot.offeringId,
       slotId: input.slot.id,
+      slotStartsAt: input.slot.startsAt,
+      slotEndsAt: input.slot.endsAt,
       petId: input.petId,
       pincode: input.pincode,
       paymentMethod,
@@ -422,6 +424,9 @@ export async function holdAppointmentSlot(input: HoldAppointmentInput): Promise<
   if (!PIN_PATTERN.test(input.pincode)) throw contractError('PIN_CODE_INVALID', 'Select a valid six-digit service PIN before booking.');
   if (!input.accessToken && !appConfig.allowDemoMode) throw new Error('Please sign in before booking an appointment.');
   if (appConfig.allowDemoMode && input.slot.id.startsWith('demo-slot-')) return `demo-appointment-${input.slot.id}`;
+  if (!input.slot.startsAt || !input.slot.endsAt) {
+    throw contractError('SLOT_TIME_INVALID', 'Reload appointment availability before booking this slot.');
+  }
 
   const paymentMethod = input.paymentMethod ?? 'PAY_AT_PROVIDER';
   const baseKey = appointmentAttemptKey(input.slot.id, input.petId, input.pincode, paymentMethod);

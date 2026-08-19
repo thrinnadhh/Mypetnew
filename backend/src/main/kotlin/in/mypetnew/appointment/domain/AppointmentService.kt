@@ -309,12 +309,26 @@ class AppointmentService(
         notes: String?,
         idempotencyKey: String,
         servicePincode: String,
+        expectedSlotStartsAt: Instant? = null,
+        expectedSlotEndsAt: Instant? = null,
     ): CustomerAppointment {
         Authorizer.requireRole(customer, Role.CUSTOMER)
         validateIdempotencyKey(idempotencyKey)
         val offering = activeOffering(serviceId)
         if (offering.outletId != outletId) unavailable()
         val slot = persistence.getSlot(slotId)?.takeIf { it.serviceId == serviceId && it.active } ?: unavailable()
+        if (
+            expectedSlotStartsAt != null || expectedSlotEndsAt != null
+        ) {
+            if (
+                expectedSlotStartsAt == null ||
+                expectedSlotEndsAt == null ||
+                slot.startsAt != expectedSlotStartsAt ||
+                slot.endsAt != expectedSlotEndsAt
+            ) {
+                staleSlot()
+            }
+        }
         val now = clock.instant()
         if (!slot.startsAt.isAfter(now)) slotUnavailable()
         val pet = customerData.getPet(customer.actorId, petId)
@@ -351,7 +365,8 @@ class AppointmentService(
             now,
         )
         val fingerprint = fingerprint(
-            "${customer.actorId}:$outletId:$serviceId:$petId:$slotId:$paymentMethod:$servicePincode:$cleanNotes",
+            "${customer.actorId}:$outletId:$serviceId:$petId:$slotId:$paymentMethod:$servicePincode:" +
+                "${expectedSlotStartsAt ?: slot.startsAt}:${expectedSlotEndsAt ?: slot.endsAt}:$cleanNotes",
         )
         return persistence.hold(appointment, idempotencyKey, fingerprint, now)
     }
@@ -454,6 +469,10 @@ class AppointmentService(
     private fun appointmentPincodeUnavailable(): Nothing = throw DomainException(
         "APPOINTMENT_PIN_NOT_SERVICEABLE",
         "The selected provider no longer serves this PIN code",
+    )
+    private fun staleSlot(): Nothing = throw DomainException(
+        "APPOINTMENT_SLOT_STALE",
+        "The selected appointment time has changed. Choose a current slot before booking.",
     )
 }
 

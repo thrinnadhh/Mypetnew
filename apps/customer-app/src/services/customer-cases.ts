@@ -34,12 +34,17 @@ export interface CustomerCase {
   resolvedAt?: string | null;
 }
 
+function currentAuthEpoch(): number {
+  const getter = (apiClient as typeof apiClient & { getAuthEpoch?: () => number }).getAuthEpoch;
+  return typeof getter === 'function' ? getter.call(apiClient) : 0;
+}
+
 function assertCurrentAuthEpoch(epoch: number): void {
-  if (apiClient.getAuthEpoch() !== epoch) throw new StaleAuthResponseError();
+  if (currentAuthEpoch() !== epoch) throw new StaleAuthResponseError();
 }
 
 async function request<T>(path: string, accessToken: string, init: RequestInit = {}): Promise<T> {
-  const epoch = apiClient.getAuthEpoch();
+  const epoch = currentAuthEpoch();
   const response = await fetch(`${appConfig.apiBaseUrl}${path}`, {
     ...init,
     headers: {
@@ -92,7 +97,7 @@ export async function uploadCustomerCaseEvidence(
     name: asset.name,
     type: asset.mimeType,
   } as unknown as Blob);
-  const epoch = apiClient.getAuthEpoch();
+  const epoch = currentAuthEpoch();
   const response = await fetch(reservation.uploadUrl, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },

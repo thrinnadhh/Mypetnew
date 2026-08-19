@@ -223,7 +223,7 @@ class RecurringOrderServiceTest {
         assertEquals("PAGE_SIZE_INVALID", codeOf { fixture.service.list(fixture.customerId, -1, 20) })
         assertEquals("PAGE_SIZE_INVALID", codeOf { fixture.service.list(fixture.customerId, 0, 101) })
         assertFalse(fixture.service.list(fixture.customerId, 0, 20).hasNext)
-        assertEquals(listOf("SUBSCRIPTION_CREATED", "PAUSED"), fixture.service.history(fixture.customerId, created.id).map { it.eventType })
+        assertEquals(listOf("PAUSED", "SUBSCRIPTION_CREATED"), fixture.service.history(fixture.customerId, created.id).map { it.eventType })
     }
 
     private fun fixture(stock: Int = 100): Fixture {

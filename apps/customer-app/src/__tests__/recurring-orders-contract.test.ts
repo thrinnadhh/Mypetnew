@@ -32,10 +32,11 @@ describe('recurring order contract', () => {
     expect(controller).toContain('Authorizer.requireRole(principal, Role.CUSTOMER)');
     expect(controller).toContain('customer(authentication)');
     expect(backend).toContain('orders.detail(customerId, sourceOrderId)');
+    expect(backend).toContain('persistence.findBySource(customerId, sourceOrderId)');
     expect(backend).toContain('ALLOWED_CADENCES = setOf(7, 15, 25, 30, 35)');
     expect(backend).toContain('listing?.sellingPricePaise ?: line.unitPricePaise');
     expect(backend).toContain('status = RecurringOrderStatus.AWAITING_CONFIRMATION');
-    expect(migration).toContain("WHERE status <> 'CANCELLED'");
+    expect(migration).toContain('UNIQUE (customer_id, source_order_id)');
   });
 
   it('preserves D-019 explicit confirmation and no automatic charging', () => {

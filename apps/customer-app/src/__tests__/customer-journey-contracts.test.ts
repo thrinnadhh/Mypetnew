@@ -183,22 +183,23 @@ describe('MyPet customer journey contracts', () => {
     expect(payments).toContain("currency: 'INR';");
   });
 
-  it('verifies recurring-order cadences (7/15/25/30/35) and confirmation safety per Decision D-019 while backend runtime is deferred', () => {
+  it('verifies canonical recurring-order cadences and explicit confirmation safety per Decision D-019', () => {
     const subscriptions = source('src/app/subscriptions/index.tsx');
     const service = source('src/services/recurring-orders.ts');
+    const backend = source('../../backend/src/main/kotlin/in/mypetnew/recurring/domain/RecurringOrderService.kt');
     const decisions = source('../../docs/product/DECISIONS.md');
-    const matrix = source('../../docs/architecture/CUSTOMER_API_COMPATIBILITY_MATRIX.md');
 
     expect(RECURRING_CADENCES).toEqual([7, 15, 25, 30, 35]);
     for (const cadence of RECURRING_CADENCES) expect(isRecurringCadence(cadence)).toBe(true);
     expect(isRecurringCadence(10)).toBe(false);
     expectAll(subscriptions, ['No silent charging', 'Revalidate and confirm']);
-    expect(service).toContain('/api/v1/orders/subscriptions');
+    expect(service).toContain('/api/v1/customer/recurring-orders');
+    expect(service).not.toContain('/api/v1/orders/subscriptions');
+    expectAll(backend, ['AWAITING_CONFIRMATION', 'ALLOWED_CADENCES = setOf(7, 15, 25, 30, 35)', 'sellingPricePaise']);
     expectAll(decisions, [
       'Recurring product orders support fixed cadences of 7, 15, 25, 30, and 35 days',
       'No automatic COD placement or payment mandate charge occurs',
     ]);
-    expect(matrix).toContain('- **2.6.2 Recurring Orders & Subscriptions (`DEFERRED`)**:');
   });
 
   it('keeps appointment booking real while grooming entry remains provider-first', () => {

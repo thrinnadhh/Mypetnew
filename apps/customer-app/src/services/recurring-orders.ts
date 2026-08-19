@@ -35,10 +35,19 @@ async function fetchAllPages<T>(path: string, id: (item: T) => string, accessTok
   const unique = new Map<string, T>();
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const separator = path.includes('?') ? '&' : '?';
-    const payload = await request<PageResponse<T>>(
+    const payload = await request<PageResponse<T> | T[]>(
       `${path}${separator}page=${page}&pageSize=${PAGE_SIZE}`,
       accessToken,
     );
+
+    // Historical P14 returned a single bounded array. Accept it only as a terminal
+    // one-page compatibility response; current servers must use PageResponse.
+    if (Array.isArray(payload)) {
+      if (page !== 0) throw new Error('Recurring-order service changed pagination shape mid-request.');
+      payload.forEach((item) => unique.set(id(item), item));
+      return [...unique.values()];
+    }
+
     if (!Array.isArray(payload.items) || payload.page !== page || payload.pageSize !== PAGE_SIZE) {
       throw new Error('Recurring-order service returned an invalid paginated response.');
     }

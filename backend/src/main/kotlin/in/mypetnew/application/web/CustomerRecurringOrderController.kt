@@ -6,6 +6,7 @@ import `in`.mypetnew.commerce.domain.OrderStatus
 import `in`.mypetnew.common.auth.Authorizer
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
+import `in`.mypetnew.customer.domain.CustomerDataService
 import `in`.mypetnew.recurring.domain.RecurringOrderConfirmation
 import `in`.mypetnew.recurring.domain.RecurringOrderService
 import `in`.mypetnew.recurring.domain.RecurringOrderStatus
@@ -111,6 +112,7 @@ data class RecurringOrderConfirmationResponse(
 class CustomerRecurringOrderController(
     private val recurring: RecurringOrderService,
     private val orders: OrderService,
+    private val customerData: CustomerDataService,
 ) {
     @GetMapping
     fun list(
@@ -166,18 +168,27 @@ class CustomerRecurringOrderController(
         @PathVariable subscriptionId: UUID,
         @RequestHeader("Idempotency-Key") idempotencyKey: String,
         @RequestBody request: UpdateRecurringOrderRequest,
-    ): RecurringOrderResponse = response(
-        recurring.update(
-            customer(authentication),
-            subscriptionId,
-            request.action,
-            request.cadenceDays,
-            request.quantityMultiplier,
-            request.deliveryAddressId,
-            idempotencyKey,
-            currentTraceId(),
-        ),
-    )
+    ): RecurringOrderResponse {
+        val customerId = customer(authentication)
+        if (request.action.trim().equals("CHANGE", ignoreCase = true) && request.deliveryAddressId != null) {
+            // Resolve through the customer-owned address service before the recurring
+            // aggregate sees the identifier. A foreign/random ID is therefore never
+            // accepted even when the current schedule is STORE_PICKUP.
+            customerData.getAddress(customerId, request.deliveryAddressId)
+        }
+        return response(
+            recurring.update(
+                customerId,
+                subscriptionId,
+                request.action,
+                request.cadenceDays,
+                request.quantityMultiplier,
+                request.deliveryAddressId,
+                idempotencyKey,
+                currentTraceId(),
+            ),
+        )
+    }
 
     @PostMapping("/{subscriptionId}/proposals/{proposalId}/confirm")
     fun confirm(

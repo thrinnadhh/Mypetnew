@@ -96,6 +96,8 @@ describe('appointment booking API failure handling', () => {
         serviceName: 'Rebookable service',
         startTime: 'Tomorrow',
         endTime: 'Later',
+        startsAt: '2026-08-20T10:00:00Z',
+        endsAt: '2026-08-20T10:30:00Z',
         price: 500,
       },
       userId: 'customer-rebook',
@@ -113,7 +115,11 @@ describe('appointment booking API failure handling', () => {
       'Idempotency-Key': 'appointment-v2-slot-rebook-pet-rebook-517501-retry-loyw3v28',
     });
     expect(mockedFetch.mock.calls[1][1]?.body).toBe(mockedFetch.mock.calls[0][1]?.body);
-    expect(JSON.parse(String(mockedFetch.mock.calls[0][1]?.body))).toMatchObject({ pincode: '517501' });
+    expect(JSON.parse(String(mockedFetch.mock.calls[0][1]?.body))).toMatchObject({
+      pincode: '517501',
+      slotStartsAt: '2026-08-20T10:00:00Z',
+      slotEndsAt: '2026-08-20T10:30:00Z',
+    });
 
     nowSpy.mockRestore();
   });
@@ -127,6 +133,8 @@ describe('appointment booking API failure handling', () => {
         serviceName: 'Service',
         startTime: 'Tomorrow',
         endTime: 'Later',
+        startsAt: '2026-08-20T10:00:00Z',
+        endsAt: '2026-08-20T10:30:00Z',
         price: 500,
       },
       userId: 'customer',
@@ -134,6 +142,25 @@ describe('appointment booking API failure handling', () => {
       pincode: '012345',
       accessToken: 'token',
     })).rejects.toMatchObject({ name: 'PIN_CODE_INVALID' });
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a hold without canonical slot timestamps before issuing the mutation', async () => {
+    await expect(holdAppointmentSlot({
+      slot: {
+        id: 'slot-no-time',
+        providerId: 'provider-no-time',
+        offeringId: 'service-no-time',
+        serviceName: 'Service',
+        startTime: 'Tomorrow',
+        endTime: 'Later',
+        price: 500,
+      },
+      userId: 'customer',
+      petId: 'pet',
+      pincode: '517501',
+      accessToken: 'token',
+    })).rejects.toMatchObject({ name: 'SLOT_TIME_INVALID' });
     expect(mockedFetch).not.toHaveBeenCalled();
   });
 });

@@ -153,9 +153,14 @@ class FlywaySchemaContractTest {
 
             val customerId = UUID.randomUUID()
             connection.prepareStatement(
-                "insert into mypet.identity_account(id, role, status) values (?, 'CUSTOMER', 'ACTIVE')",
-            ).use { it.setObject(1, customerId); it.executeUpdate() }
+                "insert into mypet.identity_account(id, role, status, mobile_e164) values (?, 'CUSTOMER', 'ACTIVE', ?)",
+            ).use {
+                it.setObject(1, customerId)
+                it.setString(2, "+919876543210")
+                it.executeUpdate()
+            }
             val quoteId = UUID.randomUUID()
+            val sourceOrderId = UUID.randomUUID()
             connection.prepareStatement(
                 """
                 insert into mypet.product_order(
@@ -166,7 +171,7 @@ class FlywaySchemaContractTest {
                           'PENDING_EXTERNAL_COLLECTION', 12500, 1000, 1000, 'DELIVERED')
                 """.trimIndent(),
             ).use {
-                it.setObject(1, UUID.randomUUID())
+                it.setObject(1, sourceOrderId)
                 it.setObject(2, customerId)
                 it.setObject(3, organizationId)
                 it.setObject(4, outletId)
@@ -176,7 +181,23 @@ class FlywaySchemaContractTest {
                 it.executeUpdate()
             }
 
-            val invalidProposalId = UUID.randomUUID()
+            val subscriptionId = UUID.randomUUID()
+            connection.prepareStatement(
+                """
+                insert into mypet.recurring_order_subscription(
+                    id, customer_id, provider_id, source_order_id, fulfilment_mode,
+                    cadence_days, quantity_multiplier, status, next_order_at
+                ) values (?, ?, ?, ?, 'STORE_PICKUP', 7, 1, 'ACTIVE', ?)
+                """.trimIndent(),
+            ).use {
+                it.setObject(1, subscriptionId)
+                it.setObject(2, customerId)
+                it.setObject(3, outletId)
+                it.setObject(4, sourceOrderId)
+                it.setObject(5, Instant.parse("2026-08-20T00:00:00Z"))
+                it.executeUpdate()
+            }
+
             assertThrows(Exception::class.java) {
                 connection.prepareStatement(
                     """
@@ -187,11 +208,11 @@ class FlywaySchemaContractTest {
                     ) values (?, ?, ?, ?, ?, 'STORE_PICKUP', 10, 1, ?, 'AWAITING_CONFIRMATION', ?)
                     """.trimIndent(),
                 ).use {
-                    it.setObject(1, invalidProposalId)
-                    it.setObject(2, UUID.randomUUID())
+                    it.setObject(1, UUID.randomUUID())
+                    it.setObject(2, subscriptionId)
                     it.setObject(3, customerId)
                     it.setObject(4, outletId)
-                    it.setObject(5, UUID.randomUUID())
+                    it.setObject(5, sourceOrderId)
                     it.setObject(6, Instant.parse("2026-08-20T00:00:00Z"))
                     it.setObject(7, Instant.parse("2026-08-23T00:00:00Z"))
                     it.executeUpdate()

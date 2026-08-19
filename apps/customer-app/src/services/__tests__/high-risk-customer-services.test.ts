@@ -165,7 +165,7 @@ describe('high-risk customer service contracts', () => {
   });
 
   describe('recurring orders', () => {
-    it('sends authenticated create, update, confirm and list requests', async () => {
+    it('sends authenticated create, update, confirm and paginated list requests', async () => {
       const subscription = {
         subscriptionId: 'sub-1',
         customerId: 'customer-1',
@@ -181,7 +181,7 @@ describe('high-risk customer service contracts', () => {
         updatedAt: '2026-08-06T00:00:00Z',
       };
       mockedFetch
-        .mockResolvedValueOnce(jsonResponse([subscription]))
+        .mockResolvedValueOnce(jsonResponse({ items: [subscription], page: 0, pageSize: 20, hasNext: false }))
         .mockResolvedValueOnce(jsonResponse(subscription, 201))
         .mockResolvedValueOnce(jsonResponse({ ...subscription, status: 'PAUSED' }))
         .mockResolvedValueOnce(jsonResponse({ subscription, reorder: { canReorder: true, items: [] } }));
@@ -192,10 +192,10 @@ describe('high-risk customer service contracts', () => {
       await confirmRecurringOrder('sub-1', 'access-token');
 
       expect(mockedFetch.mock.calls.map((call) => [call[0], call[1]?.method ?? 'GET'])).toEqual([
-        ['https://api.mypet.test/api/v1/orders/subscriptions', 'GET'],
-        ['https://api.mypet.test/api/v1/orders/subscriptions', 'POST'],
-        ['https://api.mypet.test/api/v1/orders/subscriptions/sub-1', 'PATCH'],
-        ['https://api.mypet.test/api/v1/orders/subscriptions/sub-1/confirm', 'POST'],
+        ['https://api.mypet.test/api/v1/customer/recurring-orders?page=0&pageSize=20', 'GET'],
+        ['https://api.mypet.test/api/v1/customer/recurring-orders', 'POST'],
+        ['https://api.mypet.test/api/v1/customer/recurring-orders/sub-1', 'PATCH'],
+        ['https://api.mypet.test/api/v1/customer/recurring-orders/sub-1/confirm', 'POST'],
       ]);
       expect(JSON.parse(mockedFetch.mock.calls[1][1]?.body as string)).toEqual({
         sourceOrderId: 'order-1',

@@ -66,6 +66,7 @@ export async function initiateOrderPayment(
 
 export async function initiateAppointmentPayment(
   appointmentId: string,
+  customerId: string,
   idempotencyKey = Crypto.randomUUID(),
 ): Promise<CustomerPaymentView> {
   const payment = await apiClient.post<CustomerPaymentView>(
@@ -77,7 +78,7 @@ export async function initiateAppointmentPayment(
     },
     { 'Idempotency-Key': idempotencyKey },
   );
-  await rememberPendingAppointmentPayment(payment.paymentId, appointmentId);
+  await rememberPendingAppointmentPayment(payment.paymentId, appointmentId, customerId);
   return payment;
 }
 
@@ -104,18 +105,29 @@ export async function openCashfreeOrder(payment: CustomerPaymentView): Promise<C
   });
 }
 
-async function resumePayment(payment: CustomerPaymentView): Promise<CustomerPaymentView> {
-  return payment.referenceType === 'APPOINTMENT'
-    ? initiateAppointmentPayment(payment.referenceId)
-    : initiateOrderPayment(payment.referenceId);
+async function resumePayment(
+  payment: CustomerPaymentView,
+  appointmentCustomerId?: string,
+): Promise<CustomerPaymentView> {
+  if (payment.referenceType === 'APPOINTMENT') {
+    if (!appointmentCustomerId) {
+      throw new Error('Current customer identity is required to recover an appointment payment.');
+    }
+    return initiateAppointmentPayment(payment.referenceId, appointmentCustomerId);
+  }
+  return initiateOrderPayment(payment.referenceId);
 }
 
 export async function waitForPaymentOutcome(
   paymentId: string,
   attempts = 30,
   delayMs = 2_000,
+  appointmentCustomerId?: string,
 ): Promise<CustomerPaymentView> {
   let latest = await fetchPaymentStatus(paymentId);
+  if (latest.referenceType === 'APPOINTMENT' && !appointmentCustomerId) {
+    throw new Error('Current customer identity is required to verify an appointment payment.');
+  }
 
   // A Create Order HTTP timeout can leave a durable Payment/provider identity
   // without the provider session response. Re-enter canonical initiation with a
@@ -124,7 +136,7 @@ export async function waitForPaymentOutcome(
     (latest.status === 'PENDING' || latest.status === 'AUTHORIZED') &&
     !latest.paymentSessionId
   ) {
-    const resumed = await resumePayment(latest);
+    const resumed = await resumePayment(latest, appointmentCustomerId);
     if (resumed.paymentId !== paymentId) {
       throw new Error('Payment recovery returned an inconsistent server payment.');
     }
@@ -144,10 +156,11 @@ export async function waitForPaymentOutcome(
     latest = await fetchPaymentStatus(paymentId);
   }
   if (latest.status === 'CAPTURED' || latest.status === 'FAILED' || latest.status === 'EXPIRED') {
-    await Promise.all([
-      clearPendingPayment(paymentId),
-      clearPendingAppointmentPayment(paymentId),
-    ]);
+    if (latest.referenceType === 'APPOINTMENT') {
+      await clearPendingAppointmentPayment(appointmentCustomerId as string, paymentId);
+    } else {
+      await clearPendingPayment(paymentId);
+    }
   }
   return latest;
 }

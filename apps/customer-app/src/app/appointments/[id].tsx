@@ -61,6 +61,14 @@ export default function AppointmentDetailRoute() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/appointments' as never);
+  };
+
   useEffect(() => {
     if (!id || !session) return;
     setLoading(true);
@@ -85,7 +93,7 @@ export default function AppointmentDetailRoute() {
           ? 'Appointment cancelled. MyPet will start the refund workflow for the captured payment.'
           : 'Appointment cancelled successfully.',
       );
-      router.back();
+      handleBack();
     } catch (err: any) {
       Alert.alert(t('common.error'), err.message || 'Could not cancel appointment.');
     }
@@ -113,7 +121,12 @@ export default function AppointmentDetailRoute() {
           title="Appointment Details"
           subtitle={`Ref #${id?.slice(0, 8)}`}
           action={
-            <Pressable onPress={() => router.back()} style={styles.backBtn}>
+            <Pressable
+              onPress={handleBack}
+              style={styles.backBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Close appointment details"
+            >
               <ThemedText style={{ color: theme.text, fontWeight: '700' }}>✕</ThemedText>
             </Pressable>
           }
@@ -128,7 +141,7 @@ export default function AppointmentDetailRoute() {
           title={t('states.error')}
           message={error || 'Appointment not found'}
           actionLabel={t('common.back')}
-          onAction={() => router.back()}
+          onAction={handleBack}
         />
       ) : (
         <View style={styles.container}>
@@ -185,20 +198,20 @@ export default function AppointmentDetailRoute() {
           </View>
 
           <View style={styles.quickActions}>
-            {appt.address ? <Pressable style={[styles.actionBtn, { backgroundColor: theme.primarySoft }]} onPress={openDirections}><AppIcon name="location" size={16} color={theme.primary} /><ThemedText style={[styles.actionBtnText, { color: theme.primary }]}>Directions</ThemedText></Pressable> : null}
-            {appt.providerPhone ? <Pressable style={[styles.actionBtn, { backgroundColor: theme.primarySoft }]} onPress={callProvider}><AppIcon name="sparkle" size={16} color={theme.primary} /><ThemedText style={[styles.actionBtnText, { color: theme.primary }]}>Call Clinic</ThemedText></Pressable> : null}
+            {appt.address ? <Pressable accessibilityRole="button" accessibilityLabel="Get directions to provider" style={[styles.actionBtn, { backgroundColor: theme.primarySoft }]} onPress={openDirections}><AppIcon name="location" size={16} color={theme.primary} /><ThemedText style={[styles.actionBtnText, { color: theme.primary }]}>Directions</ThemedText></Pressable> : null}
+            {appt.providerPhone ? <Pressable accessibilityRole="button" accessibilityLabel="Call provider" style={[styles.actionBtn, { backgroundColor: theme.primarySoft }]} onPress={callProvider}><AppIcon name="sparkle" size={16} color={theme.primary} /><ThemedText style={[styles.actionBtnText, { color: theme.primary }]}>Call Clinic</ThemedText></Pressable> : null}
           </View>
 
           {appt.prescriptionDocUrl ? (
             <View style={[styles.card, shadows.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
               <ThemedText style={styles.sectionTitle}>Medical Report & Prescription</ThemedText>
-              <Pressable style={styles.docRow} onPress={openPrescription}><AppIcon name="medical" size={20} color={theme.primary} /><ThemedText style={styles.docText}>View Prescribed Medical Document</ThemedText></Pressable>
+              <Pressable accessibilityRole="link" accessibilityLabel="View prescribed medical document" style={styles.docRow} onPress={openPrescription}><AppIcon name="medical" size={20} color={theme.primary} /><ThemedText style={styles.docText}>View Prescribed Medical Document</ThemedText></Pressable>
             </View>
           ) : null}
 
           {['SLOT_HELD', 'PENDING_PROVIDER', 'CONFIRMED'].includes(appt.status) ? (
             <View style={styles.actions}>
-              <Pressable style={[styles.cancelBtn, { borderColor: theme.danger }]} onPress={() => void handleCancel()}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Cancel appointment" style={[styles.cancelBtn, { borderColor: theme.danger }]} onPress={() => void handleCancel()}>
                 <ThemedText style={{ color: theme.danger, fontWeight: '700' }}>Cancel Appointment</ThemedText>
               </Pressable>
             </View>
@@ -211,7 +224,7 @@ export default function AppointmentDetailRoute() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  backBtn: { padding: spacing.x2 },
+  backBtn: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   container: { padding: spacing.x4, gap: spacing.x4 },
   providerNotice: { borderRadius: radii.compact, padding: spacing.x3, gap: spacing.x1 },
   providerNoticeTitle: { ...typography.label, fontWeight: '800' },
@@ -223,10 +236,10 @@ const styles = StyleSheet.create({
   paymentRow: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.x2 },
   infoText: { ...typography.body },
   sectionTitle: { ...typography.label },
-  docRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.x2, paddingVertical: spacing.x2 },
+  docRow: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: spacing.x2, paddingVertical: spacing.x2 },
   docText: { ...typography.label, color: '#2563EB' },
   quickActions: { flexDirection: 'row', gap: spacing.x3 },
-  actionBtn: { flex: 1, height: 44, borderRadius: radii.compact, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.x2 },
+  actionBtn: { flex: 1, height: 48, borderRadius: radii.compact, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.x2 },
   actionBtnText: { ...typography.label, fontWeight: '700' },
   actions: { marginTop: spacing.x2 },
   cancelBtn: { height: 48, borderWidth: 1, borderRadius: radii.compact, alignItems: 'center', justifyContent: 'center' },

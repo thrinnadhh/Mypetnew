@@ -1,12 +1,3 @@
-import {
-  CFPaymentGatewayService,
-  type CFCallback,
-  type CFErrorResponse,
-} from 'react-native-cashfree-pg-sdk';
-import { CFEnvironment, CFSession } from 'cashfree-pg-api-contract';
-
-import { appConfig } from '../utils/app-config';
-
 export type CashfreeNativeSignal = 'VERIFY' | 'ERROR';
 
 export interface CashfreeNativeCheckoutInput {
@@ -15,43 +6,14 @@ export interface CashfreeNativeCheckoutInput {
 }
 
 /**
- * Native Cashfree integration boundary.
+ * Non-native fallback for environments such as TypeScript/Jest/server tooling.
  *
- * Provider callbacks are deliberately reduced to local signals. They never
- * establish payment success; callers must query MyPet's canonical payment API.
- * Keeping this SDK binding in its own lazily imported module also prevents
- * unrelated auth/service Jest suites from loading native Cashfree bindings.
+ * The real Cashfree React Native SDK binding lives in cashfree-native.native.ts.
+ * Keeping the generic module free of the native package prevents Expo web/SSR
+ * resolution from walking into Cashfree's native-only published artifacts.
  */
 export async function openCashfreeNativeCheckout(
-  input: CashfreeNativeCheckoutInput,
+  _input: CashfreeNativeCheckoutInput,
 ): Promise<CashfreeNativeSignal> {
-  const environment = appConfig.environment === 'production'
-    ? CFEnvironment.PRODUCTION
-    : CFEnvironment.SANDBOX;
-  const session = new CFSession(input.paymentSessionId, input.providerOrderId, environment);
-
-  return new Promise<CashfreeNativeSignal>((resolve, reject) => {
-    let settled = false;
-    const removeCallback = () => {
-      CFPaymentGatewayService.removeCallback();
-    };
-    const settle = (signal: CashfreeNativeSignal) => {
-      if (settled) return;
-      settled = true;
-      removeCallback();
-      resolve(signal);
-    };
-    const callback: CFCallback = {
-      onVerify: () => settle('VERIFY'),
-      onError: (_error: CFErrorResponse, _orderId: string) => settle('ERROR'),
-    };
-
-    try {
-      CFPaymentGatewayService.setCallback(callback);
-      CFPaymentGatewayService.doWebPayment(session);
-    } catch (error) {
-      removeCallback();
-      reject(error);
-    }
-  });
+  throw new Error('Cashfree native checkout is only available on Android and iOS.');
 }

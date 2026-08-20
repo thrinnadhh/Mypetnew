@@ -19,7 +19,7 @@ describe('P10 groomer detail and service selection contract', () => {
     const detail = source('src/screens/groomer-detail-screen.tsx');
 
     expect(detail).toContain('if (!activeCity.featureFlags.allowGrooming)');
-    expect(detail).toContain('if (!providerId || !UUID_PATTERN.test(providerId))');
+    expect(detail).toContain('if (!providerId || !isUuid(providerId))');
     expect(detail).toContain('if (!SERVICE_PIN_PATTERN.test(selectedPincode))');
     expect(detail).toContain("fetchProviderProfile(providerId, { kind: 'groomer', pincode: selectedPincode })");
     expect(detail).toContain("fetchAppointmentServices({ providerId, capability: 'GROOMING' })");

@@ -1,12 +1,12 @@
 import { getDemoAppointmentSlots } from '@/services/demo-customer-data';
 import { appConfig } from '@/utils/app-config';
+import { isUuid } from '@/utils/uuid';
 
 const DEMO_USER_ID = 'd3b07384-d113-4e4e-9c8e-3d8e3d8e3d8e';
 const AVAILABILITY_WINDOW_DAYS = 14;
 const PUBLIC_PAGE_SIZE = 100;
 const MAX_PUBLIC_PAGES = 10;
 const TERMINAL_REPLAY_STATUSES = new Set(['CANCELLED', 'HOLD_EXPIRED', 'REJECTED']);
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PIN_PATTERN = /^[1-9][0-9]{5}$/;
 
 export const APPOINTMENT_DISPLAY_TIME_ZONE = 'Asia/Kolkata';
@@ -159,7 +159,7 @@ function validateService(
   expectedCapability?: AppointmentServiceCapability,
   strictIdentity = true,
 ): AppointmentServiceOption {
-  if (strictIdentity && (!UUID_PATTERN.test(dto.serviceId) || !UUID_PATTERN.test(dto.outletId))) {
+  if (strictIdentity && (!isUuid(dto.serviceId) || !isUuid(dto.outletId))) {
     throw contractError('SERVICE_IDENTITY_INVALID', 'The provider returned an invalid service identity.');
   }
   if (strictIdentity && expectedProviderId && dto.outletId !== expectedProviderId) {
@@ -251,7 +251,7 @@ export async function fetchAppointmentServices(input: {
   // generic appointment callers whose opaque fixture IDs are intentionally not
   // route/domain authority.
   const strictContract = Boolean(input.capability);
-  if (strictContract && input.providerId && !UUID_PATTERN.test(input.providerId)) {
+  if (strictContract && input.providerId && !isUuid(input.providerId)) {
     throw contractError('PROVIDER_ID_INVALID', 'A valid provider is required to load services.');
   }
 
@@ -280,7 +280,7 @@ function validateSlot(
   nowMs: number,
   strictContract: boolean,
 ): AppointmentSlotOption | null {
-  if (strictContract && (!UUID_PATTERN.test(dto.slotId) || !UUID_PATTERN.test(dto.serviceId))) {
+  if (strictContract && (!isUuid(dto.slotId) || !isUuid(dto.serviceId))) {
     throw contractError('SLOT_IDENTITY_INVALID', 'The provider returned an invalid slot identity.');
   }
   if (dto.serviceId !== service.id) {
@@ -371,10 +371,10 @@ export async function fetchAvailableAppointmentSlots(
   }
 
   const strictContract = Boolean(capability);
-  if (strictContract && !UUID_PATTERN.test(providerId)) {
+  if (strictContract && !isUuid(providerId)) {
     throw contractError('PROVIDER_ID_INVALID', 'A valid provider is required to load appointment availability.');
   }
-  if (strictContract && serviceId && !UUID_PATTERN.test(serviceId)) {
+  if (strictContract && serviceId && !isUuid(serviceId)) {
     throw contractError('SERVICE_ID_INVALID', 'A valid service is required to load appointment availability.');
   }
 

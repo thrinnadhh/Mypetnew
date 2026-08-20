@@ -185,13 +185,19 @@ export function BottomSheet({ visible, title, onClose, children }: { visible: bo
   const reducedMotion = useReducedMotion();
   return (
     <Modal visible={visible} transparent animationType={reducedMotion ? "none" : "slide"} onRequestClose={onClose} accessibilityViewIsModal>
-      <Pressable style={styles.overlay} onPress={onClose} accessibilityLabel={title}>
-        <Pressable style={[styles.sheet, shadows.raised, { backgroundColor: theme.backgroundElement }]}>
+      <View style={styles.overlay}>
+        <Pressable
+          style={styles.backdrop}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel={`Close ${title}`}
+        />
+        <View style={[styles.sheet, shadows.raised, { backgroundColor: theme.backgroundElement }]}>
           <View style={[styles.handle, { backgroundColor: theme.border }]} />
           <SectionHeader title={title} />
           {children}
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -226,7 +232,8 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.55 },
   pressed: { opacity: 0.82 },
   sticky: { borderTopWidth: StyleSheet.hairlineWidth, padding: spacing.x4 },
-  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(11, 28, 48, 0.45)' },
+  overlay: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(11, 28, 48, 0.45)' },
   sheet: { borderTopLeftRadius: radii.feature, borderTopRightRadius: radii.feature, padding: spacing.x4, gap: spacing.x4, maxHeight: '88%' },
   handle: { width: 44, height: 4, borderRadius: 2, alignSelf: 'center' },
   skeleton: { borderRadius: radii.card, borderWidth: StyleSheet.hairlineWidth, opacity: 0.7 },

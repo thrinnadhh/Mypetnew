@@ -30,6 +30,7 @@ import `in`.mypetnew.identity.domain.OtpProvider
 import `in`.mypetnew.identity.domain.OtpService
 import `in`.mypetnew.identity.domain.SessionStore
 import `in`.mypetnew.identity.infrastructure.ConsoleOtpProvider
+import `in`.mypetnew.identity.infrastructure.StagingUnavailableOtpProvider
 import `in`.mypetnew.loyalty.domain.LoyaltyService
 import `in`.mypetnew.payment.domain.FakePaymentGateway
 import `in`.mypetnew.payment.domain.InMemoryPaymentPersistence
@@ -57,6 +58,10 @@ class DomainConfiguration {
     @Bean
     @Profile("device")
     fun deviceOtpProvider(): OtpProvider = ConsoleOtpProvider()
+
+    @Bean
+    @Profile("staging")
+    fun stagingOtpProvider(): OtpProvider = StagingUnavailableOtpProvider()
 
     @Bean fun otpService(provider: OtpProvider) = OtpService(provider)
 

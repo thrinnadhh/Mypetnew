@@ -27,8 +27,7 @@ import {
   safeTelephoneUrl,
   singleRouteParam,
 } from '@/utils/customer-navigation-safety';
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import { isUuid } from '@/utils/uuid';
 
 type DetailErrorKind = 'invalid' | 'error';
 
@@ -123,7 +122,7 @@ export default function AppointmentDetailRoute() {
       setLoading(false);
       return () => { requestGenerationRef.current += 1; };
     }
-    if (!id || !UUID_PATTERN.test(id)) {
+    if (!isUuid(id)) {
       setError('This appointment link is invalid.');
       setErrorKind('invalid');
       setLoading(false);

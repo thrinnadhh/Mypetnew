@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
+  Platform,
   Pressable,
   StyleSheet,
   TextInput,
@@ -398,16 +399,12 @@ export function CategoryTemplate({
             const eligible = isCommerceEligible(item);
 
             return (
-              <Pressable
-                onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(item.id)}` as never)}
-                accessibilityRole="button"
-                accessibilityLabel={`${item.name}. ${item.brand ? `${item.brand}. ` : ''}₹${item.price}. ${item.inStock ? 'In stock' : 'Out of stock'}.`}
-                style={({ pressed }) => [
+              <View
+                style={[
                   styles.productCard,
                   columns > 1 && styles.productCardWide,
                   shadows.card,
                   { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-                  pressed && styles.pressed,
                 ]}
               >
                 <View
@@ -417,11 +414,18 @@ export function CategoryTemplate({
                     { backgroundColor: theme.muted },
                   ]}
                 >
-                  <ResilientRemoteImage
-                    uri={item.imageUrl}
-                    fallbackUri={fallbackForProduct(item)}
-                    style={styles.productImage}
-                  />
+                  <Pressable
+                    onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(item.id)}` as never)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open ${item.name} details`}
+                    style={({ pressed }) => [styles.productImageLink, pressed && styles.pressed]}
+                  >
+                    <ResilientRemoteImage
+                      uri={item.imageUrl}
+                      fallbackUri={fallbackForProduct(item)}
+                      style={styles.productImage}
+                    />
+                  </Pressable>
                   <Pressable
                     onPress={() => void toggleFavourite('PRODUCT', item.id)}
                     accessibilityRole="button"
@@ -443,21 +447,28 @@ export function CategoryTemplate({
                 </View>
 
                 <View style={styles.productDetails}>
-                  <View style={styles.brandRow}>
-                    {item.brand ? (
-                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.flex}>
-                        {item.brand}
-                      </ThemedText>
-                    ) : (
-                      <View style={styles.flex} />
-                    )}
-                    {item.rating ? <StatusBadge label={item.rating} color={theme.warning} /> : null}
-                  </View>
+                  <Pressable
+                    onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(item.id)}` as never)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open ${item.name} details`}
+                    style={({ pressed }) => [styles.productDetailsLink, pressed && styles.pressed]}
+                  >
+                    <View style={styles.brandRow}>
+                      {item.brand ? (
+                        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.flex}>
+                          {item.brand}
+                        </ThemedText>
+                      ) : (
+                        <View style={styles.flex} />
+                      )}
+                      {item.rating ? <StatusBadge label={item.rating} color={theme.warning} /> : null}
+                    </View>
 
-                  <ThemedText style={[styles.productName, { color: theme.text }]} numberOfLines={2}>{item.name}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                    {item.deliveryTime ? `${item.deliveryTime} · ` : ''}{item.providerName}
-                  </ThemedText>
+                    <ThemedText style={[styles.productName, { color: theme.text }]} numberOfLines={2}>{item.name}</ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                      {item.deliveryTime ? `${item.deliveryTime} · ` : ''}{item.providerName}
+                    </ThemedText>
+                  </Pressable>
 
                   <View style={styles.priceFooter}>
                     <View style={styles.priceBlock}>
@@ -523,7 +534,7 @@ export function CategoryTemplate({
                     )}
                   </View>
                 </View>
-              </Pressable>
+              </View>
             );
           }}
         />
@@ -572,6 +583,7 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   imageContainerWide: { height: 160 },
+  productImageLink: { width: '100%', height: '100%' },
   productImage: { width: '100%', height: '100%', resizeMode: 'cover' },
   favouriteButton: {
     position: 'absolute',
@@ -582,11 +594,16 @@ const styles = StyleSheet.create({
     borderRadius: touchTarget / 2,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    ...Platform.select({
+      web: { boxShadow: '0 2px 8px rgba(0, 0, 0, 0.10)' },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2,
+      },
+    }),
   },
   newArrivalTag: {
     position: 'absolute',
@@ -597,6 +614,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.compact,
   },
   productDetails: { padding: spacing.x3, gap: spacing.x1 },
+  productDetailsLink: { gap: spacing.x1 },
   brandRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   flex: { flex: 1 },
   productName: { ...typography.headline, fontSize: 15, fontWeight: '700' },

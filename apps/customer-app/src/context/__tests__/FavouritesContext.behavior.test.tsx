@@ -10,12 +10,17 @@ const mockApiPut = jest.fn();
 const mockApiDelete = jest.fn();
 let mockAuthEpoch = 0;
 let mockSession: { accountId: string; accessToken: string } | null = null;
+let mockAuthLoading = false;
+let mockBeforeStorageGet: ((key: string) => Promise<void>) | null = null;
 let mockBeforeStorageSet: ((key: string, value: string) => Promise<void>) | null = null;
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,
   default: {
-    getItem: jest.fn(async (key: string) => mockStorage.get(key) ?? null),
+    getItem: jest.fn(async (key: string) => {
+      if (mockBeforeStorageGet) await mockBeforeStorageGet(key);
+      return mockStorage.get(key) ?? null;
+    }),
     setItem: jest.fn(async (key: string, value: string) => {
       if (mockBeforeStorageSet) await mockBeforeStorageSet(key, value);
       mockStorage.set(key, value);
@@ -30,7 +35,7 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ session: mockSession }),
+  useAuth: () => ({ session: mockSession, loading: mockAuthLoading }),
 }));
 
 jest.mock('@/services/api-client', () => {
@@ -95,8 +100,40 @@ describe('FavouritesContext P6 behaviour', () => {
     mockApiDelete.mockResolvedValue({});
     mockAuthEpoch = 0;
     mockSession = null;
+    mockAuthLoading = false;
+    mockBeforeStorageGet = null;
     mockBeforeStorageSet = null;
     latest = null;
+  });
+
+  it('waits for cold-start auth resolution before settling guest favourites', async () => {
+    mockAuthLoading = true;
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    mockBeforeStorageGet = async () => readGate;
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(tree());
+    });
+    await settle();
+    expect(latest?.loading).toBe(true);
+
+    mockAuthEpoch += 1;
+    mockAuthLoading = false;
+    act(() => {
+      renderer!.update(tree());
+    });
+    mockBeforeStorageGet = null;
+    releaseRead();
+    await settle();
+
+    expect(latest?.loading).toBe(false);
+    await act(async () => {
+      await latest!.toggleFavourite('PRODUCT', 'product-after-restore');
+    });
+    expect(latest?.isFavourite('PRODUCT', 'product-after-restore')).toBe(true);
   });
 
   it('hides User A favourites immediately when the session switches to User B', async () => {

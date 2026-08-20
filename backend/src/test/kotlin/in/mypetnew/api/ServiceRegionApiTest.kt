@@ -7,6 +7,9 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.http.MediaType
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.header
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
 import org.springframework.beans.factory.annotation.Autowired
@@ -41,6 +44,29 @@ class ServiceRegionApiTest {
             jsonPath("$[0].featureFlags.allowGrooming") { value(true) }
             jsonPath("$[0].featureFlags.allowVet") { value(true) }
         }
+    }
+
+    @Test
+    fun `customer web origin can preflight public API requests`() {
+        mockMvc.perform(
+            options("/api/v1/service-regions/active")
+                .header("Origin", "http://localhost:8081")
+                .header("Access-Control-Request-Method", "GET"),
+        )
+            .andExpect(status().isOk)
+            .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:8081"))
+            .andExpect(header().string("Access-Control-Allow-Methods", org.hamcrest.Matchers.containsString("GET")))
+    }
+
+    @Test
+    fun `unapproved web origin is rejected during preflight`() {
+        mockMvc.perform(
+            options("/api/v1/service-regions/active")
+                .header("Origin", "https://evil.example")
+                .header("Access-Control-Request-Method", "GET"),
+        )
+            .andExpect(status().isForbidden)
+            .andExpect(header().doesNotExist("Access-Control-Allow-Origin"))
     }
 
     @Test

@@ -118,6 +118,28 @@ describe('customer end-to-end regression contracts', () => {
     expect(banner).toMatch(/!target\.includes\(':\/\/'\)/);
   });
 
+  it('keeps product-card navigation separate from favourite and cart controls', () => {
+    const category = source('src/components/commerce/CategoryTemplate.tsx');
+    const provider = source('src/components/commerce/ProviderProfileTemplate.tsx');
+    const favourites = source('src/app/favourites/index.tsx');
+
+    expect(category).toContain('accessibilityLabel={`Open ${item.name} details`}');
+    expect(category).toMatch(/<View\s+style=\{\[\s*styles\.productCard/);
+    expect(provider).toContain('accessibilityLabel={`Open ${item.name} details`}');
+    expect(provider).toMatch(/<View\s+key=\{item\.id\}/);
+    expect(favourites).toContain('accessibilityLabel={`Open ${shop.name} details`}');
+    expect(favourites).toContain('accessibilityLabel={`Open ${product.name} details`}');
+    expect(favourites).toMatch(/<View\s+key=\{product\.id\}/);
+  });
+
+  it('keeps bottom-sheet content outside the dismiss backdrop button', () => {
+    const primitives = source('src/components/foundation/primitives.tsx');
+
+    expect(primitives).toContain('<View style={styles.overlay}>');
+    expect(primitives).toContain('style={styles.backdrop}');
+    expect(primitives).toContain('<View style={[styles.sheet, shadows.raised');
+  });
+
   it('isolates carts by customer, rebuilds subscription carts, and keeps order detail server-authoritative', () => {
     const cart = source('src/context/CartContext.tsx');
     const order = source('src/app/orders/[id].tsx');

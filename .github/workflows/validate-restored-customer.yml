@@ -75,3 +75,5 @@ jobs:
         run: npm test -- --runInBand
       - name: Export Android Customer bundle
         run: npx expo export -p android --output-dir /tmp/customer-android-export
+      - name: Export Customer web bundle
+        run: npx expo export -p web --output-dir /tmp/customer-web-export

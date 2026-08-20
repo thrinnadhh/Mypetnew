@@ -15,6 +15,9 @@ import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.web.AuthenticationEntryPoint
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter
+import org.springframework.web.cors.CorsConfiguration
+import org.springframework.web.cors.CorsConfigurationSource
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 import java.time.Instant
 import java.util.UUID
 import tools.jackson.databind.ObjectMapper
@@ -35,18 +38,56 @@ data class SecurityProperties(
         "SecurityProperties(tokenSecret=[REDACTED], tokenIssuer=$tokenIssuer, tokenAudience=$tokenAudience)"
 }
 
+@ConfigurationProperties("mypet.cors")
+data class CorsProperties(
+    val allowedOrigins: List<String> = emptyList(),
+) {
+    val normalizedAllowedOrigins: List<String> = allowedOrigins
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .distinct()
+
+    init {
+        require(normalizedAllowedOrigins.none { it == "*" }) {
+            "MYPET_CORS_ALLOWED_ORIGINS must contain explicit origins; wildcard origins are forbidden"
+        }
+        require(normalizedAllowedOrigins.all { origin ->
+            origin.matches(Regex("https?://[^/]+"))
+        }) {
+            "MYPET_CORS_ALLOWED_ORIGINS contains an invalid origin"
+        }
+    }
+}
+
 @Configuration
-@EnableConfigurationProperties(SecurityProperties::class)
+@EnableConfigurationProperties(SecurityProperties::class, CorsProperties::class)
 class SecurityConfiguration {
+    @Bean
+    fun corsConfigurationSource(properties: CorsProperties): CorsConfigurationSource {
+        val configuration = CorsConfiguration().apply {
+            allowedOrigins = properties.normalizedAllowedOrigins
+            allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+            allowedHeaders = listOf("Accept", "Authorization", "Content-Type", "Idempotency-Key")
+            exposedHeaders = listOf("X-Trace-Id")
+            allowCredentials = false
+            maxAge = 3600
+        }
+        return UrlBasedCorsConfigurationSource().apply {
+            registerCorsConfiguration("/api/**", configuration)
+        }
+    }
+
     @Bean
     fun securityFilterChain(
         http: HttpSecurity,
         objectMapper: ObjectMapper,
         bearerAuthenticationFilter: BearerAuthenticationFilter,
         merchantReauthorizationFilter: MerchantReauthorizationFilter,
+        corsConfigurationSource: CorsConfigurationSource,
     ): SecurityFilterChain {
         val entryPoint = stableAuthenticationEntryPoint(objectMapper)
         http
+            .cors { it.configurationSource(corsConfigurationSource) }
             .csrf { it.disable() }
             .httpBasic { it.disable() }
             .formLogin { it.disable() }

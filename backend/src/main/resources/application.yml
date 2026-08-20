@@ -25,6 +25,8 @@ spring:
       max-request-size: 11MB
 
 mypet:
+  cors:
+    allowed-origins: ${MYPET_CORS_ALLOWED_ORIGINS:http://localhost:8081,http://127.0.0.1:8081}
   security:
     token-secret: ${MYPET_TOKEN_SECRET:}
     token-issuer: ${MYPET_TOKEN_ISSUER:}

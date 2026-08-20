@@ -15,6 +15,7 @@ import `in`.mypetnew.recurring.domain.RenewalProposalStatus
 import org.springframework.dao.DuplicateKeyException
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.support.TransactionTemplate
+import java.sql.Timestamp
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -179,7 +180,7 @@ class JdbcRecurringOrderPersistence(
             LIMIT :limit
             """.trimIndent(),
         )
-            .param("now", now)
+            .param("now", now.jdbcTimestamp())
             .param("limit", limit)
             .query { result, _ -> checkNotNull(result.getObject("id", UUID::class.java)) }
             .list()
@@ -225,7 +226,7 @@ class JdbcRecurringOrderPersistence(
                     WHERE id = :id
                     """.trimIndent(),
                 )
-                    .param("now", now)
+                    .param("now", now.jdbcTimestamp())
                     .param("id", subscription.id)
                     .update()
                 insertHistory(
@@ -256,7 +257,7 @@ class JdbcRecurringOrderPersistence(
             LIMIT :limit
             """.trimIndent(),
         )
-            .param("now", now)
+            .param("now", now.jdbcTimestamp())
             .param("limit", limit)
             .query { result, _ -> checkNotNull(result.getObject("id", UUID::class.java)) }
             .list()
@@ -508,12 +509,12 @@ class JdbcRecurringOrderPersistence(
             .param("cadenceDays", subscription.cadenceDays)
             .param("quantityMultiplier", subscription.quantityMultiplier)
             .param("status", subscription.status.name)
-            .param("nextOrderAt", subscription.nextOrderAt)
-            .param("lastRemindedAt", subscription.lastRemindedAt)
+            .param("nextOrderAt", subscription.nextOrderAt.jdbcTimestamp())
+            .param("lastRemindedAt", subscription.lastRemindedAt?.jdbcTimestamp())
             .param("timeZone", subscription.timeZone)
             .param("version", subscription.version)
-            .param("createdAt", subscription.createdAt)
-            .param("updatedAt", subscription.updatedAt)
+            .param("createdAt", subscription.createdAt.jdbcTimestamp())
+            .param("updatedAt", subscription.updatedAt.jdbcTimestamp())
             .update()
     }
 
@@ -539,11 +540,11 @@ class JdbcRecurringOrderPersistence(
             .param("cadenceDays", updated.cadenceDays)
             .param("quantityMultiplier", updated.quantityMultiplier)
             .param("status", updated.status.name)
-            .param("nextOrderAt", updated.nextOrderAt)
-            .param("lastRemindedAt", updated.lastRemindedAt)
+            .param("nextOrderAt", updated.nextOrderAt.jdbcTimestamp())
+            .param("lastRemindedAt", updated.lastRemindedAt?.jdbcTimestamp())
             .param("timeZone", updated.timeZone)
             .param("nextVersion", updated.version)
-            .param("updatedAt", updated.updatedAt)
+            .param("updatedAt", updated.updatedAt.jdbcTimestamp())
             .param("id", updated.id)
             .param("customerId", updated.customerId)
             .param("expectedVersion", current.version)
@@ -605,7 +606,7 @@ class JdbcRecurringOrderPersistence(
             """.trimIndent(),
         )
             .param("subscriptionId", subscriptionId)
-            .param("dueCycleAt", dueCycleAt)
+            .param("dueCycleAt", dueCycleAt.jdbcTimestamp())
             .query(::mapProposal)
             .optional()
             .orElse(null)
@@ -688,17 +689,17 @@ class JdbcRecurringOrderPersistence(
             .param("fulfilmentMode", proposal.fulfilmentMode)
             .param("cadenceDays", proposal.cadenceDays)
             .param("quantityMultiplier", proposal.quantityMultiplier)
-            .param("dueCycleAt", proposal.dueCycleAt)
+            .param("dueCycleAt", proposal.dueCycleAt.jdbcTimestamp())
             .param("status", proposal.status.name)
-            .param("expiresAt", proposal.expiresAt)
-            .param("revalidatedAt", proposal.revalidatedAt)
-            .param("confirmedAt", proposal.confirmedAt)
+            .param("expiresAt", proposal.expiresAt.jdbcTimestamp())
+            .param("revalidatedAt", proposal.revalidatedAt?.jdbcTimestamp())
+            .param("confirmedAt", proposal.confirmedAt?.jdbcTimestamp())
             .param("orderId", proposal.orderId)
             .param("checkoutIdempotencyKey", proposal.checkoutIdempotencyKey)
             .param("failureReason", proposal.failureReason)
             .param("version", proposal.version)
-            .param("createdAt", proposal.createdAt)
-            .param("updatedAt", proposal.updatedAt)
+            .param("createdAt", proposal.createdAt.jdbcTimestamp())
+            .param("updatedAt", proposal.updatedAt.jdbcTimestamp())
             .update()
     }
 
@@ -721,13 +722,13 @@ class JdbcRecurringOrderPersistence(
         )
             .param("deliveryAddressId", next.deliveryAddressId)
             .param("status", next.status.name)
-            .param("revalidatedAt", next.revalidatedAt)
-            .param("confirmedAt", next.confirmedAt)
+            .param("revalidatedAt", next.revalidatedAt?.jdbcTimestamp())
+            .param("confirmedAt", next.confirmedAt?.jdbcTimestamp())
             .param("orderId", next.orderId)
             .param("checkoutIdempotencyKey", next.checkoutIdempotencyKey)
             .param("failureReason", next.failureReason)
             .param("nextVersion", next.version)
-            .param("updatedAt", next.updatedAt)
+            .param("updatedAt", next.updatedAt.jdbcTimestamp())
             .param("id", next.id)
             .param("expectedVersion", current.version)
             .update()
@@ -743,8 +744,8 @@ class JdbcRecurringOrderPersistence(
             WHERE id = :id AND version = :version
             """.trimIndent(),
         )
-            .param("nextOrderAt", nextOrderAt)
-            .param("now", now)
+            .param("nextOrderAt", nextOrderAt.jdbcTimestamp())
+            .param("now", now.jdbcTimestamp())
             .param("id", subscription.id)
             .param("version", subscription.version)
             .update()
@@ -833,7 +834,7 @@ class JdbcRecurringOrderPersistence(
             .param("idempotencyKey", idempotencyKey)
             .param("traceId", traceId.take(128))
             .param("details", details?.take(1000))
-            .param("occurredAt", occurredAt)
+            .param("occurredAt", occurredAt.jdbcTimestamp())
             .update()
     }
 
@@ -877,6 +878,9 @@ class JdbcRecurringOrderPersistence(
         createdAt = result.getTimestamp("created_at").toInstant(),
         updatedAt = result.getTimestamp("updated_at").toInstant(),
     )
+
+
+    private fun Instant.jdbcTimestamp(): Timestamp = Timestamp.from(this)
 
     private fun <T> tx(block: () -> T): T = transactions.execute { block() }
         ?: throw IllegalStateException("Recurring-order transaction returned no result")

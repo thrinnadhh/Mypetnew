@@ -218,12 +218,16 @@ class RecurringOrderServiceTest {
     fun `pagination is bounded and transition history is durable projection`() {
         val fixture = fixture()
         val created = fixture.service.create(fixture.customerId, fixture.orderId, 30, 1, "history-create")
-        fixture.service.update(fixture.customerId, created.id, "PAUSE", null, null, null, "history-pause")
+        val laterService = fixture.serviceAt("2026-08-19T00:01:00Z")
+        laterService.update(fixture.customerId, created.id, "PAUSE", null, null, null, "history-pause")
 
         assertEquals("PAGE_SIZE_INVALID", codeOf { fixture.service.list(fixture.customerId, -1, 20) })
         assertEquals("PAGE_SIZE_INVALID", codeOf { fixture.service.list(fixture.customerId, 0, 101) })
         assertFalse(fixture.service.list(fixture.customerId, 0, 20).hasNext)
-        assertEquals(listOf("PAUSED", "SUBSCRIPTION_CREATED"), fixture.service.history(fixture.customerId, created.id).map { it.eventType })
+        assertEquals(
+            listOf("SUBSCRIPTION_CREATED", "PAUSED"),
+            laterService.history(fixture.customerId, created.id).map { it.eventType },
+        )
     }
 
     private fun fixture(stock: Int = 100): Fixture {

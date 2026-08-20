@@ -28,8 +28,7 @@ import {
   type CustomerCaseType,
 } from '@/services/customer-cases';
 import { singleRouteParam } from '@/utils/customer-navigation-safety';
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import { isUuid } from '@/utils/uuid';
 
 const CASE_TYPES: Array<{ value: CustomerCaseType; label: string }> = [
   { value: 'MISSING_ITEM', label: 'Missing item' },
@@ -68,7 +67,7 @@ export default function CustomerSupportScreen() {
   const params = useLocalSearchParams<{ orderId?: string | string[] }>();
   const orderId = singleRouteParam(params.orderId);
   const hasOrderParam = params.orderId !== undefined;
-  const validOrderId = orderId && UUID_PATTERN.test(orderId) ? orderId : null;
+  const validOrderId = isUuid(orderId) ? orderId : null;
   const { user, session } = useAuth();
   const { requireAuth } = useAuthIntent();
   const [cases, setCases] = useState<CustomerCase[]>([]);

@@ -20,10 +20,10 @@ import {
 import { ApiError } from '@/services/api-client';
 import { isOfflineError } from '@/services/customer-profile';
 import { fetchProviderProfile, type ProviderProfile } from '@/services/provider-profile';
+import { isUuid } from '@/utils/uuid';
 
 type LoadState = 'loading' | 'ready' | 'offline' | 'error' | 'unavailable' | 'service_unavailable' | 'invalid_input' | 'invalid_location' | 'feature_disabled';
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SERVICE_PIN_PATTERN = /^[1-9][0-9]{5}$/;
 
 function single(value: string | string[] | undefined): string | undefined {
@@ -107,7 +107,7 @@ export default function VeterinarySlotDiscoveryScreen() {
       setState('feature_disabled');
       return;
     }
-    if (!providerId || !serviceId || !UUID_PATTERN.test(providerId) || !UUID_PATTERN.test(serviceId)) {
+    if (!providerId || !serviceId || !isUuid(providerId) || !isUuid(serviceId)) {
       setState('invalid_input');
       return;
     }

@@ -13,8 +13,8 @@ describe('P10 groomer date and slot discovery contract', () => {
     expect(route).toContain("GroomerSlotDiscoveryScreen");
     expect(screen).toContain("id?: string | string[]");
     expect(screen).toContain("serviceId?: string | string[]");
-    expect(screen).toContain('if (!providerId || !UUID_PATTERN.test(providerId))');
-    expect(screen).toContain('if (!serviceId || !UUID_PATTERN.test(serviceId))');
+    expect(screen).toContain('if (!providerId || !isUuid(providerId))');
+    expect(screen).toContain('if (!serviceId || !isUuid(serviceId))');
     expect(screen).toContain('if (!SERVICE_PIN_PATTERN.test(selectedPincode))');
   });
 

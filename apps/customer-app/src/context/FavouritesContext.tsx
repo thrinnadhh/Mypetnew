@@ -139,7 +139,7 @@ async function discardStaleGuestAddition(
 }
 
 export function FavouritesProvider({ children }: { children: React.ReactNode }) {
-  const { session } = useAuth();
+  const { session, loading: authLoading } = useAuth();
   const accountId = session?.accountId ?? null;
   const currentOwnerKey = favouriteOwnerKey(accountId);
   const [favourites, setFavourites] = useState<FavouriteItem[]>([]);
@@ -167,6 +167,11 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
     const ownerAtStart = favouriteOwnerKey(accountAtStart);
     setLoading(true);
     setError(null);
+
+    // The auth provider may advance the API epoch while restoring a persisted
+    // session. Wait until that owner decision is final so the first favourites
+    // load cannot be invalidated without a dependency change to restart it.
+    if (authLoading) return;
 
     const isCurrent = () => (
       loadGenerationRef.current === generation
@@ -240,7 +245,7 @@ export function FavouritesProvider({ children }: { children: React.ReactNode }) 
     } finally {
       if (isCurrent()) setLoading(false);
     }
-  }, [accountId, replaceFavourites]);
+  }, [accountId, authLoading, replaceFavourites]);
 
   useEffect(() => {
     void reload();

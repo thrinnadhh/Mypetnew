@@ -35,8 +35,7 @@ import {
 } from '@/services/recurring-orders';
 import { buildCartFromRevalidation } from '@/services/revalidated-cart';
 import { backOrReplace, formatIndiaDateTime, singleRouteParam } from '@/utils/customer-navigation-safety';
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import { isUuid } from '@/utils/uuid';
 
 function subscriptionTone(status: RecurringOrderSubscription['status']): 'success' | 'warning' | 'error' | 'neutral' {
   if (status === 'ACTIVE') return 'success';
@@ -59,7 +58,7 @@ export default function RecurringOrdersScreen() {
   const theme = useTheme();
   const params = useLocalSearchParams<{ sourceOrderId?: string | string[] }>();
   const sourceOrderId = singleRouteParam(params.sourceOrderId);
-  const sourceOrderIdValid = !sourceOrderId || UUID_PATTERN.test(sourceOrderId);
+  const sourceOrderIdValid = !sourceOrderId || isUuid(sourceOrderId);
   const { user, session } = useAuth();
   const { requireAuth } = useAuthIntent();
   const { replaceCart, providerId: cartProviderId } = useCart();

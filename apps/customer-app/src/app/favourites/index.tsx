@@ -267,48 +267,46 @@ export default function FavouritesScreen() {
               <SectionHeader title="Saved shops" />
               <View style={styles.grid}>
                 {favouriteShops.map((shop) => (
-                  <Pressable
+                  <View
                     key={shop.id}
-                    onPress={() => router.push(`/shop/${encodeURIComponent(shop.id)}` as never)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${shop.name}. Serves PIN ${selectedPincode}.`}
-                    style={({ pressed }) => [
+                    style={[
                       styles.shopCard,
                       shadows.card,
                       { width: cardWidth, backgroundColor: theme.backgroundElement, borderColor: theme.border },
-                      pressed && styles.pressed,
                     ]}
                   >
-                    <ResilientRemoteImage
-                      uri={undefined}
-                      style={styles.shopImage}
-                      accessibilityLabel={shop.name}
-                    />
-                    <View style={styles.shopBody}>
-                      <View style={styles.cardTopRow}>
+                    <Pressable
+                      onPress={() => router.push(`/shop/${encodeURIComponent(shop.id)}` as never)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open ${shop.name} details`}
+                      style={({ pressed }) => [styles.shopSummary, pressed && styles.pressed]}
+                    >
+                      <ResilientRemoteImage
+                        uri={undefined}
+                        style={styles.shopImage}
+                        accessibilityLabel={shop.name}
+                      />
+                      <View style={styles.shopBody}>
                         <View style={styles.flex}>
                           <ThemedText style={styles.cardTitle} numberOfLines={2}>{shop.name}</ThemedText>
                           <ThemedText type="small" themeColor="textSecondary">Serves PIN {selectedPincode}</ThemedText>
                         </View>
-                        <Pressable
-                          onPress={(event) => {
-                            event.stopPropagation();
-                            void toggleFavourite('SHOP', shop.id);
-                          }}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Remove ${shop.name} from favourites`}
-                          accessibilityState={{ selected: true }}
-                          style={({ pressed }) => [styles.heartButton, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}
-                        >
-                          <AppIcon name="heart" color={theme.danger} size={21} />
-                        </Pressable>
+                        <StatusBadge
+                          label={shop.pickupEnabled ? 'Pickup available' : 'Pickup unavailable'}
+                          color={shop.pickupEnabled ? theme.success : theme.textSecondary}
+                        />
                       </View>
-                      <StatusBadge
-                        label={shop.pickupEnabled ? 'Pickup available' : 'Pickup unavailable'}
-                        color={shop.pickupEnabled ? theme.success : theme.textSecondary}
-                      />
-                    </View>
-                  </Pressable>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => void toggleFavourite('SHOP', shop.id)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Remove ${shop.name} from favourites`}
+                      accessibilityState={{ selected: true }}
+                      style={({ pressed }) => [styles.heartButton, styles.shopHeart, { backgroundColor: theme.backgroundElement }, pressed && styles.pressed]}
+                    >
+                      <AppIcon name="heart" color={theme.danger} size={21} />
+                    </Pressable>
+                  </View>
                 ))}
               </View>
             </View>
@@ -324,29 +322,29 @@ export default function FavouritesScreen() {
                   const variant = product.variants[0];
 
                   return (
-                    <Pressable
+                    <View
                       key={product.id}
-                      onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(product.id)}` as never)}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${product.name}. ${product.brand ? `${product.brand}. ` : ''}₹${product.price}. ${product.inStock ? 'In stock' : 'Out of stock'}.`}
-                      style={({ pressed }) => [
+                      style={[
                         styles.productCard,
                         shadows.card,
                         { width: cardWidth, backgroundColor: theme.backgroundElement, borderColor: theme.border },
-                        pressed && styles.pressed,
                       ]}
                     >
                       <View style={[styles.productImageWrap, { backgroundColor: theme.muted }]}>
-                        <ResilientRemoteImage
-                          uri={product.imageUrl}
-                          style={styles.productImage}
-                          accessibilityLabel={product.name}
-                        />
                         <Pressable
-                          onPress={(event) => {
-                            event.stopPropagation();
-                            void toggleFavourite('PRODUCT', product.id);
-                          }}
+                          onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(product.id)}` as never)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Open ${product.name} details`}
+                          style={({ pressed }) => [styles.productImageLink, pressed && styles.pressed]}
+                        >
+                          <ResilientRemoteImage
+                            uri={product.imageUrl}
+                            style={styles.productImage}
+                            accessibilityLabel={product.name}
+                          />
+                        </Pressable>
+                        <Pressable
+                          onPress={() => void toggleFavourite('PRODUCT', product.id)}
                           accessibilityRole="button"
                           accessibilityLabel={`Remove ${product.name} from favourites`}
                           accessibilityState={{ selected: true }}
@@ -357,11 +355,18 @@ export default function FavouritesScreen() {
                       </View>
 
                       <View style={styles.productBody}>
-                        {product.brand ? <ThemedText type="small" themeColor="textSecondary">{product.brand}</ThemedText> : null}
-                        <ThemedText style={styles.cardTitle} numberOfLines={2}>{product.name}</ThemedText>
-                        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                          {product.providerName}
-                        </ThemedText>
+                        <Pressable
+                          onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(product.id)}` as never)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Open ${product.name} details`}
+                          style={({ pressed }) => [styles.productDetailsLink, pressed && styles.pressed]}
+                        >
+                          {product.brand ? <ThemedText type="small" themeColor="textSecondary">{product.brand}</ThemedText> : null}
+                          <ThemedText style={styles.cardTitle} numberOfLines={2}>{product.name}</ThemedText>
+                          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                            {product.providerName}
+                          </ThemedText>
+                        </Pressable>
 
                         <View style={styles.productFooter}>
                           <View style={styles.flex}>
@@ -409,7 +414,7 @@ export default function FavouritesScreen() {
                           )}
                         </View>
                       </View>
-                    </Pressable>
+                    </View>
                   );
                 })}
               </View>
@@ -430,17 +435,20 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.x3 },
   unavailableCard: { borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card, padding: spacing.x4, gap: spacing.x3 },
   unavailableCopy: { minHeight: touchTarget, flexDirection: 'row', alignItems: 'flex-start', gap: spacing.x3 },
-  shopCard: { overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card },
+  shopCard: { position: 'relative', overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card },
+  shopSummary: { flex: 1 },
   shopImage: { width: '100%', height: 150 },
   shopBody: { padding: spacing.x3, gap: spacing.x2 },
-  cardTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.x2 },
   cardTitle: { ...typography.label, fontSize: 15, lineHeight: 21 },
   heartButton: { width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, alignItems: 'center', justifyContent: 'center', ...shadows.card },
+  shopHeart: { position: 'absolute', top: 150 + spacing.x2, right: spacing.x2 },
   productCard: { minHeight: 154, flexDirection: 'row', borderWidth: StyleSheet.hairlineWidth, borderRadius: radii.card, overflow: 'hidden' },
   productImageWrap: { width: 124, position: 'relative' },
+  productImageLink: { flex: 1 },
   productImage: { width: '100%', height: '100%' },
   productHeart: { position: 'absolute', top: spacing.x1, right: spacing.x1 },
   productBody: { flex: 1, padding: spacing.x3, gap: spacing.x1 },
+  productDetailsLink: { gap: spacing.x1 },
   productFooter: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: spacing.x2, marginTop: 'auto' },
   price: { ...typography.title, fontSize: 18, lineHeight: 24 },
   stepper: { minHeight: touchTarget, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: radii.compact },

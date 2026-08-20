@@ -22,8 +22,7 @@ import { isCommerceEligible } from '@/services/commerce-eligibility';
 import { isOfflineError } from '@/services/customer-profile';
 import { fetchServiceableCommerceProduct } from '@/services/paginated-catalog';
 import { appConfig } from '@/utils/app-config';
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { isUuid } from '@/utils/uuid';
 
 type LoadState = 'loading' | 'ready' | 'offline' | 'error' | 'not-found' | 'unavailable';
 
@@ -72,7 +71,7 @@ export default function ProductDetailScreen() {
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
 
-    if (!id || (!appConfig.allowDemoMode && !UUID_PATTERN.test(id))) {
+    if (!id || (!appConfig.allowDemoMode && !isUuid(id))) {
       setProduct(null);
       setSelectedVariant(null);
       setGalleryIndex(0);

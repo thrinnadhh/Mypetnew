@@ -15,8 +15,7 @@ import { ApiError, apiClient } from '@/services/api-client';
 import { cancelCustomerOrder, fetchCustomerOrderDetail, type CustomerOrderDetail } from '@/services/customer-order-detail';
 import { fetchCustomerOrderTracking, type CustomerOrderTracking } from '@/services/customer-delivery';
 import { isOfflineError } from '@/services/customer-profile';
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import { isUuid } from '@/utils/uuid';
 
 type DetailErrorKind = 'offline' | 'notFound' | 'error';
 
@@ -54,7 +53,7 @@ export default function OrderDetailRoute() {
     const authEpoch = apiClient.getAuthEpoch();
     const current = () => generation === requestGenerationRef.current && authEpoch === apiClient.getAuthEpoch();
 
-    if (!UUID_PATTERN.test(id)) {
+    if (!isUuid(id)) {
       setOrder(null);
       setTracking(null);
       setTrackingError(null);

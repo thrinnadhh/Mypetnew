@@ -175,82 +175,85 @@ export function ProviderProfileTemplate({
               const eligible = isCommerceEligible(item);
 
               return (
-                <Pressable
+                <View
                   key={item.id}
-                  onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(item.id)}` as never)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${item.name}, ₹${item.price}`}
-                  style={({ pressed }) => [
+                  style={[
                     styles.productCard,
                     shadows.raised,
                     { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-                    pressed && styles.pressed,
                   ]}
                 >
-                  <ResilientRemoteImage
-                    uri={item.imageUrl}
-                    fallbackUri={fallbackForProduct(item)}
-                    style={styles.productImg}
-                  />
-                  <View style={styles.productMeta}>
-                    <ThemedText style={[styles.productTitle, { color: theme.text }]} numberOfLines={2}>
-                      {item.name}
-                    </ThemedText>
-                    <ThemedText style={{ fontSize: 12, color: theme.textSecondary }}>
-                      {item.brand ? `${item.brand} · ` : ''}₹{item.price}
-                    </ThemedText>
-                    <View style={styles.cardActions}>
-                      <Pressable
-                        onPress={() => void toggleFavourite('PRODUCT', item.id)}
-                        style={[styles.smallIconBtn, { backgroundColor: isFav ? theme.primarySoft : theme.muted }]}
-                        accessibilityLabel={isFav ? `Remove ${item.name} from favourites` : `Add ${item.name} to favourites`}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected: isFav }}
-                      >
-                        <AppIcon name="heart" color={isFav ? theme.danger : theme.textSecondary} size={18} />
-                      </Pressable>
-                      {eligible ? (
-                        qtyInCart > 0 ? (
-                          <View
-                            style={[styles.inlineStepper, { backgroundColor: theme.primarySoft }]}
-                            accessibilityRole="adjustable"
-                            accessibilityLabel={`${item.name} quantity`}
-                            accessibilityValue={{ min: 0, now: qtyInCart }}
-                          >
-                            <Pressable
-                              onPress={() => updateQuantity(item.id, undefined, qtyInCart - 1)}
-                              style={styles.stepTouch}
-                              accessibilityRole="button"
-                              accessibilityLabel={`Decrease ${item.name} quantity`}
-                            >
-                              <ThemedText style={{ color: theme.primary, fontWeight: '700' }}>−</ThemedText>
-                            </Pressable>
-                            <ThemedText style={{ color: theme.primary, fontWeight: '800', minWidth: 20, textAlign: 'center' }}>{qtyInCart}</ThemedText>
-                            <Pressable
-                              onPress={() => updateQuantity(item.id, undefined, qtyInCart + 1)}
-                              style={styles.stepTouch}
-                              accessibilityRole="button"
-                              accessibilityLabel={`Increase ${item.name} quantity`}
-                            >
-                              <ThemedText style={{ color: theme.primary, fontWeight: '700' }}>+</ThemedText>
-                            </Pressable>
-                          </View>
-                        ) : (
-                          <PrimaryButton
-                            label="Add"
-                            style={{ paddingHorizontal: 12 }}
-                            onPress={() => addToCart(item, variant)}
-                          />
-                        )
-                      ) : (
-                        <StatusBadge
-                          label={item.kind === 'MEDICINE' || item.commerceMode === 'VIEW_ONLY' ? 'VIEW ONLY' : 'UNAVAILABLE'}
-                          color={theme.textSecondary}
-                        />
-                      )}
+                  <Pressable
+                    onPress={() => router.push(`/commerce/product-detail?id=${encodeURIComponent(item.id)}` as never)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open ${item.name} details`}
+                    style={({ pressed }) => [styles.productSummary, pressed && styles.pressed]}
+                  >
+                    <ResilientRemoteImage
+                      uri={item.imageUrl}
+                      fallbackUri={fallbackForProduct(item)}
+                      style={styles.productImg}
+                    />
+                    <View style={styles.productMeta}>
+                      <ThemedText style={[styles.productTitle, { color: theme.text }]} numberOfLines={2}>
+                        {item.name}
+                      </ThemedText>
+                      <ThemedText style={{ fontSize: 12, color: theme.textSecondary }}>
+                        {item.brand ? `${item.brand} · ` : ''}₹{item.price}
+                      </ThemedText>
                     </View>
+                  </Pressable>
+                  <View style={styles.cardActions}>
+                    <Pressable
+                      onPress={() => void toggleFavourite('PRODUCT', item.id)}
+                      style={[styles.smallIconBtn, { backgroundColor: isFav ? theme.primarySoft : theme.muted }]}
+                      accessibilityLabel={isFav ? `Remove ${item.name} from favourites` : `Add ${item.name} to favourites`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: isFav }}
+                    >
+                      <AppIcon name="heart" color={isFav ? theme.danger : theme.textSecondary} size={18} />
+                    </Pressable>
+                    {eligible ? (
+                      qtyInCart > 0 ? (
+                        <View
+                          style={[styles.inlineStepper, { backgroundColor: theme.primarySoft }]}
+                          accessibilityRole="adjustable"
+                          accessibilityLabel={`${item.name} quantity`}
+                          accessibilityValue={{ min: 0, now: qtyInCart }}
+                        >
+                          <Pressable
+                            onPress={() => updateQuantity(item.id, undefined, qtyInCart - 1)}
+                            style={styles.stepTouch}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Decrease ${item.name} quantity`}
+                          >
+                            <ThemedText style={{ color: theme.primary, fontWeight: '700' }}>−</ThemedText>
+                          </Pressable>
+                          <ThemedText style={{ color: theme.primary, fontWeight: '800', minWidth: 20, textAlign: 'center' }}>{qtyInCart}</ThemedText>
+                          <Pressable
+                            onPress={() => updateQuantity(item.id, undefined, qtyInCart + 1)}
+                            style={styles.stepTouch}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Increase ${item.name} quantity`}
+                          >
+                            <ThemedText style={{ color: theme.primary, fontWeight: '700' }}>+</ThemedText>
+                          </Pressable>
+                        </View>
+                      ) : (
+                        <PrimaryButton
+                          label="Add"
+                          style={{ paddingHorizontal: 12 }}
+                          onPress={() => addToCart(item, variant)}
+                        />
+                      )
+                    ) : (
+                      <StatusBadge
+                        label={item.kind === 'MEDICINE' || item.commerceMode === 'VIEW_ONLY' ? 'VIEW ONLY' : 'UNAVAILABLE'}
+                        color={theme.textSecondary}
+                      />
+                    )}
                   </View>
-                </Pressable>
+                </View>
               );
             })}
           </View>
@@ -311,7 +314,8 @@ const styles = StyleSheet.create({
   sectionTitle: { ...typography.headline, fontSize: 16, fontWeight: '700' },
   chipScroll: { gap: spacing.x2, paddingRight: spacing.x2 },
   productsGrid: { gap: spacing.x3 },
-  productCard: { borderRadius: radii.card, borderWidth: 1, padding: spacing.x3, flexDirection: 'row', gap: spacing.x3 },
+  productCard: { borderRadius: radii.card, borderWidth: 1, padding: spacing.x3, gap: spacing.x2 },
+  productSummary: { flexDirection: 'row', gap: spacing.x3, alignItems: 'center' },
   productImg: { width: 80, height: 80, borderRadius: radii.compact },
   productMeta: { flex: 1, gap: 4 },
   productTitle: { ...typography.body, fontWeight: '700' },

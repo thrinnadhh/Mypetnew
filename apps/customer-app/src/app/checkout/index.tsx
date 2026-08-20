@@ -43,8 +43,7 @@ import {
   type CustomerAddress,
 } from '@/services/customer-profile';
 import { appConfig } from '@/utils/app-config';
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import { isUuid } from '@/utils/uuid';
 const PIN_PATTERN = /^[1-9][0-9]{5}$/;
 
 type CheckoutViewQuote = {
@@ -145,8 +144,8 @@ export default function CheckoutScreen() {
   );
 
   const hasPreviewItems = !providerId
-    || !UUID_PATTERN.test(providerId)
-    || checkoutItems.some((item) => !UUID_PATTERN.test(item.offeringId));
+    || !isUuid(providerId)
+    || checkoutItems.some((item) => !isUuid(item.offeringId));
   const demoCheckout = appConfig.allowDemoMode && Boolean(providerId) && checkoutItems.length > 0 && hasPreviewItems;
 
   const [fulfilmentMode, setFulfilmentMode] = useState<ProductFulfilmentMode>('STORE_PICKUP');

@@ -1,4 +1,5 @@
 import { ApiError, apiClient } from '@/services/api-client';
+import { isUuid } from '@/utils/uuid';
 
 export type ProviderProfileKind = 'store' | 'groomer' | 'vet';
 
@@ -38,8 +39,6 @@ interface PublicOutletDto {
   capabilities: string[];
   pickupEnabled: boolean;
 }
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function providerTypeFor(capabilities: string[]): string {
   if (capabilities.includes('VETERINARY_HOSPITAL')) return 'VET_HOSPITAL';
@@ -127,7 +126,7 @@ export async function fetchProviderProfile(
   providerId: string,
   options: { kind?: ProviderProfileKind; pincode?: string } = {},
 ): Promise<ProviderProfile> {
-  if (!UUID_PATTERN.test(providerId)) {
+  if (!isUuid(providerId)) {
     if (options.pincode !== undefined) {
       requireValidServicePincode(options.pincode);
       throw new Error('PROVIDER_SERVICEABILITY_UNVERIFIABLE');

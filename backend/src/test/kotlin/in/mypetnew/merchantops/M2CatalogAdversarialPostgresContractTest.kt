@@ -59,7 +59,7 @@ class M2CatalogAdversarialPostgresContractTest {
         val ownerFailure = assertThrows(DomainException::class.java) {
             context.providers.requireActiveOutlet(revokedOwner, ownerScope.outletId, MerchantPermission.CATALOG_WRITE)
         }
-        assertEquals("MERCHANT_PERMISSION_REQUIRED", ownerFailure.code)
+        assertEquals("RESOURCE_NOT_FOUND", ownerFailure.code)
         assertEquals(1, historyCount(context.jdbc, ownerListing.id))
 
         val memberId = createMerchant(context.jdbc, "+919310000002")
@@ -75,8 +75,22 @@ class M2CatalogAdversarialPostgresContractTest {
         val memberFailure = assertThrows(DomainException::class.java) {
             context.providers.requireActiveOutlet(removedMember, memberScope.outletId, MerchantPermission.CATALOG_WRITE)
         }
-        assertEquals("MERCHANT_PERMISSION_REQUIRED", memberFailure.code)
+        assertEquals("RESOURCE_NOT_FOUND", memberFailure.code)
         assertEquals(1, historyCount(context.jdbc, memberListing.id))
+
+        val limitedId = createMerchant(context.jdbc, "+919310000010")
+        val limitedScope = seedScope(context.jdbc, limitedId, "ORDER_FULFIL")
+        val limitedListing = context.catalog.createListing(
+            product(limitedScope, "AUTH-LIMITED", "Permission protected"),
+            "m2-auth-limited-create",
+            limitedId,
+        )
+        val limitedPrincipal = resolver.resolve(limitedId, UUID.randomUUID())
+        val limitedFailure = assertThrows(DomainException::class.java) {
+            context.providers.requireActiveOutlet(limitedPrincipal, limitedScope.outletId, MerchantPermission.CATALOG_WRITE)
+        }
+        assertEquals("MERCHANT_PERMISSION_REQUIRED", limitedFailure.code)
+        assertEquals(1, historyCount(context.jdbc, limitedListing.id))
 
         val suspendedId = createMerchant(context.jdbc, "+919310000003")
         val suspendedScope = seedScope(context.jdbc, suspendedId, "CATALOG_WRITE")

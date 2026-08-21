@@ -10,67 +10,27 @@ import {
   View,
 } from 'react-native';
 import {
-  BarcodeType,
+  type BarcodeType,
   changeListingStatus,
   createListing,
   fetchCatalogPage,
   fetchMerchantCatalogContext,
-  ListingKind,
-  ListingStatus,
-  MerchantListing,
+  type ListingKind,
+  type ListingStatus,
+  type MerchantListing,
   updateListing,
 } from '../src/catalog/api';
+import {
+  canWriteCatalog,
+  catalogErrorMessage,
+  catalogFormFromListing,
+  createCatalogInput,
+  emptyCatalogForm,
+  mutableCatalogInput,
+  type CatalogFormState,
+} from '../src/catalog/model';
 
 type StatusFilter = ListingStatus | 'ALL';
-
-type FormState = {
-  barcodeType: BarcodeType;
-  barcode: string;
-  kind: ListingKind;
-  name: string;
-  mrpPaise: string;
-  sellingPricePaise: string;
-  category: string;
-  brand: string;
-  description: string;
-  petType: string;
-  lifeStage: string;
-  packLabel: string;
-  sku: string;
-};
-
-const EMPTY_FORM: FormState = {
-  barcodeType: 'INTERNAL',
-  barcode: '',
-  kind: 'PRODUCT',
-  name: '',
-  mrpPaise: '',
-  sellingPricePaise: '',
-  category: 'other',
-  brand: '',
-  description: '',
-  petType: '',
-  lifeStage: '',
-  packLabel: '',
-  sku: '',
-};
-
-function parsePaise(value: string, field: string): number {
-  if (!/^\d+$/.test(value.trim())) throw new Error(`${field} must be a whole number of paise.`);
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`${field} is outside the supported range.`);
-  return parsed;
-}
-
-function messageFor(error: unknown): string {
-  if (!(error instanceof Error)) return 'The catalog action could not be completed.';
-  if (error.name === 'CATALOG_VERSION_CONFLICT') return 'This listing changed on the server. The latest version was reloaded.';
-  if (error.name === 'CATALOG_DUPLICATE') return 'That barcode already identifies another listing in this outlet.';
-  if (error.name === 'MERCHANT_PERMISSION_REQUIRED' || error.name === 'RESOURCE_NOT_FOUND') {
-    return 'Your current Merchant access does not allow this catalog action.';
-  }
-  return error.message;
-}
 
 export default function MerchantCatalogScreen() {
   const [outletIds, setOutletIds] = useState<string[]>([]);
@@ -85,13 +45,9 @@ export default function MerchantCatalogScreen() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [editing, setEditing] = useState<MerchantListing | null>(null);
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [form, setForm] = useState<CatalogFormState>(() => emptyCatalogForm());
 
-  const canWrite = useMemo(() => {
-    if (!outletId) return false;
-    const granted = permissions[outletId] ?? [];
-    return granted.includes('OWNER') || granted.includes('CATALOG_WRITE');
-  }, [outletId, permissions]);
+  const canWrite = useMemo(() => canWriteCatalog(permissions, outletId), [outletId, permissions]);
 
   const loadPage = useCallback(async (selectedOutlet: string, selectedPage = page) => {
     setLoading(true);
@@ -107,7 +63,7 @@ export default function MerchantCatalogScreen() {
       setPage(result.page);
       setHasNext(result.hasNext);
     } catch (error) {
-      setMessage(messageFor(error));
+      setMessage(catalogErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -125,7 +81,7 @@ export default function MerchantCatalogScreen() {
         setOutletId(firstOutlet);
         if (firstOutlet) await loadPage(firstOutlet, 0);
       } catch (error) {
-        if (active) setMessage(messageFor(error));
+        if (active) setMessage(catalogErrorMessage(error));
       } finally {
         if (active) setLoading(false);
       }
@@ -135,33 +91,19 @@ export default function MerchantCatalogScreen() {
     };
   }, []); // Context is intentionally loaded once per screen mount.
 
-  function updateForm<K extends keyof FormState>(key: K, value: FormState[K]) {
+  function updateForm<K extends keyof CatalogFormState>(key: K, value: CatalogFormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
   function startCreate() {
     setEditing(null);
-    setForm(EMPTY_FORM);
+    setForm(emptyCatalogForm());
     setMessage('');
   }
 
   function startEdit(listing: MerchantListing) {
     setEditing(listing);
-    setForm({
-      barcodeType: listing.barcodeType,
-      barcode: listing.normalizedBarcode,
-      kind: listing.kind,
-      name: listing.name,
-      mrpPaise: String(listing.mrpPaise),
-      sellingPricePaise: String(listing.sellingPricePaise),
-      category: listing.category,
-      brand: listing.brand ?? '',
-      description: listing.description ?? '',
-      petType: listing.petType ?? '',
-      lifeStage: listing.lifeStage ?? '',
-      packLabel: listing.packLabel ?? '',
-      sku: listing.sku ?? '',
-    });
+    setForm(catalogFormFromListing(listing));
     setMessage('');
   }
 
@@ -170,35 +112,18 @@ export default function MerchantCatalogScreen() {
     setSaving(true);
     setMessage('');
     try {
-      const mutable = {
-        name: form.name,
-        mrpPaise: parsePaise(form.mrpPaise, 'MRP'),
-        sellingPricePaise: parsePaise(form.sellingPricePaise, 'Selling price'),
-        category: form.category,
-        brand: form.brand || null,
-        description: form.description || null,
-        petType: form.petType || null,
-        lifeStage: form.lifeStage || null,
-        packLabel: form.packLabel || null,
-        sku: form.sku || null,
-      };
       if (editing) {
-        await updateListing(editing, mutable);
+        await updateListing(editing, mutableCatalogInput(form));
         setMessage('Listing updated.');
       } else {
-        await createListing(outletId, {
-          ...mutable,
-          barcodeType: form.barcodeType,
-          barcode: form.barcode,
-          kind: form.kind,
-        });
+        await createListing(outletId, createCatalogInput(form));
         setMessage('Listing created.');
       }
       setEditing(null);
-      setForm(EMPTY_FORM);
+      setForm(emptyCatalogForm());
       await loadPage(outletId, 0);
     } catch (error) {
-      setMessage(messageFor(error));
+      setMessage(catalogErrorMessage(error));
       if (error instanceof Error && error.name === 'CATALOG_VERSION_CONFLICT') await loadPage(outletId, page);
     } finally {
       setSaving(false);
@@ -215,7 +140,7 @@ export default function MerchantCatalogScreen() {
       setMessage(target === 'ACTIVE' ? 'Listing activated.' : 'Listing deactivated.');
       await loadPage(outletId, page);
     } catch (error) {
-      setMessage(messageFor(error));
+      setMessage(catalogErrorMessage(error));
       if (error instanceof Error && error.name === 'CATALOG_VERSION_CONFLICT') await loadPage(outletId, page);
     } finally {
       setSaving(false);
@@ -225,7 +150,7 @@ export default function MerchantCatalogScreen() {
   async function chooseOutlet(nextOutletId: string) {
     setOutletId(nextOutletId);
     setEditing(null);
-    setForm(EMPTY_FORM);
+    setForm(emptyCatalogForm());
     setPage(0);
     await loadPage(nextOutletId, 0);
   }
@@ -254,7 +179,13 @@ export default function MerchantCatalogScreen() {
           <>
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Find listings</Text>
-              <TextInput value={query} onChangeText={setQuery} placeholder="Name, category, brand or SKU" style={styles.input} accessibilityLabel="Catalog search" />
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Name, category, brand or SKU"
+                style={styles.input}
+                accessibilityLabel="Catalog search"
+              />
               <View style={styles.rowWrap}>
                 {(['ALL', 'ACTIVE', 'INACTIVE'] as StatusFilter[]).map((value) => (
                   <Pressable key={value} accessibilityRole="button" onPress={() => setStatus(value)} style={styles.chip}>
@@ -300,7 +231,11 @@ export default function MerchantCatalogScreen() {
               <TextInput value={form.petType} onChangeText={(value) => updateForm('petType', value)} placeholder="Pet type (optional)" style={styles.input} />
               <TextInput value={form.lifeStage} onChangeText={(value) => updateForm('lifeStage', value)} placeholder="Life stage (optional)" style={styles.input} />
               <TextInput value={form.description} onChangeText={(value) => updateForm('description', value)} placeholder="Description (optional)" multiline style={[styles.input, styles.multiline]} />
-              <Button title={saving ? 'Saving…' : editing ? 'Save versioned update' : 'Create listing'} disabled={saving || !canWrite} onPress={() => void save()} />
+              <Button
+                title={saving ? 'Saving…' : editing ? 'Save versioned update' : 'Create listing'}
+                disabled={saving || !canWrite}
+                onPress={() => void save()}
+              />
               {editing ? <Button title="Cancel edit" disabled={saving} onPress={startCreate} /> : null}
             </View>
 
@@ -316,7 +251,11 @@ export default function MerchantCatalogScreen() {
                   <Text>{listing.category}{listing.sku ? ` · SKU ${listing.sku}` : ''}</Text>
                   <View style={styles.rowWrap}>
                     <Button title="Edit" disabled={!canWrite || saving} onPress={() => startEdit(listing)} />
-                    <Button title={listing.status === 'ACTIVE' ? 'Deactivate' : 'Activate'} disabled={!canWrite || saving} onPress={() => void toggleStatus(listing)} />
+                    <Button
+                      title={listing.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                      disabled={!canWrite || saving}
+                      onPress={() => void toggleStatus(listing)}
+                    />
                   </View>
                 </View>
               ))}

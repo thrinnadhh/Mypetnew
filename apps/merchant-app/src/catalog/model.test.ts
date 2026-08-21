@@ -3,9 +3,15 @@ import {
   canWriteCatalog,
   catalogErrorMessage,
   catalogFormFromListing,
+  catalogIdentitySummary,
+  catalogPageLabel,
+  catalogSearchOptions,
+  catalogStatusSuccessMessage,
   createCatalogInput,
   emptyCatalogForm,
+  formatPaise,
   mutableCatalogInput,
+  nextCatalogStatus,
   parseCatalogPaise,
 } from './model';
 
@@ -159,5 +165,35 @@ describe('M2 Merchant catalog view model', () => {
       packLabel: null,
       sku: 'SKU-1',
     });
+  });
+
+  it('defines deterministic lifecycle transitions and success messages', () => {
+    expect(nextCatalogStatus('ACTIVE')).toBe('INACTIVE');
+    expect(nextCatalogStatus('INACTIVE')).toBe('ACTIVE');
+    expect(catalogStatusSuccessMessage('ACTIVE')).toBe('Listing activated.');
+    expect(catalogStatusSuccessMessage('INACTIVE')).toBe('Listing deactivated.');
+  });
+
+  it('builds bounded screen search options without inventing a status filter', () => {
+    expect(catalogSearchOptions('dog', 'ALL', 2)).toEqual({
+      query: 'dog',
+      status: undefined,
+      page: 2,
+      pageSize: 25,
+    });
+    expect(catalogSearchOptions('dog', 'INACTIVE', 0)).toEqual({
+      query: 'dog',
+      status: 'INACTIVE',
+      page: 0,
+      pageSize: 25,
+    });
+  });
+
+  it('formats canonical catalog display values', () => {
+    expect(formatPaise(0)).toBe('₹0.00');
+    expect(formatPaise(21900)).toBe('₹219.00');
+    expect(catalogIdentitySummary(listing)).toBe('PRODUCT · GTIN_13 · 4006381333931');
+    expect(catalogPageLabel(0)).toBe('Page 1');
+    expect(catalogPageLabel(4)).toBe('Page 5');
   });
 });

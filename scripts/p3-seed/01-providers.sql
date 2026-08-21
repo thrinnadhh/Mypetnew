@@ -15,6 +15,11 @@ INSERT INTO mypet.provider_outlet(id,organization_id,name,status,pickup_enabled,
 (md5('mypet:p3:groomer-outlet')::uuid,md5('mypet:p3:groomer-org')::uuid,'MyPet Staging Grooming','ACTIVE',false,13.6310,79.4210),
 (md5('mypet:p3:vet-outlet')::uuid,md5('mypet:p3:vet-org')::uuid,'MyPet Staging Vet Care','ACTIVE',false,13.6260,79.4160)
 ON CONFLICT(id) DO UPDATE SET name=excluded.name,status='ACTIVE',pickup_enabled=excluded.pickup_enabled,dispatch_latitude=excluded.dispatch_latitude,dispatch_longitude=excluded.dispatch_longitude,updated_at=now();
+INSERT INTO mypet.merchant_staff(account_id,organization_id,outlet_id,permission,active) VALUES
+(md5('mypet:p3:store-owner')::uuid,md5('mypet:p3:store-org')::uuid,md5('mypet:p3:store-outlet')::uuid,'OWNER',true),
+(md5('mypet:p3:groomer-owner')::uuid,md5('mypet:p3:groomer-org')::uuid,md5('mypet:p3:groomer-outlet')::uuid,'OWNER',true),
+(md5('mypet:p3:vet-owner')::uuid,md5('mypet:p3:vet-org')::uuid,md5('mypet:p3:vet-outlet')::uuid,'OWNER',true)
+ON CONFLICT(account_id,outlet_id,permission) DO UPDATE SET organization_id=excluded.organization_id,active=true;
 INSERT INTO mypet.outlet_capability(outlet_id,capability,verified) VALUES
 (md5('mypet:p3:store-outlet')::uuid,'PRODUCT_STORE',true),(md5('mypet:p3:store-outlet')::uuid,'MEDICINE_CATALOG_VIEW_ONLY',true),
 (md5('mypet:p3:groomer-outlet')::uuid,'GROOMING',true),(md5('mypet:p3:vet-outlet')::uuid,'VETERINARY_CLINIC',true)

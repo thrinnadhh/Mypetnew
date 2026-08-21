@@ -2,13 +2,16 @@ import type { MerchantListing } from './api';
 import {
   canWriteCatalog,
   catalogEditorTitle,
+  catalogEmptyStateMessage,
   catalogErrorMessage,
   catalogFormFromListing,
   catalogIdentitySummary,
   catalogListingCard,
   catalogOutletLabel,
   catalogPageLabel,
+  catalogSaveButtonTitle,
   catalogSearchOptions,
+  catalogSelectedLabel,
   catalogStatusSuccessMessage,
   createCatalogInput,
   emptyCatalogForm,
@@ -16,6 +19,7 @@ import {
   mutableCatalogInput,
   nextCatalogStatus,
   parseCatalogPaise,
+  shouldReloadCatalogAfterError,
 } from './model';
 
 const listing: MerchantListing = {
@@ -91,19 +95,23 @@ describe('M2 Merchant catalog view model', () => {
     const stale = new Error('stale');
     stale.name = 'CATALOG_VERSION_CONFLICT';
     expect(catalogErrorMessage(stale)).toContain('latest version was reloaded');
+    expect(shouldReloadCatalogAfterError(stale)).toBe(true);
 
     const duplicate = new Error('duplicate');
     duplicate.name = 'CATALOG_DUPLICATE';
     expect(catalogErrorMessage(duplicate)).toContain('barcode already identifies');
+    expect(shouldReloadCatalogAfterError(duplicate)).toBe(false);
 
     for (const code of ['MERCHANT_PERMISSION_REQUIRED', 'RESOURCE_NOT_FOUND']) {
       const denied = new Error('denied');
       denied.name = code;
       expect(catalogErrorMessage(denied)).toContain('current Merchant access');
+      expect(shouldReloadCatalogAfterError(denied)).toBe(false);
     }
 
     expect(catalogErrorMessage(new Error('Specific validation message'))).toBe('Specific validation message');
     expect(catalogErrorMessage({ code: 'UNKNOWN' })).toBe('The catalog action could not be completed.');
+    expect(shouldReloadCatalogAfterError({ code: 'CATALOG_VERSION_CONFLICT' })).toBe(false);
   });
 
   it('round-trips canonical listing metadata into editable form fields', () => {
@@ -200,9 +208,20 @@ describe('M2 Merchant catalog view model', () => {
     expect(catalogPageLabel(4)).toBe('Page 5');
   });
 
-  it('models editor and outlet labels without leaking full outlet identifiers', () => {
+  it('models editor, selection, empty-state and save labels', () => {
     expect(catalogEditorTitle(null)).toBe('Create listing');
     expect(catalogEditorTitle(listing)).toBe('Edit Dental Chew');
+    expect(catalogSaveButtonTitle(false, null)).toBe('Create listing');
+    expect(catalogSaveButtonTitle(false, listing)).toBe('Save versioned update');
+    expect(catalogSaveButtonTitle(true, listing)).toBe('Saving…');
+    expect(catalogSelectedLabel('ACTIVE', 'ACTIVE')).toBe('✓ ACTIVE');
+    expect(catalogSelectedLabel('ACTIVE', 'INACTIVE')).toBe('INACTIVE');
+    expect(catalogEmptyStateMessage(true, 0)).toBeNull();
+    expect(catalogEmptyStateMessage(false, 1)).toBeNull();
+    expect(catalogEmptyStateMessage(false, 0)).toBe('No listings match this view.');
+  });
+
+  it('models outlet labels without leaking full outlet identifiers', () => {
     expect(catalogOutletLabel('12345678-aaaa-bbbb-cccc-123456789000', null)).toBe('12345678');
     expect(catalogOutletLabel('12345678-aaaa-bbbb-cccc-123456789000', '12345678-aaaa-bbbb-cccc-123456789000')).toBe('✓ 12345678');
   });

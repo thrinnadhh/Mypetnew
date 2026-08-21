@@ -111,7 +111,12 @@ class M2CatalogInMemoryContractTest {
                 catalog.getManagedListing(UUID.randomUUID(), outletId, created.id)
             }.code,
         )
-        assertTrue(catalog.listHistory(UUID.randomUUID(), outletId, created.id).isEmpty())
+        assertEquals(
+            "RESOURCE_NOT_FOUND",
+            assertThrows(DomainException::class.java) {
+                catalog.listHistory(UUID.randomUUID(), outletId, created.id)
+            }.code,
+        )
     }
 
     @Test

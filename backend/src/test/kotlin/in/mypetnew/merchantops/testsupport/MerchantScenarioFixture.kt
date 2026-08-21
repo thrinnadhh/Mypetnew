@@ -51,8 +51,18 @@ class MerchantScenarioFixture(dataSource: DataSource) {
             "M0 product $number",
         ).update()
         jdbc.sql(
-            "INSERT INTO mypet.inventory_balance(listing_id, on_hand, reserved, version) VALUES (?, ?, ?, 0)",
-        ).params(scenario.listingId, onHand, reserved).update()
+            """
+            INSERT INTO mypet.inventory_balance(
+                listing_id, organization_id, outlet_id, on_hand, reserved, version
+            ) VALUES (?, ?, ?, ?, ?, 0)
+            """.trimIndent(),
+        ).params(
+            scenario.listingId,
+            scenario.organizationId,
+            scenario.outletId,
+            onHand,
+            reserved,
+        ).update()
         return scenario
     }
 

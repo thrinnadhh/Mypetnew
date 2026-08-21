@@ -207,32 +207,30 @@ class JdbcProviderPersistence(
             return requested
         }
 
-        jdbc.query(
+        // A scope-less Merchant is valid only for first onboarding. Once an organization already
+        // belongs to this actor, current OWNER membership must be re-established by authorization;
+        // owner_actor_id alone is identity metadata and must never resurrect revoked authority.
+        val existingOrganization = jdbc.query(
             "SELECT id FROM mypet.merchant_organization WHERE owner_actor_id = ?",
             { result, _ -> result.getObject("id", UUID::class.java) },
             merchant.actorId,
-        ).singleOrNull()?.let { return it }
+        ).singleOrNull()
+        if (existingOrganization != null) {
+            throw DomainException("MERCHANT_PERMISSION_REQUIRED", "The required merchant permission is missing")
+        }
 
         val organizationId = UUID.randomUUID()
-        try {
-            jdbc.update(
-                """
-                INSERT INTO mypet.merchant_organization (
-                    id, name, status, owner_actor_id
-                ) VALUES (?, ?, 'UNDER_REVIEW', ?)
-                """.trimIndent(),
-                organizationId,
-                name,
-                merchant.actorId,
-            )
-            return organizationId
-        } catch (duplicate: DuplicateKeyException) {
-            return jdbc.query(
-                "SELECT id FROM mypet.merchant_organization WHERE owner_actor_id = ?",
-                { result, _ -> result.getObject("id", UUID::class.java) },
-                merchant.actorId,
-            ).singleOrNull() ?: throw duplicate
-        }
+        jdbc.update(
+            """
+            INSERT INTO mypet.merchant_organization (
+                id, name, status, owner_actor_id
+            ) VALUES (?, ?, 'UNDER_REVIEW', ?)
+            """.trimIndent(),
+            organizationId,
+            name,
+            merchant.actorId,
+        )
+        return organizationId
     }
 
     private fun ensureOwnerMembership(actorId: UUID, organizationId: UUID, outletId: UUID) {

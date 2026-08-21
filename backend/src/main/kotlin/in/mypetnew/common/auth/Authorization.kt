@@ -26,6 +26,21 @@ enum class AdminPermission {
     ADMIN_ACCESS_MANAGER,
 }
 
+/**
+ * Server-owned Merchant capabilities. Grants are always scoped to one outlet.
+ * OWNER is the only wildcard and represents the canonical owner membership
+ * established by Merchant onboarding.
+ */
+enum class MerchantPermission {
+    OWNER,
+    OUTLET_MANAGE,
+    CATALOG_WRITE,
+    INVENTORY_WRITE,
+    ORDER_FULFIL,
+    POS_OPERATE,
+    LOYALTY_OPERATE,
+}
+
 data class Principal(
     val actorId: UUID,
     val role: Role,
@@ -33,6 +48,7 @@ data class Principal(
     val outletIds: Set<UUID> = emptySet(),
     val permissions: Set<AdminPermission> = emptySet(),
     val sessionId: UUID = UUID.randomUUID(),
+    val merchantPermissionsByOutlet: Map<UUID, Set<MerchantPermission>> = emptyMap(),
 )
 
 object Authorizer {
@@ -55,5 +71,16 @@ object Authorizer {
             throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
         }
     }
-}
 
+    fun requireMerchantPermission(
+        principal: Principal,
+        outletId: UUID,
+        permission: MerchantPermission,
+    ) {
+        requireOutlet(principal, outletId)
+        val granted = principal.merchantPermissionsByOutlet[outletId].orEmpty()
+        if (MerchantPermission.OWNER !in granted && permission !in granted) {
+            throw DomainException("MERCHANT_PERMISSION_REQUIRED", "The required merchant permission is missing")
+        }
+    }
+}

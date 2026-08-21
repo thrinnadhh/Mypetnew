@@ -30,3 +30,14 @@ required PostgreSQL, process-restart, multi-device, or physical-camera test.
 
 Skipped or focused tests are forbidden in governed sources. A genuine external
 blocker is documented as blocked; it is never translated into success.
+
+## M1 authority evidence
+
+M1 activates `M1-AUTH-001` and `M1-AUTH-002`.
+
+- `M1MerchantAuthorityPostgresContractTest` is the production-shaped evidence for persistent owner membership, idempotent onboarding replay, cross-tenant/outlet denial, current permission resolution, permission revocation, suspended-outlet command denial, and membership revocation.
+- `MerchantPrincipalResolverContractTest` supplies the fast contract lane for stale-scope replacement, permission removal, malformed cross-organization membership rejection, and suspended-account failure.
+- `BearerTokenServiceContractTest` proves that an outlet-scoped Merchant permission snapshot round-trips without widening outlet scope; production request authorization still re-resolves PostgreSQL state.
+- Existing Customer, Merchant and backend suites remain regression gates; M1 does not replace them with the targeted authority tests.
+
+M1 is not added to `program-state.json` until the required exact-head CI evidence is green.

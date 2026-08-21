@@ -1,6 +1,7 @@
 package `in`.mypetnew.application.security
 
 import `in`.mypetnew.common.auth.AdminPermission
+import `in`.mypetnew.common.auth.MerchantPermission
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
@@ -42,6 +43,7 @@ class BearerTokenService(
             principal.organizationId ?: "-",
             principal.outletIds.sortedBy(UUID::toString).joinToString(","),
             principal.permissions.sortedBy(Enum<*>::name).joinToString(","),
+            encodeMerchantPermissions(principal.merchantPermissionsByOutlet),
             principal.sessionId,
             clock.instant().plus(lifetime).epochSecond,
         ).joinToString("|")
@@ -58,8 +60,8 @@ class BearerTokenService(
         if (!MessageDigest.isEqual(sign(parts[0]), actualSignature)) invalid()
         val payload = runCatching { String(decoder.decode(parts[0]), StandardCharsets.UTF_8) }.getOrElse { invalid() }
         val values = payload.split('|')
-        if (values.size != 9 || values[0] != issuer || values[1] != audience) invalid()
-        val expiresAt = values[8].toLongOrNull() ?: invalid()
+        if (values.size != 10 || values[0] != issuer || values[1] != audience) invalid()
+        val expiresAt = values[9].toLongOrNull() ?: invalid()
         if (clock.instant().epochSecond >= expiresAt) invalid()
         return runCatching {
             Principal(
@@ -68,9 +70,31 @@ class BearerTokenService(
                 organizationId = values[4].takeUnless { it == "-" }?.let(UUID::fromString),
                 outletIds = values[5].csv().map(UUID::fromString).toSet(),
                 permissions = values[6].csv().map(AdminPermission::valueOf).toSet(),
-                sessionId = UUID.fromString(values[7]),
+                sessionId = UUID.fromString(values[8]),
+                merchantPermissionsByOutlet = decodeMerchantPermissions(values[7]),
             )
         }.getOrElse { invalid() }
+    }
+
+    private fun encodeMerchantPermissions(
+        permissionsByOutlet: Map<UUID, Set<MerchantPermission>>,
+    ): String = permissionsByOutlet.entries
+        .sortedBy { it.key.toString() }
+        .flatMap { (outletId, permissions) ->
+            permissions.sortedBy { it.name }.map { permission -> "$outletId~${permission.name}" }
+        }
+        .joinToString(",")
+
+    private fun decodeMerchantPermissions(value: String): Map<UUID, Set<MerchantPermission>> {
+        if (value.isBlank()) return emptyMap()
+        return value.split(',')
+            .map { encoded ->
+                val fields = encoded.split('~')
+                if (fields.size != 2) invalid()
+                UUID.fromString(fields[0]) to MerchantPermission.valueOf(fields[1])
+            }
+            .groupBy({ it.first }, { it.second })
+            .mapValues { (_, permissions) -> permissions.toSet() }
     }
 
     private fun sign(payload: String): ByteArray = Mac.getInstance("HmacSHA256").run {
@@ -104,6 +128,9 @@ class BearerAuthenticationFilter(
                 val authorities = buildList {
                     add(SimpleGrantedAuthority("ROLE_${principal.role}"))
                     principal.permissions.forEach { add(SimpleGrantedAuthority("PERMISSION_$it")) }
+                    principal.merchantPermissionsByOutlet.values.flatten().toSet().forEach {
+                        add(SimpleGrantedAuthority("MERCHANT_PERMISSION_$it"))
+                    }
                 }
                 SecurityContextHolder.getContext().authentication =
                     UsernamePasswordAuthenticationToken(principal, null, authorities)

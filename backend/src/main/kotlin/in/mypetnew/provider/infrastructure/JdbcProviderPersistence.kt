@@ -29,7 +29,6 @@ class JdbcProviderPersistence(
         try {
             return transactions.execute {
                 replaySubmission(merchant.actorId, idempotencyKey, requestFingerprint)?.let { replay ->
-                    ensureOwnerMembership(merchant.actorId, replay.organizationId, replay.id)
                     return@execute replay
                 }
                 val organizationId = resolveOrganization(merchant, name)
@@ -78,7 +77,6 @@ class JdbcProviderPersistence(
             }
         } catch (duplicate: DuplicateKeyException) {
             replaySubmission(merchant.actorId, idempotencyKey, requestFingerprint)?.let { replay ->
-                ensureOwnerMembership(merchant.actorId, replay.organizationId, replay.id)
                 return replay
             }
             throw DomainException("PROVIDER_CONFLICT", "Provider onboarding changed concurrently; refresh and retry")

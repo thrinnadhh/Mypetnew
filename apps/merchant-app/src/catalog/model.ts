@@ -2,6 +2,7 @@ import type {
   BarcodeType,
   CreateListingInput,
   ListingKind,
+  ListingStatus,
   MerchantListing,
   UpdateListingInput,
 } from './api';
@@ -21,6 +22,8 @@ export type CatalogFormState = {
   packLabel: string;
   sku: string;
 };
+
+export type CatalogStatusFilter = ListingStatus | 'ALL';
 
 export function emptyCatalogForm(): CatalogFormState {
   return {
@@ -107,4 +110,37 @@ export function createCatalogInput(form: CatalogFormState): CreateListingInput {
     barcode: form.barcode,
     kind: form.kind,
   };
+}
+
+export function nextCatalogStatus(current: ListingStatus): ListingStatus {
+  return current === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+}
+
+export function catalogStatusSuccessMessage(status: ListingStatus): string {
+  return status === 'ACTIVE' ? 'Listing activated.' : 'Listing deactivated.';
+}
+
+export function catalogSearchOptions(
+  query: string,
+  status: CatalogStatusFilter,
+  page: number,
+): { query: string; status?: ListingStatus; page: number; pageSize: number } {
+  return {
+    query,
+    status: status === 'ALL' ? undefined : status,
+    page,
+    pageSize: 25,
+  };
+}
+
+export function formatPaise(paise: number): string {
+  return `₹${(paise / 100).toFixed(2)}`;
+}
+
+export function catalogIdentitySummary(listing: MerchantListing): string {
+  return `${listing.kind} · ${listing.barcodeType} · ${listing.normalizedBarcode}`;
+}
+
+export function catalogPageLabel(page: number): string {
+  return `Page ${page + 1}`;
 }

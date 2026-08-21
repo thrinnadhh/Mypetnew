@@ -1,6 +1,7 @@
 import type { MerchantListing } from './api';
 import {
   canWriteCatalog,
+  catalogAccessNotice,
   catalogEditorTitle,
   catalogEmptyStateMessage,
   catalogErrorMessage,
@@ -89,6 +90,13 @@ describe('M2 Merchant catalog view model', () => {
     expect(canWriteCatalog({ 'outlet-1': ['ORDER_FULFIL'] }, 'outlet-1')).toBe(false);
     expect(canWriteCatalog({ 'outlet-1': ['CATALOG_WRITE'] }, 'outlet-1')).toBe(true);
     expect(canWriteCatalog({ 'outlet-1': ['OWNER'] }, 'outlet-1')).toBe(true);
+  });
+
+  it('describes no-outlet and read-only authority states', () => {
+    expect(catalogAccessNotice(null, true, false)).toBeNull();
+    expect(catalogAccessNotice(null, false, false)).toBe('No authorized Merchant outlet is available.');
+    expect(catalogAccessNotice('outlet-1', false, false)).toBe('Read only: CATALOG_WRITE is not currently granted for this outlet.');
+    expect(catalogAccessNotice('outlet-1', false, true)).toBeNull();
   });
 
   it('maps canonical server failures to actionable Merchant messages', () => {

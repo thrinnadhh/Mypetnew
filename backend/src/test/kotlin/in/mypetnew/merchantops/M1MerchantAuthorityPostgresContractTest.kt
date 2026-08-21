@@ -13,6 +13,8 @@ import `in`.mypetnew.merchantops.testsupport.PostgresTestDatabase
 import `in`.mypetnew.provider.domain.ProviderCapability
 import `in`.mypetnew.provider.domain.ProviderService
 import `in`.mypetnew.provider.infrastructure.JdbcProviderPersistence
+import org.flywaydb.core.Flyway
+import org.flywaydb.core.api.MigrationVersion
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -22,7 +24,6 @@ import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.jdbc.datasource.DataSourceTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
-import javax.sql.DataSource
 
 @MerchantOpsContract
 @MerchantOpsPostgres
@@ -171,6 +172,65 @@ class M1MerchantAuthorityPostgresContractTest {
         }
     }
 
+    @Test
+    fun `V22 upgrades an existing V21 owner outlet into canonical owner scope`() {
+        val dataSource = PostgresTestDatabase.dataSource()
+        val toV21 = flyway(dataSource, MigrationVersion.fromVersion("21"))
+        toV21.clean()
+        toV21.migrate()
+
+        val jdbc = JdbcTemplate(dataSource)
+        val ownerId = createMerchant(jdbc, "+919100000005")
+        val organizationId = UUID.randomUUID()
+        val outletId = UUID.randomUUID()
+        jdbc.update(
+            """
+            INSERT INTO mypet.merchant_organization(id, name, status, owner_actor_id)
+            VALUES (?, 'Legacy Merchant', 'ACTIVE', ?)
+            """.trimIndent(),
+            organizationId,
+            ownerId,
+        )
+        jdbc.update(
+            """
+            INSERT INTO mypet.provider_outlet(id, organization_id, name, status, pickup_enabled)
+            VALUES (?, ?, 'Legacy Outlet', 'ACTIVE', TRUE)
+            """.trimIndent(),
+            outletId,
+            organizationId,
+        )
+        assertEquals(
+            0,
+            jdbc.queryForObject(
+                "SELECT COUNT(*) FROM mypet.merchant_staff WHERE account_id = ? AND outlet_id = ?",
+                Int::class.java,
+                ownerId,
+                outletId,
+            ),
+        )
+
+        flyway(dataSource).migrate()
+
+        assertEquals(
+            1,
+            jdbc.queryForObject(
+                """
+                SELECT COUNT(*) FROM mypet.merchant_staff
+                WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
+                  AND permission = 'OWNER' AND active = TRUE
+                """.trimIndent(),
+                Int::class.java,
+                ownerId,
+                organizationId,
+                outletId,
+            ),
+        )
+        val resolved = JdbcMerchantPrincipalResolver(JdbcClient.create(dataSource))
+            .resolve(ownerId, UUID.randomUUID())
+        assertEquals(setOf(outletId), resolved.outletIds)
+        assertEquals(setOf(MerchantPermission.OWNER), resolved.merchantPermissionsByOutlet[outletId])
+    }
+
     private fun context(): Context {
         PostgresTestDatabase.resetAndMigrate()
         val dataSource = PostgresTestDatabase.dataSource()
@@ -182,11 +242,25 @@ class M1MerchantAuthorityPostgresContractTest {
             ),
         )
         return Context(
-            dataSource = dataSource,
             jdbc = jdbc,
             providers = providers,
             resolver = JdbcMerchantPrincipalResolver(JdbcClient.create(dataSource)),
         )
+    }
+
+    private fun flyway(
+        dataSource: javax.sql.DataSource,
+        target: MigrationVersion? = null,
+    ): Flyway {
+        val configuration = Flyway.configure()
+            .dataSource(dataSource)
+            .schemas("mypet")
+            .defaultSchema("mypet")
+            .createSchemas(true)
+            .cleanDisabled(false)
+            .locations("classpath:db/migration")
+        if (target != null) configuration.target(target)
+        return configuration.load()
     }
 
     private fun createMerchant(jdbc: JdbcTemplate, mobile: String): UUID {
@@ -215,7 +289,6 @@ class M1MerchantAuthorityPostgresContractTest {
     }
 
     private data class Context(
-        val dataSource: DataSource,
         val jdbc: JdbcTemplate,
         val providers: ProviderService,
         val resolver: JdbcMerchantPrincipalResolver,

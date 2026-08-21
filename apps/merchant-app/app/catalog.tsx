@@ -22,18 +22,22 @@ import {
 import {
   canWriteCatalog,
   catalogEditorTitle,
+  catalogEmptyStateMessage,
   catalogErrorMessage,
   catalogFormFromListing,
   catalogIdentitySummary,
   catalogListingCard,
   catalogOutletLabel,
   catalogPageLabel,
+  catalogSaveButtonTitle,
   catalogSearchOptions,
+  catalogSelectedLabel,
   catalogStatusSuccessMessage,
   createCatalogInput,
   emptyCatalogForm,
   mutableCatalogInput,
   nextCatalogStatus,
+  shouldReloadCatalogAfterError,
   type CatalogFormState,
   type CatalogStatusFilter,
 } from '../src/catalog/model';
@@ -54,6 +58,7 @@ export default function MerchantCatalogScreen() {
   const [form, setForm] = useState<CatalogFormState>(() => emptyCatalogForm());
 
   const canWrite = useMemo(() => canWriteCatalog(permissions, outletId), [outletId, permissions]);
+  const emptyStateMessage = catalogEmptyStateMessage(loading, items.length);
 
   const loadPage = useCallback(async (selectedOutlet: string, selectedPage = page) => {
     setLoading(true);
@@ -125,7 +130,7 @@ export default function MerchantCatalogScreen() {
       await loadPage(outletId, 0);
     } catch (error) {
       setMessage(catalogErrorMessage(error));
-      if (error instanceof Error && error.name === 'CATALOG_VERSION_CONFLICT') await loadPage(outletId, page);
+      if (shouldReloadCatalogAfterError(error)) await loadPage(outletId, page);
     } finally {
       setSaving(false);
     }
@@ -142,7 +147,7 @@ export default function MerchantCatalogScreen() {
       await loadPage(outletId, page);
     } catch (error) {
       setMessage(catalogErrorMessage(error));
-      if (error instanceof Error && error.name === 'CATALOG_VERSION_CONFLICT') await loadPage(outletId, page);
+      if (shouldReloadCatalogAfterError(error)) await loadPage(outletId, page);
     } finally {
       setSaving(false);
     }
@@ -190,7 +195,7 @@ export default function MerchantCatalogScreen() {
               <View style={styles.rowWrap}>
                 {(['ALL', 'ACTIVE', 'INACTIVE'] as CatalogStatusFilter[]).map((value) => (
                   <Pressable key={value} accessibilityRole="button" onPress={() => setStatus(value)} style={styles.chip}>
-                    <Text>{status === value ? `✓ ${value}` : value}</Text>
+                    <Text>{catalogSelectedLabel(status, value)}</Text>
                   </Pressable>
                 ))}
               </View>
@@ -205,7 +210,7 @@ export default function MerchantCatalogScreen() {
                   <View style={styles.rowWrap}>
                     {(['PRODUCT', 'MEDICINE'] as ListingKind[]).map((value) => (
                       <Pressable key={value} accessibilityRole="button" onPress={() => updateForm('kind', value)} style={styles.chip}>
-                        <Text>{form.kind === value ? `✓ ${value}` : value}</Text>
+                        <Text>{catalogSelectedLabel(form.kind, value)}</Text>
                       </Pressable>
                     ))}
                   </View>
@@ -213,7 +218,7 @@ export default function MerchantCatalogScreen() {
                   <View style={styles.rowWrap}>
                     {(['INTERNAL', 'GTIN_13'] as BarcodeType[]).map((value) => (
                       <Pressable key={value} accessibilityRole="button" onPress={() => updateForm('barcodeType', value)} style={styles.chip}>
-                        <Text>{form.barcodeType === value ? `✓ ${value}` : value}</Text>
+                        <Text>{catalogSelectedLabel(form.barcodeType, value)}</Text>
                       </Pressable>
                     ))}
                   </View>
@@ -233,7 +238,7 @@ export default function MerchantCatalogScreen() {
               <TextInput value={form.lifeStage} onChangeText={(value) => updateForm('lifeStage', value)} placeholder="Life stage (optional)" style={styles.input} />
               <TextInput value={form.description} onChangeText={(value) => updateForm('description', value)} placeholder="Description (optional)" multiline style={[styles.input, styles.multiline]} />
               <Button
-                title={saving ? 'Saving…' : editing ? 'Save versioned update' : 'Create listing'}
+                title={catalogSaveButtonTitle(saving, editing)}
                 disabled={saving || !canWrite}
                 onPress={() => void save()}
               />
@@ -243,7 +248,7 @@ export default function MerchantCatalogScreen() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Listings</Text>
               {loading ? <Text accessibilityLiveRegion="polite">Loading catalog…</Text> : null}
-              {!loading && items.length === 0 ? <Text>No listings match this view.</Text> : null}
+              {emptyStateMessage ? <Text>{emptyStateMessage}</Text> : null}
               {items.map((listing) => {
                 const card = catalogListingCard(listing);
                 return (

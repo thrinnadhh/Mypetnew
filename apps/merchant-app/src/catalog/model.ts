@@ -25,6 +25,13 @@ export type CatalogFormState = {
 
 export type CatalogStatusFilter = ListingStatus | 'ALL';
 
+export type CatalogListingCard = {
+  stateLine: string;
+  priceLine: string;
+  metadataLine: string;
+  actionLabel: string;
+};
+
 export function emptyCatalogForm(): CatalogFormState {
   return {
     barcodeType: 'INTERNAL',
@@ -143,4 +150,23 @@ export function catalogIdentitySummary(listing: MerchantListing): string {
 
 export function catalogPageLabel(page: number): string {
   return `Page ${page + 1}`;
+}
+
+export function catalogEditorTitle(listing: MerchantListing | null): string {
+  return listing ? `Edit ${listing.name}` : 'Create listing';
+}
+
+export function catalogOutletLabel(outletId: string, selectedOutletId: string | null): string {
+  const shortId = outletId.slice(0, 8);
+  return outletId === selectedOutletId ? `✓ ${shortId}` : shortId;
+}
+
+export function catalogListingCard(listing: MerchantListing): CatalogListingCard {
+  const skuSuffix = listing.sku ? ` · SKU ${listing.sku}` : '';
+  return {
+    stateLine: `${listing.status} · v${listing.version} · ${listing.commerceMode}`,
+    priceLine: `${formatPaise(listing.sellingPricePaise)} · MRP ${formatPaise(listing.mrpPaise)}`,
+    metadataLine: `${listing.category}${skuSuffix}`,
+    actionLabel: listing.status === 'ACTIVE' ? 'Deactivate' : 'Activate',
+  };
 }

@@ -1,7 +1,7 @@
 # M1 — Merchant Authority, Permissions, and Outlet Foundation
 
-Status: implementation contract and certification record  
-Predecessor: M0 merged main `85188ac7f26927226862d9f04d85c9d634fcd9e9`  
+Status: implementation contract and certification record
+Predecessor: M0 merged main `85188ac7f26927226862d9f04d85c9d634fcd9e9`
 Program obligations: `M1-AUTH-001`, `M1-AUTH-002`
 
 ## 1. Purpose
@@ -57,11 +57,11 @@ Unknown/invalid persisted Merchant permission values fail closed rather than bei
 
 ## 6. Persistent onboarding and upgrade repair
 
-`JdbcProviderPersistence.submit` creates the provider outlet and corresponding `merchant_staff` owner row within the same Spring transaction. An idempotent onboarding replay also ensures the owner membership exists and is active, so retry cannot return an outlet that lacks canonical owner scope.
+`JdbcProviderPersistence.submit` creates the provider outlet and corresponding `merchant_staff` owner row within the same Spring transaction. An idempotent onboarding replay repairs a missing owner row but never reactivates an existing revoked `OWNER` grant; revocation remains authoritative.
 
-M1 adds forward-only migration `V22__merchant_owner_membership_backfill.sql`. It backfills `OWNER` membership for existing provider outlets whose organization already has a canonical Merchant `owner_actor_id`. This is required because existing/staging provider rows can predate the fixed onboarding path. Historical migrations V1–V21 remain unchanged.
+M1 adds forward-only migration `V22__merchant_owner_membership_backfill.sql`. It backfills missing `OWNER` membership for existing provider outlets whose organization already has a canonical Merchant `owner_actor_id`. Existing inactive `OWNER` rows are left inactive so migration cannot resurrect revoked authority. This is required because existing/staging provider rows can predate the fixed onboarding path. Historical migrations V1–V21 remain unchanged.
 
-The P3 staging provider seed now creates matching `OWNER` memberships so re-running that seed after V22 cannot recreate scope-less staged owners.
+The P3 staging provider seed now creates matching `OWNER` memberships so staged providers resolve canonical authority after seeding.
 
 ## 7. M1 certification evidence
 
@@ -75,14 +75,14 @@ Mandatory evidence is implemented in:
 The PostgreSQL contract must prove:
 
 1. onboarding creates one durable `OWNER` membership;
-2. idempotent replay does not duplicate membership;
+2. idempotent replay does not duplicate membership or resurrect a revoked owner;
 3. owner scope resolves from PostgreSQL and can use active-outlet commands;
 4. a foreign outlet is denied;
 5. an explicit limited permission succeeds only for the granted outlet/action;
 6. permission revocation is effective after reauthorization;
 7. suspended outlet commands fail closed while membership remains available for read authorization;
 8. membership revocation removes outlet scope entirely;
-9. a V21 database containing an existing canonical owner/outlet upgrades through V22 and gains exactly one usable `OWNER` membership.
+9. a V21 database containing an existing canonical owner/outlet upgrades through V22 and gains exactly one usable `OWNER` membership when missing, while an already revoked `OWNER` remains revoked.
 
 ## 8. Exit conditions
 

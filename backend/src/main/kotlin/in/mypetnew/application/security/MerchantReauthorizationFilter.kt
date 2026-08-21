@@ -31,6 +31,9 @@ class MerchantReauthorizationFilter(
                 val authorities = buildList {
                     add(SimpleGrantedAuthority("ROLE_${currentPrincipal.role}"))
                     currentPrincipal.permissions.forEach { add(SimpleGrantedAuthority("PERMISSION_$it")) }
+                    currentPrincipal.merchantPermissionsByOutlet.values.flatten().toSet().forEach {
+                        add(SimpleGrantedAuthority("MERCHANT_PERMISSION_$it"))
+                    }
                 }
                 SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken(
                     currentPrincipal,

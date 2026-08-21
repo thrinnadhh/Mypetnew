@@ -58,5 +58,7 @@ class MerchantScenarioFixture(dataSource: DataSource) {
 
     fun listingIds(organizationId: UUID, outletId: UUID): List<UUID> = jdbc.sql(
         "SELECT id FROM mypet.catalog_listing WHERE organization_id = ? AND outlet_id = ? ORDER BY id",
-    ).params(organizationId, outletId).query(UUID::class.java).list()
+    ).params(organizationId, outletId)
+        .query { result, _ -> checkNotNull(result.getObject("id", UUID::class.java)) }
+        .list()
 }

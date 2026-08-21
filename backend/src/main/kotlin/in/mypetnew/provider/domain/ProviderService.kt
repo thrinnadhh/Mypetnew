@@ -2,6 +2,7 @@ package `in`.mypetnew.provider.domain
 
 import `in`.mypetnew.common.auth.AdminPermission
 import `in`.mypetnew.common.auth.Authorizer
+import `in`.mypetnew.common.auth.MerchantPermission
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
@@ -103,15 +104,37 @@ class ProviderService(
         latitude: Double,
         longitude: Double,
     ): ProviderOutlet {
-        Authorizer.requireOutlet(merchant, outletId)
+        Authorizer.requireMerchantPermission(merchant, outletId, MerchantPermission.OUTLET_MANAGE)
+        val outlet = getOutlet(outletId)
+        if (merchant.organizationId == null || outlet.organizationId != merchant.organizationId) resourceUnavailable()
         validateCoordinates(latitude, longitude)
         return persistence.updateDispatchOrigin(outletId, latitude, longitude)
+    }
+
+    /**
+     * Canonical gate for Merchant commands that require an ACTIVE outlet.
+     * Membership, permission and organization are all derived from the reauthorized principal;
+     * request-supplied outlet IDs are only targets to validate.
+     */
+    fun requireActiveOutlet(
+        merchant: Principal,
+        outletId: UUID,
+        permission: MerchantPermission,
+    ): ProviderOutlet {
+        Authorizer.requireMerchantPermission(merchant, outletId, permission)
+        val outlet = getOutlet(outletId)
+        if (
+            outlet.status != ProviderStatus.ACTIVE ||
+            merchant.organizationId == null ||
+            outlet.organizationId != merchant.organizationId
+        ) resourceUnavailable()
+        return outlet
     }
 
     fun allOutlets(): List<ProviderOutlet> = persistence.all()
 
     fun getOutlet(outletId: UUID): ProviderOutlet = persistence.get(outletId)
-        ?: throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+        ?: resourceUnavailable()
 
     private fun validateSubmission(
         name: String,
@@ -143,6 +166,11 @@ class ProviderService(
     private fun invalidCoordinates(): Nothing = throw DomainException(
         "OUTLET_COORDINATES_INVALID",
         "Outlet coordinates must be a valid latitude/longitude pair",
+    )
+
+    private fun resourceUnavailable(): Nothing = throw DomainException(
+        "RESOURCE_NOT_FOUND",
+        "The requested resource is unavailable",
     )
 
     private fun fingerprint(value: String): String = MessageDigest.getInstance("SHA-256")

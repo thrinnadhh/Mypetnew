@@ -57,6 +57,15 @@ CREATE INDEX idx_inventory_movement_tenant_history
 CREATE INDEX idx_inventory_movement_reference
     ON mypet.inventory_movement (organization_id, outlet_id, source_type, source_reference);
 
+-- Pre-M3 movement keys were outlet-scoped. M3 prevents one Merchant actor from changing command
+-- meaning (including outlet) while allowing another actor to use an independently generated key.
+ALTER TABLE mypet.inventory_movement
+    DROP CONSTRAINT uq_inventory_movement_idempotency;
+
+ALTER TABLE mypet.inventory_movement
+    ADD CONSTRAINT uq_inventory_movement_idempotency_actor
+        UNIQUE (outlet_id, actor_id, idempotency_key);
+
 -- Preserve the exact pre-M3 stock projection. If historical movements do not sum to the
 -- current on-hand quantity, append one deterministic system-owned opening movement for the gap.
 WITH ledger AS (
@@ -122,6 +131,7 @@ CREATE TABLE mypet.inventory_command_receipt (
     organization_id UUID NOT NULL REFERENCES mypet.merchant_organization(id),
     outlet_id UUID NOT NULL REFERENCES mypet.provider_outlet(id),
     listing_id UUID NOT NULL REFERENCES mypet.catalog_listing(id),
+    actor_id UUID NOT NULL,
     idempotency_key VARCHAR(128) NOT NULL,
     operation_scope VARCHAR(40) NOT NULL,
     request_fingerprint VARCHAR(64) NOT NULL,
@@ -129,14 +139,14 @@ CREATE TABLE mypet.inventory_command_receipt (
     resulting_on_hand INTEGER NOT NULL,
     resulting_reserved INTEGER NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uq_inventory_receipt_key UNIQUE (outlet_id, idempotency_key),
+    CONSTRAINT uq_inventory_receipt_key UNIQUE (organization_id, actor_id, idempotency_key),
     CHECK (resulting_on_hand >= 0),
     CHECK (resulting_reserved >= 0),
     CHECK (resulting_on_hand >= resulting_reserved)
 );
 
 CREATE INDEX idx_inventory_receipt_tenant_key
-    ON mypet.inventory_command_receipt (organization_id, outlet_id, idempotency_key);
+    ON mypet.inventory_command_receipt (organization_id, outlet_id, actor_id, idempotency_key);
 
 -- One durable publication record per accepted inventory movement. The application inserts the
 -- event in the same PostgreSQL transaction as movement, balance, and receipt.

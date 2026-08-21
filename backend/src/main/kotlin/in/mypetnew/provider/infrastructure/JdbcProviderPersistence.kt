@@ -241,8 +241,7 @@ class JdbcProviderPersistence(
             INSERT INTO mypet.merchant_staff (
                 account_id, organization_id, outlet_id, permission, active
             ) VALUES (?, ?, ?, 'OWNER', TRUE)
-            ON CONFLICT (account_id, outlet_id, permission)
-            DO UPDATE SET organization_id = EXCLUDED.organization_id, active = TRUE
+            ON CONFLICT (account_id, outlet_id, permission) DO NOTHING
             """.trimIndent(),
             actorId,
             organizationId,

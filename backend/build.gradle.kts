@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.testing.Test
+
 plugins {
     kotlin("jvm") version "2.3.21"
     kotlin("plugin.spring") version "2.3.21"
@@ -36,11 +38,39 @@ dependencies {
     testImplementation("org.springframework.security:spring-security-test")
     testImplementation("com.h2database:h2")
     testImplementation("com.tngtech.archunit:archunit-junit5:1.4.1")
+    testImplementation("org.testcontainers:junit-jupiter")
+    testImplementation("org.testcontainers:postgresql")
 }
 
 tasks.test {
     useJUnitPlatform()
     finalizedBy(tasks.jacocoTestReport)
+}
+
+val merchantOperationsTestSourceSet = sourceSets.named("test")
+
+tasks.register<Test>("merchantOpsContractTest") {
+    description = "Runs Merchant Operations contract tests."
+    group = "verification"
+    testClassesDirs = merchantOperationsTestSourceSet.get().output.classesDirs
+    classpath = merchantOperationsTestSourceSet.get().runtimeClasspath
+    useJUnitPlatform { includeTags("merchant-ops-contract") }
+}
+
+tasks.register<Test>("merchantOpsPostgresTest") {
+    description = "Runs real-PostgreSQL Merchant Operations tests."
+    group = "verification"
+    testClassesDirs = merchantOperationsTestSourceSet.get().output.classesDirs
+    classpath = merchantOperationsTestSourceSet.get().runtimeClasspath
+    useJUnitPlatform { includeTags("merchant-ops-postgres") }
+}
+
+tasks.register<Test>("merchantOpsConcurrencyTest") {
+    description = "Runs Merchant Operations concurrency certification tests."
+    group = "verification"
+    testClassesDirs = merchantOperationsTestSourceSet.get().output.classesDirs
+    classpath = merchantOperationsTestSourceSet.get().runtimeClasspath
+    useJUnitPlatform { includeTags("merchant-ops-concurrency") }
 }
 
 tasks.jacocoTestReport {

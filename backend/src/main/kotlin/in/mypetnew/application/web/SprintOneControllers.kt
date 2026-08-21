@@ -1,12 +1,18 @@
 package `in`.mypetnew.application.web
 
 import `in`.mypetnew.catalog.domain.BarcodeType
+import `in`.mypetnew.catalog.domain.CatalogLifecycleCommand
+import `in`.mypetnew.catalog.domain.CatalogSearchPage
+import `in`.mypetnew.catalog.domain.CatalogSearchQuery
 import `in`.mypetnew.catalog.domain.CatalogService
 import `in`.mypetnew.catalog.domain.CommerceMode
 import `in`.mypetnew.catalog.domain.CreateListingCommand
 import `in`.mypetnew.catalog.domain.InventoryService
+import `in`.mypetnew.catalog.domain.Listing
 import `in`.mypetnew.catalog.domain.ListingKind
+import `in`.mypetnew.catalog.domain.ListingStatus
 import `in`.mypetnew.catalog.domain.StockReason
+import `in`.mypetnew.catalog.domain.UpdateListingCommand
 import `in`.mypetnew.commerce.domain.OrderService
 import `in`.mypetnew.commerce.domain.OrderStatus
 import `in`.mypetnew.commerce.domain.ProductOrder
@@ -24,16 +30,19 @@ import `in`.mypetnew.pos.domain.CustomerAssociationChallengeService
 import `in`.mypetnew.pos.domain.PaymentDeclaration
 import `in`.mypetnew.pos.domain.PosService
 import `in`.mypetnew.provider.domain.ProviderCapability
+import `in`.mypetnew.provider.domain.ProviderOutlet
 import `in`.mypetnew.provider.domain.ProviderService
 import `in`.mypetnew.provider.domain.ProviderStatus
 import org.slf4j.MDC
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import java.util.UUID
 
@@ -84,6 +93,29 @@ data class CreateListingRequest(
     val imageUrls: List<String>? = null,
 )
 
+data class UpdateListingRequest(
+    val outletId: UUID,
+    val expectedVersion: Long,
+    val name: String,
+    val mrpPaise: Long,
+    val sellingPricePaise: Long,
+    val category: String,
+    val brand: String? = null,
+    val description: String? = null,
+    val petType: String? = null,
+    val lifeStage: String? = null,
+    val packLabel: String? = null,
+    val sku: String? = null,
+)
+
+data class CatalogLifecycleRequest(val outletId: UUID, val expectedVersion: Long)
+
+data class MerchantCatalogContextResponse(
+    val organizationId: UUID?,
+    val outletIds: List<UUID>,
+    val permissionsByOutlet: Map<UUID, Set<MerchantPermission>>,
+)
+
 @RestController
 @RequestMapping("/api/v1/merchant")
 class CatalogInventoryApiController(
@@ -91,12 +123,23 @@ class CatalogInventoryApiController(
     private val catalog: CatalogService,
     private val inventory: InventoryService,
 ) {
+    @GetMapping("/context")
+    fun context(authentication: Authentication): MerchantCatalogContextResponse {
+        val principal = authentication.domainPrincipal()
+        Authorizer.requireRole(principal, Role.MERCHANT)
+        return MerchantCatalogContextResponse(
+            organizationId = principal.organizationId,
+            outletIds = principal.outletIds.sortedBy(UUID::toString),
+            permissionsByOutlet = principal.merchantPermissionsByOutlet,
+        )
+    }
+
     @PostMapping("/listings")
     fun createListing(
         authentication: Authentication,
         @RequestHeader("Idempotency-Key") idempotencyKey: String,
         @RequestBody request: CreateListingRequest,
-    ): `in`.mypetnew.catalog.domain.Listing {
+    ): Listing {
         val principal = authentication.domainPrincipal()
         val outlet = providers.requireActiveOutlet(
             principal,
@@ -124,7 +167,100 @@ class CatalogInventoryApiController(
                 imageUrls = request.imageUrls.orEmpty(),
             ),
             idempotencyKey,
+            principal.actorId,
         )
+    }
+
+    @GetMapping("/listings")
+    fun searchListings(
+        authentication: Authentication,
+        @RequestParam outletId: UUID,
+        @RequestParam(required = false) query: String?,
+        @RequestParam(required = false) status: ListingStatus?,
+        @RequestParam(defaultValue = "0") page: Int,
+        @RequestParam(defaultValue = "25") pageSize: Int,
+    ): CatalogSearchPage {
+        val principal = authentication.domainPrincipal()
+        val outlet = requireCatalogRead(principal, outletId)
+        return catalog.searchManagedListings(
+            CatalogSearchQuery(
+                organizationId = outlet.organizationId,
+                outletId = outlet.id,
+                query = query,
+                status = status,
+                page = page,
+                pageSize = pageSize,
+            ),
+        )
+    }
+
+    @GetMapping("/listings/{listingId}")
+    fun getListing(
+        authentication: Authentication,
+        @PathVariable listingId: UUID,
+        @RequestParam outletId: UUID,
+    ): Listing {
+        val principal = authentication.domainPrincipal()
+        val outlet = requireCatalogRead(principal, outletId)
+        return catalog.getManagedListing(outlet.organizationId, outlet.id, listingId)
+    }
+
+    @PatchMapping("/listings/{listingId}")
+    fun updateListing(
+        authentication: Authentication,
+        @PathVariable listingId: UUID,
+        @RequestHeader("Idempotency-Key") idempotencyKey: String,
+        @RequestBody request: UpdateListingRequest,
+    ): Listing {
+        val principal = authentication.domainPrincipal()
+        val outlet = providers.requireActiveOutlet(principal, request.outletId, MerchantPermission.CATALOG_WRITE)
+        return catalog.updateListing(
+            UpdateListingCommand(
+                organizationId = outlet.organizationId,
+                outletId = outlet.id,
+                listingId = listingId,
+                expectedVersion = request.expectedVersion,
+                name = request.name,
+                mrpPaise = request.mrpPaise,
+                sellingPricePaise = request.sellingPricePaise,
+                category = request.category,
+                brand = request.brand,
+                description = request.description,
+                petType = request.petType,
+                lifeStage = request.lifeStage,
+                packLabel = request.packLabel,
+                sku = request.sku,
+                capabilities = outlet.capabilities,
+            ),
+            idempotencyKey,
+            principal.actorId,
+        )
+    }
+
+    @PostMapping("/listings/{listingId}/deactivate")
+    fun deactivateListing(
+        authentication: Authentication,
+        @PathVariable listingId: UUID,
+        @RequestHeader("Idempotency-Key") idempotencyKey: String,
+        @RequestBody request: CatalogLifecycleRequest,
+    ): Listing = changeLifecycle(authentication, listingId, idempotencyKey, request, ListingStatus.INACTIVE)
+
+    @PostMapping("/listings/{listingId}/activate")
+    fun activateListing(
+        authentication: Authentication,
+        @PathVariable listingId: UUID,
+        @RequestHeader("Idempotency-Key") idempotencyKey: String,
+        @RequestBody request: CatalogLifecycleRequest,
+    ): Listing = changeLifecycle(authentication, listingId, idempotencyKey, request, ListingStatus.ACTIVE)
+
+    @GetMapping("/listings/{listingId}/history")
+    fun listingHistory(
+        authentication: Authentication,
+        @PathVariable listingId: UUID,
+        @RequestParam outletId: UUID,
+    ) = authentication.domainPrincipal().let { principal ->
+        val outlet = requireCatalogRead(principal, outletId)
+        catalog.listHistory(outlet.organizationId, outlet.id, listingId)
     }
 
     data class ReceiveStockRequest(val outletId: UUID, val listingId: UUID, val quantity: Int)
@@ -152,6 +288,36 @@ class CatalogInventoryApiController(
             actorId = principal.actorId,
             traceId = currentTraceId(),
         )
+    }
+
+    private fun changeLifecycle(
+        authentication: Authentication,
+        listingId: UUID,
+        idempotencyKey: String,
+        request: CatalogLifecycleRequest,
+        target: ListingStatus,
+    ): Listing {
+        val principal = authentication.domainPrincipal()
+        val outlet = providers.requireActiveOutlet(principal, request.outletId, MerchantPermission.CATALOG_WRITE)
+        return catalog.changeLifecycle(
+            CatalogLifecycleCommand(
+                organizationId = outlet.organizationId,
+                outletId = outlet.id,
+                listingId = listingId,
+                expectedVersion = request.expectedVersion,
+                targetStatus = target,
+                capabilities = outlet.capabilities,
+            ),
+            idempotencyKey,
+            principal.actorId,
+        )
+    }
+
+    private fun requireCatalogRead(principal: Principal, outletId: UUID): ProviderOutlet {
+        Authorizer.requireOutlet(principal, outletId)
+        val outlet = providers.getOutlet(outletId)
+        if (principal.organizationId == null || outlet.organizationId != principal.organizationId) resourceUnavailable()
+        return outlet
     }
 }
 

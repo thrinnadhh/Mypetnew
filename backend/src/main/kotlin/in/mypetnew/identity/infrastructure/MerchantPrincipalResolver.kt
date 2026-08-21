@@ -1,5 +1,6 @@
 package `in`.mypetnew.identity.infrastructure
 
+import `in`.mypetnew.common.auth.MerchantPermission
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
@@ -41,22 +42,35 @@ class JdbcMerchantPrincipalResolver(
         ).param("account_id", accountId).query(Int::class.java).single() == 1
         if (!authorized) invalidSession()
 
-        val organizations = jdbc.sql(
+        val memberships = jdbc.sql(
             """
-            SELECT DISTINCT organization_id
-            FROM mypet.merchant_staff
-            WHERE account_id = :account_id AND active = TRUE
+            SELECT s.organization_id, s.outlet_id, s.permission
+            FROM mypet.merchant_staff s
+            JOIN mypet.provider_outlet o
+              ON o.id = s.outlet_id
+             AND o.organization_id = s.organization_id
+            WHERE s.account_id = :account_id
+              AND s.active = TRUE
+            ORDER BY s.organization_id, s.outlet_id, s.permission
             """.trimIndent(),
-        ).param("account_id", accountId).query(UUID::class.java).list().filterNotNull()
+        ).param("account_id", accountId).query { result, _ ->
+            val permission = runCatching {
+                MerchantPermission.valueOf(result.getString("permission"))
+            }.getOrElse { invalidSession() }
+            MerchantMembership(
+                organizationId = result.getObject("organization_id", UUID::class.java),
+                outletId = result.getObject("outlet_id", UUID::class.java),
+                permission = permission,
+            )
+        }.list()
+
+        val organizations = memberships.map { it.organizationId }.distinct()
         if (organizations.size > 1) invalidSession()
 
-        val outlets: Set<UUID> = jdbc.sql(
-            """
-            SELECT DISTINCT outlet_id
-            FROM mypet.merchant_staff
-            WHERE account_id = :account_id AND active = TRUE
-            """.trimIndent(),
-        ).param("account_id", accountId).query(UUID::class.java).list().filterNotNull().toSet()
+        val outlets = memberships.map { it.outletId }.toSet()
+        val merchantPermissions = memberships
+            .groupBy(MerchantMembership::outletId, MerchantMembership::permission)
+            .mapValues { (_, permissions) -> permissions.toSet() }
 
         return Principal(
             actorId = accountId,
@@ -64,6 +78,7 @@ class JdbcMerchantPrincipalResolver(
             organizationId = organizations.singleOrNull(),
             outletIds = outlets,
             sessionId = sessionId,
+            merchantPermissionsByOutlet = merchantPermissions,
         )
     }
 
@@ -75,5 +90,11 @@ class JdbcMerchantPrincipalResolver(
     private fun invalidSession(): Nothing = throw DomainException(
         "SESSION_INVALID",
         "The session cannot be created",
+    )
+
+    private data class MerchantMembership(
+        val organizationId: UUID,
+        val outletId: UUID,
+        val permission: MerchantPermission,
     )
 }

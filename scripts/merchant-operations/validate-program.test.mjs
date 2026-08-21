@@ -108,6 +108,11 @@ test("unknown dependencies and incomplete dependency closure fail closed", () =>
 
 test("completed sprint with planned obligation fails closed", () => {
   const root = validFixture();
+  mutateJson(root, "contracts/merchant-operations/test-obligations.json", (document) => {
+    const obligation = document.obligations.find((candidate) => candidate.id === "M1-AUTH-001");
+    obligation.status = "PLANNED";
+    obligation.evidence = [];
+  });
   mutateJson(root, "contracts/merchant-operations/program-state.json", (document) => document.completedSprints.push("M1"));
   expectFailure(root, /still has planned obligation M1-AUTH-001/);
 });

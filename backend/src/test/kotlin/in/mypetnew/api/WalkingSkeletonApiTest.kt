@@ -3,6 +3,7 @@ package `in`.mypetnew.api
 import `in`.mypetnew.application.MyPetNewApplication
 import `in`.mypetnew.application.security.BearerTokenService
 import `in`.mypetnew.common.auth.AdminPermission
+import `in`.mypetnew.common.auth.MerchantPermission
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -66,6 +67,7 @@ class WalkingSkeletonApiTest {
             Role.MERCHANT,
             organizationId = organizationId,
             outletIds = setOf(outletId),
+            merchantPermissionsByOutlet = mapOf(outletId to setOf(MerchantPermission.OWNER)),
         )
         val merchantToken = tokens.issue(merchant)
         post(

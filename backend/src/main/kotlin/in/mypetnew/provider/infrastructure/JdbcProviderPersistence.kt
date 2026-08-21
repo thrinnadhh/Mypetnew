@@ -28,7 +28,10 @@ class JdbcProviderPersistence(
     ): ProviderOutlet {
         try {
             return transactions.execute {
-                replaySubmission(merchant.actorId, idempotencyKey, requestFingerprint)?.let { return@execute it }
+                replaySubmission(merchant.actorId, idempotencyKey, requestFingerprint)?.let { replay ->
+                    ensureOwnerMembership(merchant.actorId, replay.organizationId, replay.id)
+                    return@execute replay
+                }
                 val organizationId = resolveOrganization(merchant, name)
                 val outletId = UUID.randomUUID()
                 jdbc.update(
@@ -50,6 +53,7 @@ class JdbcProviderPersistence(
                     idempotencyKey,
                     requestFingerprint,
                 )
+                ensureOwnerMembership(merchant.actorId, organizationId, outletId)
                 capabilities.forEach { capability ->
                     jdbc.update(
                         """
@@ -73,7 +77,10 @@ class JdbcProviderPersistence(
                 get(outletId) ?: throw IllegalStateException("Provider insert was not readable")
             }
         } catch (duplicate: DuplicateKeyException) {
-            replaySubmission(merchant.actorId, idempotencyKey, requestFingerprint)?.let { return it }
+            replaySubmission(merchant.actorId, idempotencyKey, requestFingerprint)?.let { replay ->
+                ensureOwnerMembership(merchant.actorId, replay.organizationId, replay.id)
+                return replay
+            }
             throw DomainException("PROVIDER_CONFLICT", "Provider onboarding changed concurrently; refresh and retry")
         }
     }
@@ -226,6 +233,20 @@ class JdbcProviderPersistence(
                 merchant.actorId,
             ).singleOrNull() ?: throw duplicate
         }
+    }
+
+    private fun ensureOwnerMembership(actorId: UUID, organizationId: UUID, outletId: UUID) {
+        jdbc.update(
+            """
+            INSERT INTO mypet.merchant_staff (
+                account_id, organization_id, outlet_id, permission, active
+            ) VALUES (?, ?, ?, 'OWNER', TRUE)
+            ON CONFLICT (account_id, outlet_id, permission) DO NOTHING
+            """.trimIndent(),
+            actorId,
+            organizationId,
+            outletId,
+        )
     }
 
     private fun replaySubmission(

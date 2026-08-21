@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver
 import java.sql.DriverManager
 import java.util.UUID
 
@@ -21,7 +22,10 @@ class FlywaySchemaContractTest {
             .load()
 
         val result = flyway.migrate()
-        assertEquals(21, result.migrationsExecuted)
+        val migrationCount = PathMatchingResourcePatternResolver()
+            .getResources("classpath*:db/migration/V*.sql")
+            .size
+        assertEquals(migrationCount, result.migrationsExecuted)
 
         DriverManager.getConnection(url, "sa", "").use { connection ->
             val tables = connection.prepareStatement(

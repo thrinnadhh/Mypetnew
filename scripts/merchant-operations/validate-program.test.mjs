@@ -30,40 +30,24 @@ function dependencies() {
 
 function validFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mypetnew-program-"));
-  writeJson(root, "contracts/merchant-operations/invariants.json", {
-    schemaVersion: 1,
-    invariants: [{ id: "MO-TEST-001", owner: "delivery", severity: "CRITICAL", description: "Tests are honest." }],
-  });
+  const sourceContracts = path.join(repositoryRoot, "contracts/merchant-operations");
+  for (const name of ["invariants.json", "test-obligations.json"]) {
+    write(root, `contracts/merchant-operations/${name}`, fs.readFileSync(path.join(sourceContracts, name), "utf8"));
+  }
   writeJson(root, "contracts/merchant-operations/sprint-dependencies.json", { schemaVersion: 1, dependencies: dependencies() });
   writeJson(root, "contracts/merchant-operations/program-state.json", {
     schemaVersion: 1,
     baselineMainSha: "a".repeat(40),
     completedSprints: ["M0"],
   });
-  const obligations = [{
-    id: "M0-GATE-001",
-    sprint: "M0",
-    category: "PROGRAM",
-    severity: "CRITICAL",
-    status: "ENFORCED",
-    invariantIds: ["MO-TEST-001"],
-    description: "The gate is tested.",
-    evidence: ["evidence/gate.test.ts"],
-  }];
-  for (let index = 1; index <= 13; index += 1) {
-    obligations.push({
-      id: `M${index}-GATE-001`,
-      sprint: `M${index}`,
-      category: "PROGRAM",
-      severity: "HIGH",
-      status: "PLANNED",
-      invariantIds: ["MO-TEST-001"],
-      description: `M${index} planned evidence.`,
-      evidence: [],
-    });
+  const obligationsPath = path.join(root, "contracts/merchant-operations/test-obligations.json");
+  const obligationsDocument = JSON.parse(fs.readFileSync(obligationsPath, "utf8"));
+  for (const obligation of obligationsDocument.obligations) {
+    if (obligation.status !== "ENFORCED") continue;
+    obligation.evidence = [`evidence/${obligation.id}.test.ts`];
+    write(root, obligation.evidence[0], "test('gate', () => expect(true).toBe(true));\n");
   }
-  writeJson(root, "contracts/merchant-operations/test-obligations.json", { schemaVersion: 1, obligations });
-  write(root, "evidence/gate.test.ts", "test('gate', () => expect(true).toBe(true));\n");
+  fs.writeFileSync(obligationsPath, `${JSON.stringify(obligationsDocument, null, 2)}\n`);
   write(root, ".github/workflows/merchant-operations-contract.yml", "name: fixture\n");
   write(root, ".github/pull_request_template.md", "# fixture\n");
   write(root, "scripts/merchant-operations/verify-forward-migrations.sh", "#!/usr/bin/env bash\n");
@@ -89,13 +73,27 @@ function expectFailure(root, pattern) {
 
 test("valid program manifest and evidence pass", () => {
   const root = validFixture();
-  assert.deepEqual(validateProgram(root), { completedSprints: ["M0"], invariantCount: 1, obligationCount: 14 });
+  assert.deepEqual(validateProgram(root), { completedSprints: ["M0"], invariantCount: 22, obligationCount: 27 });
 });
 
 test("duplicate invariant IDs fail closed", () => {
   const root = validFixture();
   mutateJson(root, "contracts/merchant-operations/invariants.json", (document) => document.invariants.push({ ...document.invariants[0] }));
   expectFailure(root, /Duplicate invariant ID/);
+});
+
+test("required invariants and obligations cannot be silently removed", () => {
+  const root = validFixture();
+  mutateJson(root, "contracts/merchant-operations/invariants.json", (document) => {
+    document.invariants = document.invariants.filter((invariant) => invariant.id !== "MO-INV-001");
+  });
+  expectFailure(root, /Required invariant is missing: MO-INV-001/);
+
+  const secondRoot = validFixture();
+  mutateJson(secondRoot, "contracts/merchant-operations/test-obligations.json", (document) => {
+    document.obligations = document.obligations.filter((obligation) => obligation.id !== "M9-RACE-001");
+  });
+  expectFailure(secondRoot, /Required test obligation is missing: M9-RACE-001/);
 });
 
 test("unknown dependencies and incomplete dependency closure fail closed", () => {
@@ -111,17 +109,17 @@ test("unknown dependencies and incomplete dependency closure fail closed", () =>
 test("completed sprint with planned obligation fails closed", () => {
   const root = validFixture();
   mutateJson(root, "contracts/merchant-operations/program-state.json", (document) => document.completedSprints.push("M1"));
-  expectFailure(root, /still has planned obligation M1-GATE-001/);
+  expectFailure(root, /still has planned obligation M1-AUTH-001/);
 });
 
 test("missing evidence and disabled or focused evidence fail closed", () => {
   const root = validFixture();
-  fs.rmSync(path.join(root, "evidence/gate.test.ts"));
+  fs.rmSync(path.join(root, "evidence/M0-GATE-001.test.ts"));
   expectFailure(root, /evidence does not exist/);
 
   const focusedRoot = validFixture();
   const focusedCall = ["test", "only"].join(".");
-  write(focusedRoot, "evidence/gate.test.ts", `${focusedCall}('bad', () => {});\n`);
+  write(focusedRoot, "evidence/M0-GATE-001.test.ts", `${focusedCall}('bad', () => {});\n`);
   expectFailure(focusedRoot, /skipped or focused test/i);
 });
 

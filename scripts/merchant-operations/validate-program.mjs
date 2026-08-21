@@ -12,6 +12,19 @@ const obligationIdPattern = /^M(?:[0-9]|1[0-3])-[A-Z0-9]+-[0-9]{3}$/;
 const sprintIdPattern = /^M(?:[0-9]|1[0-3])$/;
 const allowedStatuses = new Set(["PLANNED", "ENFORCED"]);
 const allowedSeverities = new Set(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
+const requiredInvariantIds = new Set([
+  "MO-AUTH-001", "MO-AUTH-002", "MO-AUTH-003", "MO-INV-001", "MO-INV-002", "MO-INV-003",
+  "MO-IDEM-001", "MO-IDEM-002", "MO-CONC-001", "MO-OFF-001", "MO-OFF-002", "MO-OFF-003",
+  "MO-CUST-001", "MO-CUST-002", "MO-BC-001", "MO-BC-002", "MO-MONEY-001", "MO-MED-001",
+  "MO-AUDIT-001", "MO-POS-001", "MO-MIG-001", "MO-TEST-001",
+]);
+const requiredObligationIds = new Set([
+  "M0-GATE-001", "M0-MIG-001", "M0-PG-001", "M0-MOBILE-001", "M0-CUST-001",
+  "M1-AUTH-001", "M1-AUTH-002", "M2-CAT-001", "M2-CAT-002", "M3-INV-001", "M3-INV-002",
+  "M4-BC-001", "M4-MEDIA-001", "M5-OFF-001", "M6-SYNC-001", "M6-SYNC-002", "M7-DRAFT-001",
+  "M8-COUNT-001", "M8-OPS-001", "M9-RACE-001", "M9-ORDER-001", "M10-CUST-001", "M10-QUERY-001",
+  "M11-OPS-001", "M12-ADMIN-001", "M13-E2E-001", "M13-DEVICE-001",
+]);
 const skippedWord = ["sk", "ip"].join("");
 const focusedWord = ["on", "ly"].join("");
 const pendingWord = ["to", "do"].join("");
@@ -200,11 +213,15 @@ export function validateProgram(root = defaultRoot) {
   });
   assertUnique(invariantIds, "invariant ID");
   const invariantSet = new Set(invariantIds);
+  for (const requiredId of requiredInvariantIds) {
+    if (!invariantSet.has(requiredId)) fail(`Required invariant is missing: ${requiredId}`);
+  }
 
   const completedSprints = requireArray(stateDocument.completedSprints, "completedSprints");
   if (!/^[0-9a-f]{40}$/.test(stateDocument.baselineMainSha ?? "")) fail("baselineMainSha must be a full Git SHA");
   validateDependencyGraph(dependenciesDocument.dependencies ?? {}, completedSprints);
   const completed = new Set(completedSprints);
+  if (!completed.has("M0")) fail("M0 cannot be removed from completedSprints after the program foundation is established");
 
   const obligations = requireArray(obligationsDocument.obligations, "obligations");
   const obligationIds = obligations.map((obligation, index) => {
@@ -231,6 +248,10 @@ export function validateProgram(root = defaultRoot) {
     return id;
   });
   assertUnique(obligationIds, "obligation ID");
+  const obligationSet = new Set(obligationIds);
+  for (const requiredId of requiredObligationIds) {
+    if (!obligationSet.has(requiredId)) fail(`Required test obligation is missing: ${requiredId}`);
+  }
 
   for (const sprint of Object.keys(dependenciesDocument.dependencies)) {
     if (!obligations.some((obligation) => obligation.sprint === sprint)) fail(`Sprint ${sprint} has no test obligation`);

@@ -29,4 +29,4 @@ jobs:
       - name: Verify Merchant Operations program contract
         run: ./scripts/verify-merchant-operations.sh
       - name: Verify patch whitespace
-        run: git diff --check
+        run: git diff --check "origin/${GITHUB_BASE_REF:-main}...HEAD"

@@ -1,9 +1,12 @@
 import type { MerchantListing } from './api';
 import {
   canWriteCatalog,
+  catalogEditorTitle,
   catalogErrorMessage,
   catalogFormFromListing,
   catalogIdentitySummary,
+  catalogListingCard,
+  catalogOutletLabel,
   catalogPageLabel,
   catalogSearchOptions,
   catalogStatusSuccessMessage,
@@ -195,5 +198,27 @@ describe('M2 Merchant catalog view model', () => {
     expect(catalogIdentitySummary(listing)).toBe('PRODUCT · GTIN_13 · 4006381333931');
     expect(catalogPageLabel(0)).toBe('Page 1');
     expect(catalogPageLabel(4)).toBe('Page 5');
+  });
+
+  it('models editor and outlet labels without leaking full outlet identifiers', () => {
+    expect(catalogEditorTitle(null)).toBe('Create listing');
+    expect(catalogEditorTitle(listing)).toBe('Edit Dental Chew');
+    expect(catalogOutletLabel('12345678-aaaa-bbbb-cccc-123456789000', null)).toBe('12345678');
+    expect(catalogOutletLabel('12345678-aaaa-bbbb-cccc-123456789000', '12345678-aaaa-bbbb-cccc-123456789000')).toBe('✓ 12345678');
+  });
+
+  it('models active and inactive listing cards consistently', () => {
+    expect(catalogListingCard(listing)).toEqual({
+      stateLine: 'ACTIVE · v7 · COMMERCE',
+      priceLine: '₹219.00 · MRP ₹250.00',
+      metadataLine: 'treats',
+      actionLabel: 'Deactivate',
+    });
+    expect(catalogListingCard({ ...listing, status: 'INACTIVE', sku: 'SKU-9' })).toEqual({
+      stateLine: 'INACTIVE · v7 · COMMERCE',
+      priceLine: '₹219.00 · MRP ₹250.00',
+      metadataLine: 'treats · SKU SKU-9',
+      actionLabel: 'Activate',
+    });
   });
 });

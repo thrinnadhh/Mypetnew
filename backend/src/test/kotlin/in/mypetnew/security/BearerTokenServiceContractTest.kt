@@ -2,12 +2,13 @@ package `in`.mypetnew.security
 
 import `in`.mypetnew.application.security.BearerTokenService
 import `in`.mypetnew.application.security.SecurityProperties
+import `in`.mypetnew.common.auth.MerchantPermission
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
 import java.time.Clock
-import java.time.Instant
 import java.time.Duration
+import java.time.Instant
 import java.time.ZoneOffset
 import java.util.UUID
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -37,5 +38,24 @@ class BearerTokenServiceContractTest {
             val expiredClock = Clock.fixed(clock.instant().plus(Duration.ofMinutes(15)), ZoneOffset.UTC)
             BearerTokenService(SecurityProperties(secret, "mypet-api", "customer-app"), expiredClock).verify(token)
         }
+    }
+
+    @Test
+    fun `merchant outlet permission claims round trip without widening scope`() {
+        val outletA = UUID.randomUUID()
+        val outletB = UUID.randomUUID()
+        val principal = Principal(
+            actorId = UUID.randomUUID(),
+            role = Role.MERCHANT,
+            organizationId = UUID.randomUUID(),
+            outletIds = setOf(outletA, outletB),
+            merchantPermissionsByOutlet = mapOf(
+                outletA to setOf(MerchantPermission.CATALOG_WRITE, MerchantPermission.INVENTORY_WRITE),
+                outletB to setOf(MerchantPermission.POS_OPERATE),
+            ),
+        )
+        val tokens = BearerTokenService(SecurityProperties(secret, "mypet-api", "merchant-app"), clock)
+
+        assertEquals(principal, tokens.verify(tokens.issue(principal)))
     }
 }

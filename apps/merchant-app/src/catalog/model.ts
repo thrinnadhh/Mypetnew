@@ -63,6 +63,12 @@ export function canWriteCatalog(permissions: Record<string, string[]>, outletId:
   return granted.includes('OWNER') || granted.includes('CATALOG_WRITE');
 }
 
+export function catalogAccessNotice(outletId: string | null, loading: boolean, canWrite: boolean): string | null {
+  if (!outletId && !loading) return 'No authorized Merchant outlet is available.';
+  if (outletId && !canWrite) return 'Read only: CATALOG_WRITE is not currently granted for this outlet.';
+  return null;
+}
+
 export function catalogErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) return 'The catalog action could not be completed.';
   if (error.name === 'CATALOG_VERSION_CONFLICT') {

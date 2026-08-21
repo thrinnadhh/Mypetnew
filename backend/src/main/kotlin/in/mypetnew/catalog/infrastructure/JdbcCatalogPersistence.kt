@@ -88,7 +88,7 @@ class JdbcCatalogPersistence(
                     ?: persistenceError()
                 insertHistory(null, created, CatalogMutationType.CREATE, actorId)
                 created
-            } ?: persistenceError()
+            }
         } catch (duplicateKey: DuplicateKeyException) {
             replayCreate(command.outletId, actionKey, requestFingerprint)?.let { return it }
             findByBarcode(command.organizationId, command.outletId, command.barcodeType, normalizedBarcode)?.let { existing ->
@@ -152,7 +152,7 @@ class JdbcCatalogPersistence(
                 insertHistory(current, updated, CatalogMutationType.UPDATE, actorId)
                 insertReceipt(updated, CatalogMutationType.UPDATE, actionKey, requestFingerprint)
                 updated
-            } ?: persistenceError()
+            }
         } catch (duplicateKey: DuplicateKeyException) {
             replayMutation(command.outletId, actionKey, requestFingerprint)?.let { return it }
             throw DomainException("CATALOG_CONFLICT", "The catalog changed concurrently; refresh and retry")
@@ -197,7 +197,7 @@ class JdbcCatalogPersistence(
                 insertHistory(current, updated, mutation, actorId)
                 insertReceipt(updated, mutation, actionKey, requestFingerprint)
                 updated
-            } ?: persistenceError()
+            }
         } catch (duplicateKey: DuplicateKeyException) {
             replayMutation(command.outletId, actionKey, requestFingerprint)?.let { return it }
             throw DomainException("CATALOG_CONFLICT", "The catalog changed concurrently; refresh and retry")

@@ -19,6 +19,8 @@ import `in`.mypetnew.merchantops.testsupport.MerchantOpsContract
 import `in`.mypetnew.merchantops.testsupport.MerchantOpsPostgres
 import `in`.mypetnew.merchantops.testsupport.PostgresTestDatabase
 import `in`.mypetnew.provider.domain.ProviderCapability
+import `in`.mypetnew.provider.domain.ProviderService
+import `in`.mypetnew.provider.infrastructure.JdbcProviderPersistence
 import org.flywaydb.core.Flyway
 import org.flywaydb.core.api.MigrationVersion
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -45,7 +47,7 @@ class M2CatalogPostgresContractTest {
         val scope = seedScope(context.jdbc, actorId, "OWNER")
 
         val created = context.catalog.createListing(
-            productCommand(scope.organizationId, scope.outletId, "8901234567894", "Premium Dog Food"),
+            productCommand(scope.organizationId, scope.outletId, "8901234567890", "Premium Dog Food"),
             "m2-create-1",
             actorId,
         )
@@ -144,7 +146,7 @@ class M2CatalogPostgresContractTest {
         val actorId = createMerchant(context.jdbc, "+919300000002")
         val scope = seedScope(context.jdbc, actorId, "CATALOG_WRITE")
         val created = context.catalog.createListing(
-            productCommand(scope.organizationId, scope.outletId, "8901234567801", "Stale Safe"),
+            productCommand(scope.organizationId, scope.outletId, "8901234567807", "Stale Safe"),
             "m2-stale-create",
             actorId,
         )
@@ -171,12 +173,12 @@ class M2CatalogPostgresContractTest {
         val actorId = createMerchant(context.jdbc, "+919300000003")
         val scope = seedScope(context.jdbc, actorId, "CATALOG_WRITE")
         val first = context.catalog.createListing(
-            productCommand(scope.organizationId, scope.outletId, "8901234567818", "Alpha Food").copy(sku = "SHARED-SKU"),
+            productCommand(scope.organizationId, scope.outletId, "8901234567814", "Alpha Food").copy(sku = "SHARED-SKU"),
             "m2-idem-create",
             actorId,
         )
         val replay = context.catalog.createListing(
-            productCommand(scope.organizationId, scope.outletId, "8901234567818", "Alpha Food").copy(sku = "SHARED-SKU"),
+            productCommand(scope.organizationId, scope.outletId, "8901234567814", "Alpha Food").copy(sku = "SHARED-SKU"),
             "m2-idem-create",
             actorId,
         )
@@ -185,7 +187,7 @@ class M2CatalogPostgresContractTest {
 
         val mismatch = assertThrows(DomainException::class.java) {
             context.catalog.createListing(
-                productCommand(scope.organizationId, scope.outletId, "8901234567818", "Mutated replay"),
+                productCommand(scope.organizationId, scope.outletId, "8901234567814", "Mutated replay"),
                 "m2-idem-create",
                 actorId,
             )
@@ -194,7 +196,7 @@ class M2CatalogPostgresContractTest {
 
         val duplicate = assertThrows(DomainException::class.java) {
             context.catalog.createListing(
-                productCommand(scope.organizationId, scope.outletId, "8901234567818", "Different duplicate"),
+                productCommand(scope.organizationId, scope.outletId, "8901234567814", "Different duplicate"),
                 "m2-duplicate-key",
                 actorId,
             )
@@ -202,12 +204,12 @@ class M2CatalogPostgresContractTest {
         assertEquals("CATALOG_DUPLICATE", duplicate.code)
 
         val second = context.catalog.createListing(
-            productCommand(scope.organizationId, scope.outletId, "8901234567825", "Beta Food").copy(sku = "SHARED-SKU"),
+            productCommand(scope.organizationId, scope.outletId, "8901234567821", "Beta Food").copy(sku = "SHARED-SKU"),
             "m2-create-beta",
             actorId,
         )
         context.catalog.createListing(
-            productCommand(scope.organizationId, scope.outletId, "8901234567832", "Gamma Treat"),
+            productCommand(scope.organizationId, scope.outletId, "8901234567838", "Gamma Treat"),
             "m2-create-gamma",
             actorId,
         )
@@ -257,7 +259,7 @@ class M2CatalogPostgresContractTest {
         val merchantB = createMerchant(context.jdbc, "+919300000005")
         val scopeB = seedScope(context.jdbc, merchantB, "CATALOG_WRITE")
         val listingB = context.catalog.createListing(
-            productCommand(scopeB.organizationId, scopeB.outletId, "8901234567849", "Merchant B Private"),
+            productCommand(scopeB.organizationId, scopeB.outletId, "8901234567845", "Merchant B Private"),
             "m2-private-b",
             merchantB,
         )
@@ -284,13 +286,14 @@ class M2CatalogPostgresContractTest {
 
         context.jdbc.update("UPDATE mypet.provider_outlet SET status = 'SUSPENDED' WHERE id = ?", scopeB.outletId)
         val principalB = resolver.resolve(merchantB, UUID.randomUUID())
-        assertThrows(DomainException::class.java) {
-            `in`.mypetnew.provider.domain.ProviderService().requireActiveOutlet(
+        val suspended = assertThrows(DomainException::class.java) {
+            context.providers.requireActiveOutlet(
                 principalB,
                 scopeB.outletId,
                 MerchantPermission.CATALOG_WRITE,
             )
         }
+        assertEquals("RESOURCE_NOT_FOUND", suspended.code)
     }
 
     @Test
@@ -332,7 +335,7 @@ class M2CatalogPostgresContractTest {
         val actorId = createMerchant(context.jdbc, "+919300000007")
         val scope = seedScope(context.jdbc, actorId, "OWNER")
         val listing = context.catalog.createListing(
-            productCommand(scope.organizationId, scope.outletId, "8901234567856", "Race Listing"),
+            productCommand(scope.organizationId, scope.outletId, "8901234567852", "Race Listing"),
             "m2-race-create",
             actorId,
         )
@@ -367,15 +370,15 @@ class M2CatalogPostgresContractTest {
         assertEquals(1, updateVsDeactivate.count { it.exceptionOrNull() is DomainException && (it.exceptionOrNull() as DomainException).code == "CATALOG_VERSION_CONFLICT" })
 
         val duplicateResults = race(
-            { context.catalog.createListing(productCommand(scope.organizationId, scope.outletId, "8901234567863", "Duplicate Race"), "m2-dup-a", actorId) },
-            { context.catalog.createListing(productCommand(scope.organizationId, scope.outletId, "8901234567863", "Duplicate Race"), "m2-dup-b", actorId) },
+            { context.catalog.createListing(productCommand(scope.organizationId, scope.outletId, "8901234567869", "Duplicate Race"), "m2-dup-a", actorId) },
+            { context.catalog.createListing(productCommand(scope.organizationId, scope.outletId, "8901234567869", "Duplicate Race"), "m2-dup-b", actorId) },
         )
         assertTrue(duplicateResults.all { it.isSuccess })
         assertEquals(duplicateResults[0].getOrThrow().id, duplicateResults[1].getOrThrow().id)
         assertEquals(
             1,
             context.jdbc.queryForObject(
-                "SELECT COUNT(*) FROM mypet.catalog_listing WHERE outlet_id = ? AND normalized_barcode = '8901234567863'",
+                "SELECT COUNT(*) FROM mypet.catalog_listing WHERE outlet_id = ? AND normalized_barcode = '8901234567869'",
                 Int::class.java,
                 scope.outletId,
             ),
@@ -394,12 +397,12 @@ class M2CatalogPostgresContractTest {
         PostgresTestDatabase.resetAndMigrate()
         val dataSource = PostgresTestDatabase.dataSource()
         val jdbc = JdbcTemplate(dataSource)
+        val transactions = TransactionTemplate(DataSourceTransactionManager(dataSource))
         return Context(
             dataSource = dataSource,
             jdbc = jdbc,
-            catalog = CatalogService(
-                JdbcCatalogPersistence(jdbc, TransactionTemplate(DataSourceTransactionManager(dataSource))),
-            ),
+            catalog = CatalogService(JdbcCatalogPersistence(jdbc, transactions)),
+            providers = ProviderService(JdbcProviderPersistence(jdbc, transactions)),
         )
     }
 
@@ -483,5 +486,10 @@ class M2CatalogPostgresContractTest {
     }
 
     private data class Scope(val organizationId: UUID, val outletId: UUID)
-    private data class Context(val dataSource: javax.sql.DataSource, val jdbc: JdbcTemplate, val catalog: CatalogService)
+    private data class Context(
+        val dataSource: javax.sql.DataSource,
+        val jdbc: JdbcTemplate,
+        val catalog: CatalogService,
+        val providers: ProviderService,
+    )
 }

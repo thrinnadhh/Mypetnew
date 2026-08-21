@@ -19,6 +19,7 @@ function response(ok: boolean, body: unknown): Response {
 
 beforeEach(() => {
   fetchMock.mockReset();
+  uuidMock.mockClear();
   uuidMock.mockReturnValue('inventory-command-uuid');
 });
 

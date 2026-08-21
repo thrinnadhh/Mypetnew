@@ -77,6 +77,10 @@ export function catalogErrorMessage(error: unknown): string {
   return error.message;
 }
 
+export function shouldReloadCatalogAfterError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'CATALOG_VERSION_CONFLICT';
+}
+
 export function catalogFormFromListing(listing: MerchantListing): CatalogFormState {
   return {
     barcodeType: listing.barcodeType,
@@ -154,6 +158,19 @@ export function catalogPageLabel(page: number): string {
 
 export function catalogEditorTitle(listing: MerchantListing | null): string {
   return listing ? `Edit ${listing.name}` : 'Create listing';
+}
+
+export function catalogSaveButtonTitle(saving: boolean, listing: MerchantListing | null): string {
+  if (saving) return 'Saving…';
+  return listing ? 'Save versioned update' : 'Create listing';
+}
+
+export function catalogSelectedLabel(current: string, value: string): string {
+  return current === value ? `✓ ${value}` : value;
+}
+
+export function catalogEmptyStateMessage(loading: boolean, itemCount: number): string | null {
+  return !loading && itemCount === 0 ? 'No listings match this view.' : null;
 }
 
 export function catalogOutletLabel(outletId: string, selectedOutletId: string | null): string {

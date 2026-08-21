@@ -21,6 +21,7 @@ import {
 } from '../src/catalog/api';
 import {
   canWriteCatalog,
+  catalogAccessNotice,
   catalogEditorTitle,
   catalogEmptyStateMessage,
   catalogErrorMessage,
@@ -58,6 +59,7 @@ export default function MerchantCatalogScreen() {
   const [form, setForm] = useState<CatalogFormState>(() => emptyCatalogForm());
 
   const canWrite = useMemo(() => canWriteCatalog(permissions, outletId), [outletId, permissions]);
+  const accessNotice = catalogAccessNotice(outletId, loading, canWrite);
   const emptyStateMessage = catalogEmptyStateMessage(loading, items.length);
 
   const loadPage = useCallback(async (selectedOutlet: string, selectedPage = page) => {
@@ -177,8 +179,7 @@ export default function MerchantCatalogScreen() {
           </View>
         ) : null}
 
-        {!outletId && !loading ? <Text accessibilityRole="alert">No authorized Merchant outlet is available.</Text> : null}
-        {!canWrite && outletId ? <Text style={styles.notice}>Read only: CATALOG_WRITE is not currently granted for this outlet.</Text> : null}
+        {accessNotice ? <Text accessibilityRole="alert" style={styles.notice}>{accessNotice}</Text> : null}
         {message ? <Text accessibilityRole="alert" style={styles.notice}>{message}</Text> : null}
 
         {outletId ? (

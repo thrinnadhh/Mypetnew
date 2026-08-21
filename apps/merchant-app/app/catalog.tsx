@@ -21,15 +21,17 @@ import {
 } from '../src/catalog/api';
 import {
   canWriteCatalog,
+  catalogEditorTitle,
   catalogErrorMessage,
   catalogFormFromListing,
   catalogIdentitySummary,
+  catalogListingCard,
+  catalogOutletLabel,
   catalogPageLabel,
   catalogSearchOptions,
   catalogStatusSuccessMessage,
   createCatalogInput,
   emptyCatalogForm,
-  formatPaise,
   mutableCatalogInput,
   nextCatalogStatus,
   type CatalogFormState,
@@ -164,7 +166,7 @@ export default function MerchantCatalogScreen() {
           <View style={styles.rowWrap}>
             {outletIds.map((id) => (
               <Pressable key={id} accessibilityRole="button" onPress={() => void chooseOutlet(id)} style={styles.chip}>
-                <Text>{id === outletId ? `✓ ${id.slice(0, 8)}` : id.slice(0, 8)}</Text>
+                <Text>{catalogOutletLabel(id, outletId)}</Text>
               </Pressable>
             ))}
           </View>
@@ -196,7 +198,7 @@ export default function MerchantCatalogScreen() {
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>{editing ? `Edit ${editing.name}` : 'Create listing'}</Text>
+              <Text style={styles.sectionTitle}>{catalogEditorTitle(editing)}</Text>
               {!editing ? (
                 <>
                   <Text style={styles.label}>Listing kind</Text>
@@ -242,22 +244,25 @@ export default function MerchantCatalogScreen() {
               <Text style={styles.sectionTitle}>Listings</Text>
               {loading ? <Text accessibilityLiveRegion="polite">Loading catalog…</Text> : null}
               {!loading && items.length === 0 ? <Text>No listings match this view.</Text> : null}
-              {items.map((listing) => (
-                <View key={listing.id} style={styles.card}>
-                  <Text style={styles.cardTitle}>{listing.name}</Text>
-                  <Text>{listing.status} · v{listing.version} · {listing.commerceMode}</Text>
-                  <Text>{formatPaise(listing.sellingPricePaise)} · MRP {formatPaise(listing.mrpPaise)}</Text>
-                  <Text>{listing.category}{listing.sku ? ` · SKU ${listing.sku}` : ''}</Text>
-                  <View style={styles.rowWrap}>
-                    <Button title="Edit" disabled={!canWrite || saving} onPress={() => startEdit(listing)} />
-                    <Button
-                      title={listing.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
-                      disabled={!canWrite || saving}
-                      onPress={() => void toggleStatus(listing)}
-                    />
+              {items.map((listing) => {
+                const card = catalogListingCard(listing);
+                return (
+                  <View key={listing.id} style={styles.card}>
+                    <Text style={styles.cardTitle}>{listing.name}</Text>
+                    <Text>{card.stateLine}</Text>
+                    <Text>{card.priceLine}</Text>
+                    <Text>{card.metadataLine}</Text>
+                    <View style={styles.rowWrap}>
+                      <Button title="Edit" disabled={!canWrite || saving} onPress={() => startEdit(listing)} />
+                      <Button
+                        title={card.actionLabel}
+                        disabled={!canWrite || saving}
+                        onPress={() => void toggleStatus(listing)}
+                      />
+                    </View>
                   </View>
-                </View>
-              ))}
+                );
+              })}
               <View style={styles.rowWrap}>
                 <Button title="Previous" disabled={loading || page === 0} onPress={() => outletId && void loadPage(outletId, page - 1)} />
                 <Text>{catalogPageLabel(page)}</Text>

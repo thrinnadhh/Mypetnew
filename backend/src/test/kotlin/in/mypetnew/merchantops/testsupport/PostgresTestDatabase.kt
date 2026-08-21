@@ -3,15 +3,13 @@ package `in`.mypetnew.merchantops.testsupport
 import org.flywaydb.core.Flyway
 import org.flywaydb.core.api.output.MigrateResult
 import org.springframework.jdbc.datasource.DriverManagerDataSource
-import org.testcontainers.containers.PostgreSQLContainer
+import org.testcontainers.postgresql.PostgreSQLContainer
 import org.testcontainers.utility.DockerImageName
 import javax.sql.DataSource
 
-private class MyPetPostgreSqlContainer(image: DockerImageName) : PostgreSQLContainer<MyPetPostgreSqlContainer>(image)
-
 object PostgresTestDatabase {
-    private val container: MyPetPostgreSqlContainer by lazy {
-        MyPetPostgreSqlContainer(DockerImageName.parse("postgres:17.6-alpine"))
+    private val container: PostgreSQLContainer by lazy {
+        PostgreSQLContainer(DockerImageName.parse("postgres:17.6-alpine"))
             .withDatabaseName("mypetnew_contract")
             .withUsername("mypet_test")
             .withPassword("mypet_test")

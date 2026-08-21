@@ -358,7 +358,7 @@ class JdbcCatalogPersistence(
         normalizedBarcode: String,
     ): Listing? = readListing(
         "WHERE organization_id = ? AND outlet_id = ? AND barcode_type = ? AND normalized_barcode = ?",
-        arrayOf(organizationId, outletId, barcodeType.name, normalizedBarcode),
+        arrayOf<Any>(organizationId, outletId, barcodeType.name, normalizedBarcode),
     )
 
     private fun insertHistory(old: Listing?, new: Listing, mutationType: CatalogMutationType, actorId: UUID) {

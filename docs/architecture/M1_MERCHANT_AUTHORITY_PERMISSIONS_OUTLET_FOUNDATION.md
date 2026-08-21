@@ -49,15 +49,19 @@ Merchant order reads retain the membership-only rule so suspension does not eras
 
 ## 5. Token and reauthorization contract
 
-Access tokens may transport the outlet permission snapshot required by development/test clients, but production does not treat that snapshot as current authority. `MerchantReauthorizationFilter` resolves the current account, memberships and permissions on every authenticated Merchant request and replaces the token principal before controller execution.
+Access tokens can transport an outlet-permission snapshot, but production does not treat that snapshot as current authority. `MerchantReauthorizationFilter` resolves the current account, memberships and permissions on every authenticated Merchant request and replaces the token principal before controller execution.
+
+The M1 token format remains backward-compatible with the prior nine-field access-token format. A legacy Merchant token carries no new permission grants; production reauthorization supplies the current PostgreSQL permission set before a protected command runs.
 
 Unknown/invalid persisted Merchant permission values fail closed rather than being interpreted permissively.
 
-## 6. Persistent onboarding repair
+## 6. Persistent onboarding and upgrade repair
 
-`JdbcProviderPersistence.submit` creates the provider outlet and the corresponding `merchant_staff` owner row within the same Spring transaction. An idempotent onboarding replay also ensures the owner membership exists and is active, so retry cannot return an outlet that lacks canonical owner scope.
+`JdbcProviderPersistence.submit` creates the provider outlet and corresponding `merchant_staff` owner row within the same Spring transaction. An idempotent onboarding replay also ensures the owner membership exists and is active, so retry cannot return an outlet that lacks canonical owner scope.
 
-No Flyway migration is required for the forward path because `merchant_staff` already exists in V1 and owner/provider replay metadata already exists in V8. Historical Flyway files remain unchanged.
+M1 adds forward-only migration `V22__merchant_owner_membership_backfill.sql`. It backfills `OWNER` membership for existing provider outlets whose organization already has a canonical Merchant `owner_actor_id`. This is required because existing/staging provider rows can predate the fixed onboarding path. Historical migrations V1–V21 remain unchanged.
+
+The P3 staging provider seed now creates matching `OWNER` memberships so re-running that seed after V22 cannot recreate scope-less staged owners.
 
 ## 7. M1 certification evidence
 
@@ -77,7 +81,8 @@ The PostgreSQL contract must prove:
 5. an explicit limited permission succeeds only for the granted outlet/action;
 6. permission revocation is effective after reauthorization;
 7. suspended outlet commands fail closed while membership remains available for read authorization;
-8. membership revocation removes outlet scope entirely.
+8. membership revocation removes outlet scope entirely;
+9. a V21 database containing an existing canonical owner/outlet upgrades through V22 and gains exactly one usable `OWNER` membership.
 
 ## 8. Exit conditions
 
@@ -87,6 +92,6 @@ M1 is complete only when:
 - `M1-AUTH-001` and `M1-AUTH-002` are `ENFORCED` with real evidence paths;
 - `program-state.json` records M1 only after evidence is green;
 - backend `check`, Merchant validation, Customer validation and program-contract checks all pass on the exact final PR head;
-- no historical migration is changed;
+- V22 clean-install and V21→V22 upgrade evidence is green and no historical migration is changed;
 - no M2+ production behavior is pulled into this sprint;
 - the exact green head is merged and merged `main` is certified.

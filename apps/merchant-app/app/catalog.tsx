@@ -16,7 +16,6 @@ import {
   fetchCatalogPage,
   fetchMerchantCatalogContext,
   type ListingKind,
-  type ListingStatus,
   type MerchantListing,
   updateListing,
 } from '../src/catalog/api';
@@ -24,13 +23,18 @@ import {
   canWriteCatalog,
   catalogErrorMessage,
   catalogFormFromListing,
+  catalogIdentitySummary,
+  catalogPageLabel,
+  catalogSearchOptions,
+  catalogStatusSuccessMessage,
   createCatalogInput,
   emptyCatalogForm,
+  formatPaise,
   mutableCatalogInput,
+  nextCatalogStatus,
   type CatalogFormState,
+  type CatalogStatusFilter,
 } from '../src/catalog/model';
-
-type StatusFilter = ListingStatus | 'ALL';
 
 export default function MerchantCatalogScreen() {
   const [outletIds, setOutletIds] = useState<string[]>([]);
@@ -40,7 +44,7 @@ export default function MerchantCatalogScreen() {
   const [page, setPage] = useState(0);
   const [hasNext, setHasNext] = useState(false);
   const [query, setQuery] = useState('');
-  const [status, setStatus] = useState<StatusFilter>('ALL');
+  const [status, setStatus] = useState<CatalogStatusFilter>('ALL');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -53,12 +57,7 @@ export default function MerchantCatalogScreen() {
     setLoading(true);
     setMessage('');
     try {
-      const result = await fetchCatalogPage(selectedOutlet, {
-        query,
-        status: status === 'ALL' ? undefined : status,
-        page: selectedPage,
-        pageSize: 25,
-      });
+      const result = await fetchCatalogPage(selectedOutlet, catalogSearchOptions(query, status, selectedPage));
       setItems(result.items);
       setPage(result.page);
       setHasNext(result.hasNext);
@@ -135,9 +134,9 @@ export default function MerchantCatalogScreen() {
     setSaving(true);
     setMessage('');
     try {
-      const target: ListingStatus = listing.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+      const target = nextCatalogStatus(listing.status);
       await changeListingStatus(listing, target);
-      setMessage(target === 'ACTIVE' ? 'Listing activated.' : 'Listing deactivated.');
+      setMessage(catalogStatusSuccessMessage(target));
       await loadPage(outletId, page);
     } catch (error) {
       setMessage(catalogErrorMessage(error));
@@ -187,7 +186,7 @@ export default function MerchantCatalogScreen() {
                 accessibilityLabel="Catalog search"
               />
               <View style={styles.rowWrap}>
-                {(['ALL', 'ACTIVE', 'INACTIVE'] as StatusFilter[]).map((value) => (
+                {(['ALL', 'ACTIVE', 'INACTIVE'] as CatalogStatusFilter[]).map((value) => (
                   <Pressable key={value} accessibilityRole="button" onPress={() => setStatus(value)} style={styles.chip}>
                     <Text>{status === value ? `✓ ${value}` : value}</Text>
                   </Pressable>
@@ -219,7 +218,7 @@ export default function MerchantCatalogScreen() {
                   <TextInput value={form.barcode} onChangeText={(value) => updateForm('barcode', value)} placeholder="Barcode or internal code" style={styles.input} />
                 </>
               ) : (
-                <Text style={styles.body}>Identity: {editing.kind} · {editing.barcodeType} · {editing.normalizedBarcode}</Text>
+                <Text style={styles.body}>Identity: {catalogIdentitySummary(editing)}</Text>
               )}
               <TextInput value={form.name} onChangeText={(value) => updateForm('name', value)} placeholder="Product name" style={styles.input} />
               <TextInput value={form.mrpPaise} onChangeText={(value) => updateForm('mrpPaise', value)} placeholder="MRP in paise" keyboardType="number-pad" style={styles.input} />
@@ -247,7 +246,7 @@ export default function MerchantCatalogScreen() {
                 <View key={listing.id} style={styles.card}>
                   <Text style={styles.cardTitle}>{listing.name}</Text>
                   <Text>{listing.status} · v{listing.version} · {listing.commerceMode}</Text>
-                  <Text>₹{(listing.sellingPricePaise / 100).toFixed(2)} · MRP ₹{(listing.mrpPaise / 100).toFixed(2)}</Text>
+                  <Text>{formatPaise(listing.sellingPricePaise)} · MRP {formatPaise(listing.mrpPaise)}</Text>
                   <Text>{listing.category}{listing.sku ? ` · SKU ${listing.sku}` : ''}</Text>
                   <View style={styles.rowWrap}>
                     <Button title="Edit" disabled={!canWrite || saving} onPress={() => startEdit(listing)} />
@@ -261,7 +260,7 @@ export default function MerchantCatalogScreen() {
               ))}
               <View style={styles.rowWrap}>
                 <Button title="Previous" disabled={loading || page === 0} onPress={() => outletId && void loadPage(outletId, page - 1)} />
-                <Text>Page {page + 1}</Text>
+                <Text>{catalogPageLabel(page)}</Text>
                 <Button title="Next" disabled={loading || !hasNext} onPress={() => outletId && void loadPage(outletId, page + 1)} />
               </View>
             </View>

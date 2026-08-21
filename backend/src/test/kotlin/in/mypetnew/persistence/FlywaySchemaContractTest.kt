@@ -1,25 +1,27 @@
 package `in`.mypetnew.persistence
 
+import `in`.mypetnew.merchantops.testsupport.PostgresTestDatabase
 import org.flywaydb.core.Flyway
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver
-import java.sql.DriverManager
 import java.util.UUID
 
 class FlywaySchemaContractTest {
     @Test
     fun `clean migration creates private Sprint 1 schema and database-backed invariants`() {
-        val url = "jdbc:h2:mem:migration-${UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
+        val dataSource = PostgresTestDatabase.dataSource()
         val flyway = Flyway.configure()
-            .dataSource(url, "sa", "")
+            .dataSource(dataSource)
             .schemas("mypet")
             .defaultSchema("mypet")
             .createSchemas(true)
+            .cleanDisabled(false)
             .locations("classpath:db/migration")
             .load()
+        flyway.clean()
 
         val result = flyway.migrate()
         val migrationCount = PathMatchingResourcePatternResolver()
@@ -27,7 +29,7 @@ class FlywaySchemaContractTest {
             .size
         assertEquals(migrationCount, result.migrationsExecuted)
 
-        DriverManager.getConnection(url, "sa", "").use { connection ->
+        dataSource.connection.use { connection ->
             val tables = connection.prepareStatement(
                 "select table_name from information_schema.tables where lower(table_schema) = 'mypet'",
             ).use { statement ->
@@ -40,6 +42,7 @@ class FlywaySchemaContractTest {
                 "catalog_listing_image",
                 "inventory_balance",
                 "inventory_movement",
+                "inventory_command_receipt",
                 "product_order",
                 "pos_sale",
                 "pos_customer_association_challenge",
@@ -188,8 +191,17 @@ class FlywaySchemaContractTest {
             }
             assertThrows(Exception::class.java) {
                 connection.prepareStatement(
-                    "insert into mypet.inventory_balance(listing_id, on_hand, reserved, version) values (?, 0, 1, 0)",
-                ).use { it.setObject(1, listingId); it.executeUpdate() }
+                    """
+                    insert into mypet.inventory_balance(
+                        listing_id, organization_id, outlet_id, on_hand, reserved, version
+                    ) values (?, ?, ?, 0, 1, 0)
+                    """.trimIndent(),
+                ).use {
+                    it.setObject(1, listingId)
+                    it.setObject(2, organizationId)
+                    it.setObject(3, outletId)
+                    it.executeUpdate()
+                }
             }
         }
     }

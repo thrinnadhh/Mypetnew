@@ -10,7 +10,10 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint --quiet",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "test:ci": "jest --ci --runInBand --coverage",
+    "test:contract": "jest --ci --runInBand --testPathPattern=src",
+    "test:offline": "jest --ci --runInBand --testPathPattern=offline-harness"
   },
   "dependencies": {
     "expo": "~56.0.19",

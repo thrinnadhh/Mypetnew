@@ -64,6 +64,7 @@
     "lint": "expo lint --quiet",
     "test": "jest",
     "test:coverage": "jest --runInBand --coverage",
+    "test:merchant-consistency": "jest --runInBand src/__tests__/p5-product-detail-cart-contract.test.ts src/__tests__/p7-checkout-hardening.test.ts src/services/__tests__/checkout-safety.test.ts src/services/__tests__/customer-checkout-contract.test.ts src/services/__tests__/customer-quote-contract.test.ts src/services/__tests__/paginated-catalog.test.ts",
     "test:s10": "jest --runInBand src/auth/__tests__ src/navigation/__tests__/s10-i18n.test.ts",
     "lint:all": "expo lint"
   },

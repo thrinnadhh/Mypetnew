@@ -60,8 +60,18 @@ jobs:
       - name: Lint Merchant app
         run: npm run lint
       - name: Test Merchant app
-        run: npm test
+        run: npm run test:ci
+      - name: Export Merchant Android bundle
+        run: npx expo export --platform android --output-dir /tmp/merchant-android-export
       - name: Export Merchant production web bundle
         env:
           EXPO_PUBLIC_API_BASE_URL: https://api.invalid.example
         run: npx expo export --platform web --output-dir dist-ci
+      - name: Upload Merchant test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: merchant-test-evidence-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            apps/merchant-app/coverage

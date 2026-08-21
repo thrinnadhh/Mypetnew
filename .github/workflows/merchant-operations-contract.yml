@@ -1,0 +1,32 @@
+name: merchant-operations-contract
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, "trial/*", "feat/m0-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: merchant-operations-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  program-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test Merchant Operations gate failures
+        run: node --test scripts/merchant-operations/validate-program.test.mjs
+      - name: Verify Merchant Operations program contract
+        run: ./scripts/verify-merchant-operations.sh
+      - name: Verify patch whitespace
+        run: git diff --check "origin/${GITHUB_BASE_REF:-main}...HEAD"

@@ -1,5 +1,6 @@
 -- M1: make existing provider owners first-class Merchant staff members.
 -- Historical migrations remain immutable; this is a forward-only data repair.
+-- Existing OWNER rows are never reactivated here; revocation must remain authoritative.
 
 INSERT INTO mypet.merchant_staff (
     account_id,
@@ -21,7 +22,4 @@ JOIN mypet.identity_account account
   ON account.id = organization.owner_actor_id
  AND account.role = 'MERCHANT'
 WHERE organization.owner_actor_id IS NOT NULL
-ON CONFLICT (account_id, outlet_id, permission)
-DO UPDATE SET
-    organization_id = EXCLUDED.organization_id,
-    active = TRUE;
+ON CONFLICT (account_id, outlet_id, permission) DO NOTHING;

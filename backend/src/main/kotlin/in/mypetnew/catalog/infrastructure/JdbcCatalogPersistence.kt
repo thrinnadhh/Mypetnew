@@ -146,7 +146,10 @@ class JdbcCatalogPersistence(
                     command.outletId,
                     command.expectedVersion,
                 )
-                if (changed != 1) versionConflict()
+                if (changed != 1) {
+                    replayMutation(command.outletId, actionKey, requestFingerprint)?.let { return@execute it }
+                    versionConflict()
+                }
                 val updated = getManaged(command.organizationId, command.outletId, command.listingId)
                     ?: persistenceError()
                 insertHistory(current, updated, CatalogMutationType.UPDATE, actorId)
@@ -186,7 +189,10 @@ class JdbcCatalogPersistence(
                     command.outletId,
                     command.expectedVersion,
                 )
-                if (changed != 1) versionConflict()
+                if (changed != 1) {
+                    replayMutation(command.outletId, actionKey, requestFingerprint)?.let { return@execute it }
+                    versionConflict()
+                }
                 val updated = getManaged(command.organizationId, command.outletId, command.listingId)
                     ?: persistenceError()
                 val mutation = if (command.targetStatus == ListingStatus.ACTIVE) {

@@ -22,9 +22,22 @@ class DevelopmentMerchantPrincipalResolver : MerchantPrincipalResolver {
     override fun resolve(accountId: UUID, sessionId: UUID): Principal =
         Principal(actorId = accountId, role = Role.MERCHANT, sessionId = sessionId)
 
-    // Existing contract/API tests construct explicit Merchant scopes. Preserve those test fixtures;
-    // production uses JdbcMerchantPrincipalResolver and never trusts token scopes as current truth.
-    override fun reauthorize(principal: Principal): Principal = principal
+    // Existing contract/API tests construct explicit Merchant scopes. Preserve those fixtures only
+    // in test/development; production always uses JdbcMerchantPrincipalResolver and current DB grants.
+    override fun reauthorize(principal: Principal): Principal {
+        if (
+            principal.role == Role.MERCHANT &&
+            principal.outletIds.isNotEmpty() &&
+            principal.merchantPermissionsByOutlet.isEmpty()
+        ) {
+            return principal.copy(
+                merchantPermissionsByOutlet = principal.outletIds.associateWith {
+                    setOf(MerchantPermission.OWNER)
+                },
+            )
+        }
+        return principal
+    }
 }
 
 @Component

@@ -42,7 +42,7 @@ WITH targets(listing_id,target_on_hand) AS (VALUES
         organization_id,listing_id,outlet_id,'OPENING_BALANCE',target_on_hand,target_on_hand,0,
         'SEED','P3_INITIAL_STOCK','00000000-0000-0000-0000-000000000000'::uuid,
         'p3-opening:'||listing_id::text,'p3-seed','inventory-opening-balance',
-        encode(digest('p3-opening:'||listing_id::text||':'||target_on_hand::text,'sha256'),'hex'),now()
+        md5('p3-opening:'||listing_id::text||':'||target_on_hand::text)||md5('m3:'||listing_id::text),now()
     FROM opening
     RETURNING listing_id,resulting_on_hand
 )

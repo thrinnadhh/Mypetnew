@@ -168,3 +168,24 @@ CREATE TRIGGER inventory_movement_immutable
 BEFORE UPDATE OR DELETE ON mypet.inventory_movement
 FOR EACH ROW
 EXECUTE FUNCTION mypet.reject_inventory_movement_mutation();
+
+-- A brand-new M2 listing has canonical zero stock immediately. Creating a zero projection is not
+-- a stock change, so it does not fabricate a movement; the first non-zero stock change must append
+-- a movement and update this projection atomically through the inventory command path.
+CREATE OR REPLACE FUNCTION mypet.initialize_inventory_balance_for_listing()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    INSERT INTO mypet.inventory_balance(
+        listing_id, organization_id, outlet_id, on_hand, reserved, version, updated_at
+    ) VALUES (NEW.id, NEW.organization_id, NEW.outlet_id, 0, 0, 0, CURRENT_TIMESTAMP)
+    ON CONFLICT (listing_id) DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER catalog_listing_inventory_balance
+AFTER INSERT ON mypet.catalog_listing
+FOR EACH ROW
+EXECUTE FUNCTION mypet.initialize_inventory_balance_for_listing();

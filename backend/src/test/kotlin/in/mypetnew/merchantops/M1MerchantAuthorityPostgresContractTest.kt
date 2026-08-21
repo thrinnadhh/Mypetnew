@@ -102,6 +102,51 @@ class M1MerchantAuthorityPostgresContractTest {
     }
 
     @Test
+    fun `replaying onboarding cannot resurrect a revoked owner membership`() {
+        val context = context()
+        val ownerId = createMerchant(context.jdbc, "+919100000006")
+        val outlet = context.providers.submitOutlet(
+            Principal(ownerId, Role.MERCHANT),
+            "Replay Safe Merchant",
+            setOf(ProviderCapability.PRODUCT_STORE),
+            setOf("517506"),
+            "m1-submit-replay-safe",
+        )
+        context.jdbc.update(
+            """
+            UPDATE mypet.merchant_staff SET active = FALSE
+            WHERE account_id = ? AND outlet_id = ? AND permission = 'OWNER'
+            """.trimIndent(),
+            ownerId,
+            outlet.id,
+        )
+
+        val replay = context.providers.submitOutlet(
+            Principal(ownerId, Role.MERCHANT),
+            "Replay Safe Merchant",
+            setOf(ProviderCapability.PRODUCT_STORE),
+            setOf("517506"),
+            "m1-submit-replay-safe",
+        )
+
+        assertEquals(outlet.id, replay.id)
+        assertEquals(
+            0,
+            context.jdbc.queryForObject(
+                """
+                SELECT COUNT(*) FROM mypet.merchant_staff
+                WHERE account_id = ? AND outlet_id = ? AND permission = 'OWNER' AND active = TRUE
+                """.trimIndent(),
+                Int::class.java,
+                ownerId,
+                outlet.id,
+            ),
+        )
+        val reauthorized = context.resolver.resolve(ownerId, UUID.randomUUID())
+        assertTrue(reauthorized.outletIds.isEmpty())
+    }
+
+    @Test
     fun `permission membership and suspended outlet changes fail closed on reauthorization`() {
         val context = context()
         val ownerId = createMerchant(context.jdbc, "+919100000003")
@@ -173,7 +218,7 @@ class M1MerchantAuthorityPostgresContractTest {
     }
 
     @Test
-    fun `V22 upgrades an existing V21 owner outlet into canonical owner scope`() {
+    fun `V22 upgrades missing owner scope without reviving an existing revoked owner`() {
         val dataSource = PostgresTestDatabase.dataSource()
         val toV21 = flyway(dataSource, MigrationVersion.fromVersion("21"))
         toV21.clean()
@@ -199,6 +244,36 @@ class M1MerchantAuthorityPostgresContractTest {
             outletId,
             organizationId,
         )
+
+        val revokedOwnerId = createMerchant(jdbc, "+919100000007")
+        val revokedOrganizationId = UUID.randomUUID()
+        val revokedOutletId = UUID.randomUUID()
+        jdbc.update(
+            """
+            INSERT INTO mypet.merchant_organization(id, name, status, owner_actor_id)
+            VALUES (?, 'Revoked Legacy Merchant', 'ACTIVE', ?)
+            """.trimIndent(),
+            revokedOrganizationId,
+            revokedOwnerId,
+        )
+        jdbc.update(
+            """
+            INSERT INTO mypet.provider_outlet(id, organization_id, name, status, pickup_enabled)
+            VALUES (?, ?, 'Revoked Legacy Outlet', 'ACTIVE', TRUE)
+            """.trimIndent(),
+            revokedOutletId,
+            revokedOrganizationId,
+        )
+        jdbc.update(
+            """
+            INSERT INTO mypet.merchant_staff(account_id, organization_id, outlet_id, permission, active)
+            VALUES (?, ?, ?, 'OWNER', FALSE)
+            """.trimIndent(),
+            revokedOwnerId,
+            revokedOrganizationId,
+            revokedOutletId,
+        )
+
         assertEquals(
             0,
             jdbc.queryForObject(
@@ -225,10 +300,28 @@ class M1MerchantAuthorityPostgresContractTest {
                 outletId,
             ),
         )
+        assertEquals(
+            0,
+            jdbc.queryForObject(
+                """
+                SELECT COUNT(*) FROM mypet.merchant_staff
+                WHERE account_id = ? AND outlet_id = ? AND permission = 'OWNER' AND active = TRUE
+                """.trimIndent(),
+                Int::class.java,
+                revokedOwnerId,
+                revokedOutletId,
+            ),
+        )
         val resolved = JdbcMerchantPrincipalResolver(JdbcClient.create(dataSource))
             .resolve(ownerId, UUID.randomUUID())
         assertEquals(setOf(outletId), resolved.outletIds)
         assertEquals(setOf(MerchantPermission.OWNER), resolved.merchantPermissionsByOutlet[outletId])
+        assertTrue(
+            JdbcMerchantPrincipalResolver(JdbcClient.create(dataSource))
+                .resolve(revokedOwnerId, UUID.randomUUID())
+                .outletIds
+                .isEmpty(),
+        )
     }
 
     private fun context(): Context {

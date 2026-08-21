@@ -60,8 +60,13 @@ class BearerTokenService(
         if (!MessageDigest.isEqual(sign(parts[0]), actualSignature)) invalid()
         val payload = runCatching { String(decoder.decode(parts[0]), StandardCharsets.UTF_8) }.getOrElse { invalid() }
         val values = payload.split('|')
-        if (values.size != 10 || values[0] != issuer || values[1] != audience) invalid()
-        val expiresAt = values[9].toLongOrNull() ?: invalid()
+        if (values.size !in setOf(LEGACY_FIELD_COUNT, CURRENT_FIELD_COUNT) || values[0] != issuer || values[1] != audience) {
+            invalid()
+        }
+        val currentFormat = values.size == CURRENT_FIELD_COUNT
+        val sessionIndex = if (currentFormat) 8 else 7
+        val expiryIndex = if (currentFormat) 9 else 8
+        val expiresAt = values[expiryIndex].toLongOrNull() ?: invalid()
         if (clock.instant().epochSecond >= expiresAt) invalid()
         return runCatching {
             Principal(
@@ -70,8 +75,8 @@ class BearerTokenService(
                 organizationId = values[4].takeUnless { it == "-" }?.let(UUID::fromString),
                 outletIds = values[5].csv().map(UUID::fromString).toSet(),
                 permissions = values[6].csv().map(AdminPermission::valueOf).toSet(),
-                sessionId = UUID.fromString(values[8]),
-                merchantPermissionsByOutlet = decodeMerchantPermissions(values[7]),
+                sessionId = UUID.fromString(values[sessionIndex]),
+                merchantPermissionsByOutlet = if (currentFormat) decodeMerchantPermissions(values[7]) else emptyMap(),
             )
         }.getOrElse { invalid() }
     }
@@ -107,6 +112,8 @@ class BearerTokenService(
     private fun invalid(): Nothing = throw DomainException("TOKEN_INVALID", "The access token is invalid or expired")
 
     companion object {
+        private const val LEGACY_FIELD_COUNT = 9
+        private const val CURRENT_FIELD_COUNT = 10
         private val ACCESS_TOKEN_LIFETIME: Duration = Duration.ofMinutes(15)
     }
 }

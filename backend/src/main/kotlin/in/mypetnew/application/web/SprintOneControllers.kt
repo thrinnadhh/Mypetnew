@@ -11,15 +11,15 @@ import `in`.mypetnew.commerce.domain.OrderService
 import `in`.mypetnew.commerce.domain.OrderStatus
 import `in`.mypetnew.commerce.domain.ProductOrder
 import `in`.mypetnew.commerce.domain.QuoteService
-import `in`.mypetnew.common.auth.AdminPermission
 import `in`.mypetnew.common.auth.Authorizer
+import `in`.mypetnew.common.auth.MerchantPermission
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.delivery.domain.DispatchService
-import `in`.mypetnew.loyalty.domain.LoyaltyService
 import `in`.mypetnew.engagement.domain.NotificationService
 import `in`.mypetnew.engagement.domain.SafeRoute
+import `in`.mypetnew.loyalty.domain.LoyaltyService
 import `in`.mypetnew.pos.domain.CustomerAssociationChallengeService
 import `in`.mypetnew.pos.domain.PaymentDeclaration
 import `in`.mypetnew.pos.domain.PosService
@@ -98,7 +98,11 @@ class CatalogInventoryApiController(
         @RequestBody request: CreateListingRequest,
     ): `in`.mypetnew.catalog.domain.Listing {
         val principal = authentication.domainPrincipal()
-        val outlet = authorizedActiveOutlet(principal, request.outletId, providers)
+        val outlet = providers.requireActiveOutlet(
+            principal,
+            request.outletId,
+            MerchantPermission.CATALOG_WRITE,
+        )
         return catalog.createListing(
             CreateListingCommand(
                 organizationId = outlet.organizationId,
@@ -132,7 +136,11 @@ class CatalogInventoryApiController(
         @RequestBody request: ReceiveStockRequest,
     ): `in`.mypetnew.catalog.domain.StockMovement {
         val principal = authentication.domainPrincipal()
-        authorizedActiveOutlet(principal, request.outletId, providers)
+        providers.requireActiveOutlet(
+            principal,
+            request.outletId,
+            MerchantPermission.INVENTORY_WRITE,
+        )
         val listing = catalog.getListing(request.listingId)
         if (listing.outletId != request.outletId) resourceUnavailable()
         if (request.quantity <= 0) throw DomainException("QUANTITY_INVALID", "Quantity must be positive")
@@ -325,6 +333,7 @@ class MerchantCommerceApiController(
     ): ProductOrder {
         val principal = authentication.domainPrincipal()
         val order = authorizedOrder(principal, orderId)
+        providers.requireActiveOutlet(principal, order.outletId, MerchantPermission.ORDER_FULFIL)
         val updated = orders.transition(
             orderId = order.id,
             target = request.target,
@@ -359,7 +368,11 @@ class MerchantCommerceApiController(
         @RequestBody request: PosSaleRequest,
     ): `in`.mypetnew.pos.domain.PosSale {
         val principal = authentication.domainPrincipal()
-        val outlet = authorizedActiveOutlet(principal, request.outletId, providers)
+        val outlet = providers.requireActiveOutlet(
+            principal,
+            request.outletId,
+            MerchantPermission.POS_OPERATE,
+        )
         val customerId = request.associationChallengeId?.let {
             associations.consume(it, outlet.organizationId, outlet.id)
         }
@@ -410,21 +423,6 @@ class MerchantCommerceApiController(
 
 internal fun Authentication.domainPrincipal(): Principal = principal as? Principal
     ?: throw DomainException("AUTHENTICATION_REQUIRED", "Authentication is required")
-
-private fun authorizedActiveOutlet(
-    principal: Principal,
-    outletId: UUID,
-    providers: ProviderService,
-): `in`.mypetnew.provider.domain.ProviderOutlet {
-    Authorizer.requireOutlet(principal, outletId)
-    val outlet = providers.getOutlet(outletId)
-    if (
-        outlet.status != ProviderStatus.ACTIVE ||
-        principal.organizationId == null ||
-        outlet.organizationId != principal.organizationId
-    ) resourceUnavailable()
-    return outlet
-}
 
 private fun currentTraceId(): String = MDC.get("traceId") ?: InventoryService.SYSTEM_TRACE_ID
 

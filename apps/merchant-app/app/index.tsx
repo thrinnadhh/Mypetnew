@@ -79,6 +79,11 @@ export default function MerchantEntryScreen() {
         <>
           <Text style={styles.body}>Merchant session active.</Text>
           <View style={styles.primaryLinkBox}>
+            <Text style={styles.primaryLinkTitle}>Catalog management</Text>
+            <Text style={styles.primaryLinkBody}>Create products, update price and metadata, search listings, and activate or deactivate safely with version checks.</Text>
+            <Link href="/catalog" accessibilityRole="button" style={styles.primaryLink}>Open catalog</Link>
+          </View>
+          <View style={styles.primaryLinkBox}>
             <Text style={styles.primaryLinkTitle}>New booking requests</Text>
             <Text style={styles.primaryLinkBody}>Accept or reject grooming and veterinary requests before customers see Confirmed.</Text>
             <Link href="/appointments" accessibilityRole="button" style={styles.primaryLink}>Open booking requests</Link>

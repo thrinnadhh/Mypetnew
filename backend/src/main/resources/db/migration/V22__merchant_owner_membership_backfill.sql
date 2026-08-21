@@ -22,4 +22,10 @@ JOIN mypet.identity_account account
   ON account.id = organization.owner_actor_id
  AND account.role = 'MERCHANT'
 WHERE organization.owner_actor_id IS NOT NULL
-ON CONFLICT (account_id, outlet_id, permission) DO NOTHING;
+  AND NOT EXISTS (
+      SELECT 1
+      FROM mypet.merchant_staff existing
+      WHERE existing.account_id = organization.owner_actor_id
+        AND existing.outlet_id = outlet.id
+        AND existing.permission = 'OWNER'
+  );

@@ -2,13 +2,12 @@ package `in`.mypetnew.catalog
 
 import `in`.mypetnew.catalog.domain.BarcodeType
 import `in`.mypetnew.catalog.domain.CatalogService
-import `in`.mypetnew.catalog.domain.CommerceMode
 import `in`.mypetnew.catalog.domain.CreateListingCommand
 import `in`.mypetnew.catalog.domain.ListingKind
 import `in`.mypetnew.catalog.infrastructure.JdbcCatalogPersistence
 import `in`.mypetnew.common.error.DomainException
+import `in`.mypetnew.merchantops.testsupport.PostgresTestDatabase
 import `in`.mypetnew.provider.domain.ProviderCapability
-import org.flywaydb.core.Flyway
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -16,7 +15,6 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.DataSourceTransactionManager
-import org.springframework.jdbc.datasource.DriverManagerDataSource
 import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
 
@@ -27,17 +25,8 @@ class JdbcCatalogPersistenceContractTest {
 
     @BeforeEach
     fun setUp() {
-        val url = "jdbc:h2:mem:catalog-test-${UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
-        val dataSource = DriverManagerDataSource(url, "sa", "")
-        Flyway.configure()
-            .dataSource(dataSource)
-            .schemas("mypet")
-            .defaultSchema("mypet")
-            .createSchemas(true)
-            .locations("classpath:db/migration")
-            .load()
-            .migrate()
-
+        PostgresTestDatabase.resetAndMigrate()
+        val dataSource = PostgresTestDatabase.dataSource()
         jdbc = JdbcTemplate(dataSource)
         val transactionManager = DataSourceTransactionManager(dataSource)
         val transactionTemplate = TransactionTemplate(transactionManager)

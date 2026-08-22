@@ -10,6 +10,7 @@ import `in`.mypetnew.commerce.domain.QuoteService
 import `in`.mypetnew.commerce.infrastructure.JdbcOrderPersistence
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
+import `in`.mypetnew.merchantops.testsupport.PostgresTestDatabase
 import `in`.mypetnew.payment.domain.CreateProviderOrderCommand
 import `in`.mypetnew.payment.domain.CreateProviderOrderResult
 import `in`.mypetnew.payment.domain.CreateRefundCommand
@@ -17,9 +18,11 @@ import `in`.mypetnew.payment.domain.Payment
 import `in`.mypetnew.payment.domain.PaymentAttemptOutcome
 import `in`.mypetnew.payment.domain.PaymentGateway
 import `in`.mypetnew.payment.domain.PaymentProvider
+import `in`.mypetnew.payment.domain.PaymentReferenceType
 import `in`.mypetnew.payment.domain.PaymentService
 import `in`.mypetnew.payment.domain.PaymentStatus
 import `in`.mypetnew.payment.domain.PaymentWebhookEvent
+import `in`.mypetnew.payment.domain.ProviderCommandState
 import `in`.mypetnew.payment.domain.ProviderPaymentSnapshot
 import `in`.mypetnew.payment.domain.ProviderPaymentsResult
 import `in`.mypetnew.payment.domain.RefundProviderResult
@@ -28,13 +31,11 @@ import `in`.mypetnew.payment.domain.RefundStatus
 import `in`.mypetnew.payment.domain.TerminalOrderPaymentProjection
 import `in`.mypetnew.payment.infrastructure.JdbcPaymentPersistence
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.DataSourceTransactionManager
-import org.springframework.jdbc.datasource.DriverManagerDataSource
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.Instant
@@ -302,16 +303,22 @@ class JdbcPaymentFailureRaceCertificationTest {
     }
 
     private fun fixture(initialStock: Int = 3): Fixture {
-        val databaseName = "p5_race_${UUID.randomUUID().toString().replace("-", "")}"
-        val dataSource = DriverManagerDataSource(
-            "jdbc:h2:mem:$databaseName;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=10000",
-            "sa",
-            "",
-        )
+        PostgresTestDatabase.resetAndMigrate()
+        val dataSource = PostgresTestDatabase.dataSource()
         val jdbc = JdbcTemplate(dataSource)
-        jdbc.execute("CREATE SCHEMA mypet")
-        createSchema(jdbc)
         val transactions = TransactionTemplate(DataSourceTransactionManager(dataSource))
+        val organizationId = UUID.randomUUID()
+        val outletId = UUID.randomUUID()
+        jdbc.update(
+            "INSERT INTO mypet.merchant_organization(id, name, status) VALUES (?, 'P5 payment race organization', 'ACTIVE')",
+            organizationId,
+        )
+        jdbc.update(
+            "INSERT INTO mypet.provider_outlet(id, organization_id, name, status, pickup_enabled) VALUES (?, ?, 'P5 payment race outlet', 'ACTIVE', TRUE)",
+            outletId,
+            organizationId,
+        )
+
         val inventory = InventoryService(JdbcInventoryPersistence(jdbc, transactions))
         val clock = MutableClock(baseNow)
         val paymentPersistence = JdbcPaymentPersistence(jdbc, transactions, inventory)
@@ -334,284 +341,9 @@ class JdbcPaymentFailureRaceCertificationTest {
             payments = payments,
             gateway = gateway,
             clock = clock,
-            organizationId = UUID.randomUUID(),
-            outletId = UUID.randomUUID(),
+            organizationId = organizationId,
+            outletId = outletId,
             initialStock = initialStock,
-        )
-    }
-
-    private fun createSchema(jdbc: JdbcTemplate) {
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.identity_account (
-                id UUID PRIMARY KEY,
-                mobile_e164 VARCHAR(20) NOT NULL,
-                status VARCHAR(24) NOT NULL
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.catalog_listing (
-                id UUID PRIMARY KEY,
-                outlet_id UUID NOT NULL
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.inventory_balance (
-                listing_id UUID PRIMARY KEY,
-                on_hand INTEGER NOT NULL DEFAULT 0,
-                reserved INTEGER NOT NULL DEFAULT 0,
-                version BIGINT NOT NULL DEFAULT 0,
-                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CHECK (on_hand >= 0),
-                CHECK (reserved >= 0),
-                CHECK (on_hand >= reserved)
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.inventory_movement (
-                id UUID PRIMARY KEY,
-                listing_id UUID NOT NULL,
-                outlet_id UUID NOT NULL,
-                reason VARCHAR(40) NOT NULL,
-                quantity_delta INTEGER NOT NULL,
-                resulting_on_hand INTEGER NOT NULL,
-                resulting_reserved INTEGER NOT NULL,
-                source_type VARCHAR(40) NOT NULL,
-                source_reference VARCHAR(160) NOT NULL,
-                actor_id UUID NOT NULL,
-                idempotency_key VARCHAR(128) NOT NULL,
-                trace_id VARCHAR(64) NOT NULL,
-                operation_scope VARCHAR(40) NOT NULL,
-                request_fingerprint VARCHAR(64) NOT NULL,
-                occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT uq_inventory_movement_idempotency UNIQUE (outlet_id, idempotency_key)
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.product_order (
-                id UUID PRIMARY KEY,
-                order_number VARCHAR(32) NOT NULL UNIQUE,
-                customer_id UUID NOT NULL,
-                organization_id UUID NOT NULL,
-                outlet_id UUID NOT NULL,
-                quote_id UUID NOT NULL,
-                status VARCHAR(32) NOT NULL,
-                fulfilment_mode VARCHAR(32) NOT NULL,
-                payment_method VARCHAR(40) NOT NULL,
-                payment_status VARCHAR(40) NOT NULL,
-                grand_total_paise BIGINT NOT NULL,
-                platform_fee_paise BIGINT NOT NULL,
-                merchant_commission_paise BIGINT NOT NULL,
-                currency VARCHAR(3) NOT NULL DEFAULT 'INR',
-                payment_hold_expires_at TIMESTAMP WITH TIME ZONE,
-                version BIGINT NOT NULL DEFAULT 0,
-                checkout_idempotency_key VARCHAR(128),
-                checkout_request_fingerprint VARCHAR(64),
-                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT uq_order_checkout UNIQUE (customer_id, checkout_idempotency_key)
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.product_order_line (
-                order_id UUID NOT NULL,
-                listing_id UUID NOT NULL,
-                listing_name VARCHAR(160) NOT NULL,
-                quantity INTEGER NOT NULL,
-                unit_price_paise BIGINT NOT NULL,
-                PRIMARY KEY (order_id, listing_id)
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.product_order_history (
-                id UUID PRIMARY KEY,
-                order_id UUID NOT NULL,
-                from_status VARCHAR(32),
-                to_status VARCHAR(32) NOT NULL,
-                actor_id UUID NOT NULL,
-                actor_role VARCHAR(32) NOT NULL,
-                reason VARCHAR(240),
-                idempotency_key VARCHAR(128) NOT NULL,
-                trace_id VARCHAR(64) NOT NULL,
-                occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT uq_order_history_command UNIQUE (order_id, idempotency_key)
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.inventory_reservation (
-                id UUID PRIMARY KEY,
-                order_id UUID NOT NULL,
-                listing_id UUID NOT NULL,
-                quantity INTEGER NOT NULL,
-                status VARCHAR(24) NOT NULL,
-                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT uq_order_listing_reservation UNIQUE (order_id, listing_id)
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.payment (
-                id UUID PRIMARY KEY,
-                reference_type VARCHAR(32) NOT NULL,
-                reference_id UUID NOT NULL,
-                customer_id UUID NOT NULL,
-                provider VARCHAR(24) NOT NULL,
-                status VARCHAR(24) NOT NULL,
-                amount_paise BIGINT NOT NULL,
-                currency VARCHAR(3) NOT NULL,
-                provider_order_reference VARCHAR(45) NOT NULL,
-                provider_session_id VARCHAR(512),
-                provider_idempotency_key VARCHAR(64) NOT NULL,
-                provider_command_state VARCHAR(24) NOT NULL,
-                last_provider_error_code VARCHAR(64),
-                reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE,
-                next_reconciliation_at TIMESTAMP WITH TIME ZONE,
-                reconciliation_attempts INTEGER NOT NULL DEFAULT 0,
-                captured_at TIMESTAMP WITH TIME ZONE,
-                expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                version BIGINT NOT NULL DEFAULT 0,
-                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT uq_payment_reference_provider UNIQUE (reference_type, reference_id, provider),
-                CONSTRAINT uq_payment_provider_order UNIQUE (provider, provider_order_reference),
-                CONSTRAINT uq_payment_provider_idempotency UNIQUE (provider, provider_idempotency_key)
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.payment_initiation_command (
-                customer_id UUID NOT NULL,
-                idempotency_key VARCHAR(128) NOT NULL,
-                request_fingerprint VARCHAR(64) NOT NULL,
-                payment_id UUID NOT NULL,
-                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (customer_id, idempotency_key)
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.payment_history (
-                id UUID PRIMARY KEY,
-                payment_id UUID NOT NULL,
-                from_status VARCHAR(24),
-                to_status VARCHAR(24) NOT NULL,
-                reason_code VARCHAR(64) NOT NULL,
-                source_identity VARCHAR(160) NOT NULL,
-                occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT uq_payment_history_source UNIQUE (payment_id, source_identity)
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.payment_attempt (
-                id UUID PRIMARY KEY,
-                payment_id UUID NOT NULL,
-                provider VARCHAR(24) NOT NULL,
-                provider_payment_id VARCHAR(96) NOT NULL,
-                outcome VARCHAR(24) NOT NULL,
-                payment_amount_paise BIGINT NOT NULL,
-                payment_currency VARCHAR(3) NOT NULL,
-                provider_payment_time TIMESTAMP WITH TIME ZONE,
-                safe_error_code VARCHAR(64),
-                safe_error_reason VARCHAR(240),
-                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT uq_payment_attempt_provider_id UNIQUE (provider, provider_payment_id)
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.payment_webhook_inbox (
-                id UUID PRIMARY KEY,
-                provider VARCHAR(24) NOT NULL,
-                delivery_identity VARCHAR(160) NOT NULL,
-                webhook_version VARCHAR(24) NOT NULL,
-                event_type VARCHAR(80) NOT NULL,
-                provider_order_reference VARCHAR(45) NOT NULL,
-                provider_payment_id VARCHAR(96),
-                attempt_status VARCHAR(24),
-                order_amount_paise BIGINT NOT NULL,
-                order_currency VARCHAR(3) NOT NULL,
-                payment_amount_paise BIGINT,
-                payment_currency VARCHAR(3),
-                provider_payment_time TIMESTAMP WITH TIME ZONE,
-                provider_event_time TIMESTAMP WITH TIME ZONE,
-                payload_sha256 VARCHAR(64) NOT NULL,
-                safe_error_code VARCHAR(64),
-                safe_error_reason VARCHAR(240),
-                processing_status VARCHAR(24) NOT NULL,
-                retry_count INTEGER NOT NULL DEFAULT 0,
-                last_safe_error VARCHAR(240),
-                received_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                claim_started_at TIMESTAMP WITH TIME ZONE,
-                lease_expires_at TIMESTAMP WITH TIME ZONE,
-                processed_at TIMESTAMP WITH TIME ZONE,
-                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT uq_payment_webhook_delivery UNIQUE (provider, delivery_identity)
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.payment_refund (
-                id UUID PRIMARY KEY,
-                payment_id UUID NOT NULL,
-                status VARCHAR(24) NOT NULL,
-                amount_paise BIGINT NOT NULL,
-                currency VARCHAR(3) NOT NULL,
-                provider_refund_id VARCHAR(40) NOT NULL,
-                provider_idempotency_key VARCHAR(64) NOT NULL,
-                execution_state VARCHAR(24) NOT NULL,
-                reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE,
-                next_reconciliation_at TIMESTAMP WITH TIME ZONE,
-                reconciliation_attempts INTEGER NOT NULL DEFAULT 0,
-                claim_started_at TIMESTAMP WITH TIME ZONE,
-                lease_expires_at TIMESTAMP WITH TIME ZONE,
-                last_provider_status VARCHAR(24),
-                last_safe_error_code VARCHAR(64),
-                version BIGINT NOT NULL DEFAULT 0,
-                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                completed_at TIMESTAMP WITH TIME ZONE,
-                CONSTRAINT uq_payment_refund_payment UNIQUE (payment_id),
-                CONSTRAINT uq_payment_refund_provider_id UNIQUE (provider_refund_id),
-                CONSTRAINT uq_payment_refund_provider_idempotency UNIQUE (provider_idempotency_key)
-            )
-            """.trimIndent(),
-        )
-        jdbc.execute(
-            """
-            CREATE TABLE mypet.payment_refund_history (
-                id UUID PRIMARY KEY,
-                refund_id UUID NOT NULL,
-                from_status VARCHAR(24),
-                to_status VARCHAR(24) NOT NULL,
-                reason_code VARCHAR(64) NOT NULL,
-                source_identity VARCHAR(160) NOT NULL,
-                occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT uq_refund_history_source UNIQUE (refund_id, source_identity)
-            )
-            """.trimIndent(),
         )
     }
 
@@ -638,11 +370,22 @@ class JdbcPaymentFailureRaceCertificationTest {
         fun onlineOrder(initiate: Boolean = true): Scenario {
             val listingId = UUID.randomUUID()
             val customerId = UUID.randomUUID()
-            jdbc.update("INSERT INTO mypet.catalog_listing (id, outlet_id) VALUES (?, ?)", listingId, outletId)
             jdbc.update(
-                "INSERT INTO mypet.identity_account (id, mobile_e164, status) VALUES (?, ?, 'ACTIVE')",
+                """
+                INSERT INTO mypet.catalog_listing(
+                    id, organization_id, outlet_id, barcode_type, normalized_barcode, name,
+                    listing_kind, commerce_mode, mrp_paise, selling_price_paise, active
+                ) VALUES (?, ?, ?, 'INTERNAL', ?, 'P5 payment race product', 'PRODUCT', 'COMMERCE', 15000, 12500, TRUE)
+                """.trimIndent(),
+                listingId,
+                organizationId,
+                outletId,
+                "P5-${listingId.toString().replace("-", "")}",
+            )
+            jdbc.update(
+                "INSERT INTO mypet.identity_account(id, mobile_e164, role, status) VALUES (?, ?, 'CUSTOMER', 'ACTIVE')",
                 customerId,
-                "+919876543210",
+                "+919${customerId.toString().replace("-", "").take(9)}",
             )
             inventory.adjust(
                 listingId,
@@ -677,7 +420,7 @@ class JdbcPaymentFailureRaceCertificationTest {
             } else {
                 Payment(
                     id = UUID(0L, 0L),
-                    referenceType = `in`.mypetnew.payment.domain.PaymentReferenceType.PRODUCT_ORDER,
+                    referenceType = PaymentReferenceType.PRODUCT_ORDER,
                     referenceId = order.id,
                     customerId = customerId,
                     provider = PaymentProvider.CASHFREE,
@@ -687,7 +430,7 @@ class JdbcPaymentFailureRaceCertificationTest {
                     providerOrderReference = "not-created",
                     providerSessionId = null,
                     providerIdempotencyKey = "not-created",
-                    commandState = `in`.mypetnew.payment.domain.ProviderCommandState.PREPARED,
+                    commandState = ProviderCommandState.PREPARED,
                     expiresAt = requireNotNull(order.paymentHoldExpiresAt),
                 )
             }

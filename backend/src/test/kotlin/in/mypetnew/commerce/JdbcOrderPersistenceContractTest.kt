@@ -271,6 +271,7 @@ class JdbcOrderPersistenceContractTest {
             """
             CREATE TABLE mypet.catalog_listing (
                 id UUID PRIMARY KEY,
+                organization_id UUID NOT NULL,
                 outlet_id UUID NOT NULL
             )
             """.trimIndent(),
@@ -279,6 +280,8 @@ class JdbcOrderPersistenceContractTest {
             """
             CREATE TABLE mypet.inventory_balance (
                 listing_id UUID PRIMARY KEY,
+                organization_id UUID NOT NULL,
+                outlet_id UUID NOT NULL,
                 on_hand INTEGER NOT NULL DEFAULT 0,
                 reserved INTEGER NOT NULL DEFAULT 0,
                 version BIGINT NOT NULL DEFAULT 0,
@@ -293,6 +296,7 @@ class JdbcOrderPersistenceContractTest {
             """
             CREATE TABLE mypet.inventory_movement (
                 id UUID PRIMARY KEY,
+                organization_id UUID NOT NULL,
                 listing_id UUID NOT NULL,
                 outlet_id UUID NOT NULL,
                 reason VARCHAR(40) NOT NULL,
@@ -307,9 +311,43 @@ class JdbcOrderPersistenceContractTest {
                 operation_scope VARCHAR(40) NOT NULL,
                 request_fingerprint VARCHAR(64) NOT NULL,
                 occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT uq_inventory_movement_idempotency UNIQUE (outlet_id, idempotency_key),
+                CONSTRAINT uq_inventory_movement_idempotency UNIQUE (outlet_id, actor_id, idempotency_key),
                 CHECK (resulting_on_hand >= resulting_reserved),
                 CHECK (resulting_reserved >= 0)
+            )
+            """.trimIndent(),
+        )
+        jdbc.execute(
+            """
+            CREATE TABLE mypet.inventory_command_receipt (
+                id UUID PRIMARY KEY,
+                organization_id UUID NOT NULL,
+                outlet_id UUID NOT NULL,
+                listing_id UUID NOT NULL,
+                actor_id UUID NOT NULL,
+                idempotency_key VARCHAR(128) NOT NULL,
+                operation_scope VARCHAR(40) NOT NULL,
+                request_fingerprint VARCHAR(64) NOT NULL,
+                movement_id UUID NOT NULL UNIQUE,
+                resulting_on_hand INTEGER NOT NULL,
+                resulting_reserved INTEGER NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_inventory_receipt_key UNIQUE (organization_id, actor_id, idempotency_key)
+            )
+            """.trimIndent(),
+        )
+        jdbc.execute(
+            """
+            CREATE TABLE mypet.outbox_event (
+                id UUID PRIMARY KEY,
+                aggregate_type VARCHAR(40) NOT NULL,
+                aggregate_id UUID NOT NULL,
+                event_type VARCHAR(80) NOT NULL,
+                event_version INTEGER NOT NULL,
+                payload VARCHAR(4000) NOT NULL,
+                status VARCHAR(20) NOT NULL,
+                trace_id VARCHAR(64) NOT NULL,
+                CONSTRAINT uq_inventory_test_outbox UNIQUE (aggregate_type, aggregate_id, event_type)
             )
             """.trimIndent(),
         )
@@ -396,8 +434,9 @@ class JdbcOrderPersistenceContractTest {
         fun createListing(): UUID {
             val listingId = UUID.randomUUID()
             jdbc.update(
-                "INSERT INTO mypet.catalog_listing (id, outlet_id) VALUES (?, ?)",
+                "INSERT INTO mypet.catalog_listing (id, organization_id, outlet_id) VALUES (?, ?, ?)",
                 listingId,
+                organizationId,
                 outletId,
             )
             return listingId

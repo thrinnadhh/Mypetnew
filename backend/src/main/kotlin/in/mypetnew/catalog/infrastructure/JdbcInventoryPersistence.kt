@@ -13,6 +13,7 @@ import org.springframework.transaction.support.TransactionTemplate
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.sql.ResultSet
+import java.sql.Timestamp
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.UUID
@@ -415,7 +416,7 @@ class JdbcInventoryPersistence(
             traceId,
             operationScope,
             requestFingerprint,
-            movement.occurredAt,
+            Timestamp.from(movement.occurredAt),
         )
     }
 

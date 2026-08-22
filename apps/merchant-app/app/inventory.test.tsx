@@ -33,7 +33,7 @@ const movementMock = fetchInventoryMovements as jest.MockedFunction<typeof fetch
 
 beforeEach(() => {
   jest.clearAllMocks();
-  stateMock.mockImplementation(((initial: unknown) => [initial, jest.fn()]) as typeof useState);
+  stateMock.mockImplementation(((initial: unknown) => [initial, jest.fn()]) as unknown as typeof useState);
   contextMock.mockResolvedValue({
     organizationId: 'org-1',
     outletIds: ['outlet-1'],
@@ -43,7 +43,6 @@ beforeEach(() => {
     items: [{ id: 'listing-1', name: 'Dog food' } as never],
     page: 0,
     pageSize: 1,
-    total: 1,
     hasNext: false,
   });
   balanceMock.mockResolvedValue({

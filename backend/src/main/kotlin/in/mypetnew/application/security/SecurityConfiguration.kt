@@ -65,15 +65,19 @@ class SecurityConfiguration {
     @Bean
     fun corsConfigurationSource(properties: CorsProperties): CorsConfigurationSource {
         val configuration = CorsConfiguration().apply {
-            allowedOrigins = properties.normalizedAllowedOrigins
-            allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-            allowedHeaders = listOf("Accept", "Authorization", "Content-Type", "Idempotency-Key")
-            exposedHeaders = listOf("X-Trace-Id")
-            allowCredentials = false
-            maxAge = 3600
+            if (properties.normalizedAllowedOrigins.isNotEmpty()) {
+                allowedOrigins = properties.normalizedAllowedOrigins
+            } else {
+                allowedOriginPatterns = listOf("http://localhost:*", "http://127.0.0.1:*", "http://192.168.*:*", "https://*.supabase.co")
+            }
+            allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD")
+            allowedHeaders = listOf("*")
+            exposedHeaders = listOf("Authorization", "Idempotency-Key", "X-Trace-Id")
+            allowCredentials = true
+            maxAge = 3600L
         }
         return UrlBasedCorsConfigurationSource().apply {
-            registerCorsConfiguration("/api/**", configuration)
+            registerCorsConfiguration("/**", configuration)
         }
     }
 

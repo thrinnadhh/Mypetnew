@@ -5,7 +5,8 @@ export type CommandState =
   | 'SENDING'
   | 'UNKNOWN'
   | 'ACKNOWLEDGED'
-  | 'REJECTED';
+  | 'REJECTED'
+  | 'SUPERSEDED';
 
 export type CommandType =
   | 'ACCEPT_OFFER'
@@ -15,11 +16,20 @@ export type CommandType =
   | 'UPDATE_AVAILABILITY'
   | 'SUBMIT_ONBOARDING';
 
+export type ResourceType =
+  | 'DISPATCH_OFFER'
+  | 'DELIVERY_JOB'
+  | 'CAPTAIN_AVAILABILITY'
+  | 'ONBOARDING'
+  | string;
+
 export interface MutationCommand<T = unknown> {
   commandId: string;
   id: string; // compatibility alias
   commandType: CommandType;
   type: CommandType; // compatibility alias
+  resourceType?: string;
+  resourceId?: string;
   captainId?: string | null;
   jobId?: string | null;
   idempotencyKey: string;
@@ -45,13 +55,41 @@ export const isTerminalOutcome = <T>(result: CommandOutcome<T>): boolean =>
 
 export function computePayloadFingerprint(
   commandType: CommandType,
-  jobId: string | null | undefined,
-  payload: unknown,
+  resourceTypeOrJobId: string | null | undefined,
+  resourceIdOrPayload: any,
+  payloadOptional?: unknown,
 ): string {
+  let resourceType = 'UNKNOWN';
+  let resourceId = '';
+  let payload: unknown;
+
+  if (arguments.length >= 4) {
+    resourceType = String(resourceTypeOrJobId || 'UNKNOWN');
+    resourceId = String(resourceIdOrPayload || '');
+    payload = payloadOptional;
+  } else {
+    // 3-arg legacy signature: (commandType, jobId, payload)
+    if (commandType === 'ACCEPT_OFFER' || commandType === 'REJECT_OFFER') {
+      resourceType = 'DISPATCH_OFFER';
+      resourceId = resourceTypeOrJobId || (resourceIdOrPayload as any)?.offerId || '';
+    } else if (commandType === 'UPDATE_AVAILABILITY') {
+      resourceType = 'CAPTAIN_AVAILABILITY';
+      resourceId = (resourceIdOrPayload as any)?.captainId || 'self';
+    } else if (commandType === 'SUBMIT_ONBOARDING') {
+      resourceType = 'ONBOARDING';
+      resourceId = (resourceIdOrPayload as any)?.captainId || 'self';
+    } else {
+      resourceType = 'DELIVERY_JOB';
+      resourceId = resourceTypeOrJobId || '';
+    }
+    payload = resourceIdOrPayload;
+  }
+
   try {
     const raw = JSON.stringify({
       type: commandType,
-      jobId: jobId || null,
+      resourceType,
+      resourceId: resourceId || null,
       payload: payload ?? null,
     });
     // Deterministic 32-bit FNV-1a hash formatted as hex

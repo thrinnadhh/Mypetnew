@@ -12,6 +12,8 @@ describe('Level 3: Durable CommandStore Persistence Tests', () => {
       id: 'cmd-level3-001',
       commandType: 'MARK_PICKED_UP',
       type: 'MARK_PICKED_UP',
+      resourceType: 'DELIVERY_JOB',
+      resourceId: 'job-505',
       captainId: 'captain-101',
       jobId: 'job-505',
       idempotencyKey: 'idemp-cmd-505',
@@ -22,14 +24,20 @@ describe('Level 3: Durable CommandStore Persistence Tests', () => {
       attemptCount: 0,
       lastAttemptAt: null,
       lastErrorCode: null,
+      updatedAt: '2026-08-23T10:00:00Z',
     };
 
     await commandStore.save(cmd);
+
+    // Simulate memory wipe / process restart
+    commandStore.resetMemoryForTesting();
 
     const retrieved = await commandStore.get('cmd-level3-001');
     expect(retrieved).toBeDefined();
     expect(retrieved?.commandId).toBe('cmd-level3-001');
     expect(retrieved?.idempotencyKey).toBe('idemp-cmd-505');
+    expect(retrieved?.resourceType).toBe('DELIVERY_JOB');
+    expect(retrieved?.resourceId).toBe('job-505');
     expect(retrieved?.state).toBe('PENDING');
   });
 
@@ -39,6 +47,8 @@ describe('Level 3: Durable CommandStore Persistence Tests', () => {
       id: 'cmd-level3-002',
       commandType: 'MARK_DELIVERED',
       type: 'MARK_DELIVERED',
+      resourceType: 'DELIVERY_JOB',
+      resourceId: 'job-707',
       jobId: 'job-707',
       idempotencyKey: 'idemp-deliv-707',
       payload: { jobId: 'job-707' },
@@ -46,6 +56,7 @@ describe('Level 3: Durable CommandStore Persistence Tests', () => {
       createdAt: '2026-08-23T10:15:00Z',
       state: 'UNKNOWN',
       attemptCount: 1,
+      updatedAt: '2026-08-23T10:15:00Z',
     };
 
     await commandStore.save(cmd);
@@ -62,12 +73,15 @@ describe('Level 3: Durable CommandStore Persistence Tests', () => {
       id,
       commandType: 'MARK_PICKED_UP',
       type: 'MARK_PICKED_UP',
+      resourceType: 'DELIVERY_JOB',
+      resourceId: `job-${id}`,
       idempotencyKey: `key-${id}`,
       payload: {},
       payloadFingerprint: `fp-${id}`,
       createdAt: new Date().toISOString(),
       state,
       attemptCount: 1,
+      updatedAt: new Date().toISOString(),
     });
 
     await commandStore.save(makeCmd('c1', 'PENDING'));

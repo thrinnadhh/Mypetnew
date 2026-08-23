@@ -24,6 +24,8 @@ export class DeliveryRepository {
     return commandRunner.execute(
       {
         type: 'MARK_PICKED_UP',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: jobId,
         jobId,
         payload: { jobId, proof },
         existingCommandId,
@@ -54,6 +56,8 @@ export class DeliveryRepository {
     return commandRunner.execute(
       {
         type: 'MARK_DELIVERED',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: jobId,
         jobId,
         payload: { jobId, proof },
         existingCommandId,

@@ -7,8 +7,12 @@ export class AvailabilityRepository {
     params: CaptainAvailabilityParams,
   ): Promise<CommandOutcome<CaptainDeliveryStateResponse>> {
     return commandRunner.execute(
-      'UPDATE_AVAILABILITY',
-      params,
+      {
+        type: 'UPDATE_AVAILABILITY',
+        resourceType: 'CAPTAIN_AVAILABILITY',
+        resourceId: (params as any).captainId || 'self',
+        payload: params,
+      },
       async () => {
         return await updateCaptainAvailability(params);
       },

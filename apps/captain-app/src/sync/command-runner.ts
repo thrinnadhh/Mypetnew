@@ -12,6 +12,8 @@ import { connectivity } from './connectivity';
 export interface ExecuteOptions<TPayload> {
   type: CommandType;
   payload: TPayload;
+  resourceType?: string;
+  resourceId?: string;
   jobId?: string | null;
   captainId?: string | null;
   existingCommandId?: string;
@@ -31,6 +33,8 @@ export class CommandRunner {
     let type: CommandType;
     let payload: TPayload;
     let operation: (idempotencyKey: string) => Promise<TResult>;
+    let resourceType: string;
+    let resourceId: string;
     let jobId: string | null = null;
     let captainId: string | null = null;
     let existingCommandId: string | undefined;
@@ -44,6 +48,25 @@ export class CommandRunner {
       captainId = typeOrOptions.captainId ?? (payload as any)?.captainId ?? null;
       existingCommandId = typeOrOptions.existingCommandId;
       existingIdempotencyKey = typeOrOptions.existingIdempotencyKey;
+
+      resourceType =
+        typeOrOptions.resourceType ||
+        (type === 'ACCEPT_OFFER' || type === 'REJECT_OFFER'
+          ? 'DISPATCH_OFFER'
+          : type === 'UPDATE_AVAILABILITY'
+            ? 'CAPTAIN_AVAILABILITY'
+            : type === 'SUBMIT_ONBOARDING'
+              ? 'ONBOARDING'
+              : 'DELIVERY_JOB');
+
+      resourceId =
+        typeOrOptions.resourceId ||
+        (payload as any)?.offerId ||
+        (payload as any)?.jobId ||
+        jobId ||
+        captainId ||
+        (payload as any)?.captainId ||
+        'global';
     } else {
       type = typeOrOptions;
       payload = payloadOrOperation as TPayload;
@@ -52,28 +75,59 @@ export class CommandRunner {
       captainId = (payload as any)?.captainId ?? null;
       existingCommandId = existingCommandIdArg;
       existingIdempotencyKey = existingIdempotencyKeyArg;
+
+      resourceType =
+        type === 'ACCEPT_OFFER' || type === 'REJECT_OFFER'
+          ? 'DISPATCH_OFFER'
+          : type === 'UPDATE_AVAILABILITY'
+            ? 'CAPTAIN_AVAILABILITY'
+            : type === 'SUBMIT_ONBOARDING'
+              ? 'ONBOARDING'
+              : 'DELIVERY_JOB';
+
+      resourceId =
+        (payload as any)?.offerId ||
+        (payload as any)?.jobId ||
+        jobId ||
+        captainId ||
+        'global';
     }
 
-    // In-flight deduplication mutex: prevent double-tap race conditions
-    const inFlightKey = `${type}:${jobId ?? 'global'}`;
+    // In-flight deduplication mutex scoped to (commandType + resourceType + resourceId)
+    // Ensures independent resources (e.g. Offer A and Offer B) execute independently
+    const inFlightKey = `${type}:${resourceType}:${resourceId}`;
     const existingFlight = this.inFlightExecutions.get(inFlightKey);
     if (existingFlight) {
       return existingFlight as Promise<CommandOutcome<TResult>>;
     }
 
     const executionPromise = (async (): Promise<CommandOutcome<TResult>> => {
-      // Check for existing pending or uncompleted command in the store for this job & type
+      // 1. Resolve existing active or specified command
       let command: MutationCommand<TPayload> | undefined;
 
       if (existingCommandId) {
         command = (await commandStore.get(existingCommandId)) as MutationCommand<TPayload> | undefined;
+      } else if (existingIdempotencyKey) {
+        command = (await commandStore.getByIdempotencyKey(existingIdempotencyKey)) as MutationCommand<TPayload> | undefined;
       } else {
-        command = (await commandStore.getByJobAndType(jobId, type)) as MutationCommand<TPayload> | undefined;
+        command = (await commandStore.findActiveCommand(type, resourceType, resourceId)) as MutationCommand<TPayload> | undefined;
+      }
+
+      const currentFingerprint = computePayloadFingerprint(type, resourceType, resourceId, payload);
+
+      // 2. Enforce payload fingerprint matching on existing command
+      if (command) {
+        if (command.payloadFingerprint && command.payloadFingerprint !== currentFingerprint) {
+          // FAIL CLOSED: Do NOT silently reuse the old idempotency key for a different payload
+          throw AppError.fromHttp(400, {
+            code: 'IDEMPOTENCY_FINGERPRINT_MISMATCH',
+            message: `IDEMPOTENCY_FINGERPRINT_MISMATCH: Payload fingerprint mismatch for command ${command.commandId}. Expected ${command.payloadFingerprint}, received ${currentFingerprint}`,
+          });
+        }
       }
 
       const commandId = command?.commandId || existingCommandId || `cmd-${Crypto.randomUUID()}`;
       const idempotencyKey = command?.idempotencyKey || existingIdempotencyKey || `idemp-${Crypto.randomUUID()}`;
-      const fingerprint = computePayloadFingerprint(type, jobId, payload);
 
       if (!command) {
         command = {
@@ -81,11 +135,13 @@ export class CommandRunner {
           id: commandId,
           commandType: type,
           type,
+          resourceType,
+          resourceId,
           captainId: captainId ?? null,
           jobId: jobId ?? null,
           idempotencyKey,
           payload,
-          payloadFingerprint: fingerprint,
+          payloadFingerprint: currentFingerprint,
           state: 'PENDING',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -94,11 +150,13 @@ export class CommandRunner {
           lastErrorCode: null,
           lastError: null,
         };
-        // MUST be written locally BEFORE any HTTP transmission
+
+        // INVARIANT: MUST be durably committed before network transmission.
+        // If persistence fails, this throws and BLOCKS transmission.
         await commandStore.save(command);
       }
 
-      // Check if definitively offline before transmission
+      // 3. Check if offline before transmission
       if (!connectivity.online) {
         command.state = 'PENDING';
         command.updatedAt = new Date().toISOString();
@@ -112,14 +170,16 @@ export class CommandRunner {
         };
       }
 
-      // Prepare for transmission
+      // 4. Prepare for transmission: mark SENDING and persist
       command.state = 'SENDING';
       command.attemptCount = (command.attemptCount || 0) + 1;
       command.lastAttemptAt = new Date().toISOString();
       command.updatedAt = new Date().toISOString();
+
       // Durably save SENDING state before network operation
       await commandStore.save(command);
 
+      // 5. Execute HTTP network operation
       try {
         const data = await operation(idempotencyKey);
 
@@ -159,9 +219,8 @@ export class CommandRunner {
           };
         }
 
-        // 409 Conflict handling
+        // 409 Conflict handling (e.g. offer claimed by other captain)
         if (error.kind === 'Conflict') {
-          // If conflict indicates business rejection, mark REJECTED
           command.state = 'REJECTED';
           await commandStore.save(command);
 

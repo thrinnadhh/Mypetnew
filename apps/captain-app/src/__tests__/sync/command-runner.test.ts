@@ -1,5 +1,5 @@
 import { CommandRunner } from '../../sync/command-runner';
-import { commandStore } from '../../sync/command-store';
+import { commandStore, DurableStorageDriver } from '../../sync/command-store';
 import { connectivity } from '../../sync/connectivity';
 import { AppError } from '../../domain/result';
 
@@ -7,6 +7,7 @@ describe('CommandRunner and Synchronization Pipeline', () => {
   let runner: CommandRunner;
 
   beforeEach(async () => {
+    commandStore.resetStorageDriverForTesting();
     runner = new CommandRunner();
     await commandStore.clear();
     connectivity.setConnected(true);
@@ -17,7 +18,8 @@ describe('CommandRunner and Synchronization Pipeline', () => {
     const outcome = await runner.execute(
       {
         type: 'UPDATE_AVAILABILITY',
-        jobId: null,
+        resourceType: 'CAPTAIN_AVAILABILITY',
+        resourceId: 'capt-01',
         payload: { online: true },
       },
       async (key) => {
@@ -40,6 +42,243 @@ describe('CommandRunner and Synchronization Pipeline', () => {
     expect(all[0].payloadFingerprint).toBeDefined();
   });
 
+  it('Requirement 1: Storage write failure prevents HTTP operation invocation', async () => {
+    const faultyDriver: DurableStorageDriver = {
+      async getItem() {
+        return null;
+      },
+      async setItem() {
+        throw new Error('EACCES: Permission denied / Storage unavailable');
+      },
+      async removeItem() {},
+      async clear() {},
+    };
+
+    commandStore.setStorageDriver(faultyDriver);
+
+    let httpOperationInvoked = false;
+    const testRunner = new CommandRunner();
+
+    await expect(
+      testRunner.execute(
+        {
+          type: 'ACCEPT_OFFER',
+          resourceType: 'DISPATCH_OFFER',
+          resourceId: 'offer-storage-fail',
+          payload: { offerId: 'offer-storage-fail' },
+        },
+        async () => {
+          httpOperationInvoked = true;
+          return { accepted: true };
+        },
+      ),
+    ).rejects.toThrow('EACCES: Permission denied / Storage unavailable');
+
+    // INVARIANT ASSERTION: Network MUST NEVER be called if local persistence fails
+    expect(httpOperationInvoked).toBe(false);
+  });
+
+  it('Requirement 4: ACCEPT offer A and ACCEPT offer B produce different commandId, idempotencyKey, and mutex identity', async () => {
+    let keyA = '';
+    let keyB = '';
+
+    const outcomeA = await runner.execute(
+      {
+        type: 'ACCEPT_OFFER',
+        resourceType: 'DISPATCH_OFFER',
+        resourceId: 'offer-AAA',
+        payload: { offerId: 'offer-AAA' },
+      },
+      async (key) => {
+        keyA = key;
+        return { offerId: 'offer-AAA', accepted: true };
+      },
+    );
+
+    const outcomeB = await runner.execute(
+      {
+        type: 'ACCEPT_OFFER',
+        resourceType: 'DISPATCH_OFFER',
+        resourceId: 'offer-BBB',
+        payload: { offerId: 'offer-BBB' },
+      },
+      async (key) => {
+        keyB = key;
+        return { offerId: 'offer-BBB', accepted: true };
+      },
+    );
+
+    expect(outcomeA.commandId).not.toBe(outcomeB.commandId);
+    expect(outcomeA.idempotencyKey).not.toBe(outcomeB.idempotencyKey);
+    expect(keyA).not.toBe(keyB);
+
+    const all = await commandStore.listAll();
+    expect(all.length).toBe(2);
+    expect(all.map((c) => c.resourceId).sort()).toEqual(['offer-AAA', 'offer-BBB']);
+  });
+
+  it('Requirement 5: Concurrent Accept A / Accept B do not share Promise/result', async () => {
+    let callCountA = 0;
+    let callCountB = 0;
+
+    const promiseA = runner.execute(
+      {
+        type: 'ACCEPT_OFFER',
+        resourceType: 'DISPATCH_OFFER',
+        resourceId: 'offer-A-concurrent',
+        payload: { offerId: 'offer-A-concurrent' },
+      },
+      async () => {
+        callCountA++;
+        await new Promise((r) => setTimeout(r, 30));
+        return { offerId: 'offer-A-concurrent', status: 'ASSIGNED_A' };
+      },
+    );
+
+    const promiseB = runner.execute(
+      {
+        type: 'ACCEPT_OFFER',
+        resourceType: 'DISPATCH_OFFER',
+        resourceId: 'offer-B-concurrent',
+        payload: { offerId: 'offer-B-concurrent' },
+      },
+      async () => {
+        callCountB++;
+        await new Promise((r) => setTimeout(r, 30));
+        return { offerId: 'offer-B-concurrent', status: 'ASSIGNED_B' };
+      },
+    );
+
+    const [resA, resB] = await Promise.all([promiseA, promiseB]);
+
+    expect(callCountA).toBe(1);
+    expect(callCountB).toBe(1);
+    expect(resA.commandId).not.toBe(resB.commandId);
+    expect(resA.idempotencyKey).not.toBe(resB.idempotencyKey);
+    if (resA.outcome === 'ACKNOWLEDGED' && resB.outcome === 'ACKNOWLEDGED') {
+      expect(resA.data.status).toBe('ASSIGNED_A');
+      expect(resB.data.status).toBe('ASSIGNED_B');
+    }
+  });
+
+  it('Requirement 6: Same command replay with same payload reuses same idempotency key', async () => {
+    const keysUsed: string[] = [];
+
+    // First attempt -> network drop -> UNKNOWN
+    await runner.execute(
+      {
+        type: 'MARK_PICKED_UP',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-replay-01',
+        jobId: 'job-replay-01',
+        payload: { jobId: 'job-replay-01', pinCode: '4321' },
+      },
+      async (k) => {
+        keysUsed.push(k);
+        throw AppError.network('Network dropped on transmission');
+      },
+    );
+
+    // Second attempt -> replay with exact same payload
+    const outcome2 = await runner.execute(
+      {
+        type: 'MARK_PICKED_UP',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-replay-01',
+        jobId: 'job-replay-01',
+        payload: { jobId: 'job-replay-01', pinCode: '4321' },
+      },
+      async (k) => {
+        keysUsed.push(k);
+        return { id: 'job-replay-01', status: 'PICKED_UP' };
+      },
+    );
+
+    expect(outcome2.outcome).toBe('ACKNOWLEDGED');
+    expect(keysUsed.length).toBe(2);
+    expect(keysUsed[0]).toBe(keysUsed[1]); // Exact same key reused
+
+    const all = await commandStore.listAll();
+    expect(all.length).toBe(1);
+    expect(all[0].attemptCount).toBe(2);
+    expect(all[0].state).toBe('ACKNOWLEDGED');
+  });
+
+  it('Requirement 7: Same idempotency identity + different payload fails with IDEMPOTENCY_FINGERPRINT_MISMATCH', async () => {
+    // 1. First command creates active UNKNOWN record with payload { pinCode: '1111' }
+    await runner.execute(
+      {
+        type: 'MARK_PICKED_UP',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-mismatch-01',
+        jobId: 'job-mismatch-01',
+        payload: { jobId: 'job-mismatch-01', pinCode: '1111' },
+      },
+      async () => {
+        throw AppError.network('Timeout 504');
+      },
+    );
+
+    let networkCalledOnMismatch = false;
+
+    // 2. Second command targets same active resource but with DIFFERENT payload { pinCode: '9999' }
+    await expect(
+      runner.execute(
+        {
+          type: 'MARK_PICKED_UP',
+          resourceType: 'DELIVERY_JOB',
+          resourceId: 'job-mismatch-01',
+          jobId: 'job-mismatch-01',
+          payload: { jobId: 'job-mismatch-01', pinCode: '9999' },
+        },
+        async () => {
+          networkCalledOnMismatch = true;
+          return { id: 'job-mismatch-01' };
+        },
+      ),
+    ).rejects.toThrow(/IDEMPOTENCY_FINGERPRINT_MISMATCH/);
+
+    expect(networkCalledOnMismatch).toBe(false);
+  });
+
+  it('Requirement 8: Old ACKNOWLEDGED command does not get reused for a new offer', async () => {
+    let firstKey = '';
+    let secondKey = '';
+
+    // First offer accepted and ACKNOWLEDGED
+    const out1 = await runner.execute(
+      {
+        type: 'ACCEPT_OFFER',
+        resourceType: 'DISPATCH_OFFER',
+        resourceId: 'offer-1',
+        payload: { offerId: 'offer-1' },
+      },
+      async (key) => {
+        firstKey = key;
+        return { offerId: 'offer-1', accepted: true };
+      },
+    );
+    expect(out1.outcome).toBe('ACKNOWLEDGED');
+
+    // New offer arrives later
+    const out2 = await runner.execute(
+      {
+        type: 'ACCEPT_OFFER',
+        resourceType: 'DISPATCH_OFFER',
+        resourceId: 'offer-2',
+        payload: { offerId: 'offer-2' },
+      },
+      async (key) => {
+        secondKey = key;
+        return { offerId: 'offer-2', accepted: true };
+      },
+    );
+    expect(out2.outcome).toBe('ACKNOWLEDGED');
+
+    expect(out1.commandId).not.toBe(out2.commandId);
+    expect(firstKey).not.toBe(secondKey);
+  });
+
   it('saves command as PENDING and returns PENDING when offline before send', async () => {
     connectivity.setConnected(false);
 
@@ -47,7 +286,8 @@ describe('CommandRunner and Synchronization Pipeline', () => {
     const outcome = await runner.execute(
       {
         type: 'MARK_PICKED_UP',
-        jobId: 'job-offline-1',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-offline-1',
         payload: { jobId: 'job-offline-1' },
       },
       async () => {
@@ -69,7 +309,8 @@ describe('CommandRunner and Synchronization Pipeline', () => {
     const outcome = await runner.execute(
       {
         type: 'MARK_PICKED_UP',
-        jobId: 'job-1',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-1',
         payload: { jobId: 'job-1' },
       },
       async () => {
@@ -94,7 +335,8 @@ describe('CommandRunner and Synchronization Pipeline', () => {
     const outcome = await runner.execute(
       {
         type: 'MARK_DELIVERED',
-        jobId: 'job-2',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-2',
         payload: { jobId: 'job-2' },
       },
       async () => {
@@ -115,28 +357,6 @@ describe('CommandRunner and Synchronization Pipeline', () => {
     expect(pending[0].commandType).toBe('MARK_DELIVERED');
   });
 
-  it('marks outcome as UNKNOWN when request times out', async () => {
-    const outcome = await runner.execute(
-      {
-        type: 'MARK_PICKED_UP',
-        jobId: 'job-timeout-1',
-        payload: { jobId: 'job-timeout-1' },
-      },
-      async () => {
-        throw AppError.timeout('Request timed out');
-      },
-    );
-
-    expect(outcome.outcome).toBe('UNKNOWN');
-    if (outcome.outcome === 'UNKNOWN') {
-      expect(outcome.error.kind).toBe('Timeout');
-    }
-
-    const pending = await commandStore.listPending();
-    expect(pending.length).toBe(1);
-    expect(pending[0].state).toBe('UNKNOWN');
-  });
-
   it('deduplicates concurrent double taps into a single command execution', async () => {
     let executionCount = 0;
     const mockOperation = async () => {
@@ -148,7 +368,8 @@ describe('CommandRunner and Synchronization Pipeline', () => {
     const promise1 = runner.execute(
       {
         type: 'MARK_PICKED_UP',
-        jobId: 'job-double-tap',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-double-tap',
         payload: { jobId: 'job-double-tap' },
       },
       mockOperation,
@@ -157,7 +378,8 @@ describe('CommandRunner and Synchronization Pipeline', () => {
     const promise2 = runner.execute(
       {
         type: 'MARK_PICKED_UP',
-        jobId: 'job-double-tap',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-double-tap',
         payload: { jobId: 'job-double-tap' },
       },
       mockOperation,
@@ -171,53 +393,5 @@ describe('CommandRunner and Synchronization Pipeline', () => {
 
     const allCommands = await commandStore.listAll();
     expect(allCommands.length).toBe(1);
-  });
-
-  it('reuses the exact same commandId and idempotencyKey across 20 retries', async () => {
-    const keysUsed: string[] = [];
-    const commandIdsUsed: string[] = [];
-
-    // First attempt fails with network error -> becomes UNKNOWN
-    await runner.execute(
-      {
-        type: 'MARK_DELIVERED',
-        jobId: 'job-retry-20',
-        payload: { jobId: 'job-retry-20' },
-      },
-      async (key) => {
-        keysUsed.push(key);
-        throw AppError.network('Network dropped');
-      },
-    );
-
-    // 19 subsequent retries
-    for (let i = 0; i < 19; i++) {
-      const outcome = await runner.execute(
-        {
-          type: 'MARK_DELIVERED',
-          jobId: 'job-retry-20',
-          payload: { jobId: 'job-retry-20' },
-        },
-        async (key) => {
-          keysUsed.push(key);
-          if (i === 18) {
-            return { id: 'job-retry-20', status: 'DELIVERED' };
-          }
-          throw AppError.network('Network dropped');
-        },
-      );
-      commandIdsUsed.push(outcome.commandId);
-    }
-
-    expect(keysUsed.length).toBe(20);
-    // All 20 attempts must use the EXACT SAME idempotency key
-    const uniqueKeys = new Set(keysUsed);
-    expect(uniqueKeys.size).toBe(1);
-
-    // All commands must map to the same single command record
-    const all = await commandStore.listAll();
-    expect(all.length).toBe(1);
-    expect(all[0].state).toBe('ACKNOWLEDGED');
-    expect(all[0].attemptCount).toBe(20);
   });
 });

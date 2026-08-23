@@ -100,16 +100,16 @@ stateDiagram-v2
     UNAUTHENTICATED --> ONBOARDING_REQUIRED: Login Success (KYC Missing)
     UNAUTHENTICATED --> PENDING_APPROVAL: Login Success (KYC Submitted)
     UNAUTHENTICATED --> APPROVED_OFFLINE: Login Success (Approved)
-    
+
     ONBOARDING_REQUIRED --> PENDING_APPROVAL: Submit KYC Draft
     PENDING_APPROVAL --> APPROVED_OFFLINE: Backend Admin Approval
-    
+
     APPROVED_OFFLINE --> APPROVED_ONLINE: Set Online (GPS OK)
     APPROVED_ONLINE --> APPROVED_OFFLINE: Set Offline
-    
+
     APPROVED_ONLINE --> BUSY: Accepted Delivery Job
     BUSY --> APPROVED_ONLINE: Completed Delivery (Delivered)
-    
+
     APPROVED_ONLINE --> SUSPENDED: Backend Compliance Action
     APPROVED_OFFLINE --> SUSPENDED: Backend Compliance Action
 ```
@@ -135,10 +135,10 @@ stateDiagram-v2
     ACCEPTING --> ACCEPTED: Backend 200 OK (Locked)
     ACCEPTING --> REJECTED: Backend 409 Conflict (Claimed by other)
     ACCEPTING --> UNKNOWN: Network Drop / Timeout
-    
+
     PENDING --> REJECTING: Captain taps Reject
     REJECTING --> REJECTED: Backend 200 OK
-    
+
     PENDING --> EXPIRED: Timer Reaches 0
 ```
 
@@ -153,12 +153,12 @@ stateDiagram-v2
     ARRIVING_PICKUP --> PICKUP_CONFIRMING: Captain Arrived at Outlet
     PICKUP_CONFIRMING --> PICKED_UP: Server 200 (Verified PIN/Scan)
     ASSIGNED --> PICKED_UP: Direct Store Pickup Confirmation
-    
+
     PICKED_UP --> ARRIVING_CUSTOMER: Driving to Customer
     ARRIVING_CUSTOMER --> DELIVERY_CONFIRMING: Arrived at Destination
     DELIVERY_CONFIRMING --> DELIVERED: Server 200 (Verified PIN/Proof)
     PICKED_UP --> DELIVERED: Direct Delivery Confirmation
-    
+
     PICKUP_CONFIRMING --> UNKNOWN: Network Error on Mutation
     DELIVERY_CONFIRMING --> UNKNOWN: Network Error on Mutation
     UNKNOWN --> PICKED_UP: Reconciled via Active Job Poll

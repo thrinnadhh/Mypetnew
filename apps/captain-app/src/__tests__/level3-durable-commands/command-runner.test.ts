@@ -1,5 +1,5 @@
 import { CommandRunner } from '../../sync/command-runner';
-import { commandStore } from '../../sync/command-store';
+import { commandStore, DurableStorageDriver } from '../../sync/command-store';
 import { connectivity } from '../../sync/connectivity';
 import { AppError } from '../../domain/result';
 
@@ -7,12 +7,13 @@ describe('Level 3: Durable CommandRunner Pipeline Tests', () => {
   let runner: CommandRunner;
 
   beforeEach(async () => {
+    commandStore.resetStorageDriverForTesting();
     runner = new CommandRunner();
     await commandStore.clear();
     connectivity.setConnected(true);
   });
 
-  it('deduplicates rapid double-tap requests into exactly ONE execution', async () => {
+  it('deduplicates rapid double-tap requests on same resource into exactly ONE execution', async () => {
     let physicalNetworkCalls = 0;
     const mockServerCall = async () => {
       physicalNetworkCalls++;
@@ -23,6 +24,8 @@ describe('Level 3: Durable CommandRunner Pipeline Tests', () => {
     const promise1 = runner.execute(
       {
         type: 'MARK_PICKED_UP',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-101',
         jobId: 'job-101',
         payload: { jobId: 'job-101', pinCode: '1234' },
       },
@@ -32,6 +35,8 @@ describe('Level 3: Durable CommandRunner Pipeline Tests', () => {
     const promise2 = runner.execute(
       {
         type: 'MARK_PICKED_UP',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-101',
         jobId: 'job-101',
         payload: { jobId: 'job-101', pinCode: '1234' },
       },
@@ -50,6 +55,39 @@ describe('Level 3: Durable CommandRunner Pipeline Tests', () => {
     expect(all.length).toBe(1);
   });
 
+  it('proves storage write failure fails closed and blocks HTTP network operation', async () => {
+    const brokenDriver: DurableStorageDriver = {
+      async getItem() {
+        return null;
+      },
+      async setItem() {
+        throw new Error('STORAGE_IO_FAILURE: Out of disk space');
+      },
+      async removeItem() {},
+      async clear() {},
+    };
+
+    commandStore.setStorageDriver(brokenDriver);
+
+    let networkTransmitted = false;
+    await expect(
+      runner.execute(
+        {
+          type: 'MARK_DELIVERED',
+          resourceType: 'DELIVERY_JOB',
+          resourceId: 'job-fail-storage',
+          payload: { jobId: 'job-fail-storage' },
+        },
+        async () => {
+          networkTransmitted = true;
+          return { status: 'DELIVERED' };
+        },
+      ),
+    ).rejects.toThrow('STORAGE_IO_FAILURE: Out of disk space');
+
+    expect(networkTransmitted).toBe(false);
+  });
+
   it('reuses the exact same idempotencyKey and commandId across 20 retries', async () => {
     const keysObserved: string[] = [];
     const commandIdsObserved: string[] = [];
@@ -58,6 +96,8 @@ describe('Level 3: Durable CommandRunner Pipeline Tests', () => {
       const outcome = await runner.execute(
         {
           type: 'MARK_DELIVERED',
+          resourceType: 'DELIVERY_JOB',
+          resourceId: 'job-retry-loop-1',
           jobId: 'job-retry-loop-1',
           payload: { jobId: 'job-retry-loop-1' },
         },
@@ -92,6 +132,8 @@ describe('Level 3: Durable CommandRunner Pipeline Tests', () => {
     await runner.execute(
       {
         type: 'MARK_PICKED_UP',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-distinct-keys',
         jobId: 'job-distinct-keys',
         payload: { jobId: 'job-distinct-keys' },
       },
@@ -104,6 +146,8 @@ describe('Level 3: Durable CommandRunner Pipeline Tests', () => {
     await runner.execute(
       {
         type: 'MARK_DELIVERED',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-distinct-keys',
         jobId: 'job-distinct-keys',
         payload: { jobId: 'job-distinct-keys' },
       },
@@ -118,6 +162,78 @@ describe('Level 3: Durable CommandRunner Pipeline Tests', () => {
     expect(all.length).toBe(2);
   });
 
+  it('proves concurrent operations on different offers execute independently without blocking or sharing results', async () => {
+    let offerACalls = 0;
+    let offerBCalls = 0;
+
+    const pA = runner.execute(
+      {
+        type: 'ACCEPT_OFFER',
+        resourceType: 'DISPATCH_OFFER',
+        resourceId: 'offer-alpha',
+        payload: { offerId: 'offer-alpha' },
+      },
+      async () => {
+        offerACalls++;
+        await new Promise((r) => setTimeout(r, 20));
+        return { offerId: 'offer-alpha', accepted: true };
+      },
+    );
+
+    const pB = runner.execute(
+      {
+        type: 'ACCEPT_OFFER',
+        resourceType: 'DISPATCH_OFFER',
+        resourceId: 'offer-beta',
+        payload: { offerId: 'offer-beta' },
+      },
+      async () => {
+        offerBCalls++;
+        await new Promise((r) => setTimeout(r, 20));
+        return { offerId: 'offer-beta', accepted: true };
+      },
+    );
+
+    const [resA, resB] = await Promise.all([pA, pB]);
+
+    expect(offerACalls).toBe(1);
+    expect(offerBCalls).toBe(1);
+    expect(resA.commandId).not.toBe(resB.commandId);
+    expect(resA.idempotencyKey).not.toBe(resB.idempotencyKey);
+  });
+
+  it('rejects with IDEMPOTENCY_FINGERPRINT_MISMATCH when same active scope receives altered payload', async () => {
+    // 1. First attempt fails with network error
+    await runner.execute(
+      {
+        type: 'MARK_PICKED_UP',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-fp-check',
+        jobId: 'job-fp-check',
+        payload: { jobId: 'job-fp-check', otp: '1111' },
+      },
+      async () => {
+        throw AppError.network('Network dropped');
+      },
+    );
+
+    // 2. Second attempt with different OTP
+    await expect(
+      runner.execute(
+        {
+          type: 'MARK_PICKED_UP',
+          resourceType: 'DELIVERY_JOB',
+          resourceId: 'job-fp-check',
+          jobId: 'job-fp-check',
+          payload: { jobId: 'job-fp-check', otp: '9999' },
+        },
+        async () => {
+          return { status: 'PICKED_UP' };
+        },
+      ),
+    ).rejects.toThrow(/IDEMPOTENCY_FINGERPRINT_MISMATCH/);
+  });
+
   it('handles offline queueing: saves as PENDING and skips dispatch when offline', async () => {
     connectivity.setConnected(false);
 
@@ -125,6 +241,8 @@ describe('Level 3: Durable CommandRunner Pipeline Tests', () => {
     const outcome = await runner.execute(
       {
         type: 'MARK_PICKED_UP',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-offline-01',
         jobId: 'job-offline-01',
         payload: { jobId: 'job-offline-01' },
       },
@@ -146,7 +264,8 @@ describe('Level 3: Durable CommandRunner Pipeline Tests', () => {
     const outcome = await runner.execute(
       {
         type: 'ACCEPT_OFFER',
-        jobId: 'job-timeout-01',
+        resourceType: 'DISPATCH_OFFER',
+        resourceId: 'off-timeout-01',
         payload: { offerId: 'off-timeout-01' },
       },
       async () => {
@@ -168,6 +287,8 @@ describe('Level 3: Durable CommandRunner Pipeline Tests', () => {
     const outcome = await runner.execute(
       {
         type: 'MARK_PICKED_UP',
+        resourceType: 'DELIVERY_JOB',
+        resourceId: 'job-bad-otp',
         jobId: 'job-bad-otp',
         payload: { jobId: 'job-bad-otp' },
       },

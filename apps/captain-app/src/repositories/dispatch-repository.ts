@@ -33,8 +33,12 @@ export class DispatchRepository {
     const commandType = action === 'ACCEPT' ? 'ACCEPT_OFFER' : 'REJECT_OFFER';
 
     return commandRunner.execute(
-      commandType,
-      { offerId, action },
+      {
+        type: commandType,
+        resourceType: 'DISPATCH_OFFER',
+        resourceId: offerId,
+        payload: { offerId, action },
+      },
       async (idempotencyKey) => {
         const res = await respondToOffer(offerId, action, idempotencyKey);
         if (!res.accepted || !res.jobId || !res.orderId || !res.outletId || !res.deliveryAddress) {

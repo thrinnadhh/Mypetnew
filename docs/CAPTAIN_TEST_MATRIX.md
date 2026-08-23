@@ -1,7 +1,7 @@
 # MYPETNEW — CAPTAIN TEST ARCHITECTURE & PRODUCTION INVARIANT MATRIX (P7)
 
 ## Executive Summary
-This document certifies the testing architecture, adversarial contracts, and server-authoritative invariants for the MyPet Captain application and distributed dispatch backend. 
+This document certifies the testing architecture, adversarial contracts, and server-authoritative invariants for the MyPet Captain application and distributed dispatch backend.
 
 All false-positive tests, optimistic UI mocks, and unverified mock assumptions have been eliminated. Every operational mutation is verified across five distinct outcomes: **Success**, **Deterministic Rejection**, **Timeout / Network Loss**, **Retry with Key Invariance**, and **Concurrent Deduplication / Idempotency**.
 

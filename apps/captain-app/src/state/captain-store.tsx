@@ -99,8 +99,10 @@ export const CaptainStoreProvider: React.FC<{ children: React.ReactNode }> = ({ 
       return false;
     }
 
-    // Outcome is UNKNOWN (network lost during presence update)
-    setPresenceError(outcome.error);
+    // Outcome is UNKNOWN or PENDING (network lost during presence update)
+    if ('error' in outcome && outcome.error) {
+      setPresenceError(outcome.error);
+    }
     return false;
   }, []);
 

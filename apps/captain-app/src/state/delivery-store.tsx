@@ -1,11 +1,17 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '../auth/context';
 import { CommandOutcome } from '../domain/command';
-import { DeliveryJob, DeliveryProof, DeliveryState } from '../domain/delivery';
+import {
+  DeliveryJob,
+  DeliveryProof,
+  DeliveryState,
+  isDeliveryStateMoreAdvanced,
+} from '../domain/delivery';
 import { DispatchAssignment, DispatchOffer } from '../domain/dispatch';
 import { AppError } from '../domain/result';
 import { deliveryRepository } from '../repositories/delivery-repository';
 import { dispatchRepository } from '../repositories/dispatch-repository';
+import { reconciliationService } from '../sync/reconciliation';
 import { useCaptainStore } from './captain-store';
 
 interface DeliveryStoreContextType {
@@ -56,8 +62,6 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       } else {
         setActiveOffer(null);
       }
-    } else {
-      // Failed read does not crash UI, but preserves state
     }
   }, [isOnline, activeDelivery]);
 
@@ -68,10 +72,43 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     const result = await deliveryRepository.getActiveDelivery();
-    if (result.success && result.data) {
-      setActiveDelivery(result.data);
+    if (result.success) {
+      const serverJob = result.data;
+      if (serverJob) {
+        setActiveDelivery((current) => {
+          if (!current) return serverJob;
+          // Protect monotonic progression against stale out-of-order responses
+          if (isDeliveryStateMoreAdvanced(current.state, serverJob.state)) {
+            return current;
+          }
+          return serverJob;
+        });
+      }
     }
+    // Also trigger background reconciliation for any pending/unknown mutations
+    await reconciliationService.reconcile();
   }, [session]);
+
+  // Subscribe to reconciliation events
+  useEffect(() => {
+    const unsubscribe = reconciliationService.subscribe((updatedJob) => {
+      if (updatedJob !== undefined) {
+        setActiveDelivery((current) => {
+          if (!updatedJob) return null;
+          if (!current) return updatedJob;
+          if (isDeliveryStateMoreAdvanced(current.state, updatedJob.state)) {
+            return current;
+          }
+          return updatedJob;
+        });
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    restoreActiveDelivery();
+  }, [restoreActiveDelivery]);
 
   const acceptOffer = useCallback(async (offerId: string): Promise<CommandOutcome<DispatchAssignment>> => {
     setIsRespondingOffer(true);
@@ -106,7 +143,9 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       setActiveOffer(null);
     } else {
       // UNKNOWN: Network lost while accepting
-      setDeliveryError(outcome.error);
+      if ('error' in outcome && outcome.error) {
+        setDeliveryError(outcome.error);
+      }
     }
 
     return outcome;
@@ -135,6 +174,9 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     setIsConfirmingPickup(true);
     setDeliveryError(null);
 
+    // Transition to intermediate state: PICKUP_CONFIRMING
+    setActiveDelivery((prev) => (prev ? { ...prev, state: 'PICKUP_CONFIRMING' } : null));
+
     const outcome = await deliveryRepository.markPickedUp(jobId, proof);
     setLastCommandOutcome(outcome);
     setIsConfirmingPickup(false);
@@ -152,7 +194,18 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         state: 'UNKNOWN',
       } : null));
       setDeliveryError(outcome.error);
-    } else {
+    } else if (outcome.outcome === 'PENDING') {
+      setActiveDelivery((prev) => (prev ? {
+        ...prev,
+        state: 'UNKNOWN',
+      } : null));
+      if (outcome.error) setDeliveryError(outcome.error);
+    } else if (outcome.outcome === 'REJECTED') {
+      // Revert to ASSIGNED
+      setActiveDelivery((prev) => (prev ? {
+        ...prev,
+        state: 'ASSIGNED',
+      } : null));
       setDeliveryError(outcome.error);
     }
 
@@ -165,6 +218,9 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   ): Promise<CommandOutcome<Partial<DeliveryJob>>> => {
     setIsConfirmingDelivery(true);
     setDeliveryError(null);
+
+    // Transition to intermediate state: DELIVERY_CONFIRMING
+    setActiveDelivery((prev) => (prev ? { ...prev, state: 'DELIVERY_CONFIRMING' } : null));
 
     const outcome = await deliveryRepository.markDelivered(jobId, proof);
     setLastCommandOutcome(outcome);
@@ -183,7 +239,18 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         state: 'UNKNOWN',
       } : null));
       setDeliveryError(outcome.error);
-    } else {
+    } else if (outcome.outcome === 'PENDING') {
+      setActiveDelivery((prev) => (prev ? {
+        ...prev,
+        state: 'UNKNOWN',
+      } : null));
+      if (outcome.error) setDeliveryError(outcome.error);
+    } else if (outcome.outcome === 'REJECTED') {
+      // Revert to PICKED_UP
+      setActiveDelivery((prev) => (prev ? {
+        ...prev,
+        state: 'PICKED_UP',
+      } : null));
       setDeliveryError(outcome.error);
     }
 

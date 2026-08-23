@@ -30,7 +30,7 @@ export default function DeliveryProofVerificationScreen() {
 
   const handleConfirmDelivery = async () => {
     setError(null);
-    setNotice(null);
+    setNotice('Confirming delivery…');
     setLoading(true);
 
     try {
@@ -43,8 +43,11 @@ export default function DeliveryProofVerificationScreen() {
       if (outcome.outcome === 'ACKNOWLEDGED') {
         router.replace(`/delivery/${jobId}/completed` as any);
       } else if (outcome.outcome === 'UNKNOWN') {
-        setNotice('Delivery completion submitted. Waiting for server acknowledgement…');
+        setNotice('Delivery sync pending. Checking delivery status…');
+      } else if (outcome.outcome === 'PENDING') {
+        setNotice('Delivery sync pending');
       } else {
+        setNotice(null);
         setError(outcome.error.message);
       }
     } finally {
@@ -92,7 +95,7 @@ export default function DeliveryProofVerificationScreen() {
               loading={loading}
               onPress={handleConfirmDelivery}
               style={styles.confirmBtn}
-              title="COMPLETE DELIVERY"
+              title={loading ? 'Confirming delivery…' : 'COMPLETE DELIVERY'}
               variant="success"
             />
           </View>

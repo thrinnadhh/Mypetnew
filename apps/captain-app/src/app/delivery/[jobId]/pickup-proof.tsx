@@ -30,7 +30,7 @@ export default function PickupProofVerificationScreen() {
 
   const handleConfirmPickup = async () => {
     setError(null);
-    setNotice(null);
+    setNotice('Confirming pickup…');
     setLoading(true);
 
     try {
@@ -43,8 +43,11 @@ export default function PickupProofVerificationScreen() {
       if (outcome.outcome === 'ACKNOWLEDGED') {
         router.replace(`/delivery/${jobId}/customer` as any);
       } else if (outcome.outcome === 'UNKNOWN') {
-        setNotice('Pickup confirmation submitted. Waiting for server acknowledgement…');
+        setNotice('Pickup sync pending. Checking delivery status…');
+      } else if (outcome.outcome === 'PENDING') {
+        setNotice('Pickup sync pending');
       } else {
+        setNotice(null);
         setError(outcome.error.message);
       }
     } finally {
@@ -92,7 +95,7 @@ export default function PickupProofVerificationScreen() {
               loading={loading}
               onPress={handleConfirmPickup}
               style={styles.confirmBtn}
-              title="CONFIRM PICKUP"
+              title={loading ? 'Confirming pickup…' : 'CONFIRM PICKUP'}
               variant="primary"
             />
           </View>

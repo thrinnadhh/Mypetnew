@@ -1,4 +1,8 @@
-import { canTransitionDelivery } from '../../domain/delivery';
+import {
+  canTransitionDelivery,
+  isDeliveryStateMoreAdvanced,
+  DELIVERY_STATE_RANKS,
+} from '../../domain/delivery';
 import { computeCaptainState, CaptainProfile } from '../../domain/captain';
 
 describe('Domain State Machines', () => {
@@ -7,11 +11,16 @@ describe('Domain State Machines', () => {
       expect(canTransitionDelivery('ASSIGNED', 'ARRIVING_PICKUP')).toBe(true);
       expect(canTransitionDelivery('ASSIGNED', 'PICKUP_CONFIRMING')).toBe(true);
       expect(canTransitionDelivery('ASSIGNED', 'PICKED_UP')).toBe(true);
+      expect(canTransitionDelivery('PICKUP_CONFIRMING', 'PICKED_UP')).toBe(true);
       expect(canTransitionDelivery('PICKED_UP', 'ARRIVING_CUSTOMER')).toBe(true);
       expect(canTransitionDelivery('PICKED_UP', 'DELIVERY_CONFIRMING')).toBe(true);
       expect(canTransitionDelivery('PICKED_UP', 'DELIVERED')).toBe(true);
+      expect(canTransitionDelivery('DELIVERY_CONFIRMING', 'DELIVERED')).toBe(true);
       expect(canTransitionDelivery('ASSIGNED', 'UNKNOWN')).toBe(true);
+      expect(canTransitionDelivery('PICKUP_CONFIRMING', 'UNKNOWN')).toBe(true);
+      expect(canTransitionDelivery('DELIVERY_CONFIRMING', 'UNKNOWN')).toBe(true);
       expect(canTransitionDelivery('UNKNOWN', 'PICKED_UP')).toBe(true);
+      expect(canTransitionDelivery('UNKNOWN', 'DELIVERED')).toBe(true);
     });
 
     it('rejects invalid backwards state transitions', () => {
@@ -19,6 +28,21 @@ describe('Domain State Machines', () => {
       expect(canTransitionDelivery('DELIVERED', 'PICKED_UP')).toBe(false);
       expect(canTransitionDelivery('PICKED_UP', 'ASSIGNED')).toBe(false);
       expect(canTransitionDelivery('FAILED', 'PICKED_UP')).toBe(false);
+    });
+
+    it('determines monotonic state advancement correctly', () => {
+      expect(isDeliveryStateMoreAdvanced('PICKED_UP', 'ASSIGNED')).toBe(true);
+      expect(isDeliveryStateMoreAdvanced('DELIVERED', 'PICKED_UP')).toBe(true);
+      expect(isDeliveryStateMoreAdvanced('DELIVERED', 'ASSIGNED')).toBe(true);
+      expect(isDeliveryStateMoreAdvanced('ASSIGNED', 'DELIVERED')).toBe(false);
+      expect(isDeliveryStateMoreAdvanced('PICKED_UP', 'DELIVERED')).toBe(false);
+      expect(isDeliveryStateMoreAdvanced('ASSIGNED', 'PICKED_UP')).toBe(false);
+    });
+
+    it('prevents stale out-of-order responses from regressing delivery state', () => {
+      const currentState = 'DELIVERED';
+      const staleIncomingState = 'PICKED_UP';
+      expect(isDeliveryStateMoreAdvanced(staleIncomingState, currentState)).toBe(false);
     });
   });
 

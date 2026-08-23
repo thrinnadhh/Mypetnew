@@ -35,6 +35,9 @@ export default function DeliveryJobRouter() {
         case 'DELIVERED':
           router.replace(`/delivery/${jobId}/completed` as any);
           break;
+        case 'UNKNOWN':
+          // Remain on loading / router screen to allow reconciliation to determine definitive state
+          break;
         default:
           router.replace('/(tabs)/home');
           break;
@@ -48,7 +51,7 @@ export default function DeliveryJobRouter() {
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
         <ActivityIndicator color={palette.royalBlue} size="large" />
-        <Text style={styles.text}>Connecting to delivery dispatch…</Text>
+        <Text style={styles.text}>Checking delivery status…</Text>
       </View>
     </SafeAreaView>
   );

@@ -18,10 +18,17 @@ export class DeliveryRepository {
   async markPickedUp(
     jobId: string,
     proof?: DeliveryProof,
+    existingCommandId?: string,
+    existingIdempotencyKey?: string,
   ): Promise<CommandOutcome<Partial<DeliveryJob>>> {
     return commandRunner.execute(
-      'MARK_PICKED_UP',
-      { jobId, proof },
+      {
+        type: 'MARK_PICKED_UP',
+        jobId,
+        payload: { jobId, proof },
+        existingCommandId,
+        existingIdempotencyKey,
+      },
       async (idempotencyKey) => {
         const res = await markJobPickedUp(jobId, idempotencyKey);
         return {
@@ -41,10 +48,17 @@ export class DeliveryRepository {
   async markDelivered(
     jobId: string,
     proof?: DeliveryProof,
+    existingCommandId?: string,
+    existingIdempotencyKey?: string,
   ): Promise<CommandOutcome<Partial<DeliveryJob>>> {
     return commandRunner.execute(
-      'MARK_DELIVERED',
-      { jobId, proof },
+      {
+        type: 'MARK_DELIVERED',
+        jobId,
+        payload: { jobId, proof },
+        existingCommandId,
+        existingIdempotencyKey,
+      },
       async (idempotencyKey) => {
         const res = await markJobDelivered(jobId, idempotencyKey);
         return {

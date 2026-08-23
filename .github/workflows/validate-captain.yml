@@ -1,0 +1,49 @@
+name: validate-captain
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, "fix/captain-*", "feat/captain-*", "trial/*"]
+
+permissions:
+  contents: read
+
+jobs:
+  captain-app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/captain-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/captain-app/package-lock.json
+      - name: Install Captain dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Guard Captain production dependency advisories
+        run: npm audit --omit=dev
+      - name: Typecheck Captain app
+        run: npm run typecheck
+      - name: Lint Captain app
+        run: npm run lint
+      - name: Test Captain app
+        run: npm test
+      - name: Export Captain Android bundle
+        run: npx expo export --platform android --output-dir /tmp/captain-android-export
+      - name: Export Captain web bundle
+        env:
+          EXPO_PUBLIC_API_BASE_URL: https://api.invalid.example
+        run: npx expo export --platform web --output-dir dist-ci
+      - name: Upload Captain test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: captain-test-evidence-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            apps/captain-app/coverage

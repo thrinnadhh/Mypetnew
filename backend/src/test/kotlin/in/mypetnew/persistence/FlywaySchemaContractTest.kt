@@ -78,6 +78,8 @@ class FlywaySchemaContractTest {
                 "recurring_order_proposal",
                 "recurring_order_command",
                 "recurring_order_history",
+                "captain_onboarding",
+                "captain_support_ticket",
             )), "tables=$tables")
 
             val serviceRegionCount = connection.prepareStatement(

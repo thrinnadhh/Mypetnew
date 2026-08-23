@@ -208,4 +208,28 @@ class PersistenceConfiguration {
         loyalty: LoyaltyService,
         persistence: PosPersistence,
     ): PosService = PosService(inventory, loyalty, persistence)
+
+    @Bean
+    fun captainOnboardingPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): `in`.mypetnew.delivery.domain.CaptainOnboardingPersistence =
+        `in`.mypetnew.delivery.infrastructure.JdbcCaptainOnboardingPersistence(jdbc, transactions)
+
+    @Bean
+    fun productionCaptainOnboardingService(persistence: `in`.mypetnew.delivery.domain.CaptainOnboardingPersistence): `in`.mypetnew.delivery.domain.CaptainOnboardingService =
+        `in`.mypetnew.delivery.domain.CaptainOnboardingService(persistence)
+
+    @Bean
+    fun captainEarningsPersistence(jdbc: JdbcTemplate): `in`.mypetnew.delivery.domain.CaptainEarningsPersistence =
+        `in`.mypetnew.delivery.infrastructure.JdbcCaptainEarningsPersistence(jdbc)
+
+    @Bean
+    fun productionCaptainEarningsService(persistence: `in`.mypetnew.delivery.domain.CaptainEarningsPersistence): `in`.mypetnew.delivery.domain.CaptainEarningsService =
+        `in`.mypetnew.delivery.domain.CaptainEarningsService(persistence)
+
+    @Bean
+    fun captainSupportPersistence(jdbc: JdbcTemplate): `in`.mypetnew.delivery.domain.CaptainSupportPersistence =
+        `in`.mypetnew.delivery.infrastructure.JdbcCaptainSupportPersistence(jdbc)
+
+    @Bean
+    fun productionCaptainSupportService(persistence: `in`.mypetnew.delivery.domain.CaptainSupportPersistence): `in`.mypetnew.delivery.domain.CaptainSupportService =
+        `in`.mypetnew.delivery.domain.CaptainSupportService(persistence)
 }

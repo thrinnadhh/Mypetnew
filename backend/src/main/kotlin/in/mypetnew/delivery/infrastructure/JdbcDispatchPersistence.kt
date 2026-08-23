@@ -87,7 +87,9 @@ class JdbcDispatchPersistence(
         """
         SELECT id, order_id, outlet_id, origin_latitude, origin_longitude, status,
                assigned_captain_id, attempt_count, failure_reason, assigned_at,
-               picked_up_at, delivered_at, created_at, updated_at
+               picked_up_at, delivered_at, created_at, updated_at,
+               pickup_pin, delivery_pin, pickup_idempotency_key, pickup_fingerprint,
+               pickup_proof_payload, delivery_idempotency_key, delivery_fingerprint, delivery_proof_payload
         FROM mypet.dispatch_job
         WHERE order_id = ?
         """.trimIndent(),
@@ -99,13 +101,31 @@ class JdbcDispatchPersistence(
         """
         SELECT id, order_id, outlet_id, origin_latitude, origin_longitude, status,
                assigned_captain_id, attempt_count, failure_reason, assigned_at,
-               picked_up_at, delivered_at, created_at, updated_at
+               picked_up_at, delivered_at, created_at, updated_at,
+               pickup_pin, delivery_pin, pickup_idempotency_key, pickup_fingerprint,
+               pickup_proof_payload, delivery_idempotency_key, delivery_fingerprint, delivery_proof_payload
         FROM mypet.dispatch_job
         WHERE id = ?
         FOR UPDATE
         """.trimIndent(),
         { result, _ -> job(result) },
         jobId,
+    ).singleOrNull()
+
+    override fun findActiveJobByCaptain(captainId: UUID): DispatchJob? = jdbc.query(
+        """
+        SELECT id, order_id, outlet_id, origin_latitude, origin_longitude, status,
+               assigned_captain_id, attempt_count, failure_reason, assigned_at,
+               picked_up_at, delivered_at, created_at, updated_at,
+               pickup_pin, delivery_pin, pickup_idempotency_key, pickup_fingerprint,
+               pickup_proof_payload, delivery_idempotency_key, delivery_fingerprint, delivery_proof_payload
+        FROM mypet.dispatch_job
+        WHERE assigned_captain_id = ? AND status IN ('ASSIGNED', 'PICKED_UP')
+        ORDER BY updated_at DESC
+        LIMIT 1
+        """.trimIndent(),
+        { result, _ -> job(result) },
+        captainId,
     ).singleOrNull()
 
     override fun createJob(job: DispatchJob): DispatchJob {
@@ -115,8 +135,10 @@ class JdbcDispatchPersistence(
                 INSERT INTO mypet.dispatch_job(
                     id, order_id, outlet_id, origin_latitude, origin_longitude, status,
                     assigned_captain_id, attempt_count, failure_reason, assigned_at,
-                    picked_up_at, delivered_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    picked_up_at, delivered_at, created_at, updated_at,
+                    pickup_pin, delivery_pin, pickup_idempotency_key, pickup_fingerprint,
+                    pickup_proof_payload, delivery_idempotency_key, delivery_fingerprint, delivery_proof_payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent(),
                 job.id,
                 job.orderId,
@@ -132,6 +154,14 @@ class JdbcDispatchPersistence(
                 job.deliveredAt?.let(Timestamp::from),
                 Timestamp.from(job.createdAt),
                 Timestamp.from(job.updatedAt),
+                job.pickupPin,
+                job.deliveryPin,
+                job.pickupIdempotencyKey,
+                job.pickupFingerprint,
+                job.pickupProofPayload,
+                job.deliveryIdempotencyKey,
+                job.deliveryFingerprint,
+                job.deliveryProofPayload,
             )
             return job
         } catch (duplicate: DuplicateKeyException) {
@@ -144,7 +174,9 @@ class JdbcDispatchPersistence(
             """
             UPDATE mypet.dispatch_job
             SET status = ?, assigned_captain_id = ?, attempt_count = ?, failure_reason = ?,
-                assigned_at = ?, picked_up_at = ?, delivered_at = ?, updated_at = ?
+                assigned_at = ?, picked_up_at = ?, delivered_at = ?, updated_at = ?,
+                pickup_pin = ?, delivery_pin = ?, pickup_idempotency_key = ?, pickup_fingerprint = ?,
+                pickup_proof_payload = ?, delivery_idempotency_key = ?, delivery_fingerprint = ?, delivery_proof_payload = ?
             WHERE id = ?
             """.trimIndent(),
             job.status.name,
@@ -155,6 +187,14 @@ class JdbcDispatchPersistence(
             job.pickedUpAt?.let(Timestamp::from),
             job.deliveredAt?.let(Timestamp::from),
             Timestamp.from(job.updatedAt),
+            job.pickupPin,
+            job.deliveryPin,
+            job.pickupIdempotencyKey,
+            job.pickupFingerprint,
+            job.pickupProofPayload,
+            job.deliveryIdempotencyKey,
+            job.deliveryFingerprint,
+            job.deliveryProofPayload,
             job.id,
         )
         if (updated != 1) unavailable()
@@ -165,7 +205,9 @@ class JdbcDispatchPersistence(
         """
         SELECT id, order_id, outlet_id, origin_latitude, origin_longitude, status,
                assigned_captain_id, attempt_count, failure_reason, assigned_at,
-               picked_up_at, delivered_at, created_at, updated_at
+               picked_up_at, delivered_at, created_at, updated_at,
+               pickup_pin, delivery_pin, pickup_idempotency_key, pickup_fingerprint,
+               pickup_proof_payload, delivery_idempotency_key, delivery_fingerprint, delivery_proof_payload
         FROM mypet.dispatch_job
         WHERE status IN ('SEARCHING', 'OFFERED')
         ORDER BY updated_at, id
@@ -278,6 +320,14 @@ class JdbcDispatchPersistence(
         deliveredAt = result.getTimestamp("delivered_at")?.toInstant(),
         createdAt = result.getTimestamp("created_at").toInstant(),
         updatedAt = result.getTimestamp("updated_at").toInstant(),
+        pickupPin = result.getString("pickup_pin") ?: "1234",
+        deliveryPin = result.getString("delivery_pin") ?: "5678",
+        pickupIdempotencyKey = result.getString("pickup_idempotency_key"),
+        pickupFingerprint = result.getString("pickup_fingerprint"),
+        pickupProofPayload = result.getString("pickup_proof_payload"),
+        deliveryIdempotencyKey = result.getString("delivery_idempotency_key"),
+        deliveryFingerprint = result.getString("delivery_fingerprint"),
+        deliveryProofPayload = result.getString("delivery_proof_payload"),
     )
 
     private fun offer(result: ResultSet): DispatchOffer = DispatchOffer(

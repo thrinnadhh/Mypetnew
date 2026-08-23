@@ -34,6 +34,8 @@ class GlobalExceptionHandler {
             "FORBIDDEN", "ADMIN_PERMISSION_REQUIRED", "CONSENT_REQUIRED" -> HttpStatus.FORBIDDEN
             "OTP_RATE_LIMITED" -> HttpStatus.TOO_MANY_REQUESTS
             "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+            "ONBOARDING_LOCKED",
+            "DISPATCH_CONFLICT",
             "CATALOG_VERSION_CONFLICT",
             "CATALOG_STATE_INVALID",
             "CATALOG_DUPLICATE",

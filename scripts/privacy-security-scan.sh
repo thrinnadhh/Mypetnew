@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-client_paths=(apps/customer-app/src apps/merchant-app/src)
+client_paths=(apps/customer-app/src apps/merchant-app/src apps/captain-app/src)
 source_paths=(backend/src/main "${client_paths[@]}")
 
 if command -v rg >/dev/null 2>&1; then

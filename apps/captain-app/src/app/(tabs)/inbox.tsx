@@ -21,7 +21,6 @@ export default function InboxTabScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const loadNotifications = useCallback(async () => {
-    setError(null);
     try {
       const items = await fetchCaptainNotifications();
       setNotifications(items);
@@ -33,11 +32,31 @@ export default function InboxTabScreen() {
   }, []);
 
   useEffect(() => {
-    loadNotifications();
-  }, [loadNotifications]);
+    let isMounted = true;
+    (async () => {
+      try {
+        const items = await fetchCaptainNotifications();
+        if (isMounted) {
+          setNotifications(items);
+        }
+      } catch {
+        if (isMounted) {
+          setError('Unable to load inbox notifications. Please check your connection.');
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
+    setError(null);
     try {
       await loadNotifications();
     } finally {

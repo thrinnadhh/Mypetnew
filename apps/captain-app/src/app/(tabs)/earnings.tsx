@@ -19,7 +19,6 @@ export default function EarningsTabScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async () => {
-    setError(null);
     try {
       const result = await earningsRepository.getEarningsSummary();
       if (result.success) {
@@ -35,11 +34,34 @@ export default function EarningsTabScreen() {
   }, []);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    let isMounted = true;
+    (async () => {
+      try {
+        const result = await earningsRepository.getEarningsSummary();
+        if (!isMounted) return;
+        if (result.success) {
+          setSummary(result.data);
+        } else {
+          setError(result.error.message);
+        }
+      } catch {
+        if (isMounted) {
+          setError('Unable to load earnings. Please check your network connection.');
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
+    setError(null);
     try {
       await loadData();
     } finally {

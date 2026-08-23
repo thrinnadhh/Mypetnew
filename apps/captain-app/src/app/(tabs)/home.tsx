@@ -43,8 +43,17 @@ export default function HomeScreen() {
   const isApproved = profile?.status === 'ACTIVE' && profile?.approved;
 
   useEffect(() => {
-    loadSummary();
-  }, [loadSummary]);
+    let isMounted = true;
+    (async () => {
+      const res = await earningsRepository.getEarningsSummary();
+      if (isMounted && res.success) {
+        setTodaySummary(res.data);
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isOnline || !isApproved || activeDelivery) return;

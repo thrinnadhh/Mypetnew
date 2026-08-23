@@ -24,7 +24,6 @@ export default function DeliveriesTabScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async () => {
-    setError(null);
     try {
       await restoreActiveDelivery();
       const result = await earningsRepository.getDeliveryHistory();
@@ -41,11 +40,35 @@ export default function DeliveriesTabScreen() {
   }, [restoreActiveDelivery]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    let isMounted = true;
+    (async () => {
+      try {
+        await restoreActiveDelivery();
+        const result = await earningsRepository.getDeliveryHistory();
+        if (!isMounted) return;
+        if (result.success) {
+          setHistory(result.data);
+        } else {
+          setError(result.error.message);
+        }
+      } catch {
+        if (isMounted) {
+          setError('Unable to load deliveries. Please check your network connection.');
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, [restoreActiveDelivery]);
 
   const onRefresh = async () => {
     setRefreshing(true);
+    setError(null);
     try {
       await loadData();
     } finally {

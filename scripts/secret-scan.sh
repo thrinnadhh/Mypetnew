@@ -15,6 +15,7 @@ if command -v rg >/dev/null 2>&1; then
     --glob '!**/dist-ci/**'
     --glob '!**/.expo/**'
     --glob '!.pnpm-store/**'
+    --glob '!mypet-work/**'
     --glob '!docs/**'
     --glob '!.env.example'
     --glob '!.env.staging.example'
@@ -35,6 +36,7 @@ else
     --exclude-dir=dist-ci \
     --exclude-dir=.expo \
     --exclude-dir=.pnpm-store \
+    --exclude-dir=mypet-work \
     --exclude-dir=docs \
     --exclude='.env.example' \
     --exclude='.env.staging.example' \

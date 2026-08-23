@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { updateCaptainAvailability } from '../api/availability';
 import { fetchCaptainProfile } from '../api/captain';
+import { stopBackgroundLocation } from '../location/background-location';
+import { locationUploader } from '../location/location-uploader';
 import { clearSession, getStoredRefreshState, refreshCaptainSession } from './session';
 import { CaptainApprovalStatus, CaptainProfile, CaptainSessionEnvelope } from './types';
 
@@ -42,6 +44,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
+      locationUploader.clearCache();
+      await stopBackgroundLocation().catch(() => {});
       if (captainProfile?.online) {
         await updateCaptainAvailability({ online: false }).catch(() => {});
       }

@@ -198,6 +198,10 @@ data class CaptainAvailabilityRequest(
     val online: Boolean,
     val latitude: Double? = null,
     val longitude: Double? = null,
+    val accuracy: Double? = null,
+    val capturedAt: Instant? = null,
+    val heading: Double? = null,
+    val speed: Double? = null,
 )
 
 enum class CaptainOfferAction { ACCEPT, REJECT }
@@ -243,7 +247,16 @@ class CaptainDeliveryApiController(
         @RequestBody request: CaptainAvailabilityRequest,
     ) = authentication.domainPrincipal().let { captain ->
         Authorizer.requireRole(captain, Role.CAPTAIN)
-        dispatch.updateAvailability(captain.actorId, request.online, request.latitude, request.longitude)
+        dispatch.updateAvailability(
+            captain.actorId,
+            request.online,
+            request.latitude,
+            request.longitude,
+            request.accuracy,
+            request.capturedAt,
+            request.heading,
+            request.speed,
+        )
     }
 
     @GetMapping("/dispatch/offers")

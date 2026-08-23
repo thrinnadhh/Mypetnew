@@ -150,11 +150,26 @@ class DispatchService(
         online: Boolean,
         latitude: Double? = null,
         longitude: Double? = null,
+        accuracy: Double? = null,
+        capturedAt: Instant? = null,
+        heading: Double? = null,
+        speed: Double? = null,
     ): CaptainDeliveryState {
         if ((latitude == null) != (longitude == null)) invalidLocation()
+        if (accuracy != null && (accuracy < 0.0 || accuracy.isNaN() || accuracy.isInfinite())) {
+            invalidLocation()
+        }
+        val now = clock.instant()
+        if (capturedAt != null) {
+            if (capturedAt.isBefore(now.minus(locationFreshness)) || capturedAt.isAfter(now.plusSeconds(60))) {
+                throw DomainException("LOCATION_STALE", "Location coordinate timestamp is stale or in the future")
+            }
+        }
         val location = if (latitude != null && longitude != null) {
-            if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) invalidLocation()
-            CaptainLocation(latitude, longitude, clock.instant())
+            if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0 || latitude.isNaN() || longitude.isNaN() || latitude.isInfinite() || longitude.isInfinite()) {
+                invalidLocation()
+            }
+            CaptainLocation(latitude, longitude, capturedAt ?: now)
         } else {
             null
         }

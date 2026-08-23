@@ -12,6 +12,10 @@ export interface CaptainAvailabilityParams {
   online: boolean;
   latitude?: number | null;
   longitude?: number | null;
+  accuracy?: number | null;
+  capturedAt?: string | null;
+  heading?: number | null;
+  speed?: number | null;
 }
 
 export async function updateCaptainAvailability(
@@ -24,6 +28,10 @@ export async function updateCaptainAvailability(
       online: params.online,
       latitude: params.latitude ?? null,
       longitude: params.longitude ?? null,
+      accuracy: params.accuracy ?? null,
+      capturedAt: params.capturedAt ?? null,
+      heading: params.heading ?? null,
+      speed: params.speed ?? null,
     }),
     timeoutMs: 8000,
   });

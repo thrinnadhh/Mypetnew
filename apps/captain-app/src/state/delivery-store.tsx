@@ -11,6 +11,7 @@ import { DispatchAssignment, DispatchOffer } from '../domain/dispatch';
 import { AppError } from '../domain/result';
 import { deliveryRepository } from '../repositories/delivery-repository';
 import { dispatchRepository } from '../repositories/dispatch-repository';
+import { locationUploader } from '../location/location-uploader';
 import { reconciliationService } from '../sync/reconciliation';
 import { useCaptainStore } from './captain-store';
 
@@ -107,8 +108,20 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   useEffect(() => {
-    restoreActiveDelivery();
+    let mounted = true;
+    (async () => {
+      if (mounted) {
+        await restoreActiveDelivery();
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, [restoreActiveDelivery]);
+
+  useEffect(() => {
+    locationUploader.setActiveDelivery(!!activeDelivery);
+  }, [activeDelivery]);
 
   const acceptOffer = useCallback(async (offerId: string): Promise<CommandOutcome<DispatchAssignment>> => {
     setIsRespondingOffer(true);

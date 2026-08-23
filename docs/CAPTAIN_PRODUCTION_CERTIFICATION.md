@@ -30,12 +30,13 @@
 - **Package Installation (`npm ci`)**: PASSED — 1025 packages installed cleanly, 0 vulnerabilities (`npm audit --omit=dev`).
 - **Typecheck (`tsc --noEmit`)**: PASSED — 0 TypeScript compilation errors.
 - **Linter (`expo lint --quiet`)**: PASSED — 0 ESLint warnings or errors.
-- **Unit & Flow Test Suite (`jest --runInBand`)**: PASSED — **36 Test Suites, 231 Tests**, 0 failures, 100% passing.
+- **Unit, Flow & E2E Test Suite (`jest --runInBand` / `npm run test:e2e`)**: PASSED — **40 Test Suites, 235 Tests**, 0 failures, 100% passing.
   - Level 1 Unit (Domain models, state machines, math/privacy utilities): 11 suites, 87 tests
   - Level 2 API Contracts (Auth, Profile, Dispatch, Availability, Client): 4 suites, 32 tests
   - Level 3 Durable Commands (Command store, runner, reconciliation): 4 suites, 28 tests
   - Level 4 Backend Contracts (Full integration contracts): 1 suite, 12 tests
   - Level 5 Mobile Flow & Regressions (Positive flow, negative recovery, mutation coverage): 3 suites, 24 tests
+  - Level 6 End-to-End Test Suites (Full lifecycle, onboarding, network resilience, multi-captain concurrency): 4 suites, 4 tests
   - Synchronous / Feature Suites (Location lifecycle, server authority, truthful UI): 13 suites, 48 tests
 - **Expo Android Export (`npx expo export --platform android`)**: PASSED — 1339 modules bundled into Hermes bytecode (3.1MB HBC).
 - **Expo Web Export (`npx expo export --platform web`)**: PASSED — 870 modules bundled (1.4MB bundle).

@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint --quiet",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "test:e2e": "jest src/__tests__/e2e --runInBand"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

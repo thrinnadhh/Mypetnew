@@ -25,11 +25,11 @@ export interface DeliveryJob {
   orderReference?: string;
   outletId: string;
   outletName: string;
-  originLatitude: number;
-  originLongitude: number;
+  originLatitude?: number;
+  originLongitude?: number;
   deliveryAddress: DeliveryAddress;
   state: DeliveryState;
-  earningPaise: number;
+  earningPaise?: number;
   itemCount?: number;
   itemsDescription?: string;
   assignedAt: string;

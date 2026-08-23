@@ -25,7 +25,7 @@ export default function DeliveryCompletedScreen() {
 
         <Text style={styles.title}>DELIVERY COMPLETE</Text>
         <Text style={styles.orderRef}>
-          {activeDelivery?.orderReference || (activeDelivery ? `#${activeDelivery.orderId.slice(0, 8)}` : '#MP-DELIVERY')}
+          {activeDelivery?.orderReference || (activeDelivery ? `#${activeDelivery.orderId.slice(0, 8)}` : 'Completed Delivery')}
         </Text>
 
         <View style={styles.summaryCard}>
@@ -40,10 +40,14 @@ export default function DeliveryCompletedScreen() {
 
           <View style={styles.earningRow}>
             <Text style={styles.earningLabel}>Captain Earning:</Text>
-            <MoneyAmount
-              paise={activeDelivery?.earningPaise ?? 7500}
-              style={styles.earningVal}
-            />
+            {activeDelivery?.earningPaise !== undefined && activeDelivery?.earningPaise !== null ? (
+              <MoneyAmount
+                paise={activeDelivery.earningPaise}
+                style={styles.earningVal}
+              />
+            ) : (
+              <Text style={styles.earningVal}>Settlement Pending</Text>
+            )}
           </View>
         </View>
 

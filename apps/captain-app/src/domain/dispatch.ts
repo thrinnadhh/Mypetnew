@@ -38,5 +38,7 @@ export interface DispatchAssignment {
   orderId: string;
   outletId: string;
   outletName: string;
+  originLatitude?: number;
+  originLongitude?: number;
   deliveryAddress: DeliveryAddress;
 }

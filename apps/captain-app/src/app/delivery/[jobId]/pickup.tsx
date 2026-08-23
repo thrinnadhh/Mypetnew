@@ -10,18 +10,26 @@ import { useDeliveryStore } from '../../../state/delivery-store';
 
 export default function PickupScreen() {
   const { jobId } = useLocalSearchParams<{ jobId: string }>();
-  const { activeDelivery } = useDeliveryStore();
+  const { activeDelivery, isConfirmingPickup } = useDeliveryStore();
   const [arrived, setArrived] = useState(false);
 
   const delivery = activeDelivery;
-  if (!delivery) {
+  if (!delivery || delivery.jobId !== jobId) {
     router.replace('/(tabs)/home');
+    return null;
+  }
+
+  // If already picked up, transition automatically to customer step
+  if (delivery.state === 'PICKED_UP' || delivery.state === 'ARRIVING_CUSTOMER' || delivery.state === 'DELIVERY_CONFIRMING' || delivery.state === 'DELIVERED') {
+    router.replace(`/delivery/${jobId}/customer` as any);
     return null;
   }
 
   const handleProceedToProof = () => {
     router.push(`/delivery/${jobId}/pickup-proof` as any);
   };
+
+  const isSyncPending = delivery.state === 'UNKNOWN';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -34,10 +42,18 @@ export default function PickupScreen() {
       <DeliveryTimeline status={delivery.state} />
 
       <ScrollView contentContainerStyle={styles.content}>
+        {isSyncPending ? (
+          <View style={styles.syncPendingBanner}>
+            <Text style={styles.syncPendingText}>
+              ⚡ Pickup confirmation sync pending with server. Checking status…
+            </Text>
+          </View>
+        ) : null}
+
         {/* Merchant Pickup Address Card */}
         <AddressCard
           address={`${delivery.outletName} Store`}
-          instructions="Show order ID to store manager"
+          instructions="Show order reference to store executive and inspect package contents."
           latitude={delivery.originLatitude}
           longitude={delivery.originLongitude}
           name={delivery.outletName}
@@ -49,7 +65,9 @@ export default function PickupScreen() {
           <Text style={styles.cardSectionTitle}>PACKAGE SUMMARY</Text>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Items:</Text>
-            <Text style={styles.detailVal}>{delivery.itemCount || 1} Items</Text>
+            <Text style={styles.detailVal}>
+              {delivery.itemCount ? `${delivery.itemCount} Items` : 'Items Packaged'}
+            </Text>
           </View>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Order ID:</Text>
@@ -73,9 +91,11 @@ export default function PickupScreen() {
           )}
 
           <Button
+            disabled={isConfirmingPickup}
+            loading={isConfirmingPickup}
             onPress={handleProceedToProof}
             style={styles.confirmBtn}
-            title="VERIFY &amp; CONFIRM PICKUP"
+            title={isConfirmingPickup ? 'Confirming pickup…' : 'VERIFY & CONFIRM PICKUP'}
             variant="primary"
           />
         </View>
@@ -160,5 +180,19 @@ const styles = StyleSheet.create({
   },
   confirmBtn: {
     minHeight: 56,
+  },
+  syncPendingBanner: {
+    backgroundColor: '#FEF3C7',
+    padding: spacing.md,
+    borderRadius: radii.compact,
+    borderWidth: 1,
+    borderColor: palette.amber,
+    marginBottom: spacing.md,
+  },
+  syncPendingText: {
+    ...typography.bodySmall,
+    color: '#92400E',
+    fontWeight: '700',
+    textAlign: 'center',
   },
 });

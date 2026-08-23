@@ -61,15 +61,24 @@ export default function ProfileTabScreen() {
           <View style={styles.card}>
             <View style={styles.row}>
               <Text style={styles.rowLabel}>Driving License</Text>
-              <StatusBadge label="VERIFIED" variant="active" />
+              <StatusBadge
+                label={captainProfile?.approved ? 'VERIFIED' : 'PENDING'}
+                variant={captainProfile?.approved ? 'active' : 'pending'}
+              />
             </View>
             <View style={styles.row}>
               <Text style={styles.rowLabel}>Vehicle RC</Text>
-              <StatusBadge label="VERIFIED" variant="active" />
+              <StatusBadge
+                label={captainProfile?.approved ? 'VERIFIED' : 'PENDING'}
+                variant={captainProfile?.approved ? 'active' : 'pending'}
+              />
             </View>
             <View style={styles.row}>
               <Text style={styles.rowLabel}>Bank Account</Text>
-              <StatusBadge label="VERIFIED" variant="active" />
+              <StatusBadge
+                label={captainProfile?.approved ? 'VERIFIED' : 'PENDING'}
+                variant={captainProfile?.approved ? 'active' : 'pending'}
+              />
             </View>
           </View>
         </View>
@@ -78,12 +87,23 @@ export default function ProfileTabScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>REGISTERED VEHICLE</Text>
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>
-              {captainProfile?.vehicle?.model || 'Motorcycle'}
-            </Text>
-            <Text style={styles.cardSub}>
-              Reg No: {captainProfile?.vehicle?.registrationNumber || 'KA 01 AB 1234'}
-            </Text>
+            {captainProfile?.vehicle?.registrationNumber ? (
+              <>
+                <Text style={styles.cardTitle}>
+                  {captainProfile.vehicle.model || 'Registered Vehicle'}
+                </Text>
+                <Text style={styles.cardSub}>
+                  Reg No: {captainProfile.vehicle.registrationNumber}
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.cardTitle}>No vehicle registered</Text>
+                <Text style={styles.cardSub}>
+                  Vehicle details are pending submission or verification.
+                </Text>
+              </>
+            )}
           </View>
         </View>
 
@@ -91,15 +111,28 @@ export default function ProfileTabScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>SETTLEMENT BANK ACCOUNT</Text>
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>
-              {captainProfile?.bank?.bankName || 'State Bank of India'}
-            </Text>
-            <Text style={styles.cardSub}>
-              Account: {captainProfile?.bank?.accountNumberMasked || '••••••••1234'}
-            </Text>
-            <Text style={styles.cardSub}>
-              IFSC: {captainProfile?.bank?.ifscMasked || 'SBIN000XXXX'}
-            </Text>
+            {captainProfile?.bank?.accountNumberMasked ? (
+              <>
+                <Text style={styles.cardTitle}>
+                  {captainProfile.bank.bankName || 'Settlement Bank'}
+                </Text>
+                <Text style={styles.cardSub}>
+                  Account: {captainProfile.bank.accountNumberMasked}
+                </Text>
+                {captainProfile.bank.ifscMasked ? (
+                  <Text style={styles.cardSub}>
+                    IFSC: {captainProfile.bank.ifscMasked}
+                  </Text>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <Text style={styles.cardTitle}>No bank account linked</Text>
+                <Text style={styles.cardSub}>
+                  Bank account details are required for receiving weekly earnings.
+                </Text>
+              </>
+            )}
           </View>
         </View>
 

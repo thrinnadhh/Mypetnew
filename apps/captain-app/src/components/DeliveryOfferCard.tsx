@@ -54,10 +54,14 @@ export const DeliveryOfferCard: React.FC<DeliveryOfferCardProps> = ({
 
         <View style={styles.detailItem}>
           <Text style={styles.detailLabel}>EST. EARNING</Text>
-          <MoneyAmount
-            paise={offer.estimatedEarningPaise ?? 7500}
-            style={styles.earningText}
-          />
+          {offer.estimatedEarningPaise !== undefined && offer.estimatedEarningPaise !== null ? (
+            <MoneyAmount
+              paise={offer.estimatedEarningPaise}
+              style={styles.earningText}
+            />
+          ) : (
+            <Text style={styles.earningText}>Pending</Text>
+          )}
         </View>
       </View>
 

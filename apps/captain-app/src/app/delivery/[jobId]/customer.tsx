@@ -14,16 +14,41 @@ export default function CustomerDeliveryScreen() {
   const [arrived, setArrived] = useState(false);
 
   const delivery = activeDelivery;
-  if (!delivery) {
-    router.replace('/(tabs)/home');
-    return null;
+
+  // Authorization Security Guard: Never disclose customer details if unassigned or job mismatch
+  if (!delivery || delivery.jobId !== jobId || !delivery.deliveryAddress) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.unauthorizedContent}>
+          <Text style={styles.unauthorizedIcon}>🔒</Text>
+          <Text style={styles.unauthorizedTitle}>Customer Details Protected</Text>
+          <Text style={styles.unauthorizedDesc}>
+            Customer address and contact information are only disclosed after authoritative server confirmation of your assignment.
+          </Text>
+          <Button
+            onPress={() => router.replace('/(tabs)/home')}
+            style={styles.backBtn}
+            title="Return to Dashboard"
+            variant="primary"
+          />
+        </View>
+      </SafeAreaView>
+    );
   }
 
   const handleProceedToProof = () => {
     router.push(`/delivery/${jobId}/delivery-proof` as any);
   };
 
-  const addressLine = `${delivery.deliveryAddress?.line1 || ''}, ${delivery.deliveryAddress?.city || ''} - ${delivery.deliveryAddress?.pincode || ''}`;
+  const addressLine = [
+    delivery.deliveryAddress.line1,
+    delivery.deliveryAddress.line2,
+    delivery.deliveryAddress.city,
+    delivery.deliveryAddress.state,
+    delivery.deliveryAddress.pincode,
+  ]
+    .filter(Boolean)
+    .join(', ');
 
   return (
     <SafeAreaView style={styles.container}>
@@ -40,8 +65,8 @@ export default function CustomerDeliveryScreen() {
         <AddressCard
           address={addressLine}
           instructions="Contact customer upon arrival"
-          name={delivery.deliveryAddress?.recipientName || 'Customer'}
-          phone={delivery.deliveryAddress?.phoneNumber}
+          name={delivery.deliveryAddress.recipientName}
+          phone={delivery.deliveryAddress.phoneNumber}
           title="STEP 2: DELIVER TO CUSTOMER"
         />
 
@@ -161,5 +186,33 @@ const styles = StyleSheet.create({
   },
   confirmBtn: {
     minHeight: 56,
+  },
+  unauthorizedContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  unauthorizedIcon: {
+    fontSize: 48,
+    marginBottom: spacing.md,
+  },
+  unauthorizedTitle: {
+    ...typography.headline,
+    color: palette.ink,
+    fontSize: 20,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  unauthorizedDesc: {
+    ...typography.body,
+    color: palette.inkMuted,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: spacing.xl,
+  },
+  backBtn: {
+    minWidth: 200,
   },
 });

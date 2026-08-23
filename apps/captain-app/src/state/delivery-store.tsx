@@ -96,11 +96,11 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       if (updatedJob !== undefined) {
         setActiveDelivery((current) => {
           if (!updatedJob) return null;
-          if (!current) return updatedJob;
-          if (isDeliveryStateMoreAdvanced(current.state, updatedJob.state)) {
+          if (!current) return updatedJob as DeliveryJob;
+          if (updatedJob.state && isDeliveryStateMoreAdvanced(current.state, updatedJob.state)) {
             return current;
           }
-          return updatedJob;
+          return { ...current, ...updatedJob } as DeliveryJob;
         });
       }
     });

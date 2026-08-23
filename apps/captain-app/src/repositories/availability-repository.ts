@@ -5,6 +5,8 @@ import { commandRunner } from '../sync/command-runner';
 export class AvailabilityRepository {
   async updateAvailability(
     params: CaptainAvailabilityParams,
+    existingCommandId?: string,
+    existingIdempotencyKey?: string,
   ): Promise<CommandOutcome<CaptainDeliveryStateResponse>> {
     return commandRunner.execute(
       {
@@ -12,9 +14,11 @@ export class AvailabilityRepository {
         resourceType: 'CAPTAIN_AVAILABILITY',
         resourceId: (params as any).captainId || 'self',
         payload: params,
+        existingCommandId,
+        existingIdempotencyKey,
       },
-      async () => {
-        return await updateCaptainAvailability(params);
+      async (idempotencyKey) => {
+        return await updateCaptainAvailability(params, idempotencyKey);
       },
     );
   }

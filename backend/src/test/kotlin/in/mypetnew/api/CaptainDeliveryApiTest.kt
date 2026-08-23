@@ -243,6 +243,46 @@ class CaptainDeliveryApiTest {
         }
 
         assertEquals(OrderStatus.DELIVERED, orders.get(orderId).status)
+
+        // 10. Authoritative Job Lookup Contract for Reconciliation:
+        // Owner captain fetches delivered job
+        mockMvc.get("/api/v1/captain/dispatch/$assignedJobId") {
+            header("Authorization", "Bearer ${captainA.accessToken}")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.jobId") { value(assignedJobId) }
+            jsonPath("$.orderId") { value(orderId.toString()) }
+            jsonPath("$.outletId") { value(outlet.id.toString()) }
+            jsonPath("$.status") { value("DELIVERED") }
+            jsonPath("$.assignedCaptainId") { value(captainA.accountId.toString()) }
+            jsonPath("$.assignedAt") { isNotEmpty() }
+            jsonPath("$.pickedUpAt") { isNotEmpty() }
+            jsonPath("$.deliveredAt") { isNotEmpty() }
+            jsonPath("$.recipientName") { doesNotExist() }
+            jsonPath("$.phoneNumber") { doesNotExist() }
+            jsonPath("$.deliveryAddress") { doesNotExist() }
+        }
+
+        // Foreign captain cannot fetch it (404 anti-enumeration)
+        mockMvc.get("/api/v1/captain/dispatch/$assignedJobId") {
+            header("Authorization", "Bearer ${captainB.accessToken}")
+        }.andExpect {
+            status { isNotFound() }
+        }
+
+        // Customer role cannot fetch it (403 forbidden)
+        mockMvc.get("/api/v1/captain/dispatch/$assignedJobId") {
+            header("Authorization", "Bearer ${customer.accessToken}")
+        }.andExpect {
+            status { isForbidden() }
+        }
+
+        // Non-existent job fails closed (404)
+        mockMvc.get("/api/v1/captain/dispatch/${UUID.randomUUID()}") {
+            header("Authorization", "Bearer ${captainA.accessToken}")
+        }.andExpect {
+            status { isNotFound() }
+        }
     }
 
     private fun createDeliveryOutlet(): ProviderOutlet {

@@ -317,6 +317,12 @@ class DispatchService(
 
     fun tracking(orderId: UUID): DispatchJob? = persistence.findJobByOrder(orderId)
 
+    fun getCaptainJob(captainId: UUID, jobId: UUID): DispatchJob {
+        val job = persistence.getJob(jobId) ?: unavailable()
+        if (job.assignedCaptainId != captainId) unavailable()
+        return job
+    }
+
     fun captainState(captainId: UUID): CaptainDeliveryState? = persistence.captainState(captainId)
 
     fun captainLocation(captainId: UUID): CaptainLocation? = geoIndex.location(captainId)

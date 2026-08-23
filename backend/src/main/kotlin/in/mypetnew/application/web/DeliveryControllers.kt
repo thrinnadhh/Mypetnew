@@ -224,6 +224,19 @@ data class CaptainDeliveryAddressProjection(
     val pincode: String,
 )
 
+data class CaptainJobResponse(
+    val jobId: UUID,
+    val orderId: UUID,
+    val outletId: UUID,
+    val status: String,
+    val assignedCaptainId: UUID,
+    val assignedAt: Instant?,
+    val pickedUpAt: Instant?,
+    val deliveredAt: Instant?,
+    val failureReason: String?,
+    val updatedAt: Instant,
+)
+
 data class CaptainAssignmentProjection(
     val accepted: Boolean,
     val jobId: UUID?,
@@ -300,6 +313,28 @@ class CaptainDeliveryApiController(
                 state = address.state,
                 pincode = address.pincode,
             ),
+        )
+    }
+
+    @GetMapping("/dispatch/{jobId}")
+    fun getJob(
+        authentication: Authentication,
+        @PathVariable jobId: UUID,
+    ): CaptainJobResponse {
+        val captain = authentication.domainPrincipal()
+        Authorizer.requireRole(captain, Role.CAPTAIN)
+        val job = dispatch.getCaptainJob(captain.actorId, jobId)
+        return CaptainJobResponse(
+            jobId = job.id,
+            orderId = job.orderId,
+            outletId = job.outletId,
+            status = job.status.name,
+            assignedCaptainId = job.assignedCaptainId ?: captain.actorId,
+            assignedAt = job.assignedAt,
+            pickedUpAt = job.pickedUpAt,
+            deliveredAt = job.deliveredAt,
+            failureReason = job.failureReason,
+            updatedAt = job.updatedAt,
         )
     }
 

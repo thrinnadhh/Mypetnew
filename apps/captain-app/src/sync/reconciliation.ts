@@ -1,9 +1,12 @@
 import { DeliveryJob } from '../domain/delivery';
+import { ok } from '../domain/result';
+import { availabilityRepository } from '../repositories/availability-repository';
 import { deliveryRepository } from '../repositories/delivery-repository';
+import { dispatchRepository } from '../repositories/dispatch-repository';
 import { commandStore } from './command-store';
 import { connectivity } from './connectivity';
 
-type ReconciliationListener = (updatedJob?: DeliveryJob | null) => void;
+type ReconciliationListener = (updatedJob?: DeliveryJob | Partial<DeliveryJob> | null) => void;
 
 export class ReconciliationService {
   private isReconciling = false;
@@ -24,7 +27,7 @@ export class ReconciliationService {
     };
   }
 
-  private notify(job?: DeliveryJob | null): void {
+  private notify(job?: DeliveryJob | Partial<DeliveryJob> | null): void {
     this.listeners.forEach((listener) => {
       try {
         listener(job);
@@ -42,39 +45,72 @@ export class ReconciliationService {
       const pending = await commandStore.listPending();
       if (pending.length === 0) return;
 
-      const activeResult = await deliveryRepository.getActiveDelivery();
-      if (!activeResult.success) {
-        return;
+      // 1. Availability Supersession Pre-pass:
+      // If there are multiple availability commands, mark older ones as SUPERSEDED
+      const availabilityCommands = pending.filter(
+        (cmd) => (cmd.commandType || cmd.type) === 'UPDATE_AVAILABILITY',
+      );
+      if (availabilityCommands.length > 1) {
+        // Sort chronologically ascending
+        availabilityCommands.sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        );
+        // All except the last (latest desired state) are superseded
+        for (let i = 0; i < availabilityCommands.length - 1; i++) {
+          const oldCmd = availabilityCommands[i];
+          oldCmd.state = 'SUPERSEDED';
+          oldCmd.updatedAt = new Date().toISOString();
+          await commandStore.save(oldCmd);
+        }
       }
 
-      const serverJob = activeResult.data;
+      // Re-read pending after availability supersession
+      const activePending = await commandStore.listPending();
 
-      for (const cmd of pending) {
+      for (const cmd of activePending) {
         const cmdType = cmd.commandType || cmd.type;
-        const jobId = cmd.jobId || (cmd.payload as any)?.jobId;
+        const jobId = cmd.jobId || (cmd.payload as any)?.jobId || cmd.resourceId;
 
         if (cmdType === 'MARK_PICKED_UP' && jobId) {
-          if (serverJob && serverJob.jobId === jobId) {
-            if (
-              serverJob.state === 'PICKED_UP' ||
-              serverJob.state === 'ARRIVING_CUSTOMER' ||
-              serverJob.state === 'DELIVERY_CONFIRMING' ||
-              serverJob.state === 'DELIVERED'
-            ) {
-              // Server committed pickup
+          // Authoritative lookup for this specific job
+          let jobRes = await deliveryRepository.getDispatchJob(jobId);
+          if (!jobRes.success) {
+            const activeRes = await deliveryRepository.getActiveDelivery();
+            if (activeRes.success && activeRes.data && activeRes.data.jobId === jobId) {
+              jobRes = ok({
+                jobId: activeRes.data.jobId,
+                orderId: activeRes.data.orderId,
+                outletId: activeRes.data.outletId,
+                status: activeRes.data.state as any,
+                pickedUpAt: activeRes.data.pickedUpAt || undefined,
+              });
+            }
+          }
+
+          if (jobRes.success) {
+            const job = jobRes.data;
+            const status = job.status;
+
+            if (status === 'PICKED_UP' || status === 'DELIVERED') {
               cmd.state = 'ACKNOWLEDGED';
               cmd.lastErrorCode = null;
               cmd.lastError = null;
               cmd.updatedAt = new Date().toISOString();
               await commandStore.save(cmd);
-              this.notify(serverJob);
-            } else if (serverJob.state === 'FAILED') {
+              this.notify({
+                jobId: job.id || job.jobId || jobId,
+                orderId: job.orderId,
+                outletId: job.outletId,
+                state: status === 'DELIVERED' ? 'DELIVERED' : 'PICKED_UP',
+                pickedUpAt: job.pickedUpAt || new Date().toISOString(),
+                deliveredAt: job.deliveredAt || undefined,
+              });
+            } else if (status === 'FAILED') {
               cmd.state = 'REJECTED';
               cmd.updatedAt = new Date().toISOString();
               await commandStore.save(cmd);
-              this.notify(serverJob);
-            } else if (serverJob.state === 'ASSIGNED' || serverJob.state === 'ARRIVING_PICKUP') {
-              // Server did not receive/commit pickup yet
+            } else if (status === 'ASSIGNED' || status === 'SEARCHING' || status === 'OFFERED') {
+              // Server has not processed pickup yet
               if (cmd.state === 'UNKNOWN' || cmd.state === 'SENDING') {
                 cmd.state = 'PENDING';
                 cmd.updatedAt = new Date().toISOString();
@@ -90,7 +126,9 @@ export class ReconciliationService {
                 );
                 if (outcome.outcome === 'ACKNOWLEDGED') {
                   this.notify({
-                    ...serverJob,
+                    jobId: outcome.data.jobId || jobId,
+                    orderId: outcome.data.orderId || '',
+                    outletId: outcome.data.outletId || '',
                     state: 'PICKED_UP',
                     pickedUpAt: outcome.data.pickedUpAt || new Date().toISOString(),
                     pickupProof: (cmd.payload as any)?.proof,
@@ -98,27 +136,51 @@ export class ReconciliationService {
                 }
               }
             }
+          } else {
+            // Lookup failed (network, 5xx, or 404)
+            // INVARIANT: Do NOT infer success or rejection. Remain UNKNOWN/PENDING.
           }
         } else if (cmdType === 'MARK_DELIVERED' && jobId) {
-          if (serverJob && serverJob.jobId === jobId) {
-            if (serverJob.state === 'DELIVERED') {
-              // Server committed delivery
+          // Authoritative lookup for this specific job
+          let jobRes = await deliveryRepository.getDispatchJob(jobId);
+          if (!jobRes.success) {
+            const activeRes = await deliveryRepository.getActiveDelivery();
+            if (activeRes.success && activeRes.data && activeRes.data.jobId === jobId) {
+              jobRes = ok({
+                jobId: activeRes.data.jobId,
+                orderId: activeRes.data.orderId,
+                outletId: activeRes.data.outletId,
+                status: activeRes.data.state === 'DELIVERED' ? 'DELIVERED' : 'PICKED_UP',
+                deliveredAt: activeRes.data.deliveredAt || undefined,
+                pickedUpAt: activeRes.data.pickedUpAt || undefined,
+              });
+            }
+          }
+
+          if (jobRes.success) {
+            const job = jobRes.data;
+            const status = job.status;
+
+            if (status === 'DELIVERED') {
+              // Server explicitly confirms DELIVERED
               cmd.state = 'ACKNOWLEDGED';
               cmd.lastErrorCode = null;
               cmd.lastError = null;
               cmd.updatedAt = new Date().toISOString();
               await commandStore.save(cmd);
-              this.notify(serverJob);
-            } else if (serverJob.state === 'FAILED') {
+              this.notify({
+                jobId: job.id || job.jobId || jobId,
+                orderId: job.orderId,
+                outletId: job.outletId,
+                state: 'DELIVERED',
+                deliveredAt: job.deliveredAt || new Date().toISOString(),
+              });
+            } else if (status === 'FAILED') {
               cmd.state = 'REJECTED';
               cmd.updatedAt = new Date().toISOString();
               await commandStore.save(cmd);
-              this.notify(serverJob);
-            } else if (
-              serverJob.state === 'PICKED_UP' ||
-              serverJob.state === 'ARRIVING_CUSTOMER'
-            ) {
-              // Server did not receive/commit delivery yet
+            } else if (status === 'PICKED_UP' || status === 'ASSIGNED') {
+              // Server has not processed delivery yet
               if (cmd.state === 'UNKNOWN' || cmd.state === 'SENDING') {
                 cmd.state = 'PENDING';
                 cmd.updatedAt = new Date().toISOString();
@@ -134,7 +196,9 @@ export class ReconciliationService {
                 );
                 if (outcome.outcome === 'ACKNOWLEDGED') {
                   this.notify({
-                    ...serverJob,
+                    jobId: outcome.data.jobId || jobId,
+                    orderId: outcome.data.orderId || '',
+                    outletId: outcome.data.outletId || '',
                     state: 'DELIVERED',
                     deliveredAt: outcome.data.deliveredAt || new Date().toISOString(),
                     deliveryProof: (cmd.payload as any)?.proof,
@@ -142,14 +206,80 @@ export class ReconciliationService {
                 }
               }
             }
-          } else if (serverJob === null) {
-            // Completed and cleared from active dispatches on backend
+          } else {
+            // Lookup failed (network, 5xx, or 404/absence)
+            // CRITICAL INVARIANT: Never infer success when activeDelivery is null or GET job fails!
+            // Remain UNKNOWN/PENDING.
+          }
+        } else if (cmdType === 'ACCEPT_OFFER') {
+          const offerId = (cmd.payload as any)?.offerId || cmd.resourceId;
+          const targetJobId = (cmd.payload as any)?.jobId || cmd.jobId;
+
+          // Check if server shows active delivery for this Captain
+          const activeRes = await deliveryRepository.getActiveDelivery();
+          if (activeRes.success && activeRes.data && (!targetJobId || activeRes.data.jobId === targetJobId)) {
+            // Server assigned delivery to this Captain!
             cmd.state = 'ACKNOWLEDGED';
             cmd.lastErrorCode = null;
             cmd.lastError = null;
             cmd.updatedAt = new Date().toISOString();
             await commandStore.save(cmd);
-            this.notify(null);
+            this.notify(activeRes.data);
+          } else {
+            // Check if offer is still pending in offers list
+            const offersRes = await dispatchRepository.getPendingOffers();
+            if (offersRes.success) {
+              const pendingOffers = offersRes.data;
+              const isStillPending = pendingOffers.some((o) => o.offerId === offerId);
+
+              if (isStillPending && connectivity.online) {
+                // Retry acceptance with exact same command ID and idempotency key
+                const outcome = await dispatchRepository.respondToOffer(
+                  offerId,
+                  'ACCEPT',
+                  cmd.commandId,
+                  cmd.idempotencyKey,
+                );
+                if (outcome.outcome === 'ACKNOWLEDGED') {
+                  this.notify();
+                }
+              } else if (!isStillPending) {
+                // Offer expired or assigned to someone else with no assignment to this Captain
+                cmd.state = 'REJECTED';
+                cmd.updatedAt = new Date().toISOString();
+                await commandStore.save(cmd);
+              }
+            }
+          }
+        } else if (cmdType === 'REJECT_OFFER') {
+          const offerId = (cmd.payload as any)?.offerId || cmd.resourceId;
+          const offersRes = await dispatchRepository.getPendingOffers();
+          if (offersRes.success) {
+            const pendingOffers = offersRes.data;
+            const isStillPending = pendingOffers.some((o) => o.offerId === offerId);
+            if (!isStillPending) {
+              // Offer no longer pending
+              cmd.state = 'ACKNOWLEDGED';
+              cmd.updatedAt = new Date().toISOString();
+              await commandStore.save(cmd);
+            } else if (connectivity.online) {
+              await dispatchRepository.respondToOffer(
+                offerId,
+                'REJECT',
+                cmd.commandId,
+                cmd.idempotencyKey,
+              );
+            }
+          }
+        } else if (cmdType === 'UPDATE_AVAILABILITY') {
+          // If connectivity is restored, execute the latest desired state
+          if (connectivity.online) {
+            const params = cmd.payload as any;
+            await availabilityRepository.updateAvailability(
+              params,
+              cmd.commandId,
+              cmd.idempotencyKey,
+            );
           }
         }
       }

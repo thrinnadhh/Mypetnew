@@ -29,6 +29,8 @@ export class DispatchRepository {
   async respondToOffer(
     offerId: string,
     action: 'ACCEPT' | 'REJECT',
+    existingCommandId?: string,
+    existingIdempotencyKey?: string,
   ): Promise<CommandOutcome<DispatchAssignment>> {
     const commandType = action === 'ACCEPT' ? 'ACCEPT_OFFER' : 'REJECT_OFFER';
 
@@ -38,6 +40,8 @@ export class DispatchRepository {
         resourceType: 'DISPATCH_OFFER',
         resourceId: offerId,
         payload: { offerId, action },
+        existingCommandId,
+        existingIdempotencyKey,
       },
       async (idempotencyKey) => {
         const res = await respondToOffer(offerId, action, idempotencyKey);

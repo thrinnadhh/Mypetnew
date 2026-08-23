@@ -130,6 +130,20 @@ export class CommandRunner {
       const idempotencyKey = command?.idempotencyKey || existingIdempotencyKey || `idemp-${Crypto.randomUUID()}`;
 
       if (!command) {
+        if (type === 'UPDATE_AVAILABILITY' && !existingCommandId && !existingIdempotencyKey) {
+          const pendingCommands = await commandStore.listPending();
+          for (const pendingCmd of pendingCommands) {
+            if (
+              pendingCmd.commandType === 'UPDATE_AVAILABILITY' ||
+              pendingCmd.type === 'UPDATE_AVAILABILITY'
+            ) {
+              pendingCmd.state = 'SUPERSEDED';
+              pendingCmd.updatedAt = new Date().toISOString();
+              await commandStore.save(pendingCmd);
+            }
+          }
+        }
+
         command = {
           commandId,
           id: commandId,

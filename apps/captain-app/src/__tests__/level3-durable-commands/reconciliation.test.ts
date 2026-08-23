@@ -7,6 +7,7 @@ import { ok } from '../../domain/result';
 
 describe('Level 3: Durable Reconciliation & Crash Recovery Tests', () => {
   beforeEach(async () => {
+    commandStore.resetStorageDriverForTesting();
     await commandStore.clear();
     jest.restoreAllMocks();
   });
@@ -53,7 +54,15 @@ describe('Level 3: Durable Reconciliation & Crash Recovery Tests', () => {
       pickedUpAt: '2026-08-23T10:00:05.000Z',
     };
 
-    jest.spyOn(deliveryRepository, 'getActiveDelivery').mockResolvedValue(ok(mockServerJob));
+    jest.spyOn(deliveryRepository, 'getDispatchJob').mockResolvedValue(
+      ok({
+        jobId: 'job-901',
+        orderId: 'ord-901',
+        outletId: 'out-01',
+        status: 'PICKED_UP',
+        pickedUpAt: '2026-08-23T10:00:05.000Z',
+      }),
+    );
 
     await reconciliationService.reconcile();
 
@@ -86,27 +95,15 @@ describe('Level 3: Durable Reconciliation & Crash Recovery Tests', () => {
 
     await commandStore.save(savedCommand);
 
-    const mockServerJob: DeliveryJob = {
-      jobId: 'job-902',
-      orderId: 'ord-902',
-      outletId: 'out-01',
-      outletName: 'Pet Care Store',
-      deliveryAddress: {
-        addressId: 'addr-02',
-        recipientName: 'Anita',
-        phoneNumber: '+919876543211',
-        line1: '456 MG Road',
-        city: 'Bengaluru',
-        state: 'Karnataka',
-        pincode: '560002',
-      },
-      state: 'DELIVERED',
-      assignedAt: '2026-08-23T09:50:00.000Z',
-      pickedUpAt: '2026-08-23T10:00:00.000Z',
-      deliveredAt: '2026-08-23T10:30:05.000Z',
-    };
-
-    jest.spyOn(deliveryRepository, 'getActiveDelivery').mockResolvedValue(ok(mockServerJob));
+    jest.spyOn(deliveryRepository, 'getDispatchJob').mockResolvedValue(
+      ok({
+        jobId: 'job-902',
+        orderId: 'ord-902',
+        outletId: 'out-01',
+        status: 'DELIVERED',
+        deliveredAt: '2026-08-23T10:30:05.000Z',
+      }),
+    );
 
     await reconciliationService.reconcile();
 
@@ -138,26 +135,14 @@ describe('Level 3: Durable Reconciliation & Crash Recovery Tests', () => {
 
     await commandStore.save(savedCommand);
 
-    // Backend reports job still in ASSIGNED state (server never received initial request)
-    const mockServerJob: DeliveryJob = {
-      jobId: 'job-903',
-      orderId: 'ord-903',
-      outletId: 'out-01',
-      outletName: 'Pet Care Store',
-      deliveryAddress: {
-        addressId: 'addr-03',
-        recipientName: 'Karan',
-        phoneNumber: '+919876543212',
-        line1: '789 Indiranagar',
-        city: 'Bengaluru',
-        state: 'Karnataka',
-        pincode: '560038',
-      },
-      state: 'ASSIGNED',
-      assignedAt: '2026-08-23T09:50:00.000Z',
-    };
-
-    jest.spyOn(deliveryRepository, 'getActiveDelivery').mockResolvedValue(ok(mockServerJob));
+    jest.spyOn(deliveryRepository, 'getDispatchJob').mockResolvedValue(
+      ok({
+        jobId: 'job-903',
+        orderId: 'ord-903',
+        outletId: 'out-01',
+        status: 'ASSIGNED',
+      }),
+    );
 
     let keyUsedInRetry = '';
     jest.spyOn(deliveryRepository, 'markPickedUp').mockImplementation(async (_jobId, _proof, _cmdId, key) => {

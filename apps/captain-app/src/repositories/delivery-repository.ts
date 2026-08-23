@@ -1,5 +1,5 @@
 import { fetchActiveDelivery } from '../api/deliveries';
-import { markJobDelivered, markJobPickedUp } from '../api/dispatch';
+import { fetchDispatchJob, DispatchJobResponse, markJobDelivered, markJobPickedUp } from '../api/dispatch';
 import { CommandOutcome } from '../domain/command';
 import { DeliveryJob, DeliveryProof } from '../domain/delivery';
 import { AppError, err, ok, Result } from '../domain/result';
@@ -9,6 +9,15 @@ export class DeliveryRepository {
   async getActiveDelivery(): Promise<Result<DeliveryJob | null>> {
     try {
       const job = await fetchActiveDelivery();
+      return ok(job);
+    } catch (error: any) {
+      return err(error instanceof AppError ? error : AppError.network(error.message));
+    }
+  }
+
+  async getDispatchJob(jobId: string): Promise<Result<DispatchJobResponse>> {
+    try {
+      const job = await fetchDispatchJob(jobId);
       return ok(job);
     } catch (error: any) {
       return err(error instanceof AppError ? error : AppError.network(error.message));

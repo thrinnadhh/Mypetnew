@@ -40,11 +40,12 @@ export type DispatchStatus =
   | 'FAILED';
 
 export interface DispatchJobResponse {
-  id: string;
+  id?: string;
+  jobId?: string;
   orderId: string;
   outletId: string;
-  originLatitude: number;
-  originLongitude: number;
+  originLatitude?: number;
+  originLongitude?: number;
   status: DispatchStatus;
   assignedCaptainId?: string | null;
   attemptCount?: number;
@@ -54,6 +55,16 @@ export interface DispatchJobResponse {
   deliveredAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export async function fetchDispatchJob(jobId: string): Promise<DispatchJobResponse> {
+  const response = await captainApiFetch(`/api/v1/captain/dispatch/${jobId}`, { timeoutMs: 8000 });
+  const data = await handleApiResponse<DispatchJobResponse>(response);
+  return {
+    ...data,
+    id: data.id || data.jobId || jobId,
+    jobId: data.jobId || data.id || jobId,
+  };
 }
 
 export async function fetchPendingOffers(): Promise<CaptainOfferProjection[]> {

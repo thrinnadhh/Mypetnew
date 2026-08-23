@@ -16,6 +16,7 @@
 | **Pull Request** | PR #107 (`Fix/captain production repair`) | `gh pr view 107` |
 | **Main Base SHA** | `2e8bfd3592ab342982b125c7e450986025661d8f` | `git rev-parse origin/main` |
 | **Merge Base** | `2e8bfd3592ab342982b125c7e450986025661d8f` | `git merge-base HEAD origin/main` |
+| **Branch Head SHA** | `715105e24810a0174686a4ef3413e5ba24a754b7` | `git rev-parse HEAD` |
 | **Ahead / Behind** | 14 ahead / 0 behind | `git rev-list --left-right --count origin/main...HEAD` |
 | **Working Tree Status** | Clean (tracked changes committed) | `git status --porcelain` |
 | **Open Review Comments** | 0 | `gh pr view 107 --json comments,reviews` |
@@ -111,15 +112,29 @@ Real Spring Boot + PostgreSQL integration verified via JUnit 5 contract tests:
 
 ---
 
-## 6. Known Limitations & Unresolved Risks
+## 6. Exact-Head CI Workflow Evidence
 
-1. **Physical Hardware Verification Gate**: No physical Android handset was connected in the automated test runner environment. Field validation of background GPS battery drain and OEM background task killer behavior (e.g. Xiaomi MIUI / Samsung OneUI) must be completed on physical hardware prior to general store release.
+All required GitHub Actions checks associated with branch HEAD on PR #107:
+
+| Workflow Name | Job Name | Duration | Conclusion | Details URL |
+| :--- | :--- | :--- | :--- | :--- |
+| **validate-captain** | `captain-app` | 1m 22s | **SUCCESS** | `https://github.com/thrinnadhh/Mypetnew/actions/runs/32640122753/job/97195817797` |
+| **ci** | `verify-backend` | 3m 07s | **SUCCESS** | `https://github.com/thrinnadhh/Mypetnew/actions/runs/32640122747/job/97195847118` |
+| **validate-restored-customer** | `customer-app` | 2m 09s | **SUCCESS** | `https://github.com/thrinnadhh/Mypetnew/actions/runs/32640122726/job/97195817733` |
+| **validate-merchant** | `merchant-app` | 1m 11s | **SUCCESS** | `https://github.com/thrinnadhh/Mypetnew/actions/runs/32640122750/job/97195817961` |
+| **merchant-operations-contract** | `program-contract` | 9s | **SUCCESS** | `https://github.com/thrinnadhh/Mypetnew/actions/runs/32640122813/job/97195818138` |
+
+---
+
+## 7. Known Limitations & Unresolved Risks
+
+1. **Physical Hardware Verification Gate**: No physical Android handset was connected in the automated test runner environment (`adb devices` was empty). Field validation of background GPS battery drain and OEM background task killer behavior (e.g. Xiaomi MIUI / Samsung OneUI) must be completed on physical hardware prior to general store release.
 2. **Web Browser Geolocation Limitations**: Background location tracking via `expo-task-manager` is unsupported on web platforms by browser security architecture. Production Captain operation is restricted to native mobile builds (Android APK / iOS IPA).
 3. **FCM Push Notification Provisioning**: Production push notification delivery requires valid Firebase cloud messaging server credentials configured in the staging/production deployment environment.
 
 ---
 
-## 7. Release Scorecard & Decision
+## 8. Release Scorecard & Decision
 
 | Certification Category | Score | Details / Evidence |
 | :--- | :--- | :--- |
@@ -134,7 +149,7 @@ Real Spring Boot + PostgreSQL integration verified via JUnit 5 contract tests:
 | **Privacy** | **PASS** | Zero credentials in repo, PII masking, secure token storage |
 | **Backend contracts** | **PASS** | 24 API endpoints matching Spring backend routes with real tests |
 | **Tests** | **PASS** | 231 Captain + 256 Backend + 457 Customer + 49 Merchant = 993 tests passing |
-| **CI** | **PASS** | All GitHub Actions CI workflows green on branch HEAD |
+| **CI** | **PASS** | All 5 GitHub Actions CI workflows green on branch HEAD |
 | **Physical Android** | **NOT EXECUTED** | No physical hardware connected via ADB in execution environment |
 | **Release status** | **PASS WITH NON-BLOCKER** | Software artifacts, contracts, and backend fully certified |
 

@@ -6,42 +6,67 @@ import { AddressCard } from '../../../components/AddressCard';
 import { Button } from '../../../components/Button';
 import { DeliveryTimeline } from '../../../components/DeliveryTimeline';
 import { palette, radii, spacing, typography } from '../../../design/tokens';
-import { useDelivery } from '../../../features/delivery/delivery-context';
+import { useDeliveryStore } from '../../../state/delivery-store';
 
 export default function CustomerDeliveryScreen() {
   const { jobId } = useLocalSearchParams<{ jobId: string }>();
-  const { activeDelivery } = useDelivery();
+  const { activeDelivery } = useDeliveryStore();
   const [arrived, setArrived] = useState(false);
 
   const delivery = activeDelivery;
-  if (!delivery) {
-    router.replace('/(tabs)/home');
-    return null;
+
+  // Authorization Security Guard: Never disclose customer details if unassigned or job mismatch
+  if (!delivery || delivery.jobId !== jobId || !delivery.deliveryAddress) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.unauthorizedContent}>
+          <Text style={styles.unauthorizedIcon}>🔒</Text>
+          <Text style={styles.unauthorizedTitle}>Customer Details Protected</Text>
+          <Text style={styles.unauthorizedDesc}>
+            Customer address and contact information are only disclosed after authoritative server confirmation of your assignment.
+          </Text>
+          <Button
+            onPress={() => router.replace('/(tabs)/home')}
+            style={styles.backBtn}
+            title="Return to Dashboard"
+            variant="primary"
+          />
+        </View>
+      </SafeAreaView>
+    );
   }
 
   const handleProceedToProof = () => {
     router.push(`/delivery/${jobId}/delivery-proof` as any);
   };
 
+  const addressLine = [
+    delivery.deliveryAddress.line1,
+    delivery.deliveryAddress.line2,
+    delivery.deliveryAddress.city,
+    delivery.deliveryAddress.state,
+    delivery.deliveryAddress.pincode,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Top Fixed Header */}
       <View style={styles.header}>
         <Text style={styles.headerSubtitle}>OUT FOR DELIVERY</Text>
-        <Text style={styles.headerTitle}>{delivery.orderReference}</Text>
+        <Text style={styles.headerTitle}>{delivery.orderReference || `Order #${delivery.orderId.slice(0, 8)}`}</Text>
       </View>
 
-      <DeliveryTimeline status="PICKED_UP" />
+      <DeliveryTimeline status={delivery.state} />
 
       <ScrollView contentContainerStyle={styles.content}>
         {/* Customer Address Card */}
         <AddressCard
-          address={delivery.customer?.address || 'Customer destination address'}
-          instructions={delivery.customer?.deliveryInstructions || 'Leave at door / ring bell'}
-          latitude={delivery.customer?.latitude}
-          longitude={delivery.customer?.longitude}
-          name={delivery.customer?.name || 'Customer'}
-          phone={delivery.customer?.maskedPhone}
+          address={addressLine}
+          instructions="Contact customer upon arrival"
+          name={delivery.deliveryAddress.recipientName}
+          phone={delivery.deliveryAddress.phoneNumber}
           title="STEP 2: DELIVER TO CUSTOMER"
         />
 
@@ -50,11 +75,11 @@ export default function CustomerDeliveryScreen() {
           <Text style={styles.cardSectionTitle}>ORDER DETAILS</Text>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Reference:</Text>
-            <Text style={styles.detailVal}>{delivery.orderReference}</Text>
+            <Text style={styles.detailVal}>{delivery.orderReference || `#${delivery.orderId.slice(0, 8)}`}</Text>
           </View>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>From Store:</Text>
-            <Text style={styles.detailVal}>{delivery.merchant?.name}</Text>
+            <Text style={styles.detailVal}>{delivery.outletName}</Text>
           </View>
         </View>
 
@@ -76,7 +101,7 @@ export default function CustomerDeliveryScreen() {
           <Button
             onPress={handleProceedToProof}
             style={styles.confirmBtn}
-            title="VERIFY & CONFIRM DELIVERY"
+            title="VERIFY &amp; CONFIRM DELIVERY"
             variant="primary"
           />
         </View>
@@ -161,5 +186,33 @@ const styles = StyleSheet.create({
   },
   confirmBtn: {
     minHeight: 56,
+  },
+  unauthorizedContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  unauthorizedIcon: {
+    fontSize: 48,
+    marginBottom: spacing.md,
+  },
+  unauthorizedTitle: {
+    ...typography.headline,
+    color: palette.ink,
+    fontSize: 20,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  unauthorizedDesc: {
+    ...typography.body,
+    color: palette.inkMuted,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: spacing.xl,
+  },
+  backBtn: {
+    minWidth: 200,
   },
 });

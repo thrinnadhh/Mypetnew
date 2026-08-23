@@ -1,74 +1,87 @@
 import { router } from 'expo-router';
-import React, { useEffect, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useAuth } from '../../auth/context';
 import { ActiveDeliveryCard } from '../../components/ActiveDeliveryCard';
 import { CaptainHeader } from '../../components/CaptainHeader';
 import { DeliveryOfferCard } from '../../components/DeliveryOfferCard';
 import { LocationStatusBanner } from '../../components/LocationStatusBanner';
 import { MoneyAmount } from '../../components/MoneyAmount';
+import { OfflineBanner } from '../../components/OfflineBanner';
 import { OnlineToggle } from '../../components/OnlineToggle';
+import { StatusBadge } from '../../components/StatusBadge';
 import { palette, radii, spacing, typography } from '../../design/tokens';
-import { useDelivery } from '../../features/delivery/delivery-context';
-import { setCaptainOnlineState } from '../../features/location/location-publisher';
-import { getFriendlyErrorMessage } from '../../utils/errors';
+import { CaptainEarningsSummary } from '../../domain/earnings';
+import { earningsRepository } from '../../repositories/earnings-repository';
+import { useCaptainStore } from '../../state/captain-store';
+import { useDeliveryStore } from '../../state/delivery-store';
 
 export default function HomeScreen() {
-  const { captainProfile, setProfileOnlineState, refreshProfile } = useAuth();
+  const { profile, isOnline, isUpdatingPresence, presenceError, setOnline, isNetworkConnected } = useCaptainStore();
   const {
     activeDelivery,
-    currentOffer,
-    fetchOffers,
+    activeOffer,
+    refreshOffers,
     acceptOffer,
     rejectOffer,
-    dismissOffer,
-  } = useDelivery();
+    deliveryError,
+    dismissError,
+  } = useDeliveryStore();
 
-  const [togglingOnline, setTogglingOnline] = useState(false);
   const [offerActionLoading, setOfferActionLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [todaySummary, setTodaySummary] = useState<CaptainEarningsSummary | null>(null);
 
-  const isOnline = !!captainProfile?.online;
+  const loadSummary = useCallback(async () => {
+    const res = await earningsRepository.getEarningsSummary();
+    if (res.success) {
+      setTodaySummary(res.data);
+    }
+  }, []);
 
-  // Poll for offers periodically when online and not busy with an active job
+  // Poll for offers periodically when online, approved, and not busy with an active job
+  const isApproved = profile?.status === 'ACTIVE' && profile?.approved;
+
   useEffect(() => {
-    if (!isOnline || activeDelivery) return;
+    let isMounted = true;
+    (async () => {
+      const res = await earningsRepository.getEarningsSummary();
+      if (isMounted && res.success) {
+        setTodaySummary(res.data);
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
-    fetchOffers();
+  useEffect(() => {
+    if (!isOnline || !isApproved || activeDelivery) return;
+
+    refreshOffers();
     const interval = setInterval(() => {
-      fetchOffers();
+      refreshOffers();
     }, 8000);
 
     return () => clearInterval(interval);
-  }, [isOnline, activeDelivery]);
+  }, [isOnline, isApproved, activeDelivery, refreshOffers]);
 
   const handleToggleOnline = async () => {
-    setErrorMessage(null);
-    setTogglingOnline(true);
-    try {
-      const target = !isOnline;
-      const result = await setCaptainOnlineState(target);
-      setProfileOnlineState(result.online);
-      if (result.online) {
-        fetchOffers();
-      }
-    } catch (err: any) {
-      setErrorMessage(getFriendlyErrorMessage(err));
-    } finally {
-      setTogglingOnline(false);
+    dismissError();
+    await setOnline(!isOnline);
+    if (!isOnline && isApproved) {
+      refreshOffers();
     }
   };
 
   const handleAcceptOffer = async (offerId: string) => {
     setOfferActionLoading(true);
-    setErrorMessage(null);
+    dismissError();
     try {
-      const delivery = await acceptOffer(offerId);
-      router.push(`/delivery/${delivery.jobId}` as any);
-    } catch (err: any) {
-      setErrorMessage(getFriendlyErrorMessage(err));
+      const outcome = await acceptOffer(offerId);
+      if (outcome.outcome === 'ACKNOWLEDGED') {
+        router.push(`/delivery/${outcome.data.jobId}` as any);
+      }
     } finally {
       setOfferActionLoading(false);
     }
@@ -78,28 +91,30 @@ export default function HomeScreen() {
     setOfferActionLoading(true);
     try {
       await rejectOffer(offerId);
-    } catch (err: any) {
-      setErrorMessage(getFriendlyErrorMessage(err));
     } finally {
       setOfferActionLoading(false);
     }
   };
 
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await refreshProfile();
-      if (isOnline) {
-        await fetchOffers();
+      await loadSummary();
+      if (isOnline && isApproved) {
+        await refreshOffers();
       }
     } finally {
       setRefreshing(false);
     }
-  };
+  }, [isOnline, isApproved, refreshOffers, loadSummary]);
+
+  const displayedError = presenceError?.message || deliveryError?.message || null;
 
   return (
     <SafeAreaView style={styles.container}>
-      <CaptainHeader name={captainProfile?.name} online={isOnline} />
+      <CaptainHeader name={profile?.name} online={isOnline} />
+
+      {!isNetworkConnected ? <OfflineBanner /> : null}
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -107,16 +122,55 @@ export default function HomeScreen() {
           <RefreshControl onRefresh={onRefresh} refreshing={refreshing} />
         }
       >
-        {errorMessage ? (
+        {/* Unapproved / Under Review Notice Banner */}
+        {!isApproved ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            activeOpacity={0.85}
+            onPress={() => {
+              if (profile?.status === 'DRAFT') {
+                router.push('/onboarding');
+              } else {
+                router.push('/onboarding/status');
+              }
+            }}
+            style={styles.unapprovedBanner}
+          >
+            <View style={styles.unapprovedHeader}>
+              <Text style={styles.unapprovedTitle}>
+                {profile?.status === 'DRAFT'
+                  ? 'Complete Captain Onboarding'
+                  : profile?.status === 'REJECTED'
+                  ? 'Onboarding Changes Required'
+                  : 'Account Verification Pending'}
+              </Text>
+              <StatusBadge
+                label={profile?.status || 'PENDING'}
+                variant={profile?.status === 'REJECTED' ? 'error' : 'pending'}
+              />
+            </View>
+            <Text style={styles.unapprovedDesc}>
+              {profile?.status === 'DRAFT'
+                ? 'Submit your vehicle and license documents to start accepting orders.'
+                : profile?.status === 'REJECTED'
+                ? 'Your profile requires updates before you can go online. Tap to review details.'
+                : 'Your documents are under review by our operations desk. Tap to view status.'}
+            </Text>
+            <Text style={styles.unapprovedAction}>Tap to view details ›</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {displayedError ? (
           <LocationStatusBanner
             actionText="Dismiss"
-            message={errorMessage}
-            onPressAction={() => setErrorMessage(null)}
+            message={displayedError}
+            onPressAction={dismissError}
           />
         ) : null}
 
         <OnlineToggle
-          loading={togglingOnline}
+          disabled={!isApproved}
+          loading={isUpdatingPresence}
           onToggle={handleToggleOnline}
           online={isOnline}
         />
@@ -130,18 +184,18 @@ export default function HomeScreen() {
         ) : null}
 
         {/* Incoming Offer Section */}
-        {!activeDelivery && currentOffer ? (
+        {!activeDelivery && activeOffer ? (
           <DeliveryOfferCard
             loading={offerActionLoading}
-            offer={currentOffer}
-            onAccept={() => handleAcceptOffer(currentOffer.offerId)}
-            onExpired={() => dismissOffer(currentOffer.offerId)}
-            onReject={() => handleRejectOffer(currentOffer.offerId)}
+            offer={activeOffer}
+            onAccept={() => handleAcceptOffer(activeOffer.offerId)}
+            onExpired={() => rejectOffer(activeOffer.offerId)}
+            onReject={() => handleRejectOffer(activeOffer.offerId)}
           />
         ) : null}
 
         {/* Waiting For Orders Card */}
-        {isOnline && !activeDelivery && !currentOffer ? (
+        {isOnline && isApproved && !activeDelivery && !activeOffer ? (
           <View style={styles.waitingCard}>
             <View style={styles.radarPulse}>
               <Text style={styles.radarIcon}>📡</Text>
@@ -158,7 +212,7 @@ export default function HomeScreen() {
               </View>
               <View style={styles.statusChip}>
                 <Text style={styles.statusDot}>●</Text>
-                <Text style={styles.statusChipText}>Online</Text>
+                <Text style={styles.statusChipText}>Online & Available</Text>
               </View>
             </View>
           </View>
@@ -170,20 +224,28 @@ export default function HomeScreen() {
             <Text style={styles.offlineIcon}>🌙</Text>
             <Text style={styles.offlineTitle}>You are currently Offline</Text>
             <Text style={styles.offlineDesc}>
-              Go online whenever you are ready to start taking deliveries and earning.
+              {isApproved
+                ? 'Go online whenever you are ready to start taking deliveries and earning.'
+                : 'Account must be verified and approved before going online.'}
             </Text>
           </View>
         ) : null}
 
-        {/* Today's Metrics */}
+        {/* Today's Authoritative Metrics */}
         <View style={styles.metricsRow}>
           <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>TODAY'S DELIVERIES</Text>
-            <Text style={styles.metricValue}>0</Text>
+            <Text style={styles.metricLabel}>TODAY&apos;S DELIVERIES</Text>
+            <Text style={styles.metricValue}>
+              {todaySummary ? todaySummary.todayDeliveryCount : '0'}
+            </Text>
           </View>
           <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>TODAY'S EARNINGS</Text>
-            <MoneyAmount paise={0} style={styles.metricEarning} />
+            <Text style={styles.metricLabel}>TODAY&apos;S EARNINGS</Text>
+            {todaySummary ? (
+              <MoneyAmount paise={todaySummary.todayPaise} style={styles.metricEarning} />
+            ) : (
+              <MoneyAmount paise={0} style={styles.metricEarning} />
+            )}
           </View>
         </View>
       </ScrollView>
@@ -198,6 +260,39 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: spacing.lg,
+  },
+  unapprovedBanner: {
+    backgroundColor: '#FFFBEB',
+    borderRadius: radii.card,
+    borderWidth: 1.5,
+    borderColor: palette.amber,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  unapprovedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xs,
+  },
+  unapprovedTitle: {
+    ...typography.title,
+    color: '#92400E',
+    fontSize: 16,
+    flex: 1,
+    marginRight: spacing.sm,
+  },
+  unapprovedDesc: {
+    ...typography.bodySmall,
+    color: '#78350F',
+    lineHeight: 18,
+    marginTop: 2,
+  },
+  unapprovedAction: {
+    ...typography.label,
+    color: palette.royalBlue,
+    marginTop: spacing.sm,
+    fontWeight: '700',
   },
   waitingCard: {
     backgroundColor: palette.white,

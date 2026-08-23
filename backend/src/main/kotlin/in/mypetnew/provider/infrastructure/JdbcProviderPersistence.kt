@@ -28,7 +28,9 @@ class JdbcProviderPersistence(
     ): ProviderOutlet {
         try {
             return transactions.execute {
-                replaySubmission(merchant.actorId, idempotencyKey, requestFingerprint)?.let { return@execute it }
+                replaySubmission(merchant.actorId, idempotencyKey, requestFingerprint)?.let { replay ->
+                    return@execute replay
+                }
                 val organizationId = resolveOrganization(merchant, name)
                 val outletId = UUID.randomUUID()
                 jdbc.update(
@@ -50,6 +52,7 @@ class JdbcProviderPersistence(
                     idempotencyKey,
                     requestFingerprint,
                 )
+                ensureOwnerMembership(merchant.actorId, organizationId, outletId)
                 capabilities.forEach { capability ->
                     jdbc.update(
                         """
@@ -73,7 +76,9 @@ class JdbcProviderPersistence(
                 get(outletId) ?: throw IllegalStateException("Provider insert was not readable")
             }
         } catch (duplicate: DuplicateKeyException) {
-            replaySubmission(merchant.actorId, idempotencyKey, requestFingerprint)?.let { return it }
+            replaySubmission(merchant.actorId, idempotencyKey, requestFingerprint)?.let { replay ->
+                return replay
+            }
             throw DomainException("PROVIDER_CONFLICT", "Provider onboarding changed concurrently; refresh and retry")
         }
     }
@@ -200,32 +205,44 @@ class JdbcProviderPersistence(
             return requested
         }
 
-        jdbc.query(
+        // A scope-less Merchant is valid only for first onboarding. Once an organization already
+        // belongs to this actor, current OWNER membership must be re-established by authorization;
+        // owner_actor_id alone is identity metadata and must never resurrect revoked authority.
+        val existingOrganization = jdbc.query(
             "SELECT id FROM mypet.merchant_organization WHERE owner_actor_id = ?",
             { result, _ -> result.getObject("id", UUID::class.java) },
             merchant.actorId,
-        ).singleOrNull()?.let { return it }
+        ).singleOrNull()
+        if (existingOrganization != null) {
+            throw DomainException("MERCHANT_PERMISSION_REQUIRED", "The required merchant permission is missing")
+        }
 
         val organizationId = UUID.randomUUID()
-        try {
-            jdbc.update(
-                """
-                INSERT INTO mypet.merchant_organization (
-                    id, name, status, owner_actor_id
-                ) VALUES (?, ?, 'UNDER_REVIEW', ?)
-                """.trimIndent(),
-                organizationId,
-                name,
-                merchant.actorId,
-            )
-            return organizationId
-        } catch (duplicate: DuplicateKeyException) {
-            return jdbc.query(
-                "SELECT id FROM mypet.merchant_organization WHERE owner_actor_id = ?",
-                { result, _ -> result.getObject("id", UUID::class.java) },
-                merchant.actorId,
-            ).singleOrNull() ?: throw duplicate
-        }
+        jdbc.update(
+            """
+            INSERT INTO mypet.merchant_organization (
+                id, name, status, owner_actor_id
+            ) VALUES (?, ?, 'UNDER_REVIEW', ?)
+            """.trimIndent(),
+            organizationId,
+            name,
+            merchant.actorId,
+        )
+        return organizationId
+    }
+
+    private fun ensureOwnerMembership(actorId: UUID, organizationId: UUID, outletId: UUID) {
+        jdbc.update(
+            """
+            INSERT INTO mypet.merchant_staff (
+                account_id, organization_id, outlet_id, permission, active
+            ) VALUES (?, ?, ?, 'OWNER', TRUE)
+            ON CONFLICT (account_id, outlet_id, permission) DO NOTHING
+            """.trimIndent(),
+            actorId,
+            organizationId,
+            outletId,
+        )
     }
 
     private fun replaySubmission(

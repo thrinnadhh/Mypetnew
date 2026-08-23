@@ -414,19 +414,3 @@ export async function logoutMerchant(): Promise<void> {
 export function hasRuntimeMerchantSession(): boolean {
   return runtimeAccessToken !== null;
 }
-
-export async function bypassMerchantLoginForDemo(): Promise<MerchantSessionEnvelope> {
-  const demoSession: MerchantSessionEnvelope = {
-    accountId: 'merchant-demo-account',
-    accessToken: 'demo-merchant-token',
-    refreshToken: 'demo-merchant-refresh-token',
-    tokenType: 'Bearer',
-    accessTokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    refreshTokenExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-    role: 'MERCHANT',
-  };
-  runtimeAccessToken = demoSession.accessToken;
-  accessTokenGeneration += 1;
-  return demoSession;
-}
-

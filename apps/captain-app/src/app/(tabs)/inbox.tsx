@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   CaptainNotificationItem,
@@ -7,24 +7,56 @@ import {
   markNotificationRead,
 } from '../../api/notifications';
 import { EmptyState } from '../../components/EmptyState';
+import { OfflineBanner } from '../../components/OfflineBanner';
+import { RetryPanel } from '../../components/RetryPanel';
 import { palette, radii, spacing, typography } from '../../design/tokens';
+import { useCaptainStore } from '../../state/captain-store';
 import { formatDateTime } from '../../utils/date';
 
 export default function InboxTabScreen() {
+  const { isNetworkConnected } = useCaptainStore();
   const [notifications, setNotifications] = useState<CaptainNotificationItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadNotifications = async () => {
-    const items = await fetchCaptainNotifications();
-    setNotifications(items);
-  };
+  const loadNotifications = useCallback(async () => {
+    try {
+      const items = await fetchCaptainNotifications();
+      setNotifications(items);
+    } catch {
+      setError('Unable to load inbox notifications. Please check your connection.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    loadNotifications();
+    let isMounted = true;
+    (async () => {
+      try {
+        const items = await fetchCaptainNotifications();
+        if (isMounted) {
+          setNotifications(items);
+        }
+      } catch {
+        if (isMounted) {
+          setError('Unable to load inbox notifications. Please check your connection.');
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
+    setError(null);
     try {
       await loadNotifications();
     } finally {
@@ -34,10 +66,18 @@ export default function InboxTabScreen() {
 
   const handlePressItem = async (item: CaptainNotificationItem) => {
     if (!item.read) {
-      await markNotificationRead(item.id);
+      // Optimistic mark read
       setNotifications((prev) =>
         prev.map((n) => (n.id === item.id ? { ...n, read: true } : n)),
       );
+      try {
+        await markNotificationRead(item.id);
+      } catch {
+        // Revert on failure
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === item.id ? { ...n, read: false } : n)),
+        );
+      }
     }
   };
 
@@ -62,8 +102,10 @@ export default function InboxTabScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Inbox & Alerts</Text>
+        <Text style={styles.title}>Inbox &amp; Alerts</Text>
       </View>
+
+      {!isNetworkConnected ? <OfflineBanner /> : null}
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -71,7 +113,14 @@ export default function InboxTabScreen() {
           <RefreshControl onRefresh={onRefresh} refreshing={refreshing} />
         }
       >
-        {notifications.length === 0 ? (
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator color={palette.royalBlue} size="large" />
+            <Text style={styles.loadingText}>Loading notifications…</Text>
+          </View>
+        ) : error ? (
+          <RetryPanel message={error} onRetry={loadNotifications} />
+        ) : notifications.length === 0 ? (
           <EmptyState
             description="You will receive real-time updates regarding new orders, settlements, and compliance here."
             icon="🔔"
@@ -83,6 +132,7 @@ export default function InboxTabScreen() {
               <TouchableOpacity
                 key={item.id}
                 accessibilityRole="button"
+                accessibilityLabel={`${item.title}, ${item.message}`}
                 activeOpacity={0.8}
                 onPress={() => handlePressItem(item)}
                 style={[styles.itemCard, !item.read && styles.itemUnread]}
@@ -176,5 +226,15 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: palette.inkMuted,
     marginTop: spacing.xs,
+  },
+  loadingContainer: {
+    padding: spacing.xxl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  loadingText: {
+    ...typography.bodySmall,
+    color: palette.inkMuted,
   },
 });

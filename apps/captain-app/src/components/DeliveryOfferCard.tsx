@@ -1,13 +1,13 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { palette, radii, spacing, typography } from '../design/tokens';
-import { CaptainDeliveryOffer } from '../features/delivery/types';
+import { DispatchOffer } from '../domain/dispatch';
 import { Button } from './Button';
 import { MoneyAmount } from './MoneyAmount';
 import { OfferCountdown } from './OfferCountdown';
 
 export interface DeliveryOfferCardProps {
-  offer: CaptainDeliveryOffer;
+  offer: DispatchOffer;
   loading?: boolean;
   onAccept: () => void;
   onReject: () => void;
@@ -21,8 +21,8 @@ export const DeliveryOfferCard: React.FC<DeliveryOfferCardProps> = ({
   onReject,
   onExpired,
 }) => {
-  const distanceKm = offer.pickup?.distanceMeters
-    ? (offer.pickup.distanceMeters / 1000).toFixed(1)
+  const distanceKm = offer.distanceMeters
+    ? (offer.distanceMeters / 1000).toFixed(1)
     : null;
 
   return (
@@ -30,10 +30,10 @@ export const DeliveryOfferCard: React.FC<DeliveryOfferCardProps> = ({
       <View style={styles.header}>
         <Text style={styles.tag}>NEW DELIVERY REQUEST</Text>
         <Text style={styles.outletName}>
-          {offer.pickup?.outletName || 'MyPet Store'}
+          {offer.outletName || 'MyPet Store'}
         </Text>
-        {offer.pickup?.area ? (
-          <Text style={styles.areaText}>{offer.pickup.area}</Text>
+        {offer.area ? (
+          <Text style={styles.areaText}>{offer.area}</Text>
         ) : null}
       </View>
 
@@ -45,19 +45,23 @@ export const DeliveryOfferCard: React.FC<DeliveryOfferCardProps> = ({
           </View>
         ) : null}
 
-        {offer.package?.itemCount ? (
+        {offer.itemCount ? (
           <View style={styles.detailItem}>
             <Text style={styles.detailLabel}>PACKAGE</Text>
-            <Text style={styles.detailValue}>{offer.package.itemCount} items</Text>
+            <Text style={styles.detailValue}>{offer.itemCount} items</Text>
           </View>
         ) : null}
 
         <View style={styles.detailItem}>
           <Text style={styles.detailLabel}>EST. EARNING</Text>
-          <MoneyAmount
-            paise={offer.estimatedEarningPaise ?? 7500}
-            style={styles.earningText}
-          />
+          {offer.estimatedEarningPaise !== undefined && offer.estimatedEarningPaise !== null ? (
+            <MoneyAmount
+              paise={offer.estimatedEarningPaise}
+              style={styles.earningText}
+            />
+          ) : (
+            <Text style={styles.earningText}>Pending</Text>
+          )}
         </View>
       </View>
 

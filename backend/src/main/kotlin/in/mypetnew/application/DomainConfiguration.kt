@@ -180,6 +180,36 @@ class DomainConfiguration {
     fun privacyRepository(): PrivacyRepository = InMemoryPrivacyRepository()
 
     @Bean
+    @Profile("test", "development")
+    fun inMemoryCaptainOnboardingPersistence(): `in`.mypetnew.delivery.domain.CaptainOnboardingPersistence =
+        `in`.mypetnew.delivery.domain.InMemoryCaptainOnboardingPersistence()
+
+    @Bean
+    @Profile("test", "development")
+    fun captainOnboardingService(persistence: `in`.mypetnew.delivery.domain.CaptainOnboardingPersistence) =
+        `in`.mypetnew.delivery.domain.CaptainOnboardingService(persistence)
+
+    @Bean
+    @Profile("test", "development")
+    fun inMemoryCaptainEarningsPersistence(dispatch: `in`.mypetnew.delivery.domain.InMemoryDispatchPersistence): `in`.mypetnew.delivery.domain.CaptainEarningsPersistence =
+        `in`.mypetnew.delivery.domain.InMemoryCaptainEarningsPersistence(dispatch)
+
+    @Bean
+    @Profile("test", "development")
+    fun captainEarningsService(persistence: `in`.mypetnew.delivery.domain.CaptainEarningsPersistence) =
+        `in`.mypetnew.delivery.domain.CaptainEarningsService(persistence)
+
+    @Bean
+    @Profile("test", "development")
+    fun inMemoryCaptainSupportPersistence(dispatch: `in`.mypetnew.delivery.domain.InMemoryDispatchPersistence): `in`.mypetnew.delivery.domain.CaptainSupportPersistence =
+        `in`.mypetnew.delivery.domain.InMemoryCaptainSupportPersistence(dispatch)
+
+    @Bean
+    @Profile("test", "development")
+    fun captainSupportService(persistence: `in`.mypetnew.delivery.domain.CaptainSupportPersistence) =
+        `in`.mypetnew.delivery.domain.CaptainSupportService(persistence)
+
+    @Bean
     fun privacyService(
         repository: PrivacyRepository,
         sessions: SessionStore,

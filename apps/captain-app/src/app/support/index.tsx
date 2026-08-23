@@ -3,17 +3,17 @@ import React from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { palette, radii, spacing, typography } from '../../design/tokens';
-import { useDelivery } from '../../features/delivery/delivery-context';
+import { useDeliveryStore } from '../../state/delivery-store';
 
 export default function SupportLandingScreen() {
-  const { activeDelivery } = useDelivery();
+  const { activeDelivery } = useDeliveryStore();
 
   const categories = [
     {
       id: 'ACTIVE_DELIVERY',
       title: 'Active Delivery Issue',
       desc: activeDelivery
-        ? `Issues with ${activeDelivery.orderReference} (${activeDelivery.merchant?.name})`
+        ? `Issues with ${activeDelivery.orderReference || activeDelivery.orderId} (${activeDelivery.outletName})`
         : 'Store delay, customer unreachable, address issue',
       icon: '🛵',
       highlight: !!activeDelivery,
@@ -62,7 +62,7 @@ export default function SupportLandingScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Captain Help & Support</Text>
+        <Text style={styles.title}>Captain Help &amp; Support</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>

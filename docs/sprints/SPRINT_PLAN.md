@@ -1,10 +1,23 @@
 # MyPetNew Sprint Execution Plan
 
-Status: **Frontend-first / Sprint 1 only**
+## 0. Merchant Operations program amendment — 2026-08-21
 
-Version: **2.0**
+The previously stated “Sprint 1 only” restriction remains historical context
+for the original walking skeleton, but it no longer blocks the explicitly
+approved Merchant Operations + Platform Admin program.
 
-Date: **2026-08-11**
+`M0 — Merchant Operations Program Foundation, Test Harness, and Mandatory Merge
+Gates` is now the active foundation sprint. M1–M13 remain dependency-gated and
+cannot begin or be marked complete merely because their requirements appear in
+architecture documents. See
+[`M0_MERCHANT_OPERATIONS_PROGRAM_FOUNDATION.md`](../architecture/M0_MERCHANT_OPERATIONS_PROGRAM_FOUNDATION.md)
+and the machine-readable contracts under `contracts/merchant-operations/`.
+
+Status: **Merchant Operations M0 active; original Sprint 1 plan retained below as historical baseline**
+
+Version: **3.0**
+
+Date: **2026-08-21**
 
 ## 1. Active execution rule
 

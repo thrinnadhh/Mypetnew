@@ -1,46 +1,17 @@
-export interface CaptainActiveDelivery {
-  jobId: string;
-  orderId: string;
-  orderReference: string;
-  dispatchStatus: 'ASSIGNED' | 'PICKED_UP' | 'DELIVERED';
-  merchant?: {
-    outletId: string;
-    name: string;
-    address?: string;
-    latitude?: number;
-    longitude?: number;
-    phone?: string;
-    pickupInstructions?: string;
-  };
-  customer?: {
-    name?: string;
-    maskedPhone?: string;
-    address?: string;
-    latitude?: number;
-    longitude?: number;
-    deliveryInstructions?: string;
-  };
-  package?: {
-    itemCount?: number;
-    summary?: string;
-  };
-  earningPaise?: number;
-  assignedAt?: string;
-  pickedUpAt?: string;
-  deliveredAt?: string;
-}
+import { DeliveryJob } from '../../domain/delivery';
+import { DispatchOffer } from '../../domain/dispatch';
 
-export interface CaptainDeliveryOffer {
-  offerId: string;
-  jobId: string;
-  expiresAt: string;
-  pickup?: {
-    outletName?: string;
-    area?: string;
-    distanceMeters?: number;
-  };
-  package?: {
-    itemCount?: number;
-  };
-  estimatedEarningPaise?: number;
-}
+export * from '../../domain/delivery';
+export * from '../../domain/dispatch';
+
+export type CaptainActiveDelivery = DeliveryJob;
+export type CaptainDeliveryOffer = DispatchOffer;
+
+export type DeliveryLifecycleStep =
+  | 'ASSIGNED'
+  | 'ARRIVING_PICKUP'
+  | 'ARRIVED_PICKUP'
+  | 'PICKED_UP'
+  | 'ARRIVING_DELIVERY'
+  | 'ARRIVED_DELIVERY'
+  | 'DELIVERED';

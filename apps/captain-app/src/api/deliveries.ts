@@ -1,4 +1,4 @@
-import { CaptainActiveDelivery } from '../features/delivery/types';
+import { DeliveryJob } from '../domain/delivery';
 import { captainApiFetch, handleApiResponse } from './client';
 
 export interface DeliveryHistoryItem {
@@ -16,27 +16,16 @@ export interface PaginatedDeliveries {
   nextCursor?: string | null;
 }
 
-export async function fetchActiveDelivery(): Promise<CaptainActiveDelivery | null> {
-  try {
-    const response = await captainApiFetch('/api/v1/captain/dispatch/active');
-    if (response.ok) {
-      return await handleApiResponse<CaptainActiveDelivery>(response);
-    }
-  } catch {
-    // Return null if none active or endpoint not supported
+export async function fetchActiveDelivery(): Promise<DeliveryJob | null> {
+  const response = await captainApiFetch('/api/v1/captain/dispatch/active', { timeoutMs: 8000 });
+  if (response.status === 404 || response.status === 204) {
+    return null;
   }
-  return null;
+  return await handleApiResponse<DeliveryJob>(response);
 }
 
 export async function fetchDeliveryHistory(): Promise<DeliveryHistoryItem[]> {
-  try {
-    const response = await captainApiFetch('/api/v1/captain/deliveries/history');
-    if (response.ok) {
-      const data = await handleApiResponse<any>(response);
-      return Array.isArray(data) ? data : data.items ?? [];
-    }
-  } catch {
-    // Return empty list if no history yet
-  }
-  return [];
+  const response = await captainApiFetch('/api/v1/captain/deliveries/history', { timeoutMs: 8000 });
+  const data = await handleApiResponse<any>(response);
+  return Array.isArray(data) ? data : data.items ?? [];
 }

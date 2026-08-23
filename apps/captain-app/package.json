@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint --quiet",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "test:e2e": "jest src/__tests__/e2e --runInBand"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
@@ -21,7 +22,9 @@
     "expo-location": "~57.0.1",
     "expo-router": "~57.0.15",
     "expo-secure-store": "~57.0.1",
+    "expo-sqlite": "~57.0.1",
     "expo-status-bar": "~57.0.1",
+    "expo-task-manager": "~57.0.12",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.2",

@@ -12,15 +12,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../../../components/Button';
 import { ProofCodeInput } from '../../../components/ProofCodeInput';
 import { palette, spacing, typography } from '../../../design/tokens';
-import { useDelivery } from '../../../features/delivery/delivery-context';
-import { getFriendlyErrorMessage } from '../../..//utils/errors';
+import { useDeliveryStore } from '../../../state/delivery-store';
 
 export default function DeliveryProofVerificationScreen() {
   const { jobId } = useLocalSearchParams<{ jobId: string }>();
-  const { activeDelivery, markDelivered } = useDelivery();
+  const { activeDelivery, confirmDelivery } = useDeliveryStore();
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const delivery = activeDelivery;
   if (!delivery) {
@@ -30,12 +30,26 @@ export default function DeliveryProofVerificationScreen() {
 
   const handleConfirmDelivery = async () => {
     setError(null);
+    setNotice('Confirming delivery…');
     setLoading(true);
+
     try {
-      await markDelivered();
-      router.replace(`/delivery/${jobId}/completed` as any);
-    } catch (err: any) {
-      setError(getFriendlyErrorMessage(err));
+      const outcome = await confirmDelivery(jobId, {
+        type: 'PIN',
+        pinCode: code,
+        capturedAt: new Date().toISOString(),
+      });
+
+      if (outcome.outcome === 'ACKNOWLEDGED') {
+        router.replace(`/delivery/${jobId}/completed` as any);
+      } else if (outcome.outcome === 'UNKNOWN') {
+        setNotice('Delivery sync pending. Checking delivery status…');
+      } else if (outcome.outcome === 'PENDING') {
+        setNotice('Delivery sync pending');
+      } else {
+        setNotice(null);
+        setError(outcome.error.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -53,11 +67,17 @@ export default function DeliveryProofVerificationScreen() {
         >
           <View style={styles.header}>
             <Text style={styles.headerSub}>VERIFY CUSTOMER DELIVERY</Text>
-            <Text style={styles.headerTitle}>{delivery.orderReference}</Text>
-            <Text style={styles.customerName}>{delivery.customer?.name}</Text>
+            <Text style={styles.headerTitle}>{delivery.orderReference || `Order #${delivery.orderId.slice(0, 8)}`}</Text>
+            <Text style={styles.customerName}>{delivery.deliveryAddress?.recipientName}</Text>
           </View>
 
           <View style={styles.card}>
+            {notice ? (
+              <View style={styles.noticeBanner}>
+                <Text style={styles.noticeText}>{notice}</Text>
+              </View>
+            ) : null}
+
             <ProofCodeInput
               error={error}
               instructions="Ask the customer for the 4-digit delivery PIN"
@@ -75,7 +95,7 @@ export default function DeliveryProofVerificationScreen() {
               loading={loading}
               onPress={handleConfirmDelivery}
               style={styles.confirmBtn}
-              title="COMPLETE DELIVERY"
+              title={loading ? 'Confirming delivery…' : 'COMPLETE DELIVERY'}
               variant="success"
             />
           </View>
@@ -126,6 +146,19 @@ const styles = StyleSheet.create({
     borderColor: palette.outlineSoft,
     padding: spacing.xl,
     alignItems: 'center',
+  },
+  noticeBanner: {
+    backgroundColor: '#FEF3C7',
+    padding: spacing.md,
+    borderRadius: 8,
+    marginBottom: spacing.md,
+    width: '100%',
+  },
+  noticeText: {
+    ...typography.bodySmall,
+    color: '#92400E',
+    textAlign: 'center',
+    fontWeight: '600',
   },
   confirmBtn: {
     marginTop: spacing.lg,

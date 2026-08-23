@@ -1,17 +1,21 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { palette, radii, spacing, typography } from '../design/tokens';
+import { palette, spacing, typography } from '../design/tokens';
+import { DeliveryState } from '../domain/delivery';
 
 export interface DeliveryTimelineProps {
-  status: 'ASSIGNED' | 'PICKED_UP' | 'DELIVERED';
+  status?: DeliveryState | string | null;
 }
 
 export const DeliveryTimeline: React.FC<DeliveryTimelineProps> = ({ status }) => {
+  const isPickedUp = status === 'PICKED_UP' || status === 'ARRIVING_CUSTOMER' || status === 'DELIVERY_CONFIRMING' || status === 'DELIVERED';
+  const isDelivered = status === 'DELIVERED';
+
   const steps = [
-    { label: 'Assigned', active: true, completed: status === 'PICKED_UP' || status === 'DELIVERED' },
-    { label: 'Pickup', active: status === 'ASSIGNED' || status === 'PICKED_UP' || status === 'DELIVERED', completed: status === 'PICKED_UP' || status === 'DELIVERED' },
-    { label: 'Customer', active: status === 'PICKED_UP' || status === 'DELIVERED', completed: status === 'DELIVERED' },
-    { label: 'Delivered', active: status === 'DELIVERED', completed: status === 'DELIVERED' },
+    { label: 'Assigned', active: true, completed: isPickedUp || isDelivered },
+    { label: 'Pickup', active: true, completed: isPickedUp || isDelivered },
+    { label: 'Customer', active: isPickedUp || isDelivered, completed: isDelivered },
+    { label: 'Delivered', active: isDelivered, completed: isDelivered },
   ];
 
   return (

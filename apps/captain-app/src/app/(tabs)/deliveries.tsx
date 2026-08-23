@@ -1,33 +1,74 @@
 import { router } from 'expo-router';
-import React, { useEffect, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { DeliveryHistoryItem, fetchDeliveryHistory } from '../../api/deliveries';
+import { DeliveryHistoryItem } from '../../api/deliveries';
 import { ActiveDeliveryCard } from '../../components/ActiveDeliveryCard';
 import { EmptyState } from '../../components/EmptyState';
 import { MoneyAmount } from '../../components/MoneyAmount';
+import { OfflineBanner } from '../../components/OfflineBanner';
+import { RetryPanel } from '../../components/RetryPanel';
 import { StatusBadge } from '../../components/StatusBadge';
 import { palette, radii, spacing, typography } from '../../design/tokens';
-import { useDelivery } from '../../features/delivery/delivery-context';
+import { useDeliveryStore } from '../../state/delivery-store';
+import { useCaptainStore } from '../../state/captain-store';
+import { earningsRepository } from '../../repositories/earnings-repository';
 import { formatDateTime } from '../../utils/date';
 
 export default function DeliveriesTabScreen() {
-  const { activeDelivery, restoreActiveDelivery } = useDelivery();
+  const { activeDelivery, restoreActiveDelivery } = useDeliveryStore();
+  const { isNetworkConnected } = useCaptainStore();
   const [history, setHistory] = useState<DeliveryHistoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadData = async () => {
-    await restoreActiveDelivery();
-    const items = await fetchDeliveryHistory();
-    setHistory(items);
-  };
+  const loadData = useCallback(async () => {
+    try {
+      await restoreActiveDelivery();
+      const result = await earningsRepository.getDeliveryHistory();
+      if (result.success) {
+        setHistory(result.data);
+      } else {
+        setError(result.error.message);
+      }
+    } catch {
+      setError('Unable to load deliveries. Please check your network connection.');
+    } finally {
+      setLoading(false);
+    }
+  }, [restoreActiveDelivery]);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    let isMounted = true;
+    (async () => {
+      try {
+        await restoreActiveDelivery();
+        const result = await earningsRepository.getDeliveryHistory();
+        if (!isMounted) return;
+        if (result.success) {
+          setHistory(result.data);
+        } else {
+          setError(result.error.message);
+        }
+      } catch {
+        if (isMounted) {
+          setError('Unable to load deliveries. Please check your network connection.');
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, [restoreActiveDelivery]);
 
   const onRefresh = async () => {
     setRefreshing(true);
+    setError(null);
     try {
       await loadData();
     } finally {
@@ -40,6 +81,8 @@ export default function DeliveriesTabScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Your Deliveries</Text>
       </View>
+
+      {!isNetworkConnected ? <OfflineBanner /> : null}
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -60,9 +103,19 @@ export default function DeliveriesTabScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionHeading}>PAST DELIVERIES</Text>
 
-          {history.length === 0 ? (
+          {loading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator color={palette.royalBlue} size="large" />
+              <Text style={styles.loadingText}>Loading delivery history…</Text>
+            </View>
+          ) : error ? (
+            <RetryPanel
+              message={error}
+              onRetry={loadData}
+            />
+          ) : history.length === 0 ? (
             <EmptyState
-              description="Completed and delivered orders will appear here."
+              description="Completed and delivered orders will appear here once delivered."
               icon="📦"
               title="No deliveries yet"
             />
@@ -72,7 +125,7 @@ export default function DeliveriesTabScreen() {
                 <View key={item.deliveryId} style={styles.historyCard}>
                   <View style={styles.cardHeader}>
                     <View>
-                      <Text style={styles.orderRef}>{item.orderReference}</Text>
+                      <Text style={styles.orderRef}>{item.orderReference || `#${item.orderId.slice(0, 8)}`}</Text>
                       <Text style={styles.merchantName}>{item.merchantName}</Text>
                     </View>
                     <StatusBadge
@@ -169,5 +222,15 @@ const styles = StyleSheet.create({
     color: palette.emerald,
     fontSize: 16,
     fontWeight: '700',
+  },
+  loadingContainer: {
+    padding: spacing.xxl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  loadingText: {
+    ...typography.bodySmall,
+    color: palette.inkMuted,
   },
 });

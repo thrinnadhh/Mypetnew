@@ -71,6 +71,8 @@ jobs:
         run: npm run typecheck
       - name: Lint Customer app
         run: npm run lint
+      - name: Test Merchant-to-Customer consistency contracts
+        run: npm run test:merchant-consistency
       - name: Test Customer app
         run: npm test -- --runInBand
       - name: Export Android Customer bundle

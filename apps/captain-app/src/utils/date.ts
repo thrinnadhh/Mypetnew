@@ -37,7 +37,7 @@ export function formatDateTime(isoString: string | null | undefined): string {
   try {
     const date = new Date(isoString);
     if (isNaN(date.getTime())) return '—';
-    
+
     const now = new Date();
     const isToday =
       date.getDate() === now.getDate() &&

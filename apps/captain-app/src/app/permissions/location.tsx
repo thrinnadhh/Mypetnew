@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../../components/Button';
@@ -7,32 +7,56 @@ import { StatusBadge } from '../../components/StatusBadge';
 import { palette, radii, spacing, typography } from '../../design/tokens';
 import {
   checkLocationPermissions,
-  requestLocationPermissions,
-} from '../../features/location/location-permissions';
+  LocationPermissionStatus,
+  requestBackgroundLocationPermission,
+  requestForegroundLocationPermission,
+} from '../../location/permissions';
 
 export default function LocationPermissionScreen() {
-  const [status, setStatus] = useState({
+  const [status, setStatus] = useState<LocationPermissionStatus>({
+    state: 'UNKNOWN',
     foregroundGranted: false,
     backgroundGranted: false,
+    canAskAgain: true,
   });
-  const [requesting, setRequesting] = useState(false);
+  const [requestingForeground, setRequestingForeground] = useState(false);
+  const [requestingBackground, setRequestingBackground] = useState(false);
 
-  const check = async () => {
+  const check = useCallback(async () => {
     const s = await checkLocationPermissions();
     setStatus(s);
-  };
-
-  useEffect(() => {
-    check();
   }, []);
 
-  const handleRequest = async () => {
-    setRequesting(true);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const s = await checkLocationPermissions();
+      if (mounted) {
+        setStatus(s);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const handleRequestForeground = async () => {
+    setRequestingForeground(true);
     try {
-      const s = await requestLocationPermissions();
+      const s = await requestForegroundLocationPermission();
       setStatus(s);
     } finally {
-      setRequesting(false);
+      setRequestingForeground(false);
+    }
+  };
+
+  const handleRequestBackground = async () => {
+    setRequestingBackground(true);
+    try {
+      const s = await requestBackgroundLocationPermission();
+      setStatus(s);
+    } finally {
+      setRequestingBackground(false);
     }
   };
 
@@ -48,44 +72,86 @@ export default function LocationPermissionScreen() {
           MyPet Captain relies on precise real-time location to match you with nearby merchant orders, navigate store pickups, and calculate route progress.
         </Text>
 
+        {/* STEP 1: FOREGROUND PERMISSION */}
         <View style={styles.card}>
-          <View style={styles.row}>
-            <View style={styles.rowInfo}>
-              <Text style={styles.rowTitle}>Foreground Location</Text>
-              <Text style={styles.rowDesc}>Required while using the application</Text>
+          <View style={styles.cardHeader}>
+            <View style={styles.stepBadge}>
+              <Text style={styles.stepText}>STEP 1</Text>
             </View>
             <StatusBadge
-              label={status.foregroundGranted ? 'ALLOWED' : 'DENIED'}
+              label={status.foregroundGranted ? 'GRANTED' : 'REQUIRED'}
               variant={status.foregroundGranted ? 'active' : 'error'}
             />
           </View>
 
-          <View style={styles.divider} />
+          <Text style={styles.cardTitle}>Foreground Location Access</Text>
+          <Text style={styles.cardDesc}>
+            Required while using the app to broadcast availability to the dispatch engine and view nearby orders.
+          </Text>
 
-          <View style={styles.row}>
-            <View style={styles.rowInfo}>
-              <Text style={styles.rowTitle}>Background Location</Text>
-              <Text style={styles.rowDesc}>Required to receive orders when phone is locked</Text>
+          {!status.foregroundGranted && (
+            <Button
+              loading={requestingForeground}
+              onPress={handleRequestForeground}
+              style={styles.actionBtn}
+              title="Allow While Using App"
+              variant="primary"
+            />
+          )}
+        </View>
+
+        {/* STEP 2: BACKGROUND PERMISSION */}
+        <View style={[styles.card, !status.foregroundGranted && styles.cardDisabled]}>
+          <View style={styles.cardHeader}>
+            <View style={styles.stepBadge}>
+              <Text style={styles.stepText}>STEP 2</Text>
             </View>
             <StatusBadge
-              label={status.backgroundGranted ? 'ALLOWED' : 'OPTIONAL'}
-              variant={status.backgroundGranted ? 'active' : 'warning'}
+              label={
+                status.backgroundGranted
+                  ? 'GRANTED'
+                  : status.foregroundGranted
+                  ? 'RECOMMENDED'
+                  : 'PENDING STEP 1'
+              }
+              variant={
+                status.backgroundGranted
+                  ? 'active'
+                  : status.foregroundGranted
+                  ? 'warning'
+                  : 'neutral'
+              }
             />
           </View>
+
+          <Text style={styles.cardTitle}>Background Location Access</Text>
+          <Text style={styles.cardDesc}>
+            Enables continuous tracking when your screen is locked or navigation runs in the background during active customer deliveries.
+          </Text>
+
+          {status.foregroundGranted && !status.backgroundGranted && (
+            <Button
+              loading={requestingBackground}
+              onPress={handleRequestBackground}
+              style={styles.actionBtn}
+              title="Allow All The Time"
+              variant="secondary"
+            />
+          )}
         </View>
 
         <View style={styles.actions}>
           <Button
-            loading={requesting}
-            onPress={handleRequest}
-            title={status.foregroundGranted ? 'Refresh Permission State' : 'Allow Location Access'}
-            variant="primary"
+            onPress={check}
+            style={styles.backBtn}
+            title="Refresh Status"
+            variant="outline"
           />
 
           <Button
             onPress={() => router.back()}
             style={styles.backBtn}
-            title="Back"
+            title="Done"
             variant="secondary"
           />
         </View>
@@ -110,7 +176,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.royalBlueSoft,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: spacing.xl,
+    marginTop: spacing.md,
     marginBottom: spacing.md,
   },
   icon: {
@@ -128,7 +194,7 @@ const styles = StyleSheet.create({
     color: palette.inkMuted,
     textAlign: 'center',
     marginTop: spacing.xs,
-    marginBottom: spacing.xl,
+    marginBottom: spacing.lg,
     lineHeight: 20,
   },
   card: {
@@ -138,36 +204,49 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.outlineSoft,
     padding: spacing.md,
-    marginBottom: spacing.xl,
+    marginBottom: spacing.md,
   },
-  row: {
+  cardDisabled: {
+    opacity: 0.6,
+  },
+  cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: spacing.xs,
+    marginBottom: spacing.xs,
   },
-  rowInfo: {
-    flex: 1,
-    marginRight: spacing.sm,
+  stepBadge: {
+    backgroundColor: palette.royalBlueSoft,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radii.xs,
   },
-  rowTitle: {
+  stepText: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: palette.royalBlue,
+    fontSize: 11,
+  },
+  cardTitle: {
     ...typography.title,
     color: palette.ink,
-    fontSize: 15,
+    fontSize: 16,
+    marginTop: spacing.xs,
   },
-  rowDesc: {
+  cardDesc: {
     ...typography.caption,
     color: palette.inkMuted,
-    marginTop: 2,
+    marginTop: 4,
+    lineHeight: 18,
+    marginBottom: spacing.sm,
   },
-  divider: {
-    height: 1,
-    backgroundColor: palette.outlineSoft,
-    marginVertical: spacing.md,
+  actionBtn: {
+    marginTop: spacing.xs,
   },
   actions: {
     width: '100%',
-    gap: spacing.md,
+    gap: spacing.sm,
+    marginTop: spacing.md,
   },
   backBtn: {
     minHeight: 48,

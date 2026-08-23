@@ -57,17 +57,35 @@ class DispatchServiceTest {
             )
         }
 
-        val pickedUp = fixture.dispatch.markPickedUp(captainId, assigned.id, "captain-pickup")
+        val pickedUp = fixture.dispatch.markPickedUp(
+            captainId,
+            assigned.id,
+            `in`.mypetnew.delivery.domain.DeliveryProof("PIN", assigned.pickupPin),
+            "captain-pickup",
+        )
         assertEquals(DispatchStatus.PICKED_UP, pickedUp.status)
         assertEquals(OrderStatus.PICKED_UP, fixture.orders.get(fixture.readyOrder.id).status)
         assertEquals(0, fixture.inventory.reserved(fixture.listingId))
 
-        val delivered = fixture.dispatch.markDelivered(captainId, assigned.id, "captain-delivered")
+        val delivered = fixture.dispatch.markDelivered(
+            captainId,
+            assigned.id,
+            `in`.mypetnew.delivery.domain.DeliveryProof("PIN", assigned.deliveryPin),
+            "captain-delivered",
+        )
         assertEquals(DispatchStatus.DELIVERED, delivered.status)
         assertEquals(OrderStatus.DELIVERED, fixture.orders.get(fixture.readyOrder.id).status)
         assertFalse(requireNotNull(fixture.dispatch.captainState(captainId)).busy)
 
-        assertEquals(delivered.id, fixture.dispatch.markDelivered(captainId, assigned.id, "captain-delivered").id)
+        assertEquals(
+            delivered.id,
+            fixture.dispatch.markDelivered(
+                captainId,
+                assigned.id,
+                `in`.mypetnew.delivery.domain.DeliveryProof("PIN", assigned.deliveryPin),
+                "captain-delivered",
+            ).id,
+        )
     }
 
     @Test
@@ -181,6 +199,49 @@ class DispatchServiceTest {
         assertThrows(DomainException::class.java) {
             fixture.dispatch.updateAvailability(captainId, true, 91.0, 79.0)
         }
+        assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateAvailability(captainId, true, 13.6288, 181.0)
+        }
+        assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateAvailability(captainId, true, Double.NaN, 79.0)
+        }
+        assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateAvailability(captainId, true, 13.6288, 79.4192, accuracy = -5.0)
+        }
+        // Stale timestamp (10 minutes in the past)
+        val clock = Instant.parse("2026-08-15T08:00:00Z")
+        assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateAvailability(
+                captainId,
+                true,
+                13.6288,
+                79.4192,
+                accuracy = 10.0,
+                capturedAt = clock.minus(Duration.ofMinutes(10)),
+            )
+        }
+        // Far future timestamp (5 minutes in the future)
+        assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateAvailability(
+                captainId,
+                true,
+                13.6288,
+                79.4192,
+                accuracy = 10.0,
+                capturedAt = clock.plus(Duration.ofMinutes(5)),
+            )
+        }
+        // Fresh timestamp accepted
+        val state = fixture.dispatch.updateAvailability(
+            captainId,
+            true,
+            13.6288,
+            79.4192,
+            accuracy = 10.0,
+            capturedAt = clock.minusSeconds(30),
+        )
+        assertTrue(state.online)
+        assertEquals(clock.minusSeconds(30), state.lastLocationAt)
     }
 
     private fun fixture(clock: Clock = Clock.fixed(Instant.parse("2026-08-15T08:00:00Z"), ZoneOffset.UTC)): Fixture {

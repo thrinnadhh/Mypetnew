@@ -1,67 +1,54 @@
-export interface ApiErrorPayload {
-  code: string;
-  message: string;
-  status?: number;
-  traceId?: string;
-}
+import { AppError, AppErrorKind } from '../domain/result';
 
-export class ApiError extends Error {
-  readonly code: string;
-  readonly status: number;
-  readonly traceId?: string;
-
-  constructor(payload: ApiErrorPayload) {
-    super(payload.message || 'An unexpected error occurred');
-    this.name = 'ApiError';
-    this.code = payload.code || 'UNKNOWN_ERROR';
-    this.status = payload.status || 500;
-    this.traceId = payload.traceId;
-  }
-}
+export { AppError, AppErrorKind };
 
 export const ErrorCodes = {
-  AUTHENTICATION_REQUIRED: 'AUTHENTICATION_REQUIRED',
-  CAPTAIN_NOT_ACTIVE: 'CAPTAIN_NOT_ACTIVE',
-  CAPTAIN_LOCATION_REQUIRED: 'CAPTAIN_LOCATION_REQUIRED',
-  LOCATION_INVALID: 'LOCATION_INVALID',
-  CAPTAIN_NOT_ELIGIBLE: 'CAPTAIN_NOT_ELIGIBLE',
-  DISPATCH_OFFER_EXPIRED: 'DISPATCH_OFFER_EXPIRED',
-  DISPATCH_OFFER_RESOLVED: 'DISPATCH_OFFER_RESOLVED',
-  DISPATCH_CONFLICT: 'DISPATCH_CONFLICT',
-  RESOURCE_NOT_FOUND: 'RESOURCE_NOT_FOUND',
-  NETWORK_ERROR: 'NETWORK_ERROR',
-  TIMEOUT_ERROR: 'TIMEOUT_ERROR',
+  NETWORK_ERROR: 'NetworkUnavailable',
+  TIMEOUT_ERROR: 'Timeout',
+  AUTHENTICATION_REQUIRED: 'AuthenticationExpired',
+  AUTHORIZATION_DENIED: 'AuthorizationDenied',
+  RESOURCE_NOT_FOUND: 'ResourceNotFound',
+  CONFLICT: 'Conflict',
+  VALIDATION_ERROR: 'ValidationRejected',
+  SERVER_ERROR: 'ServerFailure',
+  UNKNOWN_OUTCOME: 'UnknownOutcome',
+  CAPTAIN_LOCATION_REQUIRED: 'LocationRequired',
+  LOCATION_INVALID: 'LocationInvalid',
 } as const;
 
-export function getFriendlyErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    switch (error.code) {
-      case ErrorCodes.AUTHENTICATION_REQUIRED:
-        return 'Please sign in to continue.';
-      case ErrorCodes.CAPTAIN_LOCATION_REQUIRED:
-        return 'Your current location is required to go online.';
-      case ErrorCodes.LOCATION_INVALID:
-        return 'Invalid location coordinates received.';
-      case ErrorCodes.CAPTAIN_NOT_ELIGIBLE:
-        return 'You are currently not eligible for this delivery request.';
-      case ErrorCodes.DISPATCH_OFFER_EXPIRED:
-        return 'This delivery offer has expired.';
-      case ErrorCodes.DISPATCH_OFFER_RESOLVED:
-        return 'This delivery offer was already resolved.';
-      case ErrorCodes.DISPATCH_CONFLICT:
-        return 'Delivery assignment status changed. Refreshing your dashboard.';
-      case ErrorCodes.NETWORK_ERROR:
-        return 'Network connection issue. Please check your internet connection.';
-      case ErrorCodes.TIMEOUT_ERROR:
-        return 'Request timed out. Please try again.';
-      default:
-        return error.message || 'Something went wrong. Please try again.';
-    }
-  }
+export class ApiError extends AppError {
+  constructor(details: {
+    code?: string;
+    message: string;
+    status?: number;
+    traceId?: string;
+    retryable?: boolean;
+  }) {
+    let kind: AppErrorKind = 'ServerFailure';
+    if (details.status === 401) kind = 'AuthenticationExpired';
+    else if (details.status === 403) kind = 'AuthorizationDenied';
+    else if (details.status === 404) kind = 'ResourceNotFound';
+    else if (details.status === 408) kind = 'Timeout';
+    else if (details.status === 409) kind = 'Conflict';
+    else if (details.status === 400 || details.status === 422) kind = 'ValidationRejected';
+    else if (details.status === 0 || details.code === 'NETWORK_ERROR') kind = 'NetworkUnavailable';
 
-  if (error instanceof Error) {
-    return error.message;
+    super({
+      kind,
+      code: details.code ?? kind,
+      message: details.message,
+      status: details.status,
+      traceId: details.traceId,
+      retryable: details.retryable,
+    });
+    this.name = 'ApiError';
   }
+}
 
+export function getFriendlyErrorMessage(err: any): string {
+  if (!err) return 'An unexpected error occurred.';
+  if (typeof err === 'string') return err;
+  if (err instanceof AppError) return err.message;
+  if (err.message) return err.message;
   return 'An unexpected error occurred.';
 }

@@ -4,7 +4,6 @@ export interface CaptainOfferProjection {
   offerId: string;
   jobId: string;
   expiresAt: string;
-  // Optional enriched fields
   outletName?: string;
   area?: string;
   distanceMeters?: number;
@@ -41,11 +40,12 @@ export type DispatchStatus =
   | 'FAILED';
 
 export interface DispatchJobResponse {
-  id: string;
+  id?: string;
+  jobId?: string;
   orderId: string;
   outletId: string;
-  originLatitude: number;
-  originLongitude: number;
+  originLatitude?: number;
+  originLongitude?: number;
   status: DispatchStatus;
   assignedCaptainId?: string | null;
   attemptCount?: number;
@@ -57,112 +57,87 @@ export interface DispatchJobResponse {
   updatedAt?: string;
 }
 
+export interface DeliveryProofPayload {
+  type: 'PIN';
+  pinCode: string;
+  capturedAt?: string;
+}
+
+export async function fetchDispatchJob(jobId: string): Promise<DispatchJobResponse> {
+  const response = await captainApiFetch(`/api/v1/captain/dispatch/${jobId}`, { timeoutMs: 8000 });
+  const data = await handleApiResponse<DispatchJobResponse>(response);
+  return {
+    ...data,
+    id: data.id || data.jobId || jobId,
+    jobId: data.jobId || data.id || jobId,
+  };
+}
+
 export async function fetchPendingOffers(): Promise<CaptainOfferProjection[]> {
-  try {
-    const response = await captainApiFetch('/api/v1/captain/dispatch/offers', { timeoutMs: 4000 });
-    return await handleApiResponse<CaptainOfferProjection[]>(response);
-  } catch (err: any) {
-    if (err.code === 'NETWORK_ERROR' || err.code === 'TIMEOUT_ERROR') {
-      return [];
-    }
-    throw err;
-  }
+  const response = await captainApiFetch('/api/v1/captain/dispatch/offers', { timeoutMs: 8000 });
+  return await handleApiResponse<CaptainOfferProjection[]>(response);
 }
 
 export async function respondToOffer(
   offerId: string,
   action: 'ACCEPT' | 'REJECT',
+  idempotencyKey?: string,
 ): Promise<CaptainAssignmentProjection> {
-  try {
-    const response = await captainApiFetch(`/api/v1/captain/dispatch/offers/${offerId}/respond`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action }),
-      timeoutMs: 4000,
-    });
+  const response = await captainApiFetch(`/api/v1/captain/dispatch/offers/${offerId}/respond`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+    idempotencyKey,
+    timeoutMs: 8000,
+  });
 
-    return await handleApiResponse<CaptainAssignmentProjection>(response);
-  } catch (err: any) {
-    if (err.code === 'NETWORK_ERROR' || err.code === 'TIMEOUT_ERROR') {
-      return {
-        accepted: action === 'ACCEPT',
-        jobId: `job-${offerId}`,
-        orderId: `order-${Date.now()}`,
-        outletId: 'outlet-01',
-        outletName: 'Pet Care Store',
-        deliveryAddress: {
-          addressId: 'addr-01',
-          recipientName: 'Rahul Sharma',
-          phoneNumber: '+919876543210',
-          line1: '123 Koramangala 4th Block',
-          city: 'Bengaluru',
-          state: 'Karnataka',
-          pincode: '560034',
-        },
-      };
-    }
-    throw err;
-  }
+  return await handleApiResponse<CaptainAssignmentProjection>(response);
 }
 
 export async function markJobPickedUp(
   jobId: string,
   idempotencyKey: string,
+  proof: DeliveryProofPayload,
 ): Promise<DispatchJobResponse> {
-  try {
-    const response = await captainApiFetch(`/api/v1/captain/dispatch/${jobId}/picked-up`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+  const response = await captainApiFetch(`/api/v1/captain/dispatch/${jobId}/picked-up`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      proof: {
+        type: proof.type || 'PIN',
+        pinCode: proof.pinCode,
+        capturedAt: proof.capturedAt || new Date().toISOString(),
       },
-      idempotencyKey,
-      timeoutMs: 4000,
-    });
+    }),
+    idempotencyKey,
+    timeoutMs: 8000,
+  });
 
-    return await handleApiResponse<DispatchJobResponse>(response);
-  } catch (err: any) {
-    if (err.code === 'NETWORK_ERROR' || err.code === 'TIMEOUT_ERROR') {
-      return {
-        id: jobId,
-        orderId: 'order-01',
-        outletId: 'outlet-01',
-        originLatitude: 12.9352,
-        originLongitude: 77.6245,
-        status: 'PICKED_UP',
-        pickedUpAt: new Date().toISOString(),
-      };
-    }
-    throw err;
-  }
+  return await handleApiResponse<DispatchJobResponse>(response);
 }
 
 export async function markJobDelivered(
   jobId: string,
   idempotencyKey: string,
+  proof: DeliveryProofPayload,
 ): Promise<DispatchJobResponse> {
-  try {
-    const response = await captainApiFetch(`/api/v1/captain/dispatch/${jobId}/delivered`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+  const response = await captainApiFetch(`/api/v1/captain/dispatch/${jobId}/delivered`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      proof: {
+        type: proof.type || 'PIN',
+        pinCode: proof.pinCode,
+        capturedAt: proof.capturedAt || new Date().toISOString(),
       },
-      idempotencyKey,
-      timeoutMs: 4000,
-    });
+    }),
+    idempotencyKey,
+    timeoutMs: 8000,
+  });
 
-    return await handleApiResponse<DispatchJobResponse>(response);
-  } catch (err: any) {
-    if (err.code === 'NETWORK_ERROR' || err.code === 'TIMEOUT_ERROR') {
-      return {
-        id: jobId,
-        orderId: 'order-01',
-        outletId: 'outlet-01',
-        originLatitude: 12.9352,
-        originLongitude: 77.6245,
-        status: 'DELIVERED',
-        deliveredAt: new Date().toISOString(),
-      };
-    }
-    throw err;
-  }
+  return await handleApiResponse<DispatchJobResponse>(response);
 }

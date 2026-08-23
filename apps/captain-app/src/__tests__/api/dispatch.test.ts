@@ -78,11 +78,18 @@ describe('Dispatch API Client', () => {
       }),
     });
 
-    const result = await markJobPickedUp('job-1', 'idemp-key-123');
+    const result = await markJobPickedUp('job-1', 'idemp-key-123', { type: 'PIN', pinCode: '1234' });
     expect(result.status).toBe('PICKED_UP');
 
     const lastCall = (global.fetch as jest.Mock).mock.calls[0];
     expect(lastCall[1].headers['Idempotency-Key']).toBe('idemp-key-123');
+    expect(JSON.parse(lastCall[1].body)).toEqual({
+      proof: {
+        type: 'PIN',
+        pinCode: '1234',
+        capturedAt: expect.any(String),
+      },
+    });
   });
 
   it('sends Idempotency-Key header on markJobDelivered', async () => {
@@ -96,10 +103,17 @@ describe('Dispatch API Client', () => {
       }),
     });
 
-    const result = await markJobDelivered('job-1', 'idemp-key-456');
+    const result = await markJobDelivered('job-1', 'idemp-key-456', { type: 'PIN', pinCode: '5678' });
     expect(result.status).toBe('DELIVERED');
 
     const lastCall = (global.fetch as jest.Mock).mock.calls[0];
     expect(lastCall[1].headers['Idempotency-Key']).toBe('idemp-key-456');
+    expect(JSON.parse(lastCall[1].body)).toEqual({
+      proof: {
+        type: 'PIN',
+        pinCode: '5678',
+        capturedAt: expect.any(String),
+      },
+    });
   });
 });

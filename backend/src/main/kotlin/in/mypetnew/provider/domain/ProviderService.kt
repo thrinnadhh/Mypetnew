@@ -2,6 +2,7 @@ package `in`.mypetnew.provider.domain
 
 import `in`.mypetnew.common.auth.AdminPermission
 import `in`.mypetnew.common.auth.Authorizer
+import `in`.mypetnew.common.auth.MerchantPermission
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
@@ -62,28 +63,59 @@ class ProviderService(
         Authorizer.requireRole(merchant, Role.MERCHANT)
         validateSubmission(name, capabilities, servicePinCodes, latitude, longitude)
         validateIdempotencyKey(idempotencyKey)
+        if (merchant.organizationId != null) requireOrganizationOwner(merchant)
+
         val normalizedName = name.trim()
-        val fingerprint = fingerprint(
-            listOf(
-                merchant.actorId,
-                merchant.organizationId,
-                normalizedName,
-                capabilities.sorted(),
-                servicePinCodes.sorted(),
-                latitude,
-                longitude,
-            ).joinToString(":"),
-        )
-        return persistence.submit(
-            merchant,
+        // Organization scope is deliberately excluded from the canonical fingerprint. A first-time
+        // onboarding request starts scope-less and materializes organization authority as its effect;
+        // the identical retry must therefore keep the same fingerprint after reauthorization.
+        val stableFingerprint = submissionFingerprint(
+            merchant.actorId,
+            null,
             normalizedName,
-            capabilities.toSet(),
-            servicePinCodes.toSet(),
+            capabilities,
+            servicePinCodes,
             latitude,
             longitude,
-            idempotencyKey,
-            fingerprint,
         )
+
+        return try {
+            persistence.submit(
+                merchant,
+                normalizedName,
+                capabilities.toSet(),
+                servicePinCodes.toSet(),
+                latitude,
+                longitude,
+                idempotencyKey,
+                stableFingerprint,
+            )
+        } catch (failure: DomainException) {
+            // M1 briefly persisted fingerprints that included the derived organization scope. Keep
+            // those already-accepted commands replayable while all new commands use the stable form.
+            val organizationId = merchant.organizationId
+            if (failure.code != "IDEMPOTENCY_FINGERPRINT_MISMATCH" || organizationId == null) throw failure
+            val legacyFingerprint = submissionFingerprint(
+                merchant.actorId,
+                organizationId,
+                normalizedName,
+                capabilities,
+                servicePinCodes,
+                latitude,
+                longitude,
+            )
+            if (legacyFingerprint == stableFingerprint) throw failure
+            persistence.submit(
+                merchant,
+                normalizedName,
+                capabilities.toSet(),
+                servicePinCodes.toSet(),
+                latitude,
+                longitude,
+                idempotencyKey,
+                legacyFingerprint,
+            )
+        }
     }
 
     fun approveOutlet(admin: Principal, outletId: UUID, idempotencyKey: String): ProviderOutlet {
@@ -103,15 +135,54 @@ class ProviderService(
         latitude: Double,
         longitude: Double,
     ): ProviderOutlet {
-        Authorizer.requireOutlet(merchant, outletId)
+        Authorizer.requireMerchantPermission(merchant, outletId, MerchantPermission.OUTLET_MANAGE)
+        val outlet = getOutlet(outletId)
+        if (
+            merchant.organizationId == null ||
+            outlet.organizationId != merchant.organizationId ||
+            outlet.status == ProviderStatus.SUSPENDED ||
+            outlet.status == ProviderStatus.REJECTED
+        ) resourceUnavailable()
         validateCoordinates(latitude, longitude)
         return persistence.updateDispatchOrigin(outletId, latitude, longitude)
+    }
+
+    /**
+     * Canonical gate for Merchant commands that require an ACTIVE outlet.
+     * Membership, permission and organization are all derived from the reauthorized principal;
+     * request-supplied outlet IDs are only targets to validate.
+     */
+    fun requireActiveOutlet(
+        merchant: Principal,
+        outletId: UUID,
+        permission: MerchantPermission,
+    ): ProviderOutlet {
+        Authorizer.requireMerchantPermission(merchant, outletId, permission)
+        val outlet = getOutlet(outletId)
+        if (
+            outlet.status != ProviderStatus.ACTIVE ||
+            merchant.organizationId == null ||
+            outlet.organizationId != merchant.organizationId
+        ) resourceUnavailable()
+        return outlet
     }
 
     fun allOutlets(): List<ProviderOutlet> = persistence.all()
 
     fun getOutlet(outletId: UUID): ProviderOutlet = persistence.get(outletId)
-        ?: throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+        ?: resourceUnavailable()
+
+    private fun requireOrganizationOwner(merchant: Principal) {
+        val isCurrentOwner = merchant.merchantPermissionsByOutlet.values.any { permissions ->
+            MerchantPermission.OWNER in permissions
+        }
+        if (!isCurrentOwner) {
+            throw DomainException(
+                "MERCHANT_PERMISSION_REQUIRED",
+                "The required merchant permission is missing",
+            )
+        }
+    }
 
     private fun validateSubmission(
         name: String,
@@ -145,6 +216,31 @@ class ProviderService(
         "Outlet coordinates must be a valid latitude/longitude pair",
     )
 
+    private fun resourceUnavailable(): Nothing = throw DomainException(
+        "RESOURCE_NOT_FOUND",
+        "The requested resource is unavailable",
+    )
+
+    private fun submissionFingerprint(
+        actorId: UUID,
+        organizationId: UUID?,
+        name: String,
+        capabilities: Set<ProviderCapability>,
+        servicePinCodes: Set<String>,
+        latitude: Double?,
+        longitude: Double?,
+    ): String = fingerprint(
+        listOf(
+            actorId,
+            organizationId,
+            name,
+            capabilities.sorted(),
+            servicePinCodes.sorted(),
+            latitude,
+            longitude,
+        ).joinToString(":"),
+    )
+
     private fun fingerprint(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(StandardCharsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
@@ -171,8 +267,14 @@ private class InMemoryProviderPersistence : ProviderPersistence {
         idempotencyKey,
         requestFingerprint,
     ) {
+        if (merchant.organizationId == null && merchant.actorId in merchantOrganizations) {
+            throw DomainException(
+                "MERCHANT_PERMISSION_REQUIRED",
+                "The required merchant permission is missing",
+            )
+        }
         val organizationId = merchant.organizationId
-            ?: merchantOrganizations.getOrPut(merchant.actorId) { UUID.randomUUID() }
+            ?: UUID.randomUUID().also { merchantOrganizations[merchant.actorId] = it }
         ProviderOutlet(
             id = UUID.randomUUID(),
             organizationId = organizationId,

@@ -43,7 +43,7 @@ class MerchantIdentityController(
             accountId = session.accountId,
             accessToken = tokens.issue(principal),
             refreshToken = session.refreshToken,
-            accessTokenExpiresAt = verified.verifiedAt.plusSeconds(3_600),
+            accessTokenExpiresAt = tokens.expiresAt(verified.verifiedAt),
             refreshTokenExpiresAt = session.expiresAt,
             role = Role.MERCHANT,
         )

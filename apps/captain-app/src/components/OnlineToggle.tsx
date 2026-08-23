@@ -11,26 +11,37 @@ import { palette, radii, spacing, touchTarget, typography } from '../design/toke
 export interface OnlineToggleProps {
   online: boolean;
   loading?: boolean;
+  disabled?: boolean;
   onToggle: () => void;
 }
 
 export const OnlineToggle: React.FC<OnlineToggleProps> = ({
   online,
   loading = false,
+  disabled = false,
   onToggle,
 }) => {
+  const isButtonDisabled = loading || disabled;
+
   return (
     <View style={styles.container}>
       <TouchableOpacity
-        accessibilityLabel={online ? 'Tap to go offline' : 'Tap to go online'}
+        accessibilityLabel={
+          disabled
+            ? 'Account verification pending. Cannot go online.'
+            : online
+            ? 'Tap to go offline'
+            : 'Tap to go online'
+        }
         accessibilityRole="button"
-        accessibilityState={{ busy: loading }}
+        accessibilityState={{ busy: loading, disabled: isButtonDisabled }}
         activeOpacity={0.85}
-        disabled={loading}
+        disabled={isButtonDisabled}
         onPress={onToggle}
         style={[
           styles.button,
           online ? styles.buttonOnline : styles.buttonOffline,
+          disabled && styles.buttonDisabled,
         ]}
       >
         {loading ? (
@@ -39,13 +50,15 @@ export const OnlineToggle: React.FC<OnlineToggleProps> = ({
           <View style={styles.content}>
             <View style={[styles.pulseDot, online ? styles.dotOnline : styles.dotOffline]} />
             <Text style={styles.buttonText}>
-              {online ? 'GO OFFLINE' : 'GO ONLINE'}
+              {disabled ? 'APPROVAL REQUIRED' : online ? 'GO OFFLINE' : 'GO ONLINE'}
             </Text>
           </View>
         )}
       </TouchableOpacity>
       <Text style={styles.hintText}>
-        {online
+        {disabled
+          ? 'Your account must be approved before you can go online.'
+          : online
           ? 'You are online. Ready to receive delivery orders nearby.'
           : 'You are offline. Go online to start receiving delivery requests.'}
       </Text>
@@ -73,6 +86,10 @@ const styles = StyleSheet.create({
   },
   buttonOffline: {
     backgroundColor: palette.emerald,
+  },
+  buttonDisabled: {
+    backgroundColor: palette.outlineSoft,
+    opacity: 0.8,
   },
   content: {
     flexDirection: 'row',

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "invariants": [
+    { "id": "MO-AUTH-001", "owner": "identity", "severity": "CRITICAL", "description": "Merchant organization and outlet authority is derived from the authenticated account and current active membership." },
+    { "id": "MO-AUTH-002", "owner": "identity", "severity": "CRITICAL", "description": "Request-supplied organization and outlet identifiers are validated targets, never authority." },
+    { "id": "MO-AUTH-003", "owner": "identity", "severity": "CRITICAL", "description": "Current membership, permission, and outlet status are re-evaluated for online and replayed commands." },
+    { "id": "MO-INV-001", "owner": "catalog", "severity": "CRITICAL", "description": "Spring Boot and PostgreSQL remain canonical inventory authority." },
+    { "id": "MO-INV-002", "owner": "catalog", "severity": "CRITICAL", "description": "Normal inventory mutations create commands and immutable movements instead of setting client stock." },
+    { "id": "MO-INV-003", "owner": "catalog", "severity": "CRITICAL", "description": "Canonical inventory always satisfies onHand >= reserved >= 0." },
+    { "id": "MO-IDEM-001", "owner": "common", "severity": "CRITICAL", "description": "Retrying an accepted command cannot duplicate its business effect." },
+    { "id": "MO-IDEM-002", "owner": "common", "severity": "HIGH", "description": "Reusing a command key with a different request fingerprint fails closed." },
+    { "id": "MO-CONC-001", "owner": "catalog", "severity": "CRITICAL", "description": "Contested inventory has one database-ordered winner." },
+    { "id": "MO-OFF-001", "owner": "merchant-app", "severity": "CRITICAL", "description": "Local persistence is cache, operational state, and durable queue rather than marketplace authority." },
+    { "id": "MO-OFF-002", "owner": "merchant-app", "severity": "HIGH", "description": "The UI reports synced only after durable application of a server receipt." },
+    { "id": "MO-OFF-003", "owner": "merchant-app", "severity": "CRITICAL", "description": "Process death cannot lose a locally acknowledged command." },
+    { "id": "MO-CUST-001", "owner": "customer-app", "severity": "CRITICAL", "description": "Unsynchronized Merchant changes are never exposed as canonical Customer state." },
+    { "id": "MO-CUST-002", "owner": "commerce", "severity": "CRITICAL", "description": "Quote and checkout reload listing, price, outlet, commerce mode, and available inventory." },
+    { "id": "MO-BC-001", "owner": "catalog", "severity": "HIGH", "description": "Supported barcodes remain strings, preserve leading zeroes, and validate GTIN checksums." },
+    { "id": "MO-BC-002", "owner": "catalog", "severity": "CRITICAL", "description": "Barcode payloads never supply ownership, price, stock, tax, or authenticity." },
+    { "id": "MO-MONEY-001", "owner": "common", "severity": "CRITICAL", "description": "Canonical money remains integer paise." },
+    { "id": "MO-MED-001", "owner": "catalog", "severity": "CRITICAL", "description": "Medicine remains compatible with canonical VIEW_ONLY restrictions." },
+    { "id": "MO-AUDIT-001", "owner": "audit", "severity": "HIGH", "description": "Normal CRUD cannot destroy inventory, commerce, financial, loyalty, or audit history." },
+    { "id": "MO-POS-001", "owner": "pos", "severity": "CRITICAL", "description": "V1 cannot finalize a POS sale while fully offline." },
+    { "id": "MO-MIG-001", "owner": "persistence", "severity": "CRITICAL", "description": "Applied Flyway migrations are immutable and schema changes use new forward migrations." },
+    { "id": "MO-TEST-001", "owner": "delivery", "severity": "CRITICAL", "description": "Skipped, focused, fabricated, or unexecuted tests cannot satisfy a merge gate." }
+  ]
+}

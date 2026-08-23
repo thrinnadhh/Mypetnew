@@ -3,6 +3,7 @@ package `in`.mypetnew.api
 import `in`.mypetnew.application.MyPetNewApplication
 import `in`.mypetnew.identity.domain.InMemoryOtpProvider
 import `in`.mypetnew.identity.domain.OtpProvider
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -12,6 +13,9 @@ import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.post
 import tools.jackson.databind.ObjectMapper
+import java.nio.charset.StandardCharsets
+import java.time.Instant
+import java.util.Base64
 
 @SpringBootTest(
     classes = [MyPetNewApplication::class],
@@ -56,6 +60,12 @@ class MerchantIdentityApiTest {
         val session = json.readTree(verified.response.contentAsString)
         val refreshToken = session.path("refreshToken").asString()
         val originalAccessToken = session.path("accessToken").asString()
+        val reportedExpiry = Instant.parse(session.path("accessTokenExpiresAt").asString())
+        val signedExpiry = signedAccessTokenExpiry(originalAccessToken)
+        assertTrue(
+            kotlin.math.abs(reportedExpiry.epochSecond - signedExpiry.epochSecond) <= 2,
+            "reportedExpiry=$reportedExpiry signedExpiry=$signedExpiry",
+        )
 
         val refreshed = mockMvc.post("/api/v1/auth/sessions/refresh") {
             contentType = MediaType.APPLICATION_JSON
@@ -66,7 +76,14 @@ class MerchantIdentityApiTest {
             jsonPath("$.accessToken") { isNotEmpty() }
             jsonPath("$.refreshToken") { isNotEmpty() }
         }.andReturn()
-        val refreshedAccessToken = json.readTree(refreshed.response.contentAsString).path("accessToken").asString()
+        val refreshedSession = json.readTree(refreshed.response.contentAsString)
+        val refreshedAccessToken = refreshedSession.path("accessToken").asString()
+        val refreshedReportedExpiry = Instant.parse(refreshedSession.path("accessTokenExpiresAt").asString())
+        val refreshedSignedExpiry = signedAccessTokenExpiry(refreshedAccessToken)
+        assertTrue(
+            kotlin.math.abs(refreshedReportedExpiry.epochSecond - refreshedSignedExpiry.epochSecond) <= 2,
+            "refreshedReportedExpiry=$refreshedReportedExpiry refreshedSignedExpiry=$refreshedSignedExpiry",
+        )
 
         // Rotation revokes the original session, so its access token must fail closed.
         mockMvc.post("/api/v1/merchant/outlets") {
@@ -83,5 +100,12 @@ class MerchantIdentityApiTest {
             contentType = MediaType.APPLICATION_JSON
             content = """{"name":"Merchant Bootstrap","capabilities":["PRODUCT_STORE"],"servicePinCodes":["517501"]}"""
         }.andExpect { status { is2xxSuccessful() } }
+    }
+
+    private fun signedAccessTokenExpiry(token: String): Instant {
+        val encodedPayload = token.substringBefore('.')
+        val payload = String(Base64.getUrlDecoder().decode(encodedPayload), StandardCharsets.UTF_8)
+        val expiryEpochSeconds = payload.substringAfterLast('|').toLong()
+        return Instant.ofEpochSecond(expiryEpochSeconds)
     }
 }

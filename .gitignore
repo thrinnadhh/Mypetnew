@@ -17,6 +17,7 @@ coverage/
 .idea/
 .DS_Store
 evidence/generated/
-.kotlin/
-flutter.tar.xz
 mypet-work/
+.kotlin/
+.vscode/
+*.tar.xz

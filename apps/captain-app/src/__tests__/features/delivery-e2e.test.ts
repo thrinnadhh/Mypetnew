@@ -6,13 +6,16 @@ import {
 } from '../../api/dispatch';
 import { updateCaptainAvailability } from '../../api/availability';
 import { setRuntimeAccessTokenForTesting } from '../../auth/session';
+import { deliveryRepository } from '../../repositories/delivery-repository';
+import { commandStore } from '../../sync/command-store';
 import { getOrCreateIdempotencyKey } from '../../utils/idempotency';
 import { formatPaise } from '../../utils/money';
 
 describe('Autonomous End-to-End Delivery Lifecycle Test', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     (global as any).fetch = jest.fn();
     setRuntimeAccessTokenForTesting('e2e-valid-jwt-token');
+    await commandStore.clear();
   });
 
   afterEach(() => {
@@ -98,10 +101,7 @@ describe('Autonomous End-to-End Delivery Lifecycle Test', () => {
     expect(assignment.deliveryAddress?.recipientName).toBe('Rahul Sharma');
   });
 
-  it('Stage 4: Captain arrives at store and verifies pickup with idempotency', async () => {
-    const pickupKey = getOrCreateIdempotencyKey('dispatch:pickup:job-e2e-501');
-    expect(pickupKey).toBeDefined();
-
+  it('Stage 4: Captain arrives at store and verifies pickup with durable command store', async () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -117,19 +117,24 @@ describe('Autonomous End-to-End Delivery Lifecycle Test', () => {
       }),
     });
 
-    const pickupRes = await markJobPickedUp('job-e2e-501', pickupKey);
-    expect(pickupRes.status).toBe('PICKED_UP');
-    expect(pickupRes.pickedUpAt).toBeDefined();
+    const outcome = await deliveryRepository.markPickedUp('job-e2e-501', {
+      type: 'PIN',
+      pinCode: '1234',
+      capturedAt: new Date().toISOString(),
+    });
 
-    // Verify idempotency header was passed
-    const lastCall = (global.fetch as jest.Mock).mock.calls[0];
-    expect(lastCall[1].headers['Idempotency-Key']).toBe(pickupKey);
+    expect(outcome.outcome).toBe('ACKNOWLEDGED');
+    if (outcome.outcome === 'ACKNOWLEDGED') {
+      expect(outcome.data.state).toBe('PICKED_UP');
+      expect(outcome.data.pickedUpAt).toBe('2026-08-23T12:05:00Z');
+      expect(outcome.idempotencyKey).toBeDefined();
+
+      const lastCall = (global.fetch as jest.Mock).mock.calls[0];
+      expect(lastCall[1].headers['Idempotency-Key']).toBe(outcome.idempotencyKey);
+    }
   });
 
-  it('Stage 5: Captain navigates to customer and completes delivery with idempotency', async () => {
-    const deliveryKey = getOrCreateIdempotencyKey('dispatch:delivered:job-e2e-501');
-    expect(deliveryKey).toBeDefined();
-
+  it('Stage 5: Captain navigates to customer and completes delivery with durable command store', async () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -145,12 +150,20 @@ describe('Autonomous End-to-End Delivery Lifecycle Test', () => {
       }),
     });
 
-    const deliveryRes = await markJobDelivered('job-e2e-501', deliveryKey);
-    expect(deliveryRes.status).toBe('DELIVERED');
-    expect(deliveryRes.deliveredAt).toBeDefined();
+    const outcome = await deliveryRepository.markDelivered('job-e2e-501', {
+      type: 'PIN',
+      pinCode: '5678',
+      capturedAt: new Date().toISOString(),
+    });
 
-    // Verify idempotency header was passed
-    const lastCall = (global.fetch as jest.Mock).mock.calls[0];
-    expect(lastCall[1].headers['Idempotency-Key']).toBe(deliveryKey);
+    expect(outcome.outcome).toBe('ACKNOWLEDGED');
+    if (outcome.outcome === 'ACKNOWLEDGED') {
+      expect(outcome.data.state).toBe('DELIVERED');
+      expect(outcome.data.deliveredAt).toBe('2026-08-23T12:20:00Z');
+      expect(outcome.idempotencyKey).toBeDefined();
+
+      const lastCall = (global.fetch as jest.Mock).mock.calls[0];
+      expect(lastCall[1].headers['Idempotency-Key']).toBe(outcome.idempotencyKey);
+    }
   });
 });

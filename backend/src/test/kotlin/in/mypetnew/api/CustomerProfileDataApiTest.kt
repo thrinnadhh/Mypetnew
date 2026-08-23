@@ -200,6 +200,7 @@ class CustomerProfileDataApiTest {
             """{"name":"P2 Pet Store","capabilities":["PRODUCT_STORE"],"servicePinCodes":["517501"]}""",
         )
         val outletId = submitted.path("id").asString()
+        val organizationId = submitted.path("organizationId").asString()
         postWithToken("/api/v1/admin/outlets/$outletId/approve", adminToken, "p2-approve", "{}")
 
         mockMvc.get("/api/v1/public/outlets/$outletId/serviceability?pincode=517501&mode=DELIVERY").andExpect {
@@ -210,7 +211,12 @@ class CustomerProfileDataApiTest {
         }
 
         val outletScopedMerchantToken = tokens.issue(
-            Principal(merchantActor, Role.MERCHANT, outletIds = setOf(UUID.fromString(outletId))),
+            Principal(
+                merchantActor,
+                Role.MERCHANT,
+                organizationId = UUID.fromString(organizationId),
+                outletIds = setOf(UUID.fromString(outletId)),
+            ),
         )
         mockMvc.put("/api/v1/merchant/outlets/$outletId/dispatch-origin") {
             header("Authorization", "Bearer $outletScopedMerchantToken")

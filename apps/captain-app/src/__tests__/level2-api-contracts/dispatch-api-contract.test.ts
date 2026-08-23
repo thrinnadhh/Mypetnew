@@ -100,11 +100,18 @@ describe('Level 2: Dispatch API Contract Tests', () => {
       });
     });
 
-    const job = await markJobPickedUp('job-01', 'idemp-pickup-999');
+    const job = await markJobPickedUp('job-01', 'idemp-pickup-999', { type: 'PIN', pinCode: '1234' });
     expect(job.status).toBe('PICKED_UP');
     expect(capturedUrl).toContain('/api/v1/captain/dispatch/job-01/picked-up');
     expect(capturedOpts.method).toBe('POST');
     expect(capturedOpts.headers['Idempotency-Key']).toBe('idemp-pickup-999');
+    expect(JSON.parse(capturedOpts.body)).toEqual({
+      proof: {
+        type: 'PIN',
+        pinCode: '1234',
+        capturedAt: expect.any(String),
+      },
+    });
   });
 
   it('POST /api/v1/captain/dispatch/:jobId/delivered contract', async () => {
@@ -128,10 +135,17 @@ describe('Level 2: Dispatch API Contract Tests', () => {
       });
     });
 
-    const job = await markJobDelivered('job-01', 'idemp-deliv-888');
+    const job = await markJobDelivered('job-01', 'idemp-deliv-888', { type: 'PIN', pinCode: '5678' });
     expect(job.status).toBe('DELIVERED');
     expect(capturedUrl).toContain('/api/v1/captain/dispatch/job-01/delivered');
     expect(capturedOpts.method).toBe('POST');
     expect(capturedOpts.headers['Idempotency-Key']).toBe('idemp-deliv-888');
+    expect(JSON.parse(capturedOpts.body)).toEqual({
+      proof: {
+        type: 'PIN',
+        pinCode: '5678',
+        capturedAt: expect.any(String),
+      },
+    });
   });
 });

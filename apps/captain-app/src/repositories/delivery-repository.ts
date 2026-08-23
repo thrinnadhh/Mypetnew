@@ -41,7 +41,11 @@ export class DeliveryRepository {
         existingIdempotencyKey,
       },
       async (idempotencyKey) => {
-        const res = await markJobPickedUp(jobId, idempotencyKey);
+        const res = await markJobPickedUp(jobId, idempotencyKey, {
+          type: 'PIN',
+          pinCode: proof?.pinCode || '',
+          capturedAt: proof?.capturedAt,
+        });
         return {
           jobId: res.id,
           orderId: res.orderId,
@@ -73,7 +77,11 @@ export class DeliveryRepository {
         existingIdempotencyKey,
       },
       async (idempotencyKey) => {
-        const res = await markJobDelivered(jobId, idempotencyKey);
+        const res = await markJobDelivered(jobId, idempotencyKey, {
+          type: 'PIN',
+          pinCode: proof?.pinCode || '',
+          capturedAt: proof?.capturedAt,
+        });
         return {
           jobId: res.id,
           orderId: res.orderId,

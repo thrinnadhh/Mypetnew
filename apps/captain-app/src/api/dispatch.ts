@@ -57,6 +57,12 @@ export interface DispatchJobResponse {
   updatedAt?: string;
 }
 
+export interface DeliveryProofPayload {
+  type: 'PIN';
+  pinCode: string;
+  capturedAt?: string;
+}
+
 export async function fetchDispatchJob(jobId: string): Promise<DispatchJobResponse> {
   const response = await captainApiFetch(`/api/v1/captain/dispatch/${jobId}`, { timeoutMs: 8000 });
   const data = await handleApiResponse<DispatchJobResponse>(response);
@@ -91,12 +97,20 @@ export async function respondToOffer(
 export async function markJobPickedUp(
   jobId: string,
   idempotencyKey: string,
+  proof: DeliveryProofPayload,
 ): Promise<DispatchJobResponse> {
   const response = await captainApiFetch(`/api/v1/captain/dispatch/${jobId}/picked-up`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
+    body: JSON.stringify({
+      proof: {
+        type: proof.type || 'PIN',
+        pinCode: proof.pinCode,
+        capturedAt: proof.capturedAt || new Date().toISOString(),
+      },
+    }),
     idempotencyKey,
     timeoutMs: 8000,
   });
@@ -107,12 +121,20 @@ export async function markJobPickedUp(
 export async function markJobDelivered(
   jobId: string,
   idempotencyKey: string,
+  proof: DeliveryProofPayload,
 ): Promise<DispatchJobResponse> {
   const response = await captainApiFetch(`/api/v1/captain/dispatch/${jobId}/delivered`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
+    body: JSON.stringify({
+      proof: {
+        type: proof.type || 'PIN',
+        pinCode: proof.pinCode,
+        capturedAt: proof.capturedAt || new Date().toISOString(),
+      },
+    }),
     idempotencyKey,
     timeoutMs: 8000,
   });

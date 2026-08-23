@@ -198,27 +198,21 @@ describe('Production Truthful Operational UI & State Machine Tests', () => {
   });
 
   describe('Inbox Notifications & Read Receipts', () => {
-    it('fetches notifications truthfully and sends read receipts with acknowledgement', async () => {
-      (global.fetch as jest.Mock)
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => [
-            {
-              id: 'notif-01',
-              type: 'SETTLEMENT',
-              title: 'Weekly Payout Sent',
-              message: 'Your payout of ₹420 has been transferred.',
-              createdAt: '2026-08-23T10:00:00Z',
-              read: false,
-            },
-          ],
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => ({ success: true }),
-        });
+    it('fetches notifications truthfully and tracks read receipts locally without fake network mutations', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            id: 'notif-01',
+            type: 'SETTLEMENT',
+            title: 'Weekly Payout Sent',
+            message: 'Your payout of ₹420 has been transferred.',
+            createdAt: '2026-08-23T10:00:00Z',
+            read: false,
+          },
+        ],
+      });
 
       const notifs = await fetchCaptainNotifications();
       expect(notifs).toHaveLength(1);
@@ -226,7 +220,7 @@ describe('Production Truthful Operational UI & State Machine Tests', () => {
       expect(notifs[0].read).toBe(false);
 
       await markNotificationRead('notif-01');
-      expect(global.fetch).toHaveBeenCalledTimes(2);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
     });
   });
 

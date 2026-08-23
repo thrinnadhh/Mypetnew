@@ -5,6 +5,9 @@ import `in`.mypetnew.commerce.domain.OrderStatus
 import `in`.mypetnew.commerce.domain.ProductOrder
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -45,6 +48,12 @@ data class CaptainDeliveryState(
     val lastLocationAt: Instant? = null,
 )
 
+data class DeliveryProof(
+    val type: String = "PIN",
+    val pinCode: String,
+    val capturedAt: Instant = Instant.now(),
+)
+
 data class DispatchJob(
     val id: UUID,
     val orderId: UUID,
@@ -60,6 +69,14 @@ data class DispatchJob(
     val assignedAt: Instant? = null,
     val pickedUpAt: Instant? = null,
     val deliveredAt: Instant? = null,
+    val pickupPin: String = "1234",
+    val deliveryPin: String = "5678",
+    val pickupIdempotencyKey: String? = null,
+    val pickupFingerprint: String? = null,
+    val pickupProofPayload: String? = null,
+    val deliveryIdempotencyKey: String? = null,
+    val deliveryFingerprint: String? = null,
+    val deliveryProofPayload: String? = null,
 )
 
 data class DispatchOffer(
@@ -81,6 +98,7 @@ interface DispatchPersistence {
     fun captainState(captainId: UUID): CaptainDeliveryState?
     fun findJobByOrder(orderId: UUID): DispatchJob?
     fun getJob(jobId: UUID): DispatchJob?
+    fun findActiveJobByCaptain(captainId: UUID): DispatchJob?
     fun createJob(job: DispatchJob): DispatchJob
     fun saveJob(job: DispatchJob): DispatchJob
     fun activeJobs(): List<DispatchJob>
@@ -143,6 +161,8 @@ class DispatchService(
     private val searchRadiusKm: Double = 5.0,
     private val maxAttempts: Int = 10,
 ) {
+    private val random = SecureRandom()
+
     fun approveCaptain(captainId: UUID): CaptainDeliveryState = persistence.approveCaptain(captainId)
 
     fun updateAvailability(
@@ -181,13 +201,21 @@ class DispatchService(
         return state
     }
 
-    fun start(order: ProductOrder, originLatitude: Double, originLongitude: Double): DispatchJob {
+    fun start(
+        order: ProductOrder,
+        originLatitude: Double,
+        originLongitude: Double,
+        customPickupPin: String? = null,
+        customDeliveryPin: String? = null,
+    ): DispatchJob {
         if (order.fulfilmentMode != DELIVERY_MODE || order.status != OrderStatus.READY_FOR_PICKUP) {
             throw DomainException("DISPATCH_ORDER_INVALID", "Dispatch can start only for a ready Captain-delivery order")
         }
         validateLocation(originLatitude, originLongitude)
         persistence.findJobByOrder(order.id)?.let { return it }
         val now = clock.instant()
+        val generatedPickup = customPickupPin ?: "%04d".format(random.nextInt(10000))
+        val generatedDelivery = customDeliveryPin ?: "%04d".format(random.nextInt(10000))
         val job = persistence.createJob(
             DispatchJob(
                 id = UUID.randomUUID(),
@@ -198,6 +226,8 @@ class DispatchService(
                 status = DispatchStatus.SEARCHING,
                 createdAt = now,
                 updatedAt = now,
+                pickupPin = generatedPickup,
+                deliveryPin = generatedDelivery,
             ),
         )
         return offerNext(job.id)
@@ -259,9 +289,28 @@ class DispatchService(
         return if (accept) result else offerNext(result.id)
     }
 
-    fun markPickedUp(captainId: UUID, jobId: UUID, idempotencyKey: String): DispatchJob = persistence.inTransaction {
+    fun markPickedUp(
+        captainId: UUID,
+        jobId: UUID,
+        proof: DeliveryProof,
+        idempotencyKey: String,
+    ): DispatchJob = persistence.inTransaction {
+        validateIdempotencyKey(idempotencyKey)
+        validateProof(proof)
+        val fingerprint = sha256("${proof.type}:${proof.pinCode}")
         val job = requireAssignedJob(jobId, captainId, setOf(DispatchStatus.ASSIGNED, DispatchStatus.PICKED_UP))
-        if (job.status == DispatchStatus.PICKED_UP) return@inTransaction job
+        if (job.status == DispatchStatus.PICKED_UP) {
+            if (job.pickupIdempotencyKey == idempotencyKey) {
+                if (job.pickupFingerprint == fingerprint) {
+                    return@inTransaction job
+                }
+                throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "The idempotency key was already used for another request")
+            }
+            throw DomainException("DISPATCH_CONFLICT", "The delivery job is already picked up")
+        }
+        if (proof.pinCode != job.pickupPin) {
+            throw DomainException("PROOF_INVALID", "The pickup verification code is incorrect")
+        }
         orders.transition(
             orderId = job.orderId,
             target = OrderStatus.PICKED_UP,
@@ -271,12 +320,40 @@ class DispatchService(
             traceId = "dispatch:${job.id}",
         )
         val now = clock.instant()
-        persistence.saveJob(job.copy(status = DispatchStatus.PICKED_UP, pickedUpAt = now, updatedAt = now))
+        persistence.saveJob(
+            job.copy(
+                status = DispatchStatus.PICKED_UP,
+                pickedUpAt = now,
+                updatedAt = now,
+                pickupIdempotencyKey = idempotencyKey,
+                pickupFingerprint = fingerprint,
+                pickupProofPayload = """{"type":"${proof.type}","pinCode":"${proof.pinCode}","capturedAt":"${proof.capturedAt}"}""",
+            ),
+        )
     }
 
-    fun markDelivered(captainId: UUID, jobId: UUID, idempotencyKey: String): DispatchJob = persistence.inTransaction {
+    fun markDelivered(
+        captainId: UUID,
+        jobId: UUID,
+        proof: DeliveryProof,
+        idempotencyKey: String,
+    ): DispatchJob = persistence.inTransaction {
+        validateIdempotencyKey(idempotencyKey)
+        validateProof(proof)
+        val fingerprint = sha256("${proof.type}:${proof.pinCode}")
         val job = requireAssignedJob(jobId, captainId, setOf(DispatchStatus.PICKED_UP, DispatchStatus.DELIVERED))
-        if (job.status == DispatchStatus.DELIVERED) return@inTransaction job
+        if (job.status == DispatchStatus.DELIVERED) {
+            if (job.deliveryIdempotencyKey == idempotencyKey) {
+                if (job.deliveryFingerprint == fingerprint) {
+                    return@inTransaction job
+                }
+                throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "The idempotency key was already used for another request")
+            }
+            throw DomainException("DISPATCH_CONFLICT", "The delivery job is already delivered")
+        }
+        if (proof.pinCode != job.deliveryPin) {
+            throw DomainException("PROOF_INVALID", "The delivery verification code is incorrect")
+        }
         orders.transition(
             orderId = job.orderId,
             target = OrderStatus.DELIVERED,
@@ -287,7 +364,16 @@ class DispatchService(
         )
         val now = clock.instant()
         persistence.updateCaptainBusy(captainId, false)
-        persistence.saveJob(job.copy(status = DispatchStatus.DELIVERED, deliveredAt = now, updatedAt = now))
+        persistence.saveJob(
+            job.copy(
+                status = DispatchStatus.DELIVERED,
+                deliveredAt = now,
+                updatedAt = now,
+                deliveryIdempotencyKey = idempotencyKey,
+                deliveryFingerprint = fingerprint,
+                deliveryProofPayload = """{"type":"${proof.type}","pinCode":"${proof.pinCode}","capturedAt":"${proof.capturedAt}"}""",
+            ),
+        )
     }
 
     fun retryPendingDispatches() {
@@ -322,6 +408,8 @@ class DispatchService(
         if (job.assignedCaptainId != captainId) unavailable()
         return job
     }
+
+    fun findActiveJob(captainId: UUID): DispatchJob? = persistence.findActiveJobByCaptain(captainId)
 
     fun captainState(captainId: UUID): CaptainDeliveryState? = persistence.captainState(captainId)
 
@@ -387,6 +475,25 @@ class DispatchService(
         if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) invalidLocation()
     }
 
+    private fun validateProof(proof: DeliveryProof) {
+        if (proof.type != "PIN") {
+            throw DomainException("PROOF_TYPE_UNSUPPORTED", "Only PIN verification is supported")
+        }
+        if (!proof.pinCode.matches(Regex("[0-9]{4,8}"))) {
+            throw DomainException("PROOF_INVALID", "Verification code must be 4 to 8 digits")
+        }
+    }
+
+    private fun validateIdempotencyKey(key: String) {
+        if (!key.matches(Regex("[A-Za-z0-9._:-]{1,128}"))) {
+            throw DomainException("IDEMPOTENCY_KEY_INVALID", "The idempotency key is invalid")
+        }
+    }
+
+    private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(StandardCharsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+
     private fun invalidLocation(): Nothing = throw DomainException(
         "LOCATION_INVALID",
         "The supplied location is invalid",
@@ -437,6 +544,12 @@ class InMemoryDispatchPersistence : DispatchPersistence {
     }
 
     override fun getJob(jobId: UUID): DispatchJob? = synchronized(monitor) { jobs[jobId] }
+
+    override fun findActiveJobByCaptain(captainId: UUID): DispatchJob? = synchronized(monitor) {
+        jobs.values.firstOrNull {
+            it.assignedCaptainId == captainId && (it.status == DispatchStatus.ASSIGNED || it.status == DispatchStatus.PICKED_UP)
+        }
+    }
 
     override fun createJob(job: DispatchJob): DispatchJob = synchronized(monitor) {
         jobByOrder[job.orderId]?.let { existing -> return@synchronized requireNotNull(jobs[existing]) }

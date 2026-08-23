@@ -190,6 +190,7 @@ class CaptainDeliveryApiTest {
             header("Authorization", "Bearer ${captainB.accessToken}")
             header("Idempotency-Key", "idemp-foreign-pickup")
             contentType = MediaType.APPLICATION_JSON
+            content = """{"proof":{"type":"PIN","pinCode":"${dispatchJob.pickupPin}"}}"""
         }.andExpect {
             status { isNotFound() }
         }
@@ -198,6 +199,7 @@ class CaptainDeliveryApiTest {
             header("Authorization", "Bearer ${captainB.accessToken}")
             header("Idempotency-Key", "idemp-foreign-deliv")
             contentType = MediaType.APPLICATION_JSON
+            content = """{"proof":{"type":"PIN","pinCode":"${dispatchJob.deliveryPin}"}}"""
         }.andExpect {
             status { isNotFound() }
         }
@@ -207,6 +209,7 @@ class CaptainDeliveryApiTest {
             header("Authorization", "Bearer ${captainA.accessToken}")
             header("Idempotency-Key", "idemp-captain-pickup-01")
             contentType = MediaType.APPLICATION_JSON
+            content = """{"proof":{"type":"PIN","pinCode":"${dispatchJob.pickupPin}"}}"""
         }.andExpect {
             status { isOk() }
             jsonPath("$.status") { value("PICKED_UP") }
@@ -217,6 +220,7 @@ class CaptainDeliveryApiTest {
             header("Authorization", "Bearer ${captainA.accessToken}")
             header("Idempotency-Key", "idemp-captain-pickup-01")
             contentType = MediaType.APPLICATION_JSON
+            content = """{"proof":{"type":"PIN","pinCode":"${dispatchJob.pickupPin}"}}"""
         }.andExpect {
             status { isOk() }
             jsonPath("$.status") { value("PICKED_UP") }
@@ -227,6 +231,7 @@ class CaptainDeliveryApiTest {
             header("Authorization", "Bearer ${captainA.accessToken}")
             header("Idempotency-Key", "idemp-captain-deliv-01")
             contentType = MediaType.APPLICATION_JSON
+            content = """{"proof":{"type":"PIN","pinCode":"${dispatchJob.deliveryPin}"}}"""
         }.andExpect {
             status { isOk() }
             jsonPath("$.status") { value("DELIVERED") }
@@ -237,6 +242,7 @@ class CaptainDeliveryApiTest {
             header("Authorization", "Bearer ${captainA.accessToken}")
             header("Idempotency-Key", "idemp-captain-deliv-01")
             contentType = MediaType.APPLICATION_JSON
+            content = """{"proof":{"type":"PIN","pinCode":"${dispatchJob.deliveryPin}"}}"""
         }.andExpect {
             status { isOk() }
             jsonPath("$.status") { value("DELIVERED") }

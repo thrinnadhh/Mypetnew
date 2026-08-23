@@ -20,6 +20,7 @@ export interface CaptainAvailabilityParams {
 
 export async function updateCaptainAvailability(
   params: CaptainAvailabilityParams,
+  idempotencyKey?: string,
 ): Promise<CaptainDeliveryStateResponse> {
   const response = await captainApiFetch('/api/v1/captain/availability', {
     method: 'PUT',
@@ -33,6 +34,7 @@ export async function updateCaptainAvailability(
       heading: params.heading ?? null,
       speed: params.speed ?? null,
     }),
+    idempotencyKey,
     timeoutMs: 8000,
   });
 

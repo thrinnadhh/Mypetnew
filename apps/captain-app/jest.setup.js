@@ -4,10 +4,16 @@ jest.mock("expo-crypto", () => ({
   randomUUID: jest.fn(() => `00000000-0000-4000-8000-${String(mockUuidCount++).padStart(12, '0')}`)
 }));
 
+const mockSecureStoreMap = new Map();
+
 jest.mock("expo-secure-store", () => ({
-  getItemAsync: jest.fn(),
-  setItemAsync: jest.fn(),
-  deleteItemAsync: jest.fn()
+  getItemAsync: jest.fn(async (key) => mockSecureStoreMap.get(key) ?? null),
+  setItemAsync: jest.fn(async (key, value) => {
+    mockSecureStoreMap.set(key, String(value));
+  }),
+  deleteItemAsync: jest.fn(async (key) => {
+    mockSecureStoreMap.delete(key);
+  }),
 }));
 
 const mockDefinedTasks = new Map();

@@ -67,7 +67,7 @@ export class CommandRunner {
 
       if (existingCommandId) {
         command = (await commandStore.get(existingCommandId)) as MutationCommand<TPayload> | undefined;
-      } else if (jobId) {
+      } else {
         command = (await commandStore.getByJobAndType(jobId, type)) as MutationCommand<TPayload> | undefined;
       }
 

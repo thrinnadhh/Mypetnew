@@ -5,8 +5,12 @@
  */
 
 export function formatPaise(paise: number | null | undefined, options?: { showZero?: boolean; compact?: boolean }): string {
-  if (paise === null || paise === undefined) {
-    return options?.showZero ? '₹0' : '—';
+  if (paise === null || paise === undefined || typeof paise !== 'number' || Number.isNaN(paise) || !Number.isFinite(paise)) {
+    return '—';
+  }
+
+  if (paise === 0) {
+    return options?.showZero === false ? '—' : '₹0';
   }
 
   const safePaise = Math.round(paise);

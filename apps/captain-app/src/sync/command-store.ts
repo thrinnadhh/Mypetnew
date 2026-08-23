@@ -102,10 +102,10 @@ export class CommandStore {
     return this.commands.get(commandId);
   }
 
-  async getByJobAndType(jobId: string, commandType: CommandType): Promise<MutationCommand | undefined> {
+  async getByJobAndType(jobId: string | null | undefined, commandType: CommandType): Promise<MutationCommand | undefined> {
     await this.load();
     const all = Array.from(this.commands.values()).filter(
-      (cmd) => cmd.jobId === jobId && (cmd.commandType === commandType || cmd.type === commandType),
+      (cmd) => (jobId ? cmd.jobId === jobId : !cmd.jobId) && (cmd.commandType === commandType || cmd.type === commandType),
     );
 
     // Prefer active / unresolved command (PENDING, SENDING, UNKNOWN)

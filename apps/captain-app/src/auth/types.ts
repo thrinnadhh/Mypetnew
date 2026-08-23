@@ -2,9 +2,11 @@ export type CaptainApprovalStatus =
   | 'DRAFT'
   | 'SUBMITTED'
   | 'UNDER_REVIEW'
+  | 'PENDING_REVIEW'
   | 'ACTIVE'
   | 'REJECTED'
-  | 'SUSPENDED';
+  | 'SUSPENDED'
+  | 'ONBOARDING';
 
 export interface CaptainSessionEnvelope {
   accountId: string;

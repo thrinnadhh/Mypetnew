@@ -5,7 +5,7 @@ import {
   getRuntimeAccessToken,
   refreshCaptainSession,
 } from '../auth/session';
-import { ApiError, ErrorCodes } from '../utils/errors';
+import { AppError } from '../domain/result';
 
 export interface RequestOptions extends RequestInit {
   timeoutMs?: number;
@@ -41,7 +41,7 @@ export async function captainApiFetch(
         const refreshed = await refreshCaptainSession();
         token = refreshed.accessToken;
       } catch {
-        // Continue and allow backend 401 if refresh fails
+        // Allow request to proceed and handle backend 401
       }
     }
     if (token) {
@@ -72,10 +72,9 @@ export async function captainApiFetch(
         });
       } catch {
         await clearSession();
-        throw new ApiError({
-          code: ErrorCodes.AUTHENTICATION_REQUIRED,
+        throw AppError.fromHttp(401, {
+          code: 'AUTHENTICATION_REQUIRED',
           message: 'Your session has expired. Please sign in again.',
-          status: 401,
         });
       }
     }
@@ -84,27 +83,21 @@ export async function captainApiFetch(
   } catch (error: any) {
     clearTimeout(timeoutId);
 
-    if (error instanceof ApiError) {
+    if (error instanceof AppError) {
       throw error;
     }
 
     if (error.name === 'AbortError') {
-      throw new ApiError({
-        code: ErrorCodes.TIMEOUT_ERROR,
-        message: 'The network request timed out. Please try again.',
-        status: 408,
-      });
+      throw AppError.timeout();
     }
 
-    throw new ApiError({
-      code: ErrorCodes.NETWORK_ERROR,
-      message: 'Unable to connect to the server. Please check your internet connection.',
-      status: 0,
-    });
+    throw AppError.network(error.message || 'Unable to connect to the server. Please check your network.');
   }
 }
 
 export async function handleApiResponse<T>(response: Response): Promise<T> {
+  const traceId = response.headers?.get?.('x-trace-id') || undefined;
+
   if (response.ok) {
     if (response.status === 204) {
       return {} as T;
@@ -119,10 +112,5 @@ export async function handleApiResponse<T>(response: Response): Promise<T> {
     // Body is not JSON
   }
 
-  throw new ApiError({
-    code: errorBody?.code || (response.status === 404 ? ErrorCodes.RESOURCE_NOT_FOUND : 'API_ERROR'),
-    message: errorBody?.message || `Request failed with status ${response.status}`,
-    status: response.status,
-    traceId: response.headers.get('x-trace-id') || undefined,
-  });
+  throw AppError.fromHttp(response.status, errorBody, traceId);
 }

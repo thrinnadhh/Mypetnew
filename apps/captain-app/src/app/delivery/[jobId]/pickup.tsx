@@ -6,11 +6,11 @@ import { AddressCard } from '../../../components/AddressCard';
 import { Button } from '../../../components/Button';
 import { DeliveryTimeline } from '../../../components/DeliveryTimeline';
 import { palette, radii, spacing, typography } from '../../../design/tokens';
-import { useDelivery } from '../../../features/delivery/delivery-context';
+import { useDeliveryStore } from '../../../state/delivery-store';
 
 export default function PickupScreen() {
   const { jobId } = useLocalSearchParams<{ jobId: string }>();
-  const { activeDelivery } = useDelivery();
+  const { activeDelivery } = useDeliveryStore();
   const [arrived, setArrived] = useState(false);
 
   const delivery = activeDelivery;
@@ -28,20 +28,19 @@ export default function PickupScreen() {
       {/* Top Fixed Header */}
       <View style={styles.header}>
         <Text style={styles.headerSubtitle}>ACTIVE DELIVERY</Text>
-        <Text style={styles.headerTitle}>{delivery.orderReference}</Text>
+        <Text style={styles.headerTitle}>{delivery.orderReference || `Order #${delivery.orderId.slice(0, 8)}`}</Text>
       </View>
 
-      <DeliveryTimeline status="ASSIGNED" />
+      <DeliveryTimeline status={delivery.state} />
 
       <ScrollView contentContainerStyle={styles.content}>
         {/* Merchant Pickup Address Card */}
         <AddressCard
-          address={delivery.merchant?.address || 'Store location'}
-          instructions={delivery.merchant?.pickupInstructions || 'Show order ID to store manager'}
-          latitude={delivery.merchant?.latitude}
-          longitude={delivery.merchant?.longitude}
-          name={delivery.merchant?.name || 'Partner Outlet'}
-          phone={delivery.merchant?.phone}
+          address={`${delivery.outletName} Store`}
+          instructions="Show order ID to store manager"
+          latitude={delivery.originLatitude}
+          longitude={delivery.originLongitude}
+          name={delivery.outletName}
           title="STEP 1: PICKUP FROM STORE"
         />
 
@@ -50,7 +49,7 @@ export default function PickupScreen() {
           <Text style={styles.cardSectionTitle}>PACKAGE SUMMARY</Text>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Items:</Text>
-            <Text style={styles.detailVal}>{delivery.package?.itemCount || 1} Items</Text>
+            <Text style={styles.detailVal}>{delivery.itemCount || 1} Items</Text>
           </View>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Order ID:</Text>
@@ -76,7 +75,7 @@ export default function PickupScreen() {
           <Button
             onPress={handleProceedToProof}
             style={styles.confirmBtn}
-            title="VERIFY & CONFIRM PICKUP"
+            title="VERIFY &amp; CONFIRM PICKUP"
             variant="primary"
           />
         </View>

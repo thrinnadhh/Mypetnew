@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -14,13 +14,30 @@ export default function InboxTabScreen() {
   const [notifications, setNotifications] = useState<CaptainNotificationItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadNotifications = async () => {
-    const items = await fetchCaptainNotifications();
-    setNotifications(items);
-  };
+  const loadNotifications = useCallback(async () => {
+    try {
+      const items = await fetchCaptainNotifications();
+      setNotifications(items);
+    } catch {
+      // Graceful error state
+    }
+  }, []);
 
   useEffect(() => {
-    loadNotifications();
+    let mounted = true;
+    (async () => {
+      try {
+        const items = await fetchCaptainNotifications();
+        if (mounted) {
+          setNotifications(items);
+        }
+      } catch {
+        // Ignore initial fetch error
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const onRefresh = async () => {
@@ -34,10 +51,14 @@ export default function InboxTabScreen() {
 
   const handlePressItem = async (item: CaptainNotificationItem) => {
     if (!item.read) {
-      await markNotificationRead(item.id);
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === item.id ? { ...n, read: true } : n)),
-      );
+      try {
+        await markNotificationRead(item.id);
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === item.id ? { ...n, read: true } : n)),
+        );
+      } catch {
+        // Ignore
+      }
     }
   };
 
@@ -62,7 +83,7 @@ export default function InboxTabScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Inbox & Alerts</Text>
+        <Text style={styles.title}>Inbox &amp; Alerts</Text>
       </View>
 
       <ScrollView

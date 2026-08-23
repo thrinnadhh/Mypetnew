@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../../components/Button';
@@ -8,7 +8,7 @@ import { palette, radii, spacing, typography } from '../../design/tokens';
 import {
   checkLocationPermissions,
   requestLocationPermissions,
-} from '../../features/location/location-permissions';
+} from '../../location/permissions';
 
 export default function LocationPermissionScreen() {
   const [status, setStatus] = useState({
@@ -17,13 +17,22 @@ export default function LocationPermissionScreen() {
   });
   const [requesting, setRequesting] = useState(false);
 
-  const check = async () => {
+  const check = useCallback(async () => {
     const s = await checkLocationPermissions();
     setStatus(s);
-  };
+  }, []);
 
   useEffect(() => {
-    check();
+    let mounted = true;
+    (async () => {
+      const s = await checkLocationPermissions();
+      if (mounted) {
+        setStatus(s);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const handleRequest = async () => {

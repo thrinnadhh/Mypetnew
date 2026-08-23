@@ -1,8 +1,7 @@
 import { router } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useAuth } from '../../auth/context';
 import { ActiveDeliveryCard } from '../../components/ActiveDeliveryCard';
 import { CaptainHeader } from '../../components/CaptainHeader';
 import { DeliveryOfferCard } from '../../components/DeliveryOfferCard';
@@ -10,65 +9,52 @@ import { LocationStatusBanner } from '../../components/LocationStatusBanner';
 import { MoneyAmount } from '../../components/MoneyAmount';
 import { OnlineToggle } from '../../components/OnlineToggle';
 import { palette, radii, spacing, typography } from '../../design/tokens';
-import { useDelivery } from '../../features/delivery/delivery-context';
-import { setCaptainOnlineState } from '../../features/location/location-publisher';
-import { getFriendlyErrorMessage } from '../../utils/errors';
+import { useCaptainStore } from '../../state/captain-store';
+import { useDeliveryStore } from '../../state/delivery-store';
 
 export default function HomeScreen() {
-  const { captainProfile, setProfileOnlineState, refreshProfile } = useAuth();
+  const { profile, isOnline, isUpdatingPresence, presenceError, setOnline } = useCaptainStore();
   const {
     activeDelivery,
-    currentOffer,
-    fetchOffers,
+    activeOffer,
+    refreshOffers,
     acceptOffer,
     rejectOffer,
-    dismissOffer,
-  } = useDelivery();
+    deliveryError,
+    dismissError,
+  } = useDeliveryStore();
 
-  const [togglingOnline, setTogglingOnline] = useState(false);
   const [offerActionLoading, setOfferActionLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-
-  const isOnline = !!captainProfile?.online;
 
   // Poll for offers periodically when online and not busy with an active job
   useEffect(() => {
     if (!isOnline || activeDelivery) return;
 
-    fetchOffers();
+    refreshOffers();
     const interval = setInterval(() => {
-      fetchOffers();
+      refreshOffers();
     }, 8000);
 
     return () => clearInterval(interval);
-  }, [isOnline, activeDelivery]);
+  }, [isOnline, activeDelivery, refreshOffers]);
 
   const handleToggleOnline = async () => {
-    setErrorMessage(null);
-    setTogglingOnline(true);
-    try {
-      const target = !isOnline;
-      const result = await setCaptainOnlineState(target);
-      setProfileOnlineState(result.online);
-      if (result.online) {
-        fetchOffers();
-      }
-    } catch (err: any) {
-      setErrorMessage(getFriendlyErrorMessage(err));
-    } finally {
-      setTogglingOnline(false);
+    dismissError();
+    await setOnline(!isOnline);
+    if (!isOnline) {
+      refreshOffers();
     }
   };
 
   const handleAcceptOffer = async (offerId: string) => {
     setOfferActionLoading(true);
-    setErrorMessage(null);
+    dismissError();
     try {
-      const delivery = await acceptOffer(offerId);
-      router.push(`/delivery/${delivery.jobId}` as any);
-    } catch (err: any) {
-      setErrorMessage(getFriendlyErrorMessage(err));
+      const outcome = await acceptOffer(offerId);
+      if (outcome.outcome === 'ACKNOWLEDGED') {
+        router.push(`/delivery/${outcome.data.jobId}` as any);
+      }
     } finally {
       setOfferActionLoading(false);
     }
@@ -78,28 +64,27 @@ export default function HomeScreen() {
     setOfferActionLoading(true);
     try {
       await rejectOffer(offerId);
-    } catch (err: any) {
-      setErrorMessage(getFriendlyErrorMessage(err));
     } finally {
       setOfferActionLoading(false);
     }
   };
 
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await refreshProfile();
       if (isOnline) {
-        await fetchOffers();
+        await refreshOffers();
       }
     } finally {
       setRefreshing(false);
     }
-  };
+  }, [isOnline, refreshOffers]);
+
+  const displayedError = presenceError?.message || deliveryError?.message || null;
 
   return (
     <SafeAreaView style={styles.container}>
-      <CaptainHeader name={captainProfile?.name} online={isOnline} />
+      <CaptainHeader name={profile?.name} online={isOnline} />
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -107,16 +92,16 @@ export default function HomeScreen() {
           <RefreshControl onRefresh={onRefresh} refreshing={refreshing} />
         }
       >
-        {errorMessage ? (
+        {displayedError ? (
           <LocationStatusBanner
             actionText="Dismiss"
-            message={errorMessage}
-            onPressAction={() => setErrorMessage(null)}
+            message={displayedError}
+            onPressAction={dismissError}
           />
         ) : null}
 
         <OnlineToggle
-          loading={togglingOnline}
+          loading={isUpdatingPresence}
           onToggle={handleToggleOnline}
           online={isOnline}
         />
@@ -130,18 +115,18 @@ export default function HomeScreen() {
         ) : null}
 
         {/* Incoming Offer Section */}
-        {!activeDelivery && currentOffer ? (
+        {!activeDelivery && activeOffer ? (
           <DeliveryOfferCard
             loading={offerActionLoading}
-            offer={currentOffer}
-            onAccept={() => handleAcceptOffer(currentOffer.offerId)}
-            onExpired={() => dismissOffer(currentOffer.offerId)}
-            onReject={() => handleRejectOffer(currentOffer.offerId)}
+            offer={activeOffer}
+            onAccept={() => handleAcceptOffer(activeOffer.offerId)}
+            onExpired={() => rejectOffer(activeOffer.offerId)}
+            onReject={() => handleRejectOffer(activeOffer.offerId)}
           />
         ) : null}
 
         {/* Waiting For Orders Card */}
-        {isOnline && !activeDelivery && !currentOffer ? (
+        {isOnline && !activeDelivery && !activeOffer ? (
           <View style={styles.waitingCard}>
             <View style={styles.radarPulse}>
               <Text style={styles.radarIcon}>📡</Text>
@@ -178,11 +163,11 @@ export default function HomeScreen() {
         {/* Today's Metrics */}
         <View style={styles.metricsRow}>
           <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>TODAY'S DELIVERIES</Text>
+            <Text style={styles.metricLabel}>TODAY&apos;S DELIVERIES</Text>
             <Text style={styles.metricValue}>0</Text>
           </View>
           <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>TODAY'S EARNINGS</Text>
+            <Text style={styles.metricLabel}>TODAY&apos;S EARNINGS</Text>
             <MoneyAmount paise={0} style={styles.metricEarning} />
           </View>
         </View>

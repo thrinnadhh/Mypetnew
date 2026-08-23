@@ -1,7 +1,7 @@
 import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
-import { ApiError, ErrorCodes } from '../utils/errors';
+import { AppError } from '../domain/result';
 import { CaptainSessionEnvelope } from './types';
 
 type StoredRefreshState = {
@@ -50,8 +50,9 @@ export function getApiBaseUrl(): string {
     parsed.hostname.startsWith('192.168.');
 
   if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && localDevHost)) {
-    throw new ApiError({
-      code: ErrorCodes.NETWORK_ERROR,
+    throw new AppError({
+      kind: 'ValidationRejected',
+      code: 'INSECURE_CONFIGURATION',
       message: 'Captain API configuration must use HTTPS in production',
     });
   }
@@ -125,8 +126,8 @@ export async function getInstallationDeviceId(): Promise<string> {
 
 export async function storeSession(session: CaptainSessionEnvelope): Promise<void> {
   if (session.role !== 'CAPTAIN') {
-    throw new ApiError({
-      code: ErrorCodes.AUTHENTICATION_REQUIRED,
+    throw AppError.fromHttp(403, {
+      code: 'AUTHORIZATION_DENIED',
       message: 'Invalid role for Captain application',
     });
   }
@@ -174,10 +175,9 @@ export async function refreshCaptainSession(): Promise<CaptainSessionEnvelope> {
     const state = await getStoredRefreshState();
     if (!state) {
       await clearSession();
-      throw new ApiError({
-        code: ErrorCodes.AUTHENTICATION_REQUIRED,
+      throw AppError.fromHttp(401, {
+        code: 'AUTHENTICATION_REQUIRED',
         message: 'No active session found',
-        status: 401,
       });
     }
 
@@ -189,20 +189,18 @@ export async function refreshCaptainSession(): Promise<CaptainSessionEnvelope> {
 
     if (!res.ok) {
       await clearSession();
-      throw new ApiError({
-        code: ErrorCodes.AUTHENTICATION_REQUIRED,
+      throw AppError.fromHttp(res.status, {
+        code: 'AUTHENTICATION_REQUIRED',
         message: 'Session refresh failed',
-        status: res.status,
       });
     }
 
     const data: CaptainSessionEnvelope = await res.json();
     if (data.role !== 'CAPTAIN') {
       await clearSession();
-      throw new ApiError({
-        code: ErrorCodes.AUTHENTICATION_REQUIRED,
+      throw AppError.fromHttp(403, {
+        code: 'AUTHORIZATION_DENIED',
         message: 'Invalid role returned during refresh',
-        status: 403,
       });
     }
 

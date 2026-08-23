@@ -1,14 +1,15 @@
 import { router } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { DeliveryHistoryItem, fetchDeliveryHistory } from '../../api/deliveries';
+import { DeliveryHistoryItem } from '../../api/deliveries';
 import { ActiveDeliveryCard } from '../../components/ActiveDeliveryCard';
 import { EmptyState } from '../../components/EmptyState';
 import { MoneyAmount } from '../../components/MoneyAmount';
 import { StatusBadge } from '../../components/StatusBadge';
 import { palette, radii, spacing, typography } from '../../design/tokens';
 import { useDelivery } from '../../features/delivery/delivery-context';
+import { earningsRepository } from '../../repositories/earnings-repository';
 import { formatDateTime } from '../../utils/date';
 
 export default function DeliveriesTabScreen() {
@@ -16,15 +17,27 @@ export default function DeliveriesTabScreen() {
   const [history, setHistory] = useState<DeliveryHistoryItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     await restoreActiveDelivery();
-    const items = await fetchDeliveryHistory();
-    setHistory(items);
-  };
+    const result = await earningsRepository.getDeliveryHistory();
+    if (result.success) {
+      setHistory(result.data);
+    }
+  }, [restoreActiveDelivery]);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    let mounted = true;
+    (async () => {
+      await restoreActiveDelivery();
+      const result = await earningsRepository.getDeliveryHistory();
+      if (mounted && result.success) {
+        setHistory(result.data);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [restoreActiveDelivery]);
 
   const onRefresh = async () => {
     setRefreshing(true);

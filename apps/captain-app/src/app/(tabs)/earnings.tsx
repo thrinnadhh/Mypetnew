@@ -1,26 +1,35 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import {
-  CaptainEarningsSummary,
-  fetchCaptainEarnings,
-} from '../../api/earnings';
+import { CaptainEarningsSummary } from '../../domain/earnings';
 import { EmptyState } from '../../components/EmptyState';
 import { MoneyAmount } from '../../components/MoneyAmount';
 import { StatusBadge } from '../../components/StatusBadge';
 import { palette, radii, spacing, typography } from '../../design/tokens';
+import { earningsRepository } from '../../repositories/earnings-repository';
 
 export default function EarningsTabScreen() {
   const [summary, setSummary] = useState<CaptainEarningsSummary | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadData = async () => {
-    const data = await fetchCaptainEarnings();
-    setSummary(data);
-  };
+  const loadData = useCallback(async () => {
+    const result = await earningsRepository.getEarningsSummary();
+    if (result.success) {
+      setSummary(result.data);
+    }
+  }, []);
 
   useEffect(() => {
-    loadData();
+    let mounted = true;
+    (async () => {
+      const result = await earningsRepository.getEarningsSummary();
+      if (mounted && result.success) {
+        setSummary(result.data);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const onRefresh = async () => {
@@ -35,7 +44,7 @@ export default function EarningsTabScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Earnings & Settlements</Text>
+        <Text style={styles.title}>Earnings &amp; Settlements</Text>
       </View>
 
       <ScrollView
@@ -46,7 +55,7 @@ export default function EarningsTabScreen() {
       >
         {/* Today's Earning Hero Card */}
         <View style={styles.heroCard}>
-          <Text style={styles.heroLabel}>TODAY'S TOTAL EARNINGS</Text>
+          <Text style={styles.heroLabel}>TODAY&apos;S TOTAL EARNINGS</Text>
           <MoneyAmount
             paise={summary?.todayPaise || 0}
             style={styles.heroAmount}

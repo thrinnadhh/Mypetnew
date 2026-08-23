@@ -1,13 +1,13 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { palette, radii, spacing, typography } from '../design/tokens';
-import { CaptainActiveDelivery } from '../features/delivery/types';
+import { DeliveryJob } from '../domain/delivery';
 import { Button } from './Button';
 import { DeliveryTimeline } from './DeliveryTimeline';
 import { StatusBadge } from './StatusBadge';
 
 export interface ActiveDeliveryCardProps {
-  delivery: CaptainActiveDelivery;
+  delivery: DeliveryJob;
   onContinue: () => void;
 }
 
@@ -15,32 +15,44 @@ export const ActiveDeliveryCard: React.FC<ActiveDeliveryCardProps> = ({
   delivery,
   onContinue,
 }) => {
-  const isPickup = delivery.dispatchStatus === 'ASSIGNED';
+  const isPickup = delivery.state === 'ASSIGNED' || delivery.state === 'ARRIVING_PICKUP' || delivery.state === 'PICKUP_CONFIRMING';
+  const isUnknown = delivery.state === 'UNKNOWN';
+
+  let statusLabel = isPickup ? 'PICKUP PENDING' : 'OUT FOR DELIVERY';
+  let badgeVariant: 'assigned' | 'pickedUp' | 'warning' = isPickup ? 'assigned' : 'pickedUp';
+
+  if (isUnknown) {
+    statusLabel = 'CONFIRMATION PENDING';
+    badgeVariant = 'warning';
+  }
+
+  const destinationName = isPickup ? delivery.outletName : delivery.deliveryAddress?.recipientName;
+  const addressLine = isPickup
+    ? `${delivery.outletName} Store`
+    : `${delivery.deliveryAddress?.line1 || ''}, ${delivery.deliveryAddress?.city || ''}`;
 
   return (
     <View style={styles.card}>
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>ACTIVE DELIVERY</Text>
-          <Text style={styles.orderRef}>{delivery.orderReference}</Text>
+          <Text style={styles.orderRef}>{delivery.orderReference || `Order #${delivery.orderId.slice(0, 8)}`}</Text>
         </View>
         <StatusBadge
-          label={isPickup ? 'PICKUP PENDING' : 'OUT FOR DELIVERY'}
-          variant={isPickup ? 'assigned' : 'pickedUp'}
+          label={statusLabel}
+          variant={badgeVariant}
         />
       </View>
 
-      <DeliveryTimeline status={delivery.dispatchStatus} />
+      <DeliveryTimeline status={delivery.state} />
 
       <View style={styles.infoSection}>
         <Text style={styles.infoLabel}>
           {isPickup ? 'PICKUP LOCATION' : 'DELIVER TO'}
         </Text>
-        <Text style={styles.targetName}>
-          {isPickup ? delivery.merchant?.name : delivery.customer?.name}
-        </Text>
+        <Text style={styles.targetName}>{destinationName}</Text>
         <Text numberOfLines={2} style={styles.address}>
-          {isPickup ? delivery.merchant?.address : delivery.customer?.address}
+          {addressLine}
         </Text>
       </View>
 

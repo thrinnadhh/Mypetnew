@@ -4,10 +4,11 @@ import { fetchCaptainProfile } from '../api/captain';
 import { clearSession, getStoredRefreshState, refreshCaptainSession } from './session';
 import { CaptainApprovalStatus, CaptainProfile, CaptainSessionEnvelope } from './types';
 
-interface AuthContextValue {
+export interface AuthContextValue {
   session: CaptainSessionEnvelope | null;
   captainProfile: CaptainProfile | null;
   status: CaptainApprovalStatus | null;
+  isAuthenticated: boolean;
   isLoading: boolean;
   isRestoring: boolean;
   loginSession: (session: CaptainSessionEnvelope) => Promise<void>;
@@ -41,7 +42,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
-      // If currently online, attempt to set offline before dropping tokens
       if (captainProfile?.online) {
         await updateCaptainAvailability({ online: false }).catch(() => {});
       }
@@ -96,6 +96,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         session,
         captainProfile,
         status: captainProfile?.status || null,
+        isAuthenticated: !!session,
         isLoading,
         isRestoring,
         loginSession,

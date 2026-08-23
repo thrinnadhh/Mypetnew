@@ -4,11 +4,11 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/context';
 import { palette, spacing, typography } from '../design/tokens';
-import { useDelivery } from '../features/delivery/delivery-context';
+import { useDeliveryStore } from '../state/delivery-store';
 
 export default function SplashScreen() {
   const { session, captainProfile, isRestoring, isLoading } = useAuth();
-  const { activeDelivery, restoreActiveDelivery } = useDelivery();
+  const { activeDelivery, restoreActiveDelivery } = useDeliveryStore();
 
   useEffect(() => {
     if (isRestoring || isLoading) return;
@@ -28,6 +28,7 @@ export default function SplashScreen() {
     if (
       status === 'SUBMITTED' ||
       status === 'UNDER_REVIEW' ||
+      status === 'PENDING_REVIEW' ||
       status === 'REJECTED' ||
       status === 'SUSPENDED'
     ) {
@@ -36,10 +37,9 @@ export default function SplashScreen() {
     }
 
     if (status === 'ACTIVE') {
-      // Check if there is an ongoing active delivery
-      restoreActiveDelivery().then((active) => {
-        if (active && active.dispatchStatus !== 'DELIVERED') {
-          router.replace(`/delivery/${active.jobId}` as any);
+      restoreActiveDelivery().then(() => {
+        if (activeDelivery && activeDelivery.state !== 'DELIVERED') {
+          router.replace(`/delivery/${activeDelivery.jobId}` as any);
         } else {
           router.replace('/(tabs)/home');
         }
@@ -49,7 +49,7 @@ export default function SplashScreen() {
 
     // Default fallback
     router.replace('/(tabs)/home');
-  }, [session, captainProfile, isRestoring, isLoading]);
+  }, [session, captainProfile, isRestoring, isLoading, activeDelivery, restoreActiveDelivery]);
 
   return (
     <SafeAreaView style={styles.container}>

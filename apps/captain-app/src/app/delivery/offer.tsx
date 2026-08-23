@@ -5,15 +5,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../../components/Button';
 import { DeliveryOfferCard } from '../../components/DeliveryOfferCard';
 import { palette, spacing, typography } from '../../design/tokens';
-import { useDelivery } from '../../features/delivery/delivery-context';
-import { getFriendlyErrorMessage } from '../../utils/errors';
+import { useDeliveryStore } from '../../state/delivery-store';
 
 export default function DeliveryOfferModal() {
-  const { currentOffer, acceptOffer, rejectOffer, dismissOffer } = useDelivery();
+  const { activeOffer, acceptOffer, rejectOffer } = useDeliveryStore();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!currentOffer) {
+  if (!activeOffer) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.emptyContent}>
@@ -34,10 +33,14 @@ export default function DeliveryOfferModal() {
     setError(null);
     setLoading(true);
     try {
-      const delivery = await acceptOffer(currentOffer.offerId);
-      router.replace(`/delivery/${delivery.jobId}` as any);
-    } catch (err: any) {
-      setError(getFriendlyErrorMessage(err));
+      const outcome = await acceptOffer(activeOffer.offerId);
+      if (outcome.outcome === 'ACKNOWLEDGED') {
+        router.replace(`/delivery/${outcome.data.jobId}` as any);
+      } else if (outcome.outcome === 'REJECTED') {
+        setError(outcome.error.message);
+      } else {
+        setError('Network error while accepting offer. Reconciling with server…');
+      }
     } finally {
       setLoading(false);
     }
@@ -46,10 +49,8 @@ export default function DeliveryOfferModal() {
   const handleReject = async () => {
     setLoading(true);
     try {
-      await rejectOffer(currentOffer.offerId);
+      await rejectOffer(activeOffer.offerId);
       router.back();
-    } catch (err: any) {
-      setError(getFriendlyErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -66,10 +67,10 @@ export default function DeliveryOfferModal() {
 
         <DeliveryOfferCard
           loading={loading}
-          offer={currentOffer}
+          offer={activeOffer}
           onAccept={handleAccept}
           onExpired={() => {
-            dismissOffer(currentOffer.offerId);
+            rejectOffer(activeOffer.offerId);
             router.back();
           }}
           onReject={handleReject}

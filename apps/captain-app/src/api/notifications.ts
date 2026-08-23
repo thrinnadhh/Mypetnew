@@ -20,25 +20,15 @@ export interface CaptainNotificationItem {
 }
 
 export async function fetchCaptainNotifications(): Promise<CaptainNotificationItem[]> {
-  try {
-    const response = await captainApiFetch('/api/v1/captain/notifications');
-    if (response.ok) {
-      const data = await handleApiResponse<any>(response);
-      return Array.isArray(data) ? data : data.items ?? [];
-    }
-  } catch {
-    // Return graceful initial state
-  }
-
-  return [];
+  const response = await captainApiFetch('/api/v1/captain/notifications', { timeoutMs: 8000 });
+  const data = await handleApiResponse<any>(response);
+  return Array.isArray(data) ? data : data.items ?? [];
 }
 
 export async function markNotificationRead(id: string): Promise<void> {
-  try {
-    await captainApiFetch(`/api/v1/captain/notifications/${id}/read`, {
-      method: 'POST',
-    });
-  } catch {
-    // Ignore error
-  }
+  const response = await captainApiFetch(`/api/v1/captain/notifications/${id}/read`, {
+    method: 'POST',
+    timeoutMs: 8000,
+  });
+  await handleApiResponse<void>(response);
 }

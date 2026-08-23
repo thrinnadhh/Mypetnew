@@ -5,14 +5,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../../../components/Button';
 import { MoneyAmount } from '../../../components/MoneyAmount';
 import { palette, radii, spacing, typography } from '../../../design/tokens';
-import { useDelivery } from '../../../features/delivery/delivery-context';
+import { useDeliveryStore } from '../../../state/delivery-store';
 import { formatTime } from '../../../utils/date';
 
 export default function DeliveryCompletedScreen() {
-  const { activeDelivery, clearCompletedDelivery } = useDelivery();
+  const { activeDelivery, restoreActiveDelivery } = useDeliveryStore();
 
-  const handleReturnHome = () => {
-    clearCompletedDelivery();
+  const handleReturnHome = async () => {
+    await restoreActiveDelivery();
     router.replace('/(tabs)/home');
   };
 
@@ -25,7 +25,7 @@ export default function DeliveryCompletedScreen() {
 
         <Text style={styles.title}>DELIVERY COMPLETE</Text>
         <Text style={styles.orderRef}>
-          {activeDelivery?.orderReference || '#MP-DELIVERY'}
+          {activeDelivery?.orderReference || (activeDelivery ? `#${activeDelivery.orderId.slice(0, 8)}` : '#MP-DELIVERY')}
         </Text>
 
         <View style={styles.summaryCard}>

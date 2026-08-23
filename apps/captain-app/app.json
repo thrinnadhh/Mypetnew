@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "MyPet Captain",
+    "slug": "mypet-captain",
+    "version": "1.0.0",
+    "orientation": "default",
+    "scheme": "mypetcaptain",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "in.mypetnew.captain",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "MyPet Captain needs your location to assign and navigate deliveries.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "MyPet Captain needs background location while online to receive delivery requests."
+      }
+    },
+    "android": {
+      "package": "in.mypetnew.captain",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow MyPet Captain to use your location for delivery assignments."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

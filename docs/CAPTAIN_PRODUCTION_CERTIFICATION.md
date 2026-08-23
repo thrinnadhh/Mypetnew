@@ -1,9 +1,9 @@
 # MyPet Captain Application — Final Production Certification Report
 
-**Target Platform**: MyPet Captain Mobile Application (`apps/captain-app`)  
-**Backend Platform**: MyPet Enterprise Spring Boot / Kotlin Service (`backend`)  
-**Repository**: `https://github.com/thrinnadhh/Mypetnew.git`  
-**Certification Date**: 2026-08-23  
+**Target Platform**: MyPet Captain Mobile Application (`apps/captain-app`)
+**Backend Platform**: MyPet Enterprise Spring Boot / Kotlin Service (`backend`)
+**Repository**: `https://github.com/thrinnadhh/Mypetnew.git`
+**Certification Date**: 2026-08-23
 
 ---
 
@@ -16,7 +16,7 @@
 | **Pull Request** | PR #107 (`Fix/captain production repair`) | `gh pr view 107` |
 | **Main Base SHA** | `2e8bfd3592ab342982b125c7e450986025661d8f` | `git rev-parse origin/main` |
 | **Merge Base** | `2e8bfd3592ab342982b125c7e450986025661d8f` | `git merge-base HEAD origin/main` |
-| **Ahead / Behind** | 13 ahead / 0 behind | `git rev-list --left-right --count origin/main...HEAD` |
+| **Ahead / Behind** | 14 ahead / 0 behind | `git rev-list --left-right --count origin/main...HEAD` |
 | **Working Tree Status** | Clean (tracked changes committed) | `git status --porcelain` |
 | **Open Review Comments** | 0 | `gh pr view 107 --json comments,reviews` |
 | **Required GitHub Checks** | `verify-backend`, `program-contract`, `merchant-app`, `customer-app`, `captain-app` | `.github/workflows/` |
@@ -53,7 +53,7 @@
 ### C. Repository Regression & Security Gates
 - **Secret Scan (`./scripts/secret-scan.sh`)**: PASSED — 0 private keys, 0 service role tokens, 0 cleartext passwords.
 - **Privacy & Redaction Scan (`./scripts/privacy-security-scan.sh`)**: PASSED — 0 raw payment fields, 0 unredacted log calls, 0 unprotected AsyncStorage token storage, 0 Android cleartext traffic flags.
-- **Git Diff Boundary Check (`git diff --check`)**: PASSED — Clean whitespace, zero merge markers.
+- **Git Diff Boundary Check (`git diff --check origin/main...HEAD`)**: PASSED — Clean whitespace, zero merge markers.
 - **Merchant App Regression (`apps/merchant-app`)**: PASSED — 5 test suites, 49 tests passing.
 - **Customer App Regression (`apps/customer-app`)**: PASSED — 79 test suites, 457 tests passing.
 
@@ -106,7 +106,7 @@ Real Spring Boot + PostgreSQL integration verified via JUnit 5 contract tests:
 | **Logout & PII Erasure** | Real Hardware | **NOT EXECUTED** | SecureStore cleanup verified in automated suite; physical inspection unexecuted. |
 
 > [!WARNING]
-> **Physical Device Certification Result**: `NOT EXECUTED`  
+> **Physical Device Certification Result**: `NOT EXECUTED`
 > Per production certification standards, emulator and automated test execution cannot be substituted for physical Android device verification. Physical on-device testing remains a mandatory pre-deployment field gate.
 
 ---

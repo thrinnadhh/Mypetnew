@@ -1,5 +1,6 @@
 import { appConfig } from '@/utils/app-config';
 import type { LanguageId } from '@/constants/content';
+import { apiClient } from './api-client';
 
 export interface VaccinationReminder {
   reminderId: string;
@@ -10,30 +11,26 @@ export interface VaccinationReminder {
   enabled: boolean;
 }
 
-function jsonHeaders(accessToken?: string | null): Record<string, string> {
-  const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/json' };
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  return headers;
+function retainLegacyTokenParameter(_accessToken?: string | null): void {
+  // AuthContext owns the canonical ApiClient token. Keep the argument only for
+  // source compatibility while callers stop plumbing access tokens explicitly.
 }
 
 export async function fetchLocale(accessToken?: string | null): Promise<LanguageId> {
   if (appConfig.allowDemoMode) return 'en';
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/profiles/me/locale`, {
-    headers: jsonHeaders(accessToken),
-  });
-  if (!response.ok) return 'en';
-  const body = (await response.json()) as { locale: LanguageId };
-  return body.locale;
+  retainLegacyTokenParameter(accessToken);
+  try {
+    const body = await apiClient.get<{ locale: LanguageId }>('/api/v1/profiles/me/locale');
+    return body.locale;
+  } catch {
+    return 'en';
+  }
 }
 
 export async function updateLocale(locale: LanguageId, accessToken?: string | null): Promise<void> {
   if (appConfig.allowDemoMode) return;
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/profiles/me/locale`, {
-    method: 'PATCH',
-    headers: jsonHeaders(accessToken),
-    body: JSON.stringify({ locale }),
-  });
-  if (!response.ok) throw new Error('Could not save language preference');
+  retainLegacyTokenParameter(accessToken);
+  await apiClient.patch('/api/v1/profiles/me/locale', { locale });
 }
 
 export async function fetchVaccinationReminders(accessToken?: string | null): Promise<VaccinationReminder[]> {
@@ -57,11 +54,8 @@ export async function fetchVaccinationReminders(accessToken?: string | null): Pr
       },
     ];
   }
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/vaccination-reminders`, {
-    headers: jsonHeaders(accessToken),
-  });
-  if (!response.ok) throw new Error('Could not load vaccination reminders');
-  const rows = (await response.json()) as Array<VaccinationReminder & { reminderId: string }>;
+  retainLegacyTokenParameter(accessToken);
+  const rows = await apiClient.get<Array<VaccinationReminder & { reminderId: string }>>('/api/v1/vaccination-reminders');
   return rows.map((row) => ({ ...row, reminderId: String(row.reminderId) }));
 }
 
@@ -71,10 +65,6 @@ export async function setVaccinationReminderEnabled(
   accessToken?: string | null,
 ): Promise<void> {
   if (appConfig.allowDemoMode) return;
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/vaccination-reminders/${reminderId}`, {
-    method: 'PATCH',
-    headers: jsonHeaders(accessToken),
-    body: JSON.stringify({ enabled }),
-  });
-  if (!response.ok) throw new Error('Could not update reminder');
+  retainLegacyTokenParameter(accessToken);
+  await apiClient.patch(`/api/v1/vaccination-reminders/${reminderId}`, { enabled });
 }

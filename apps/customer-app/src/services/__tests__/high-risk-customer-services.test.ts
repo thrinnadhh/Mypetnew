@@ -49,15 +49,29 @@ jest.mock('@/utils/app-config', () => ({
   },
 }));
 
-jest.mock('../api-client', () => ({
-  apiClient: {
-    get: jest.fn(),
-    post: jest.fn(),
-    patch: jest.fn(),
-    put: jest.fn(),
-    delete: jest.fn(),
-  },
-}));
+jest.mock('../api-client', () => {
+  const actual = jest.requireActual('../api-client') as typeof import('../api-client');
+  const client = actual.apiClient;
+  return {
+    ...actual,
+    apiClient: {
+      request: jest.fn(client.request.bind(client)),
+      requestMultipart: jest.fn(client.requestMultipart.bind(client)),
+      upload: jest.fn(client.upload.bind(client)),
+      get: jest.fn(client.get.bind(client)),
+      post: jest.fn(client.post.bind(client)),
+      put: jest.fn(client.put.bind(client)),
+      patch: jest.fn(client.patch.bind(client)),
+      delete: jest.fn(client.delete.bind(client)),
+      setSessionToken: jest.fn(client.setSessionToken.bind(client)),
+      getSessionToken: jest.fn(client.getSessionToken.bind(client)),
+      getAuthEpoch: jest.fn(client.getAuthEpoch.bind(client)),
+      advanceAuthEpoch: jest.fn(client.advanceAuthEpoch.bind(client)),
+      setRefreshHandler: jest.fn(client.setRefreshHandler.bind(client)),
+      setClearAuthHandler: jest.fn(client.setClearAuthHandler.bind(client)),
+    },
+  };
+});
 
 const mockOpenCashfreeNativeCheckout = jest.fn();
 

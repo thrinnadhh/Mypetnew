@@ -3,12 +3,16 @@ package `in`.mypetnew.catalog
 import `in`.mypetnew.catalog.domain.BarcodeResolutionLookup
 import `in`.mypetnew.catalog.domain.BarcodeResolutionService
 import `in`.mypetnew.catalog.domain.BarcodeType
+import `in`.mypetnew.catalog.domain.CatalogLifecycleCommand
 import `in`.mypetnew.catalog.domain.CatalogService
 import `in`.mypetnew.catalog.domain.CreateListingCommand
 import `in`.mypetnew.catalog.domain.ListingKind
+import `in`.mypetnew.catalog.domain.ListingStatus
+import `in`.mypetnew.catalog.infrastructure.InMemoryBarcodeResolutionLookup
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.provider.domain.ProviderCapability
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
@@ -21,21 +25,7 @@ class M4BarcodeResolutionContractTest {
 
     @Test
     fun `resolution preserves leading zeroes and returns only the scoped listing`() {
-        val listing = catalog.createListing(
-            CreateListingCommand(
-                organizationId = organizationId,
-                outletId = outletId,
-                barcodeType = BarcodeType.GTIN_13,
-                barcode = "0 123456 789012",
-                name = "Dog Food",
-                kind = ListingKind.PRODUCT,
-                mrpPaise = 20_000,
-                sellingPricePaise = 19_000,
-                capabilities = setOf(ProviderCapability.PRODUCT_STORE),
-                category = "food",
-            ),
-            actionKey = "m4-create",
-        )
+        val listing = createGtin13Listing("m4-create")
         val lookup = FakeLookup(listing.id, organizationId, outletId, BarcodeType.GTIN_13, "0123456789012")
         val result = BarcodeResolutionService(catalog, lookup).resolve(
             organizationId,
@@ -78,6 +68,47 @@ class M4BarcodeResolutionContractTest {
         assertEquals("BARCODE_INVALID", error.code)
         assertEquals(false, lookedUp)
     }
+
+    @Test
+    fun `development lookup still finds an inactive listing to prevent false unused state`() {
+        val listing = createGtin13Listing("m4-inactive-create")
+        catalog.changeLifecycle(
+            CatalogLifecycleCommand(
+                organizationId = organizationId,
+                outletId = outletId,
+                listingId = listing.id,
+                expectedVersion = listing.version,
+                targetStatus = ListingStatus.INACTIVE,
+                capabilities = setOf(ProviderCapability.PRODUCT_STORE),
+            ),
+            actionKey = "m4-inactive-disable",
+        )
+
+        val resolved = InMemoryBarcodeResolutionLookup(catalog).findListingId(
+            organizationId,
+            outletId,
+            BarcodeType.GTIN_13,
+            "0123456789012",
+        )
+        assertNotNull(resolved)
+        assertEquals(listing.id, resolved)
+    }
+
+    private fun createGtin13Listing(actionKey: String) = catalog.createListing(
+        CreateListingCommand(
+            organizationId = organizationId,
+            outletId = outletId,
+            barcodeType = BarcodeType.GTIN_13,
+            barcode = "0 123456 789012",
+            name = "Dog Food",
+            kind = ListingKind.PRODUCT,
+            mrpPaise = 20_000,
+            sellingPricePaise = 19_000,
+            capabilities = setOf(ProviderCapability.PRODUCT_STORE),
+            category = "food",
+        ),
+        actionKey = actionKey,
+    )
 
     private class FakeLookup(
         private val listingId: UUID,

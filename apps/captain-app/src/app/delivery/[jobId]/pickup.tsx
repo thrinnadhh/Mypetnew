@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AddressCard } from '../../../components/AddressCard';
@@ -7,6 +7,7 @@ import { Button } from '../../../components/Button';
 import { DeliveryTimeline } from '../../../components/DeliveryTimeline';
 import { palette, radii, spacing, typography } from '../../../design/tokens';
 import { useDeliveryStore } from '../../../state/delivery-store';
+import { isUuid } from '../../../utils/uuid';
 
 export default function PickupScreen() {
   const { jobId } = useLocalSearchParams<{ jobId: string }>();
@@ -14,16 +15,22 @@ export default function PickupScreen() {
   const [arrived, setArrived] = useState(false);
 
   const delivery = activeDelivery;
-  if (!delivery || delivery.jobId !== jobId) {
-    router.replace('/(tabs)/home');
-    return null;
-  }
+  const shouldOpenCustomer =
+    !!delivery &&
+    (delivery.state === 'PICKED_UP' ||
+      delivery.state === 'ARRIVING_CUSTOMER' ||
+      delivery.state === 'DELIVERY_CONFIRMING' ||
+      delivery.state === 'DELIVERED');
 
-  // If already picked up, transition automatically to customer step
-  if (delivery.state === 'PICKED_UP' || delivery.state === 'ARRIVING_CUSTOMER' || delivery.state === 'DELIVERY_CONFIRMING' || delivery.state === 'DELIVERED') {
-    router.replace(`/delivery/${jobId}/customer` as any);
-    return null;
-  }
+  useEffect(() => {
+    if (!isUuid(jobId) || !delivery || delivery.jobId !== jobId) {
+      router.replace('/(tabs)/home');
+    } else if (shouldOpenCustomer) {
+      router.replace(`/delivery/${jobId}/customer` as any);
+    }
+  }, [jobId, delivery, shouldOpenCustomer]);
+
+  if (!isUuid(jobId) || !delivery || delivery.jobId !== jobId || shouldOpenCustomer) return null;
 
   const handleProceedToProof = () => {
     router.push(`/delivery/${jobId}/pickup-proof` as any);

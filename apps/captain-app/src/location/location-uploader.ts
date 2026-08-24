@@ -1,5 +1,10 @@
-import { updateCaptainAvailability } from '../api/availability';
-import { calculateDistanceMeters } from '../domain/location-state';
+import { publishCaptainLocation } from '../api/availability';
+import { getAuthGeneration, getRuntimeAccountId } from '../auth/session';
+import {
+  calculateDistanceMeters,
+  isCoordinateFresh,
+  isValidCoordinate,
+} from '../domain/location-state';
 import { logger, sanitizeCoordinates } from '../utils/privacy';
 import {
   addBackgroundLocationListener,
@@ -16,6 +21,8 @@ export interface LocationUploaderConfig {
   minBurstIntervalMs?: number;
 }
 
+const MAX_UPLOAD_ACCURACY_METERS = 200;
+
 export class LocationUploader {
   private intervalId: any = null;
   private lastCoordinates: Coordinates | null = null;
@@ -24,6 +31,9 @@ export class LocationUploader {
   private isOnline = false;
   private hasActiveDelivery = false;
   private unsubscribeBackground: (() => void) | null = null;
+  private trackingRevision = 0;
+  private backgroundOperation: Promise<void> = Promise.resolve();
+  private publishInFlight: Promise<Coordinates | null> | null = null;
 
   private config: Required<LocationUploaderConfig>;
 
@@ -84,6 +94,23 @@ export class LocationUploader {
     isOnline: boolean,
     force = false,
   ): Promise<boolean> {
+    if (
+      !isValidCoordinate(coords.latitude, coords.longitude) ||
+      !isCoordinateFresh(coords.timestamp, 120_000) ||
+      coords.accuracy == null ||
+      !Number.isFinite(coords.accuracy) ||
+      coords.accuracy < 0 ||
+      coords.accuracy > MAX_UPLOAD_ACCURACY_METERS
+    ) {
+      logger.warn('LocationUploader', 'Rejected invalid or stale coordinate update');
+      return false;
+    }
+
+    const accountId = getRuntimeAccountId();
+    const authGeneration = getAuthGeneration();
+    const revision = this.trackingRevision;
+    if (!accountId || (!this.isOnline && !this.hasActiveDelivery)) return false;
+
     this.lastCoordinates = coords;
     const now = Date.now();
 
@@ -96,13 +123,13 @@ export class LocationUploader {
     }
 
     try {
+      const reportedOnline = isOnline || this.hasActiveDelivery;
       logger.debug(
         'LocationUploader',
-        `Publishing coordinate update: ${sanitizeCoordinates(coords.latitude, coords.longitude)} (online: ${isOnline}, active: ${this.hasActiveDelivery})`,
+        `Publishing coordinate update: ${sanitizeCoordinates(coords.latitude, coords.longitude)} (online: ${reportedOnline}, active: ${this.hasActiveDelivery})`,
       );
 
-      await updateCaptainAvailability({
-        online: isOnline,
+      await publishCaptainLocation({
         latitude: coords.latitude,
         longitude: coords.longitude,
         accuracy: coords.accuracy,
@@ -110,6 +137,14 @@ export class LocationUploader {
         heading: coords.heading,
         speed: coords.speed,
       });
+
+      if (
+        getRuntimeAccountId() !== accountId ||
+        getAuthGeneration() !== authGeneration ||
+        this.trackingRevision !== revision
+      ) {
+        return false;
+      }
 
       this.lastUploadedAt = now;
       this.lastUploadedCoords = coords;
@@ -127,13 +162,23 @@ export class LocationUploader {
     isOnline: boolean,
     force = false,
   ): Promise<Coordinates | null> {
+    if (this.publishInFlight) return this.publishInFlight;
+
+    const request = (async () => {
+      try {
+        const coords = await getCurrentCaptainLocation({ maxAgeMs: 45000 });
+        await this.uploadCoordinates(coords, isOnline, force);
+        return coords;
+      } catch {
+        logger.warn('LocationUploader', 'Unable to acquire location for periodic publish');
+        return null;
+      }
+    })();
+    this.publishInFlight = request;
     try {
-      const coords = await getCurrentCaptainLocation({ maxAgeMs: 45000 });
-      await this.uploadCoordinates(coords, isOnline, force);
-      return coords;
-    } catch (error) {
-      logger.warn('LocationUploader', 'Unable to acquire location for periodic publish');
-      return null;
+      return await request;
+    } finally {
+      if (this.publishInFlight === request) this.publishInFlight = null;
     }
   }
 
@@ -141,11 +186,12 @@ export class LocationUploader {
    * Starts periodic foreground polling and attaches background listeners.
    */
   startTracking(isOnline: boolean, hasActiveDelivery = false): void {
-    this.stopTracking();
+    this.clearForegroundTracking();
     this.isOnline = isOnline;
     this.hasActiveDelivery = hasActiveDelivery;
 
     if (!isOnline && !hasActiveDelivery) {
+      this.scheduleBackgroundTracking(false);
       return;
     }
 
@@ -160,19 +206,12 @@ export class LocationUploader {
       this.publishCurrentLocation(this.isOnline);
     }, pollingInterval);
 
-    // Listen to background updates if enabled
+    // Keep the in-process cache current; the TaskManager handler owns server publishing.
     this.unsubscribeBackground = addBackgroundLocationListener(async (coords) => {
-      if (this.isOnline || this.hasActiveDelivery) {
-        await this.uploadCoordinates(coords, this.isOnline);
-      }
+      this.lastCoordinates = coords;
     });
 
-    if (hasActiveDelivery) {
-      startBackgroundLocation({
-        distanceIntervalMeters: this.config.activeDistanceMeters,
-        timeIntervalMs: this.config.activeTimeIntervalMs,
-      }).catch(() => {});
-    }
+    this.scheduleBackgroundTracking(true);
   }
 
   /**
@@ -191,6 +230,13 @@ export class LocationUploader {
    * Stops foreground timer and background updates.
    */
   stopTracking(): void {
+    this.clearForegroundTracking();
+    this.isOnline = false;
+    this.hasActiveDelivery = false;
+    this.scheduleBackgroundTracking(false);
+  }
+
+  private clearForegroundTracking(): void {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
@@ -199,7 +245,33 @@ export class LocationUploader {
       this.unsubscribeBackground();
       this.unsubscribeBackground = null;
     }
-    stopBackgroundLocation().catch(() => {});
+  }
+
+  private scheduleBackgroundTracking(shouldTrack: boolean): void {
+    const revision = ++this.trackingRevision;
+    const accountId = getRuntimeAccountId();
+    const online = this.isOnline;
+    const activeDelivery = this.hasActiveDelivery;
+    this.backgroundOperation = this.backgroundOperation
+      .catch(() => {})
+      .then(async () => {
+        if (revision !== this.trackingRevision) return;
+        if (!shouldTrack || !accountId) {
+          await stopBackgroundLocation();
+          return;
+        }
+        await startBackgroundLocation({
+          accountId,
+          online,
+          activeDelivery,
+          distanceIntervalMeters: activeDelivery
+            ? this.config.activeDistanceMeters
+            : this.config.idleDistanceMeters,
+          timeIntervalMs: activeDelivery
+            ? this.config.activeTimeIntervalMs
+            : this.config.idleTimeIntervalMs,
+        });
+      });
   }
 
   /**

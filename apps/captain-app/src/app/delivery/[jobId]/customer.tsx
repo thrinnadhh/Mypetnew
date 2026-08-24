@@ -7,6 +7,7 @@ import { Button } from '../../../components/Button';
 import { DeliveryTimeline } from '../../../components/DeliveryTimeline';
 import { palette, radii, spacing, typography } from '../../../design/tokens';
 import { useDeliveryStore } from '../../../state/delivery-store';
+import { isUuid } from '../../../utils/uuid';
 
 export default function CustomerDeliveryScreen() {
   const { jobId } = useLocalSearchParams<{ jobId: string }>();
@@ -16,7 +17,7 @@ export default function CustomerDeliveryScreen() {
   const delivery = activeDelivery;
 
   // Authorization Security Guard: Never disclose customer details if unassigned or job mismatch
-  if (!delivery || delivery.jobId !== jobId || !delivery.deliveryAddress) {
+  if (!isUuid(jobId) || !delivery || delivery.jobId !== jobId || !delivery.deliveryAddress) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.unauthorizedContent}>

@@ -8,9 +8,10 @@ import { useDeliveryStore } from '../state/delivery-store';
 
 export default function SplashScreen() {
   const { session, captainProfile, isRestoring, isLoading } = useAuth();
-  const { activeDelivery, restoreActiveDelivery } = useDeliveryStore();
+  const { restoreActiveDelivery } = useDeliveryStore();
 
   useEffect(() => {
+    let cancelled = false;
     if (isRestoring || isLoading) return;
 
     if (!session) {
@@ -37,19 +38,29 @@ export default function SplashScreen() {
     }
 
     if (status === 'ACTIVE') {
-      restoreActiveDelivery().then(() => {
-        if (activeDelivery && activeDelivery.state !== 'DELIVERED') {
-          router.replace(`/delivery/${activeDelivery.jobId}` as any);
+      restoreActiveDelivery().then((restoredDelivery) => {
+        if (cancelled) return;
+        if (
+          restoredDelivery &&
+          restoredDelivery.state !== 'DELIVERED' &&
+          restoredDelivery.state !== 'FAILED'
+        ) {
+          router.replace(`/delivery/${restoredDelivery.jobId}` as any);
         } else {
           router.replace('/(tabs)/home');
         }
       });
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
     // Default fallback
     router.replace('/(tabs)/home');
-  }, [session, captainProfile, isRestoring, isLoading, activeDelivery, restoreActiveDelivery]);
+    return () => {
+      cancelled = true;
+    };
+  }, [session, captainProfile, isRestoring, isLoading, restoreActiveDelivery]);
 
   return (
     <SafeAreaView style={styles.container}>

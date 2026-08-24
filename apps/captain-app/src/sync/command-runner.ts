@@ -1,4 +1,5 @@
 import * as Crypto from 'expo-crypto';
+import { getAuthGeneration, getRuntimeAccountId } from '../auth/session';
 import {
   CommandOutcome,
   CommandType,
@@ -93,9 +94,19 @@ export class CommandRunner {
         'global';
     }
 
+    const runtimeCaptainId = getRuntimeAccountId();
+    if (captainId && runtimeCaptainId && captainId !== runtimeCaptainId) {
+      throw AppError.fromHttp(403, {
+        code: 'COMMAND_SESSION_MISMATCH',
+        message: 'Mutation command captain does not match the active session',
+      });
+    }
+    const effectiveCaptainId = captainId || runtimeCaptainId;
+    const capturedAuthGeneration = runtimeCaptainId ? getAuthGeneration() : null;
+
     // In-flight deduplication mutex scoped to (commandType + resourceType + resourceId)
     // Ensures independent resources (e.g. Offer A and Offer B) execute independently
-    const inFlightKey = `${type}:${resourceType}:${resourceId}`;
+    const inFlightKey = `${effectiveCaptainId || 'anonymous'}:${type}:${resourceType}:${resourceId}`;
     const existingFlight = this.inFlightExecutions.get(inFlightKey);
     if (existingFlight) {
       return existingFlight as Promise<CommandOutcome<TResult>>;
@@ -106,11 +117,22 @@ export class CommandRunner {
       let command: MutationCommand<TPayload> | undefined;
 
       if (existingCommandId) {
-        command = (await commandStore.get(existingCommandId)) as MutationCommand<TPayload> | undefined;
+        command = (await commandStore.get(
+          existingCommandId,
+          effectiveCaptainId,
+        )) as MutationCommand<TPayload> | undefined;
       } else if (existingIdempotencyKey) {
-        command = (await commandStore.getByIdempotencyKey(existingIdempotencyKey)) as MutationCommand<TPayload> | undefined;
+        command = (await commandStore.getByIdempotencyKey(
+          existingIdempotencyKey,
+          effectiveCaptainId,
+        )) as MutationCommand<TPayload> | undefined;
       } else {
-        command = (await commandStore.findActiveCommand(type, resourceType, resourceId)) as MutationCommand<TPayload> | undefined;
+        command = (await commandStore.findActiveCommand(
+          type,
+          resourceType,
+          resourceId,
+          effectiveCaptainId,
+        )) as MutationCommand<TPayload> | undefined;
       }
 
       const currentFingerprint = computePayloadFingerprint(type, resourceType, resourceId, payload);
@@ -131,7 +153,7 @@ export class CommandRunner {
 
       if (!command) {
         if (type === 'UPDATE_AVAILABILITY' && !existingCommandId && !existingIdempotencyKey) {
-          const pendingCommands = await commandStore.listPending();
+          const pendingCommands = await commandStore.listPending(effectiveCaptainId);
           for (const pendingCmd of pendingCommands) {
             if (
               pendingCmd.commandType === 'UPDATE_AVAILABILITY' ||
@@ -151,7 +173,7 @@ export class CommandRunner {
           type,
           resourceType,
           resourceId,
-          captainId: captainId ?? null,
+          captainId: effectiveCaptainId ?? null,
           jobId: jobId ?? null,
           idempotencyKey,
           payload,
@@ -197,6 +219,25 @@ export class CommandRunner {
       try {
         const data = await operation(idempotencyKey);
 
+        if (
+          runtimeCaptainId &&
+          (getRuntimeAccountId() !== runtimeCaptainId ||
+            getAuthGeneration() !== capturedAuthGeneration)
+        ) {
+          return {
+            outcome: 'UNKNOWN',
+            commandId,
+            idempotencyKey,
+            error: new AppError({
+              kind: 'AuthenticationExpired',
+              code: 'STALE_COMMAND_SESSION',
+              message: 'Mutation completed after the authenticated session changed',
+              status: 401,
+              retryable: false,
+            }),
+          };
+        }
+
         command.state = 'ACKNOWLEDGED';
         command.lastErrorCode = null;
         command.lastError = null;
@@ -211,6 +252,25 @@ export class CommandRunner {
         };
       } catch (err: any) {
         const error: AppError = err instanceof AppError ? err : AppError.network(err.message);
+
+        if (
+          runtimeCaptainId &&
+          (getRuntimeAccountId() !== runtimeCaptainId ||
+            getAuthGeneration() !== capturedAuthGeneration)
+        ) {
+          return {
+            outcome: 'UNKNOWN',
+            commandId,
+            idempotencyKey,
+            error: new AppError({
+              kind: 'AuthenticationExpired',
+              code: 'STALE_COMMAND_SESSION',
+              message: 'Mutation response arrived after the authenticated session changed',
+              status: 401,
+              retryable: false,
+            }),
+          };
+        }
 
         command.updatedAt = new Date().toISOString();
         command.lastErrorCode = error.code || error.kind;

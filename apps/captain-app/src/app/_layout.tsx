@@ -1,11 +1,13 @@
-import { Stack } from 'expo-router';
+import { router, Stack, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { AuthProvider } from '../auth/context';
+import { AuthProvider, useAuth } from '../auth/context';
 import { OfflineBanner } from '../components/OfflineBanner';
 import { palette } from '../design/tokens';
+import { CaptainNotificationBridge } from '../notifications/captain-notifications';
+import { authRouteRedirect } from '../navigation/auth-route-guard';
 import { CaptainStoreProvider } from '../state/captain-store';
 import { DeliveryStoreProvider } from '../state/delivery-store';
 import { connectivity } from '../sync/connectivity';
@@ -70,14 +72,43 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <CaptainStoreProvider>
-          <DeliveryStoreProvider>
-            <CaptainAppShell />
-          </DeliveryStoreProvider>
-        </CaptainStoreProvider>
+        <CaptainRuntime />
       </AuthProvider>
     </SafeAreaProvider>
   );
+}
+
+function CaptainRuntime() {
+  const { session, isLoading, isRestoring } = useAuth();
+  return (
+    <CaptainStoreProvider key={session?.accountId || 'logged-out'}>
+      <DeliveryStoreProvider>
+        <AuthNavigationGuard
+          authenticated={!!session}
+          restoring={isLoading || isRestoring}
+        />
+        <CaptainNotificationBridge />
+        <CaptainAppShell />
+      </DeliveryStoreProvider>
+    </CaptainStoreProvider>
+  );
+}
+
+function AuthNavigationGuard({
+  authenticated,
+  restoring,
+}: {
+  authenticated: boolean;
+  restoring: boolean;
+}) {
+  const segments = useSegments();
+
+  useEffect(() => {
+    const redirect = authRouteRedirect(authenticated, restoring, segments[0]);
+    if (redirect) router.replace(redirect);
+  }, [authenticated, restoring, segments]);
+
+  return null;
 }
 
 const styles = StyleSheet.create({

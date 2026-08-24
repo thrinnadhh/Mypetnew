@@ -29,6 +29,8 @@ import `in`.mypetnew.delivery.domain.DispatchPersistence
 import `in`.mypetnew.delivery.domain.DispatchService
 import `in`.mypetnew.delivery.infrastructure.JdbcDispatchPersistence
 import `in`.mypetnew.delivery.infrastructure.RedisCaptainGeoIndex
+import `in`.mypetnew.engagement.domain.NotificationService
+import `in`.mypetnew.engagement.domain.SafeRoute
 import `in`.mypetnew.loyalty.domain.LoyaltyPersistence
 import `in`.mypetnew.loyalty.domain.LoyaltyService
 import `in`.mypetnew.loyalty.infrastructure.JdbcLoyaltyPersistence
@@ -141,7 +143,23 @@ class PersistenceConfiguration {
         persistence: DispatchPersistence,
         geoIndex: CaptainGeoIndex,
         orders: OrderService,
-    ): DispatchService = DispatchService(persistence, geoIndex, orders)
+        notifications: NotificationService,
+    ): DispatchService = DispatchService(
+        persistence,
+        geoIndex,
+        orders,
+        offerNotifier = { offer ->
+            notifications.enqueue(
+                sourceEventId = offer.id,
+                recipientId = offer.captainId,
+                templateVersion = "captain-dispatch-offer-v1",
+                title = "New delivery assignment",
+                body = "Open MyPet Captain to review an available delivery.",
+                route = SafeRoute.CAPTAIN_OFFER,
+                resourceId = offer.id,
+            )
+        },
+    )
 
     @Bean
     fun customerDataPersistence(jdbc: JdbcClient, transactions: TransactionTemplate): CustomerDataPersistence =

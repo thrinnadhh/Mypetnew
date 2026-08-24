@@ -6,7 +6,15 @@ export interface LocationPermissionStatus {
   state: LocationPermissionState;
   foregroundGranted: boolean;
   backgroundGranted: boolean;
+  preciseGranted: boolean | null;
   canAskAgain: boolean;
+}
+
+function precisePermission(response: any): boolean | null {
+  const accuracy = response?.ios?.accuracy ?? response?.android?.accuracy;
+  if (accuracy === 'full' || accuracy === 'fine') return true;
+  if (accuracy === 'reduced' || accuracy === 'coarse' || accuracy === 'none') return false;
+  return null;
 }
 
 export function computeLocationPermissionState(
@@ -14,11 +22,13 @@ export function computeLocationPermissionState(
   backgroundGranted: boolean,
   canAskAgain: boolean,
   checked = true,
+  preciseGranted: boolean | null = null,
 ): LocationPermissionState {
   if (!checked) return 'UNKNOWN';
   if (!foregroundGranted) {
     return 'DENIED';
   }
+  if (preciseGranted === false) return 'APPROXIMATE_ONLY';
   if (backgroundGranted) {
     return 'BACKGROUND_ALLOWED';
   }
@@ -32,12 +42,20 @@ export async function checkLocationPermissions(): Promise<LocationPermissionStat
 
     const foregroundGranted = !!(foreground && (foreground.granted || foreground.status === 'granted'));
     const backgroundGranted = !!(background && (background.granted || background.status === 'granted'));
+    const preciseGranted = precisePermission(foreground);
     const canAskAgain = foreground?.canAskAgain ?? true;
 
     return {
-      state: computeLocationPermissionState(foregroundGranted, backgroundGranted, canAskAgain, true),
+      state: computeLocationPermissionState(
+        foregroundGranted,
+        backgroundGranted,
+        canAskAgain,
+        true,
+        preciseGranted,
+      ),
       foregroundGranted,
       backgroundGranted,
+      preciseGranted,
       canAskAgain,
     };
   } catch (error) {
@@ -46,6 +64,7 @@ export async function checkLocationPermissions(): Promise<LocationPermissionStat
       state: 'DENIED',
       foregroundGranted: false,
       backgroundGranted: false,
+      preciseGranted: null,
       canAskAgain: true,
     };
   }
@@ -65,11 +84,19 @@ export async function requestForegroundLocationPermission(): Promise<LocationPer
       const background = await Location.getBackgroundPermissionsAsync();
       backgroundGranted = !!(background && (background.granted || background.status === 'granted'));
     }
+    const preciseGranted = precisePermission(foreground);
 
     return {
-      state: computeLocationPermissionState(foregroundGranted, backgroundGranted, foreground.canAskAgain, true),
+      state: computeLocationPermissionState(
+        foregroundGranted,
+        backgroundGranted,
+        foreground.canAskAgain,
+        true,
+        preciseGranted,
+      ),
       foregroundGranted,
       backgroundGranted,
+      preciseGranted,
       canAskAgain: foreground.canAskAgain,
     };
   } catch (error) {
@@ -78,6 +105,7 @@ export async function requestForegroundLocationPermission(): Promise<LocationPer
       state: 'DENIED',
       foregroundGranted: false,
       backgroundGranted: false,
+      preciseGranted: null,
       canAskAgain: false,
     };
   }
@@ -99,19 +127,34 @@ export async function requestBackgroundLocationPermission(): Promise<LocationPer
   try {
     const background = await Location.requestBackgroundPermissionsAsync();
     const backgroundGranted = !!(background && (background.granted || background.status === 'granted'));
+    const preciseGranted = current.preciseGranted;
 
     return {
-      state: computeLocationPermissionState(true, backgroundGranted, background.canAskAgain, true),
+      state: computeLocationPermissionState(
+        true,
+        backgroundGranted,
+        background.canAskAgain,
+        true,
+        preciseGranted,
+      ),
       foregroundGranted: true,
       backgroundGranted,
+      preciseGranted,
       canAskAgain: background.canAskAgain,
     };
   } catch (error) {
     logger.error('Permissions', 'Failed to request background location permission', error);
     return {
-      state: 'FOREGROUND_ONLY',
+      state: computeLocationPermissionState(
+        true,
+        false,
+        false,
+        true,
+        current.preciseGranted,
+      ),
       foregroundGranted: true,
       backgroundGranted: false,
+      preciseGranted: current.preciseGranted,
       canAskAgain: false,
     };
   }

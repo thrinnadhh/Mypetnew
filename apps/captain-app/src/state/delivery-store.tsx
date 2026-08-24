@@ -1,5 +1,14 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from 'react';
 import { useAuth } from '../auth/context';
+import { getAuthGeneration, getRuntimeAccountId } from '../auth/session';
 import { CommandOutcome } from '../domain/command';
 import {
   DeliveryJob,
@@ -25,12 +34,13 @@ interface DeliveryStoreContextType {
   isConfirmingDelivery: boolean;
   deliveryError: AppError | null;
   lastCommandOutcome: CommandOutcome<any> | null;
-  refreshOffers: () => Promise<void>;
+  refreshOffers: () => Promise<DispatchOffer[]>;
+  revalidateOffer: (offerId: string) => Promise<boolean | null>;
   acceptOffer: (offerId: string) => Promise<CommandOutcome<DispatchAssignment>>;
   rejectOffer: (offerId: string) => Promise<CommandOutcome<DispatchAssignment>>;
   confirmPickup: (jobId: string, proof?: DeliveryProof) => Promise<CommandOutcome<Partial<DeliveryJob>>>;
   confirmDelivery: (jobId: string, proof?: DeliveryProof) => Promise<CommandOutcome<Partial<DeliveryJob>>>;
-  restoreActiveDelivery: () => Promise<void>;
+  restoreActiveDelivery: () => Promise<DeliveryJob | null>;
   dismissError: () => void;
 }
 
@@ -47,53 +57,99 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isConfirmingDelivery, setIsConfirmingDelivery] = useState(false);
   const [deliveryError, setDeliveryError] = useState<AppError | null>(null);
   const [lastCommandOutcome, setLastCommandOutcome] = useState<CommandOutcome<any> | null>(null);
+  const offersRequestSequence = useRef(0);
+  const restoreRequestSequence = useRef(0);
+  const offerMutationPending = useRef(false);
+  const pickupMutationPending = useRef(false);
+  const deliveryMutationPending = useRef(false);
 
-  const refreshOffers = useCallback(async () => {
+  const captureSession = useCallback(() => ({
+    accountId: getRuntimeAccountId(),
+    generation: getAuthGeneration(),
+  }), []);
+
+  const sessionIsCurrent = useCallback((captured: ReturnType<typeof captureSession>) =>
+    !!captured.accountId &&
+    getRuntimeAccountId() === captured.accountId &&
+    getAuthGeneration() === captured.generation, [captureSession]);
+
+  const applyAuthoritativeOffers = useCallback((offers: DispatchOffer[]) => {
+    setPendingOffers(offers);
+    if (offers.length > 0 && !activeDelivery) {
+      setActiveOffer(offers[0]);
+    } else {
+      setActiveOffer(null);
+    }
+  }, [activeDelivery]);
+
+  const refreshOffers = useCallback(async (): Promise<DispatchOffer[]> => {
+    const requestSequence = ++offersRequestSequence.current;
+    const capturedSession = captureSession();
     if (!isOnline) {
       setPendingOffers([]);
       setActiveOffer(null);
-      return;
+      return [];
     }
 
     const result = await dispatchRepository.getPendingOffers();
-    if (result.success) {
-      setPendingOffers(result.data);
-      if (result.data.length > 0 && !activeDelivery) {
-        setActiveOffer(result.data[0]);
-      } else {
-        setActiveOffer(null);
-      }
+    if (
+      result.success &&
+      requestSequence === offersRequestSequence.current &&
+      sessionIsCurrent(capturedSession)
+    ) {
+      applyAuthoritativeOffers(result.data);
+      return result.data;
     }
-  }, [isOnline, activeDelivery]);
+    return [];
+  }, [isOnline, captureSession, sessionIsCurrent, applyAuthoritativeOffers]);
 
-  const restoreActiveDelivery = useCallback(async () => {
+  const revalidateOffer = useCallback(async (offerId: string): Promise<boolean | null> => {
+    const requestSequence = ++offersRequestSequence.current;
+    const capturedSession = captureSession();
+    const result = await dispatchRepository.getPendingOffers();
+    if (
+      requestSequence !== offersRequestSequence.current ||
+      !sessionIsCurrent(capturedSession)
+    ) {
+      return null;
+    }
+    if (!result.success) return null;
+    applyAuthoritativeOffers(result.data);
+    return result.data.some((offer) => offer.offerId === offerId);
+  }, [captureSession, sessionIsCurrent, applyAuthoritativeOffers]);
+
+  const restoreActiveDelivery = useCallback(async (): Promise<DeliveryJob | null> => {
+    const requestSequence = ++restoreRequestSequence.current;
+    const capturedSession = captureSession();
     if (!session) {
       setActiveDelivery(null);
-      return;
+      return null;
     }
 
     const result = await deliveryRepository.getActiveDelivery();
+    if (
+      requestSequence !== restoreRequestSequence.current ||
+      !sessionIsCurrent(capturedSession)
+    ) {
+      return null;
+    }
+
+    let serverJob: DeliveryJob | null = null;
     if (result.success) {
-      const serverJob = result.data;
-      if (serverJob) {
-        setActiveDelivery((current) => {
-          if (!current) return serverJob;
-          // Protect monotonic progression against stale out-of-order responses
-          if (isDeliveryStateMoreAdvanced(current.state, serverJob.state)) {
-            return current;
-          }
-          return serverJob;
-        });
-      }
+      serverJob = result.data;
+      // Explicit reconciliation is server-authoritative, including clearing a stale local job.
+      setActiveDelivery(serverJob);
     }
     // Also trigger background reconciliation for any pending/unknown mutations
     await reconciliationService.reconcile();
-  }, [session]);
+    return sessionIsCurrent(capturedSession) ? serverJob : null;
+  }, [session, captureSession, sessionIsCurrent]);
 
   // Subscribe to reconciliation events
   useEffect(() => {
+    const capturedSession = captureSession();
     const unsubscribe = reconciliationService.subscribe((updatedJob) => {
-      if (updatedJob !== undefined) {
+      if (updatedJob !== undefined && sessionIsCurrent(capturedSession)) {
         setActiveDelivery((current) => {
           if (!updatedJob) return null;
           if (!current) return updatedJob as DeliveryJob;
@@ -105,7 +161,7 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       }
     });
     return unsubscribe;
-  }, []);
+  }, [session?.accountId, captureSession, sessionIsCurrent]);
 
   useEffect(() => {
     let mounted = true;
@@ -120,16 +176,35 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [restoreActiveDelivery]);
 
   useEffect(() => {
-    locationUploader.setActiveDelivery(!!activeDelivery);
+    const isTrackableDelivery =
+      !!activeDelivery && activeDelivery.state !== 'DELIVERED' && activeDelivery.state !== 'FAILED';
+    locationUploader.setActiveDelivery(isTrackableDelivery);
   }, [activeDelivery]);
 
   const acceptOffer = useCallback(async (offerId: string): Promise<CommandOutcome<DispatchAssignment>> => {
+    if (activeDelivery && activeDelivery.state !== 'DELIVERED' && activeDelivery.state !== 'FAILED') {
+      throw AppError.fromHttp(409, {
+        code: 'ACTIVE_DELIVERY_EXISTS',
+        message: 'Complete or reconcile the active delivery before accepting another assignment',
+      });
+    }
+    if (offerMutationPending.current) {
+      throw AppError.fromHttp(409, {
+        code: 'OFFER_RESPONSE_IN_PROGRESS',
+        message: 'An assignment response is already in progress',
+      });
+    }
+    offerMutationPending.current = true;
+    const capturedSession = captureSession();
     setIsRespondingOffer(true);
     setDeliveryError(null);
 
-    const outcome = await dispatchRepository.respondToOffer(offerId, 'ACCEPT');
+    const outcome = await dispatchRepository.respondToOffer(offerId, 'ACCEPT').finally(() => {
+      offerMutationPending.current = false;
+      if (sessionIsCurrent(capturedSession)) setIsRespondingOffer(false);
+    });
+    if (!sessionIsCurrent(capturedSession)) return outcome;
     setLastCommandOutcome(outcome);
-    setIsRespondingOffer(false);
 
     if (outcome.outcome === 'ACKNOWLEDGED') {
       const assignment = outcome.data;
@@ -162,15 +237,26 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     return outcome;
-  }, [activeOffer]);
+  }, [activeDelivery, activeOffer, captureSession, sessionIsCurrent]);
 
   const rejectOffer = useCallback(async (offerId: string): Promise<CommandOutcome<DispatchAssignment>> => {
+    if (offerMutationPending.current) {
+      throw AppError.fromHttp(409, {
+        code: 'OFFER_RESPONSE_IN_PROGRESS',
+        message: 'An assignment response is already in progress',
+      });
+    }
+    offerMutationPending.current = true;
+    const capturedSession = captureSession();
     setIsRespondingOffer(true);
     setDeliveryError(null);
 
-    const outcome = await dispatchRepository.respondToOffer(offerId, 'REJECT');
+    const outcome = await dispatchRepository.respondToOffer(offerId, 'REJECT').finally(() => {
+      offerMutationPending.current = false;
+      if (sessionIsCurrent(capturedSession)) setIsRespondingOffer(false);
+    });
+    if (!sessionIsCurrent(capturedSession)) return outcome;
     setLastCommandOutcome(outcome);
-    setIsRespondingOffer(false);
 
     setPendingOffers((prev) => prev.filter((o) => o.offerId !== offerId));
     if (activeOffer?.offerId === offerId) {
@@ -178,21 +264,44 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     return outcome;
-  }, [activeOffer]);
+  }, [activeOffer, captureSession, sessionIsCurrent]);
 
   const confirmPickup = useCallback(async (
     jobId: string,
     proof?: DeliveryProof,
   ): Promise<CommandOutcome<Partial<DeliveryJob>>> => {
+    if (!activeDelivery || activeDelivery.jobId !== jobId) {
+      throw AppError.fromHttp(403, {
+        code: 'DELIVERY_JOB_SESSION_MISMATCH',
+        message: 'This delivery is not the active assignment for the current session',
+      });
+    }
+    if (!['ASSIGNED', 'ARRIVING_PICKUP', 'PICKUP_CONFIRMING'].includes(activeDelivery.state)) {
+      throw AppError.fromHttp(409, {
+        code: 'INVALID_PICKUP_TRANSITION',
+        message: 'Pickup cannot be confirmed from the current delivery state',
+      });
+    }
+    if (pickupMutationPending.current) {
+      throw AppError.fromHttp(409, {
+        code: 'PICKUP_CONFIRMATION_IN_PROGRESS',
+        message: 'Pickup confirmation is already in progress',
+      });
+    }
+    pickupMutationPending.current = true;
+    const capturedSession = captureSession();
     setIsConfirmingPickup(true);
     setDeliveryError(null);
 
     // Transition to intermediate state: PICKUP_CONFIRMING
     setActiveDelivery((prev) => (prev ? { ...prev, state: 'PICKUP_CONFIRMING' } : null));
 
-    const outcome = await deliveryRepository.markPickedUp(jobId, proof);
+    const outcome = await deliveryRepository.markPickedUp(jobId, proof).finally(() => {
+      pickupMutationPending.current = false;
+      if (sessionIsCurrent(capturedSession)) setIsConfirmingPickup(false);
+    });
+    if (!sessionIsCurrent(capturedSession)) return outcome;
     setLastCommandOutcome(outcome);
-    setIsConfirmingPickup(false);
 
     if (outcome.outcome === 'ACKNOWLEDGED') {
       setActiveDelivery((prev) => (prev ? {
@@ -223,21 +332,44 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     return outcome;
-  }, []);
+  }, [activeDelivery, captureSession, sessionIsCurrent]);
 
   const confirmDelivery = useCallback(async (
     jobId: string,
     proof?: DeliveryProof,
   ): Promise<CommandOutcome<Partial<DeliveryJob>>> => {
+    if (!activeDelivery || activeDelivery.jobId !== jobId) {
+      throw AppError.fromHttp(403, {
+        code: 'DELIVERY_JOB_SESSION_MISMATCH',
+        message: 'This delivery is not the active assignment for the current session',
+      });
+    }
+    if (!['PICKED_UP', 'ARRIVING_CUSTOMER', 'DELIVERY_CONFIRMING'].includes(activeDelivery.state)) {
+      throw AppError.fromHttp(409, {
+        code: 'INVALID_DELIVERY_TRANSITION',
+        message: 'Delivery cannot be completed before pickup is confirmed',
+      });
+    }
+    if (deliveryMutationPending.current) {
+      throw AppError.fromHttp(409, {
+        code: 'DELIVERY_CONFIRMATION_IN_PROGRESS',
+        message: 'Delivery confirmation is already in progress',
+      });
+    }
+    deliveryMutationPending.current = true;
+    const capturedSession = captureSession();
     setIsConfirmingDelivery(true);
     setDeliveryError(null);
 
     // Transition to intermediate state: DELIVERY_CONFIRMING
     setActiveDelivery((prev) => (prev ? { ...prev, state: 'DELIVERY_CONFIRMING' } : null));
 
-    const outcome = await deliveryRepository.markDelivered(jobId, proof);
+    const outcome = await deliveryRepository.markDelivered(jobId, proof).finally(() => {
+      deliveryMutationPending.current = false;
+      if (sessionIsCurrent(capturedSession)) setIsConfirmingDelivery(false);
+    });
+    if (!sessionIsCurrent(capturedSession)) return outcome;
     setLastCommandOutcome(outcome);
-    setIsConfirmingDelivery(false);
 
     if (outcome.outcome === 'ACKNOWLEDGED') {
       setActiveDelivery((prev) => (prev ? {
@@ -268,7 +400,7 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     return outcome;
-  }, []);
+  }, [activeDelivery, captureSession, sessionIsCurrent]);
 
   const dismissError = useCallback(() => {
     setDeliveryError(null);
@@ -285,6 +417,7 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     deliveryError,
     lastCommandOutcome,
     refreshOffers,
+    revalidateOffer,
     acceptOffer,
     rejectOffer,
     confirmPickup,
@@ -301,6 +434,7 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     deliveryError,
     lastCommandOutcome,
     refreshOffers,
+    revalidateOffer,
     acceptOffer,
     rejectOffer,
     confirmPickup,

@@ -1,8 +1,122 @@
+import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { CommandType, MutationCommand } from '../domain/command';
 import { AppError } from '../domain/result';
+import { createNativeCommandStorage } from './durable-command-storage';
 
 export const COMMAND_STORE_KEY = 'mypetnew.captain.mutation_journal.v2';
+const SENSITIVE_COMMAND_KEY_PREFIX = 'mypetnew.captain.command_proof.v1.';
+const SENSITIVE_COMMAND_INDEX_KEY = 'mypetnew.captain.command_proof_index.v1';
+const webSensitiveValues = new Map<string, string>();
+
+function isProofCommand(commandType: CommandType): boolean {
+  return commandType === 'MARK_PICKED_UP' || commandType === 'MARK_DELIVERED';
+}
+
+function sensitiveKey(commandId: string): string {
+  return `${SENSITIVE_COMMAND_KEY_PREFIX}${commandId}`;
+}
+
+async function readSensitiveIndex(): Promise<Set<string>> {
+  if (Platform.OS === 'web') return new Set(webSensitiveValues.keys());
+  try {
+    const raw = await SecureStore.getItemAsync(SENSITIVE_COMMAND_INDEX_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? new Set(parsed.filter((value): value is string => typeof value === 'string'))
+      : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+async function writeSensitiveIndex(commandIds: Set<string>): Promise<void> {
+  if (Platform.OS === 'web') return;
+  if (commandIds.size === 0) {
+    await SecureStore.deleteItemAsync(SENSITIVE_COMMAND_INDEX_KEY);
+    return;
+  }
+  await SecureStore.setItemAsync(SENSITIVE_COMMAND_INDEX_KEY, JSON.stringify([...commandIds]));
+}
+
+async function setSensitiveValue(commandId: string, value: string): Promise<void> {
+  if (Platform.OS === 'web') {
+    webSensitiveValues.set(commandId, value);
+    return;
+  }
+  const commandIds = await readSensitiveIndex();
+  commandIds.add(commandId);
+  // Index first so a partial storage failure remains discoverable for logout cleanup.
+  await writeSensitiveIndex(commandIds);
+  try {
+    await SecureStore.setItemAsync(sensitiveKey(commandId), value);
+  } catch (error) {
+    commandIds.delete(commandId);
+    await writeSensitiveIndex(commandIds).catch(() => {});
+    throw error;
+  }
+}
+
+async function getSensitiveValue(commandId: string): Promise<string | null> {
+  if (Platform.OS === 'web') return webSensitiveValues.get(commandId) ?? null;
+  return SecureStore.getItemAsync(sensitiveKey(commandId));
+}
+
+async function deleteSensitiveValue(commandId: string): Promise<void> {
+  if (Platform.OS === 'web') {
+    webSensitiveValues.delete(commandId);
+    return;
+  }
+  try {
+    await SecureStore.deleteItemAsync(sensitiveKey(commandId));
+    const commandIds = await readSensitiveIndex();
+    commandIds.delete(commandId);
+    await writeSensitiveIndex(commandIds);
+  } catch {
+    // Best-effort removal during terminal transition/logout cleanup.
+  }
+}
+
+async function clearSensitiveValues(knownCommandIds: Iterable<string>): Promise<void> {
+  if (Platform.OS === 'web') {
+    webSensitiveValues.clear();
+    return;
+  }
+  const indexedCommandIds = await readSensitiveIndex();
+  for (const commandId of knownCommandIds) indexedCommandIds.add(commandId);
+  await Promise.all(
+    [...indexedCommandIds].map((commandId) =>
+      Promise.resolve(SecureStore.deleteItemAsync(sensitiveKey(commandId))).catch(() => {}),
+    ),
+  );
+  await Promise.resolve(SecureStore.deleteItemAsync(SENSITIVE_COMMAND_INDEX_KEY)).catch(() => {});
+}
+
+function proofPayload(payload: unknown): Record<string, any> | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const proof = (payload as Record<string, any>).proof;
+  return proof && typeof proof === 'object' ? proof : null;
+}
+
+function redactProofPayload(payload: unknown, requiresPinReentry: boolean): unknown {
+  if (!payload || typeof payload !== 'object') return payload;
+  const current = payload as Record<string, any>;
+  const proof = proofPayload(payload);
+  if (!proof) return payload;
+  const { pinCode: _pinCode, ...safeProof } = proof;
+  return {
+    ...current,
+    proof: {
+      ...safeProof,
+      ...(requiresPinReentry ? { requiresPinReentry: true } : {}),
+    },
+  };
+}
+
+export function commandRequiresPinReentry(command: MutationCommand): boolean {
+  return proofPayload(command.payload)?.requiresPinReentry === true;
+}
 
 export interface DurableStorageDriver {
   getItem(key: string): Promise<string | null>;
@@ -13,33 +127,47 @@ export interface DurableStorageDriver {
 
 export class DefaultStorageDriver implements DurableStorageDriver {
   private memoryStore = new Map<string, string>();
+  private nativeStore = Platform.OS === 'web' ? null : createNativeCommandStorage();
 
   async getItem(key: string): Promise<string | null> {
-    if (typeof localStorage !== 'undefined') {
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
       return localStorage.getItem(key);
     }
+    if (this.nativeStore) return this.nativeStore.getItem(key);
     return this.memoryStore.get(key) ?? null;
   }
 
   async setItem(key: string, value: string): Promise<void> {
-    if (typeof localStorage !== 'undefined') {
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
       localStorage.setItem(key, value);
+      return;
+    }
+    if (this.nativeStore) {
+      await this.nativeStore.setItem(key, value);
       return;
     }
     this.memoryStore.set(key, value);
   }
 
   async removeItem(key: string): Promise<void> {
-    if (typeof localStorage !== 'undefined') {
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
       localStorage.removeItem(key);
+      return;
+    }
+    if (this.nativeStore) {
+      await this.nativeStore.removeItem(key);
       return;
     }
     this.memoryStore.delete(key);
   }
 
   async clear(): Promise<void> {
-    if (typeof localStorage !== 'undefined') {
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
       localStorage.removeItem(COMMAND_STORE_KEY);
+      return;
+    }
+    if (this.nativeStore) {
+      await this.nativeStore.removeItem(COMMAND_STORE_KEY);
       return;
     }
     this.memoryStore.clear();
@@ -108,6 +236,17 @@ export class CommandStore {
           rawCmd.captainId ||
           'global';
 
+        let payload = rawCmd.payload;
+        if (isProofCommand(cmdType) && proofPayload(payload)?.requiresPinReentry === true) {
+          const pinCode = await getSensitiveValue(cmdId).catch(() => null);
+          if (pinCode) {
+            const current = payload as Record<string, any>;
+            const proof = proofPayload(payload) as Record<string, any>;
+            const { requiresPinReentry: _requiresPinReentry, ...hydratedProof } = proof;
+            payload = { ...current, proof: { ...hydratedProof, pinCode } };
+          }
+        }
+
         const cmd: MutationCommand = {
           commandId: cmdId,
           id: cmdId,
@@ -118,7 +257,7 @@ export class CommandStore {
           captainId: rawCmd.captainId ?? null,
           jobId: rawCmd.jobId ?? null,
           idempotencyKey: rawCmd.idempotencyKey,
-          payload: rawCmd.payload,
+          payload,
           payloadFingerprint: rawCmd.payloadFingerprint || '',
           createdAt: rawCmd.createdAt || new Date().toISOString(),
           lastAttemptAt: rawCmd.lastAttemptAt ?? null,
@@ -138,9 +277,28 @@ export class CommandStore {
   }
 
   private async persist(): Promise<void> {
-    const payload = JSON.stringify(Array.from(this.commands.values()));
+    const persistedCommands: MutationCommand[] = [];
+    const sensitiveValuesToDelete: string[] = [];
+    for (const command of this.commands.values()) {
+      const proof = proofPayload(command.payload);
+      const active = command.state === 'PENDING' || command.state === 'SENDING' || command.state === 'UNKNOWN';
+      if (isProofCommand(command.commandType) && active && typeof proof?.pinCode === 'string') {
+        await setSensitiveValue(command.commandId, proof.pinCode);
+        persistedCommands.push({
+          ...command,
+          payload: redactProofPayload(command.payload, true),
+        });
+      } else {
+        if (isProofCommand(command.commandType) && !active) {
+          sensitiveValuesToDelete.push(command.commandId);
+        }
+        persistedCommands.push(command);
+      }
+    }
+    const payload = JSON.stringify(persistedCommands);
     // Storage errors MUST propagate and block execution; NEVER swallow storage failure
     await this.storageDriver.setItem(COMMAND_STORE_KEY, payload);
+    for (const commandId of sensitiveValuesToDelete) await deleteSensitiveValue(commandId);
   }
 
   async save(command: MutationCommand): Promise<void> {
@@ -167,6 +325,10 @@ export class CommandStore {
       command.captainId ||
       'global';
 
+    const terminal =
+      command.state === 'ACKNOWLEDGED' ||
+      command.state === 'REJECTED' ||
+      command.state === 'SUPERSEDED';
     const normalized: MutationCommand = {
       ...command,
       commandId: cmdId,
@@ -175,6 +337,9 @@ export class CommandStore {
       type: cmdType,
       resourceType,
       resourceId,
+      payload: terminal && isProofCommand(cmdType)
+        ? redactProofPayload(command.payload, false)
+        : command.payload,
       updatedAt: new Date().toISOString(),
     };
 
@@ -212,18 +377,27 @@ export class CommandStore {
     }
   }
 
-  async get(commandId: string): Promise<MutationCommand | undefined> {
+  async get(commandId: string, captainId?: string | null): Promise<MutationCommand | undefined> {
     await this.load();
-    return this.commands.get(commandId);
+    const command = this.commands.get(commandId);
+    if (captainId && command?.captainId !== captainId) return undefined;
+    return command;
   }
 
-  async getByIdempotencyKey(idempotencyKey: string): Promise<MutationCommand | undefined> {
+  async getByIdempotencyKey(
+    idempotencyKey: string,
+    captainId?: string | null,
+  ): Promise<MutationCommand | undefined> {
     await this.load();
     const cmdId = this.idempotencyIndex.get(idempotencyKey);
     if (cmdId) {
-      return this.commands.get(cmdId);
+      const command = this.commands.get(cmdId);
+      if (!captainId || command?.captainId === captainId) return command;
+      return undefined;
     }
-    return Array.from(this.commands.values()).find((cmd) => cmd.idempotencyKey === idempotencyKey);
+    return Array.from(this.commands.values()).find(
+      (cmd) => cmd.idempotencyKey === idempotencyKey && (!captainId || cmd.captainId === captainId),
+    );
   }
 
   /**
@@ -234,6 +408,7 @@ export class CommandStore {
     commandType: CommandType,
     resourceType: string,
     resourceId: string,
+    captainId?: string | null,
   ): Promise<MutationCommand | undefined> {
     await this.load();
     const activeStates = new Set(['PENDING', 'SENDING', 'UNKNOWN']);
@@ -243,6 +418,7 @@ export class CommandStore {
         cmd.commandType === commandType &&
         cmd.resourceType === resourceType &&
         cmd.resourceId === resourceId &&
+        (!captainId || cmd.captainId === captainId) &&
         activeStates.has(cmd.state),
     );
   }
@@ -254,6 +430,7 @@ export class CommandStore {
   async getByJobAndType(
     jobId: string | null | undefined,
     commandType: CommandType,
+    captainId?: string | null,
   ): Promise<MutationCommand | undefined> {
     await this.load();
     const activeStates = new Set(['PENDING', 'SENDING', 'UNKNOWN']);
@@ -262,6 +439,7 @@ export class CommandStore {
       (cmd) =>
         (jobId ? cmd.jobId === jobId || cmd.resourceId === jobId : !cmd.jobId) &&
         (cmd.commandType === commandType || cmd.type === commandType) &&
+        (!captainId || cmd.captainId === captainId) &&
         activeStates.has(cmd.state),
     );
 
@@ -269,15 +447,19 @@ export class CommandStore {
     return matching.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
   }
 
-  async listPending(): Promise<MutationCommand[]> {
+  async listPending(captainId?: string | null): Promise<MutationCommand[]> {
     await this.load();
     const activeStates = new Set(['PENDING', 'SENDING', 'UNKNOWN']);
-    return Array.from(this.commands.values()).filter((cmd) => activeStates.has(cmd.state));
+    return Array.from(this.commands.values()).filter(
+      (cmd) => activeStates.has(cmd.state) && (!captainId || cmd.captainId === captainId),
+    );
   }
 
-  async listAll(): Promise<MutationCommand[]> {
+  async listAll(captainId?: string | null): Promise<MutationCommand[]> {
     await this.load();
-    return Array.from(this.commands.values());
+    return Array.from(this.commands.values()).filter(
+      (command) => !captainId || command.captainId === captainId,
+    );
   }
 
   async remove(commandId: string): Promise<void> {
@@ -287,10 +469,17 @@ export class CommandStore {
       this.idempotencyIndex.delete(cmd.idempotencyKey);
     }
     this.commands.delete(commandId);
+    await deleteSensitiveValue(commandId);
     await this.persist();
   }
 
   async clear(): Promise<void> {
+    try {
+      await this.load();
+    } catch {
+      // Clearing a corrupted journal must still remain possible.
+    }
+    await clearSensitiveValues(this.commands.keys());
     this.commands.clear();
     this.idempotencyIndex.clear();
     this.initialized = true;

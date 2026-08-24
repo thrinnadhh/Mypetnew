@@ -13,7 +13,7 @@ export default function ProfileTabScreen() {
   const { activeDelivery } = useDelivery();
 
   const handleLogout = () => {
-    if (activeDelivery) {
+    if (activeDelivery || captainProfile?.busy) {
       Alert.alert(
         'Active Delivery in Progress',
         'You have an active delivery assigned. Please complete the delivery before logging out.',

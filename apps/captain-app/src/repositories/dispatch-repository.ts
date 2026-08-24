@@ -76,6 +76,8 @@ export class DispatchRepository {
           orderId: res.orderId,
           outletId: res.outletId,
           outletName: res.outletName || 'Merchant Store',
+          originLatitude: res.originLatitude ?? undefined,
+          originLongitude: res.originLongitude ?? undefined,
           deliveryAddress: {
             addressId: res.deliveryAddress.addressId,
             recipientName: res.deliveryAddress.recipientName,

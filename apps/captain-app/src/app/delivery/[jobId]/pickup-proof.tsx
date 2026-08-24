@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -13,6 +13,7 @@ import { Button } from '../../../components/Button';
 import { ProofCodeInput } from '../../../components/ProofCodeInput';
 import { palette, spacing, typography } from '../../../design/tokens';
 import { useDeliveryStore } from '../../../state/delivery-store';
+import { isUuid } from '../../../utils/uuid';
 
 export default function PickupProofVerificationScreen() {
   const { jobId } = useLocalSearchParams<{ jobId: string }>();
@@ -23,10 +24,13 @@ export default function PickupProofVerificationScreen() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const delivery = activeDelivery;
-  if (!delivery) {
-    router.replace('/(tabs)/home');
-    return null;
-  }
+  useEffect(() => {
+    if (!isUuid(jobId) || !delivery || delivery.jobId !== jobId) {
+      router.replace('/(tabs)/home');
+    }
+  }, [jobId, delivery]);
+
+  if (!isUuid(jobId) || !delivery || delivery.jobId !== jobId) return null;
 
   const handleConfirmPickup = async () => {
     setError(null);
@@ -91,7 +95,7 @@ export default function PickupProofVerificationScreen() {
             />
 
             <Button
-              disabled={loading}
+              disabled={loading || code.length !== 4 || delivery.state === 'UNKNOWN'}
               loading={loading}
               onPress={handleConfirmPickup}
               style={styles.confirmBtn}

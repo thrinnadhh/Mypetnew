@@ -30,10 +30,14 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      "expo-notifications",
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Allow MyPet Captain to use your location for delivery assignments."
+          "locationAlwaysAndWhenInUsePermission": "Allow MyPet Captain to use your location for delivery assignments.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ]
     ],

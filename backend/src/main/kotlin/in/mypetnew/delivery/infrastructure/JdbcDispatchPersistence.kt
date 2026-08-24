@@ -42,7 +42,7 @@ class JdbcDispatchPersistence(
         lastLocationAt: Instant?,
     ): CaptainDeliveryState = inTransaction {
         requireCaptainAccount(captainId)
-        jdbc.update(
+        val updated = jdbc.update(
             """
             INSERT INTO mypet.captain_delivery_state(
                 captain_id, approved, online, busy, last_location_at, updated_at
@@ -51,11 +51,28 @@ class JdbcDispatchPersistence(
             SET online = EXCLUDED.online,
                 last_location_at = COALESCE(EXCLUDED.last_location_at, mypet.captain_delivery_state.last_location_at),
                 updated_at = CURRENT_TIMESTAMP
+            WHERE EXCLUDED.online
+               OR (
+                    NOT mypet.captain_delivery_state.busy
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM mypet.dispatch_job active_job
+                        WHERE active_job.assigned_captain_id = EXCLUDED.captain_id
+                          AND active_job.status IN ('ASSIGNED', 'PICKED_UP')
+                    )
+               )
             """.trimIndent(),
             captainId,
             online,
             lastLocationAt?.let(Timestamp::from),
         )
+        if (updated != 1 && !online) {
+            throw DomainException(
+                "CAPTAIN_ACTIVE_DELIVERY",
+                "A captain with an active delivery cannot go offline",
+            )
+        }
+        if (updated != 1) unavailable()
         captainState(captainId) ?: unavailable()
     }
 
@@ -78,6 +95,17 @@ class JdbcDispatchPersistence(
         SELECT captain_id, approved, online, busy, last_location_at
         FROM mypet.captain_delivery_state
         WHERE captain_id = ?
+        """.trimIndent(),
+        { result, _ -> captain(result) },
+        captainId,
+    ).singleOrNull()
+
+    override fun lockCaptainState(captainId: UUID): CaptainDeliveryState? = jdbc.query(
+        """
+        SELECT captain_id, approved, online, busy, last_location_at
+        FROM mypet.captain_delivery_state
+        WHERE captain_id = ?
+        FOR UPDATE
         """.trimIndent(),
         { result, _ -> captain(result) },
         captainId,

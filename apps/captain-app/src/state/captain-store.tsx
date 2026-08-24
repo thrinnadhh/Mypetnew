@@ -5,9 +5,11 @@ import React, {
   useState,
   useCallback,
   useMemo,
+  useRef,
 } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import { useAuth } from '../auth/context';
+import { getAuthGeneration, getRuntimeAccountId } from '../auth/session';
 import {
   CaptainPresence,
   CaptainProfile,
@@ -65,6 +67,7 @@ export const CaptainStoreProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const [isUpdatingPresence, setIsUpdatingPresence] = useState(false);
   const [presenceError, setPresenceError] = useState<AppError | null>(null);
   const [isNetworkConnected, setIsNetworkConnected] = useState(() => connectivity.online);
+  const presenceMutationPending = useRef(false);
 
   // Synchronize network connectivity listener
   useEffect(() => {
@@ -93,17 +96,43 @@ export const CaptainStoreProvider: React.FC<{ children: React.ReactNode }> = ({ 
   }, []);
 
   const profile = useMemo<CaptainProfile | null>(() => {
-    if (!session || session.role !== 'CAPTAIN') return null;
-    const base: CaptainProfile = captainProfile ?? {
-      captainId: session.accountId,
-      mobile: '',
-      status: 'ACTIVE',
-      approved: true,
-      online: false,
-      busy: false,
-    };
-    return profileOverride ? { ...base, ...profileOverride } : base;
+    if (!session || session.role !== 'CAPTAIN' || !captainProfile) return null;
+    return profileOverride ? { ...captainProfile, ...profileOverride } : captainProfile;
   }, [session, captainProfile, profileOverride]);
+
+  // Reconcile restart/account-switch state from the authenticated server profile.
+  useEffect(() => {
+    let cancelled = false;
+    presenceMutationPending.current = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setProfileOverride(null);
+      if (!session || !captainProfile) {
+        setPresence({ online: false });
+        setAvailabilityState('OFFLINE');
+        setLocationActivityState('STOPPED');
+        return;
+      }
+      setPresence({
+        online: captainProfile.online,
+        lastUpdated: undefined,
+      });
+      setAvailabilityState(
+        captainProfile.busy ? 'BUSY' : captainProfile.online ? 'ONLINE' : 'OFFLINE',
+      );
+    });
+
+    if (!session || !captainProfile) {
+      locationUploader.stopTracking();
+    } else if (captainProfile.online || captainProfile.busy) {
+      locationUploader.startTracking(captainProfile.online, captainProfile.busy);
+    } else {
+      locationUploader.stopTracking();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.accountId, captainProfile]);
 
   // AppState listener for background / foreground transitions
   useEffect(() => {
@@ -134,6 +163,25 @@ export const CaptainStoreProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const setOnline = useCallback(
     async (targetOnline: boolean): Promise<boolean> => {
+      if (presenceMutationPending.current) return false;
+      if (presence.online === targetOnline && !profile?.busy) return true;
+      if (!targetOnline && profile?.busy) {
+        setPresenceError(AppError.fromHttp(409, {
+          code: 'CAPTAIN_ACTIVE_DELIVERY',
+          message: 'Complete the active delivery before going offline.',
+        }));
+        setAvailabilityState('BUSY');
+        return false;
+      }
+
+      const capturedAccountId = getRuntimeAccountId();
+      const capturedGeneration = getAuthGeneration();
+      const sessionIsCurrent = () =>
+        !!capturedAccountId &&
+        getRuntimeAccountId() === capturedAccountId &&
+        getAuthGeneration() === capturedGeneration;
+
+      presenceMutationPending.current = true;
       setIsUpdatingPresence(true);
       setPresenceError(null);
 
@@ -142,6 +190,7 @@ export const CaptainStoreProvider: React.FC<{ children: React.ReactNode }> = ({ 
         // A. Verify approved Captain status
         if (!profile?.approved || profile.status !== 'ACTIVE') {
           setIsUpdatingPresence(false);
+          presenceMutationPending.current = false;
           const err = AppError.fromHttp(403, {
             code: 'CAPTAIN_NOT_APPROVED',
             message: 'Captain account must be approved before going online.',
@@ -160,6 +209,7 @@ export const CaptainStoreProvider: React.FC<{ children: React.ReactNode }> = ({ 
           setLocationPermissionState(requested.state);
           if (!requested.foregroundGranted) {
             setIsUpdatingPresence(false);
+            presenceMutationPending.current = false;
             const err = AppError.fromHttp(403, {
               code: 'CAPTAIN_LOCATION_REQUIRED',
               message: 'Foreground location permission is required to operate as Captain.',
@@ -178,6 +228,7 @@ export const CaptainStoreProvider: React.FC<{ children: React.ReactNode }> = ({ 
           coords = await getCurrentCaptainLocation({ maxAgeMs: 45000 });
         } catch (err: any) {
           setIsUpdatingPresence(false);
+          presenceMutationPending.current = false;
           setLocationActivityState('ERROR');
           const error =
             err instanceof AppError ? err : AppError.fromHttp(400, { message: err.message });
@@ -187,17 +238,34 @@ export const CaptainStoreProvider: React.FC<{ children: React.ReactNode }> = ({ 
         }
 
         // D. Submit server availability command
-        const outcome = await availabilityRepository.updateAvailability({
-          online: true,
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-          accuracy: coords.accuracy,
-          capturedAt: new Date(coords.timestamp).toISOString(),
-          heading: coords.heading,
-          speed: coords.speed,
-        });
+        let outcome: Awaited<ReturnType<typeof availabilityRepository.updateAvailability>>;
+        try {
+          outcome = await availabilityRepository.updateAvailability({
+            online: true,
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            accuracy: coords.accuracy,
+            capturedAt: new Date(coords.timestamp).toISOString(),
+            heading: coords.heading,
+            speed: coords.speed,
+          });
+        } catch (error) {
+          presenceMutationPending.current = false;
+          setIsUpdatingPresence(false);
+          setAvailabilityState('OFFLINE');
+          setPresenceError(
+            error instanceof AppError ? error : AppError.network('Unable to update availability'),
+          );
+          return false;
+        }
+
+        if (!sessionIsCurrent()) {
+          presenceMutationPending.current = false;
+          return false;
+        }
 
         setIsUpdatingPresence(false);
+        presenceMutationPending.current = false;
 
         // E. Authoritative Server Acknowledgment
         if (outcome.outcome === 'ACKNOWLEDGED') {
@@ -229,17 +297,30 @@ export const CaptainStoreProvider: React.FC<{ children: React.ReactNode }> = ({ 
       // --- 2. GOING OFFLINE ---
       setAvailabilityState('GOING_OFFLINE');
 
-      // Stop local trackers immediately to preserve battery/privacy
-      locationUploader.stopTracking();
-      setLocationActivityState('STOPPED');
+      let outcome: Awaited<ReturnType<typeof availabilityRepository.updateAvailability>>;
+      try {
+        outcome = await availabilityRepository.updateAvailability({ online: false });
+      } catch (error) {
+        presenceMutationPending.current = false;
+        setIsUpdatingPresence(false);
+        setAvailabilityState(profile?.busy ? 'BUSY' : presence.online ? 'ONLINE' : 'OFFLINE');
+        setPresenceError(
+          error instanceof AppError ? error : AppError.network('Unable to update availability'),
+        );
+        return false;
+      }
 
-      const outcome = await availabilityRepository.updateAvailability({
-        online: false,
-      });
+      if (!sessionIsCurrent()) {
+        presenceMutationPending.current = false;
+        return false;
+      }
 
       setIsUpdatingPresence(false);
+      presenceMutationPending.current = false;
 
       if (outcome.outcome === 'ACKNOWLEDGED') {
+        locationUploader.stopTracking();
+        setLocationActivityState('STOPPED');
         setPresence({
           online: false,
         });
@@ -248,9 +329,8 @@ export const CaptainStoreProvider: React.FC<{ children: React.ReactNode }> = ({ 
         return true;
       }
 
-      // If server communication failed when going offline, enforce local offline posture
-      setPresence({ online: false });
-      setAvailabilityState('OFFLINE');
+      // Preserve server-consistent tracking posture when the offline outcome is unknown/rejected.
+      setAvailabilityState(profile?.busy ? 'BUSY' : presence.online ? 'ONLINE' : 'OFFLINE');
       if (outcome.outcome === 'REJECTED') {
         setPresenceError(outcome.error);
       } else if ('error' in outcome && outcome.error) {
@@ -258,7 +338,7 @@ export const CaptainStoreProvider: React.FC<{ children: React.ReactNode }> = ({ 
       }
       return false;
     },
-    [profile],
+    [profile, presence.online],
   );
 
   const refreshPresence = useCallback(async () => {

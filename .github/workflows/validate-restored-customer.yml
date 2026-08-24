@@ -67,6 +67,8 @@ jobs:
           console.log('Customer production dependency advisory gate passed.');
           NODE
           rm -f audit.json
+      - name: Guard Customer network architecture
+        run: npm run check:network-boundaries
       - name: Typecheck Customer app
         run: npm run typecheck
       - name: Lint Customer app

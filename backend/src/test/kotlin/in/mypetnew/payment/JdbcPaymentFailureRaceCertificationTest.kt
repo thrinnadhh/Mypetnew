@@ -8,6 +8,7 @@ import `in`.mypetnew.commerce.domain.OrderStatus
 import `in`.mypetnew.commerce.domain.PaymentMethods
 import `in`.mypetnew.commerce.domain.QuoteService
 import `in`.mypetnew.commerce.infrastructure.JdbcOrderPersistence
+import `in`.mypetnew.commerce.infrastructure.JdbcQuotePersistence
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.merchantops.testsupport.PostgresTestDatabase
@@ -401,6 +402,7 @@ class JdbcPaymentFailureRaceCertificationTest {
                 mapOf(listingId to Pair(1, 12_500L)),
                 PaymentMethods.ONLINE_PAYMENT,
             )
+            JdbcQuotePersistence(jdbc, transactions).save(quote)
             val order = orders.checkout(
                 quote,
                 organizationId,

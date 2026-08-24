@@ -84,6 +84,11 @@ export default function MerchantEntryScreen() {
             <Link href="/catalog" accessibilityRole="button" style={styles.primaryLink}>Open catalog</Link>
           </View>
           <View style={styles.primaryLinkBox}>
+            <Text style={styles.primaryLinkTitle}>Inventory ledger</Text>
+            <Text style={styles.primaryLinkBody}>Review canonical stock, commit whole-unit adjustments, retry safely, and inspect immutable movement history.</Text>
+            <Link href="/inventory" accessibilityRole="button" style={styles.primaryLink}>Open inventory</Link>
+          </View>
+          <View style={styles.primaryLinkBox}>
             <Text style={styles.primaryLinkTitle}>New booking requests</Text>
             <Text style={styles.primaryLinkBody}>Accept or reject grooming and veterinary requests before customers see Confirmed.</Text>
             <Link href="/appointments" accessibilityRole="button" style={styles.primaryLink}>Open booking requests</Link>

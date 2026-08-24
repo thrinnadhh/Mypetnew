@@ -28,8 +28,8 @@ class MerchantScenarioFixture(dataSource: DataSource) {
             "INSERT INTO mypet.identity_account(id, mobile_e164, role, status) VALUES (?, ?, 'MERCHANT', 'ACTIVE')",
         ).params(scenario.accountId, "+919${number.toString().padStart(9, '0')}").update()
         jdbc.sql(
-            "INSERT INTO mypet.merchant_organization(id, name, status) VALUES (?, ?, 'ACTIVE')",
-        ).params(scenario.organizationId, "M0 organization $number").update()
+            "INSERT INTO mypet.merchant_organization(id, name, status, owner_actor_id) VALUES (?, ?, 'ACTIVE', ?)",
+        ).params(scenario.organizationId, "M0 organization $number", scenario.accountId).update()
         jdbc.sql(
             "INSERT INTO mypet.provider_outlet(id, organization_id, name, status, pickup_enabled) VALUES (?, ?, ?, 'ACTIVE', TRUE)",
         ).params(scenario.outletId, scenario.organizationId, "M0 outlet $number").update()
@@ -50,9 +50,22 @@ class MerchantScenarioFixture(dataSource: DataSource) {
             "M0-${scenario.listingId}",
             "M0 product $number",
         ).update()
+        // V25 initializes a canonical zero projection when the listing is inserted. Older test callers
+        // may still request seeded non-zero values, so update that fixture projection rather than
+        // inserting a second row. M3 contract tests use zero and create stock through movements.
         jdbc.sql(
-            "INSERT INTO mypet.inventory_balance(listing_id, on_hand, reserved, version) VALUES (?, ?, ?, 0)",
-        ).params(scenario.listingId, onHand, reserved).update()
+            """
+            UPDATE mypet.inventory_balance
+            SET on_hand = ?, reserved = ?, version = 0, updated_at = CURRENT_TIMESTAMP
+            WHERE organization_id = ? AND outlet_id = ? AND listing_id = ?
+            """.trimIndent(),
+        ).params(
+            onHand,
+            reserved,
+            scenario.organizationId,
+            scenario.outletId,
+            scenario.listingId,
+        ).update()
         return scenario
     }
 

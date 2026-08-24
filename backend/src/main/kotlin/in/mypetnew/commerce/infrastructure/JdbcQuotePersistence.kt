@@ -7,6 +7,7 @@ import `in`.mypetnew.commerce.domain.QuotePersistence
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionTemplate
 import java.sql.ResultSet
+import java.sql.Timestamp
 import java.util.UUID
 
 class JdbcQuotePersistence(
@@ -38,7 +39,7 @@ class JdbcQuotePersistence(
             quote.pricing.grandTotalPaise,
             quote.pricing.currency,
             quote.pricing.ruleVersion,
-            quote.expiresAt,
+            Timestamp.from(quote.expiresAt),
             quote.deliveryAddress?.addressId,
             quote.deliveryAddress?.recipientName,
             quote.deliveryAddress?.phoneNumber,

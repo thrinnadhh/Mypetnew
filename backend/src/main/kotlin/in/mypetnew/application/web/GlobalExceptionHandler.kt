@@ -31,9 +31,13 @@ class GlobalExceptionHandler {
     fun domain(error: DomainException, request: HttpServletRequest): ResponseEntity<ApiErrorEnvelope> {
         val status = when (error.code) {
             "RESOURCE_NOT_FOUND", "ORDER_NOT_FOUND", "CART_NOT_FOUND", "QUOTE_NOT_FOUND", "ADDRESS_NOT_FOUND" -> HttpStatus.NOT_FOUND
-            "FORBIDDEN", "ADMIN_PERMISSION_REQUIRED", "CONSENT_REQUIRED" -> HttpStatus.FORBIDDEN
+            "FORBIDDEN", "ADMIN_PERMISSION_REQUIRED", "CONSENT_REQUIRED", "CAPTAIN_NOT_APPROVED" -> HttpStatus.FORBIDDEN
             "OTP_RATE_LIMITED" -> HttpStatus.TOO_MANY_REQUESTS
             "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+            "ONBOARDING_LOCKED",
+            "DISPATCH_CONFLICT",
+            "CAPTAIN_ACTIVE_DELIVERY",
+            "CAPTAIN_OFFLINE",
             "CATALOG_VERSION_CONFLICT",
             "CATALOG_STATE_INVALID",
             "CATALOG_DUPLICATE",

@@ -7,6 +7,7 @@ import org.springframework.data.geo.Metrics
 import org.springframework.data.geo.Point
 import org.springframework.data.redis.connection.RedisGeoCommands
 import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.core.script.DefaultRedisScript
 import org.springframework.data.redis.domain.geo.GeoReference
 import java.time.Duration
 import java.time.Instant
@@ -17,11 +18,14 @@ class RedisCaptainGeoIndex(
     private val freshnessTtl: Duration = Duration.ofMinutes(2),
 ) : CaptainGeoIndex {
     override fun update(captainId: UUID, location: CaptainLocation) {
-        redis.opsForGeo().add(GEO_KEY, Point(location.longitude, location.latitude), captainId.toString())
-        redis.opsForValue().set(
-            freshnessKey(captainId),
+        redis.execute(
+            MONOTONIC_GEO_UPDATE,
+            listOf(GEO_KEY, freshnessKey(captainId)),
+            location.longitude.toString(),
+            location.latitude.toString(),
+            captainId.toString(),
             location.observedAt.toEpochMilli().toString(),
-            freshnessTtl,
+            freshnessTtl.toMillis().toString(),
         )
     }
 
@@ -69,5 +73,17 @@ class RedisCaptainGeoIndex(
     companion object {
         private const val GEO_KEY = "mypet:captains:geo"
         private const val FRESHNESS_PREFIX = "mypet:captains:fresh:"
+        private val MONOTONIC_GEO_UPDATE = DefaultRedisScript(
+            """
+            local current = redis.call('GET', KEYS[2])
+            if current and tonumber(current) > tonumber(ARGV[4]) then
+              return 0
+            end
+            redis.call('GEOADD', KEYS[1], ARGV[1], ARGV[2], ARGV[3])
+            redis.call('PSETEX', KEYS[2], ARGV[5], ARGV[4])
+            return 1
+            """.trimIndent(),
+            Long::class.java,
+        )
     }
 }

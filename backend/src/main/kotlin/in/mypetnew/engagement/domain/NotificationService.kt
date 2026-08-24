@@ -16,6 +16,7 @@ enum class RegistrationStatus { ACTIVE, ROTATED, DISABLED, REVOKED, INVALID, STA
 enum class SafeRoute(val wireValue: String) {
     CUSTOMER_LOYALTY("customer/loyalty"),
     MERCHANT_ORDER("merchant/orders/detail"),
+    CAPTAIN_OFFER("captain/dispatch/offer"),
     INBOX("inbox"),
 }
 
@@ -390,6 +391,11 @@ class NotificationService(private val repository: NotificationRepository = InMem
                 "You earned a loyalty star",
                 "Open MyPet to view your merchant loyalty activity.",
                 SafeRoute.CUSTOMER_LOYALTY,
+            ),
+            "captain-dispatch-offer-v1" to ApprovedTemplate(
+                "New delivery assignment",
+                "Open MyPet Captain to review an available delivery.",
+                SafeRoute.CAPTAIN_OFFER,
             ),
         )
         private val RESTRICTED_NOTIFICATION_CONTENT = Regex(

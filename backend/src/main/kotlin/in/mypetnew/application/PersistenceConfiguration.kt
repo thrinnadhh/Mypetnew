@@ -29,6 +29,8 @@ import `in`.mypetnew.delivery.domain.DispatchPersistence
 import `in`.mypetnew.delivery.domain.DispatchService
 import `in`.mypetnew.delivery.infrastructure.JdbcDispatchPersistence
 import `in`.mypetnew.delivery.infrastructure.RedisCaptainGeoIndex
+import `in`.mypetnew.engagement.domain.NotificationService
+import `in`.mypetnew.engagement.domain.SafeRoute
 import `in`.mypetnew.loyalty.domain.LoyaltyPersistence
 import `in`.mypetnew.loyalty.domain.LoyaltyService
 import `in`.mypetnew.loyalty.infrastructure.JdbcLoyaltyPersistence
@@ -141,7 +143,23 @@ class PersistenceConfiguration {
         persistence: DispatchPersistence,
         geoIndex: CaptainGeoIndex,
         orders: OrderService,
-    ): DispatchService = DispatchService(persistence, geoIndex, orders)
+        notifications: NotificationService,
+    ): DispatchService = DispatchService(
+        persistence,
+        geoIndex,
+        orders,
+        offerNotifier = { offer ->
+            notifications.enqueue(
+                sourceEventId = offer.id,
+                recipientId = offer.captainId,
+                templateVersion = "captain-dispatch-offer-v1",
+                title = "New delivery assignment",
+                body = "Open MyPet Captain to review an available delivery.",
+                route = SafeRoute.CAPTAIN_OFFER,
+                resourceId = offer.id,
+            )
+        },
+    )
 
     @Bean
     fun customerDataPersistence(jdbc: JdbcClient, transactions: TransactionTemplate): CustomerDataPersistence =
@@ -208,4 +226,28 @@ class PersistenceConfiguration {
         loyalty: LoyaltyService,
         persistence: PosPersistence,
     ): PosService = PosService(inventory, loyalty, persistence)
+
+    @Bean
+    fun captainOnboardingPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): `in`.mypetnew.delivery.domain.CaptainOnboardingPersistence =
+        `in`.mypetnew.delivery.infrastructure.JdbcCaptainOnboardingPersistence(jdbc, transactions)
+
+    @Bean
+    fun productionCaptainOnboardingService(persistence: `in`.mypetnew.delivery.domain.CaptainOnboardingPersistence): `in`.mypetnew.delivery.domain.CaptainOnboardingService =
+        `in`.mypetnew.delivery.domain.CaptainOnboardingService(persistence)
+
+    @Bean
+    fun captainEarningsPersistence(jdbc: JdbcTemplate): `in`.mypetnew.delivery.domain.CaptainEarningsPersistence =
+        `in`.mypetnew.delivery.infrastructure.JdbcCaptainEarningsPersistence(jdbc)
+
+    @Bean
+    fun productionCaptainEarningsService(persistence: `in`.mypetnew.delivery.domain.CaptainEarningsPersistence): `in`.mypetnew.delivery.domain.CaptainEarningsService =
+        `in`.mypetnew.delivery.domain.CaptainEarningsService(persistence)
+
+    @Bean
+    fun captainSupportPersistence(jdbc: JdbcTemplate): `in`.mypetnew.delivery.domain.CaptainSupportPersistence =
+        `in`.mypetnew.delivery.infrastructure.JdbcCaptainSupportPersistence(jdbc)
+
+    @Bean
+    fun productionCaptainSupportService(persistence: `in`.mypetnew.delivery.domain.CaptainSupportPersistence): `in`.mypetnew.delivery.domain.CaptainSupportService =
+        `in`.mypetnew.delivery.domain.CaptainSupportService(persistence)
 }

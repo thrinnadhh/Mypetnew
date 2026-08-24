@@ -27,6 +27,10 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.util.UUID
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class DispatchServiceTest {
     @Test
@@ -57,17 +61,37 @@ class DispatchServiceTest {
             )
         }
 
-        val pickedUp = fixture.dispatch.markPickedUp(captainId, assigned.id, "captain-pickup")
+        val pickedUp = fixture.dispatch.markPickedUp(
+            captainId,
+            assigned.id,
+            `in`.mypetnew.delivery.domain.DeliveryProof("PIN", assigned.pickupPin),
+            "captain-pickup",
+        )
         assertEquals(DispatchStatus.PICKED_UP, pickedUp.status)
+        assertFalse(requireNotNull(pickedUp.pickupProofPayload).contains(assigned.pickupPin))
         assertEquals(OrderStatus.PICKED_UP, fixture.orders.get(fixture.readyOrder.id).status)
         assertEquals(0, fixture.inventory.reserved(fixture.listingId))
 
-        val delivered = fixture.dispatch.markDelivered(captainId, assigned.id, "captain-delivered")
+        val delivered = fixture.dispatch.markDelivered(
+            captainId,
+            assigned.id,
+            `in`.mypetnew.delivery.domain.DeliveryProof("PIN", assigned.deliveryPin),
+            "captain-delivered",
+        )
         assertEquals(DispatchStatus.DELIVERED, delivered.status)
+        assertFalse(requireNotNull(delivered.deliveryProofPayload).contains(assigned.deliveryPin))
         assertEquals(OrderStatus.DELIVERED, fixture.orders.get(fixture.readyOrder.id).status)
         assertFalse(requireNotNull(fixture.dispatch.captainState(captainId)).busy)
 
-        assertEquals(delivered.id, fixture.dispatch.markDelivered(captainId, assigned.id, "captain-delivered").id)
+        assertEquals(
+            delivered.id,
+            fixture.dispatch.markDelivered(
+                captainId,
+                assigned.id,
+                `in`.mypetnew.delivery.domain.DeliveryProof("PIN", assigned.deliveryPin),
+                "captain-delivered",
+            ).id,
+        )
     }
 
     @Test
@@ -79,7 +103,10 @@ class DispatchServiceTest {
         val busy = UUID.randomUUID()
         val eligible = UUID.randomUUID()
 
-        fixture.dispatch.updateAvailability(unapproved, true, 13.6288, 79.4192)
+        val unapprovedOnline = assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateAvailability(unapproved, true, 13.6288, 79.4192)
+        }
+        assertEquals("CAPTAIN_NOT_APPROVED", unapprovedOnline.code)
 
         fixture.dispatch.approveCaptain(stale)
         fixture.dispatch.updateAvailability(stale, true, 13.6288, 79.4192)
@@ -98,6 +125,23 @@ class DispatchServiceTest {
         assertTrue(fixture.dispatch.pendingOffers(stale).isEmpty())
         assertTrue(fixture.dispatch.pendingOffers(busy).isEmpty())
         assertEquals(1, fixture.dispatch.pendingOffers(eligible).size)
+    }
+
+    @Test
+    fun `late telemetry cannot re-enable an offline captain`() {
+        val fixture = fixture()
+        val captainId = UUID.randomUUID()
+        fixture.dispatch.approveCaptain(captainId)
+        fixture.dispatch.updateAvailability(captainId, true, 13.6288, 79.4192)
+        fixture.dispatch.updateAvailability(captainId, false)
+
+        val rejected = assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateLocation(captainId, 13.6290, 79.4194, accuracy = 10.0)
+        }
+
+        assertEquals("CAPTAIN_OFFLINE", rejected.code)
+        assertFalse(requireNotNull(fixture.dispatch.captainState(captainId)).online)
+        assertNull(fixture.dispatch.captainLocation(captainId))
     }
 
     @Test
@@ -135,6 +179,40 @@ class DispatchServiceTest {
             fixture.dispatch.respondToOffer(foreign, offer.id, true)
         }
         assertNull(fixture.dispatch.tracking(fixture.readyOrder.id)?.assignedCaptainId)
+    }
+
+    @Test
+    fun `offer acceptance and going offline cannot both commit`() {
+        val fixture = fixture()
+        val captainId = UUID.randomUUID()
+        fixture.dispatch.approveCaptain(captainId)
+        fixture.dispatch.updateAvailability(captainId, true, 13.6288, 79.4192)
+        fixture.dispatch.start(fixture.readyOrder, 13.6287, 79.4191)
+        val offer = fixture.dispatch.pendingOffers(captainId).single()
+
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val acceptance = executor.submit(Callable {
+                start.await()
+                runCatching { fixture.dispatch.respondToOffer(captainId, offer.id, true) }.isSuccess
+            })
+            val goingOffline = executor.submit(Callable {
+                start.await()
+                runCatching { fixture.dispatch.updateAvailability(captainId, false) }.isSuccess
+            })
+
+            start.countDown()
+            val accepted = acceptance.get(5, TimeUnit.SECONDS)
+            val offline = goingOffline.get(5, TimeUnit.SECONDS)
+            val state = requireNotNull(fixture.dispatch.captainState(captainId))
+            val activeJob = fixture.dispatch.findActiveJob(captainId)
+
+            assertFalse(accepted && offline)
+            assertFalse(activeJob != null && !state.online)
+        } finally {
+            executor.shutdownNow()
+        }
     }
 
     @Test
@@ -181,6 +259,66 @@ class DispatchServiceTest {
         assertThrows(DomainException::class.java) {
             fixture.dispatch.updateAvailability(captainId, true, 91.0, 79.0)
         }
+        assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateAvailability(captainId, true, 13.6288, 181.0)
+        }
+        assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateAvailability(captainId, true, Double.NaN, 79.0)
+        }
+        assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateAvailability(captainId, true, 13.6288, 79.4192, accuracy = -5.0)
+        }
+        val imprecise = assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateAvailability(captainId, true, 13.6288, 79.4192, accuracy = 850.0)
+        }
+        assertEquals("LOCATION_ACCURACY_INSUFFICIENT", imprecise.code)
+        // Stale timestamp (10 minutes in the past)
+        val clock = Instant.parse("2026-08-15T08:00:00Z")
+        assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateAvailability(
+                captainId,
+                true,
+                13.6288,
+                79.4192,
+                accuracy = 10.0,
+                capturedAt = clock.minus(Duration.ofMinutes(10)),
+            )
+        }
+        // Far future timestamp (5 minutes in the future)
+        assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateAvailability(
+                captainId,
+                true,
+                13.6288,
+                79.4192,
+                accuracy = 10.0,
+                capturedAt = clock.plus(Duration.ofMinutes(5)),
+            )
+        }
+        // Fresh timestamp accepted
+        val state = fixture.dispatch.updateAvailability(
+            captainId,
+            true,
+            13.6288,
+            79.4192,
+            accuracy = 10.0,
+            capturedAt = clock.minusSeconds(30),
+        )
+        assertTrue(state.online)
+        assertEquals(clock.minusSeconds(30), state.lastLocationAt)
+
+        val outOfOrder = assertThrows(DomainException::class.java) {
+            fixture.dispatch.updateAvailability(
+                captainId,
+                true,
+                13.6200,
+                79.4100,
+                accuracy = 10.0,
+                capturedAt = clock.minusSeconds(45),
+            )
+        }
+        assertEquals("LOCATION_OUT_OF_ORDER", outOfOrder.code)
+        assertEquals(clock.minusSeconds(30), fixture.dispatch.captainLocation(captainId)?.observedAt)
     }
 
     private fun fixture(clock: Clock = Clock.fixed(Instant.parse("2026-08-15T08:00:00Z"), ZoneOffset.UTC)): Fixture {

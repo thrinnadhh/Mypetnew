@@ -17,3 +17,7 @@ coverage/
 .idea/
 .DS_Store
 evidence/generated/
+mypet-work/
+.kotlin/
+.vscode/
+*.tar.xz

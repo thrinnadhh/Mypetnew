@@ -21,18 +21,16 @@ export interface GuideLikeResult {
   likeCount: number;
 }
 
-function retainLegacyTokenParameter(_accessToken?: string | null): void {
-  // AuthContext owns the canonical ApiClient token. Keep this argument only for
-  // source compatibility while callers are migrated away from token plumbing.
-}
-
 export async function fetchBanners(accessToken?: string | null): Promise<PromoBanner[]> {
   if (appConfig.allowDemoMode) {
     const { PROMO_BANNERS } = await import('@/constants/content');
     return PROMO_BANNERS.map((banner) => ({ ...banner }));
   }
-  retainLegacyTokenParameter(accessToken);
-  return apiClient.get<PromoBanner[]>('/api/v1/content/banners');
+  return apiClient.get<PromoBanner[]>(
+    '/api/v1/content/banners',
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load banners' },
+  );
 }
 
 export async function fetchGuides(category: string | null, accessToken?: string | null): Promise<GuideArticle[]> {
@@ -49,15 +47,22 @@ export async function fetchGuides(category: string | null, accessToken?: string 
       likeCount: g.likeCount,
     }));
   }
-  retainLegacyTokenParameter(accessToken);
   const query = category ? `?category=${encodeURIComponent(category)}` : '';
-  return apiClient.get<GuideArticle[]>(`/api/v1/content/guides${query}`);
+  return apiClient.get<GuideArticle[]>(
+    `/api/v1/content/guides${query}`,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load guides' },
+  );
 }
 
 export async function toggleGuideLike(
   articleId: string,
   accessToken?: string | null,
 ): Promise<GuideLikeResult> {
-  retainLegacyTokenParameter(accessToken);
-  return apiClient.post<GuideLikeResult>(`/api/v1/content/guides/${articleId}/likes`);
+  return apiClient.post<GuideLikeResult>(
+    `/api/v1/content/guides/${articleId}/likes`,
+    undefined,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not update guide like' },
+  );
 }

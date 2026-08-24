@@ -33,14 +33,12 @@ export interface CustomerCase {
   resolvedAt?: string | null;
 }
 
-function retainLegacyTokenParameter(_accessToken: string): void {
-  // AuthContext owns the canonical ApiClient token. Keep this parameter only for
-  // source compatibility with existing screen/service call sites.
-}
-
 export function fetchCustomerCases(accessToken: string): Promise<CustomerCase[]> {
-  retainLegacyTokenParameter(accessToken);
-  return apiClient.get<CustomerCase[]>('/api/v1/orders/customer-cases');
+  return apiClient.get<CustomerCase[]>(
+    '/api/v1/orders/customer-cases',
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load support cases' },
+  );
 }
 
 export function createCustomerCase(
@@ -49,8 +47,12 @@ export function createCustomerCase(
   description: string,
   accessToken: string,
 ): Promise<CustomerCase> {
-  retainLegacyTokenParameter(accessToken);
-  return apiClient.post<CustomerCase>('/api/v1/orders/customer-cases', { orderId, caseType, description });
+  return apiClient.post<CustomerCase>(
+    '/api/v1/orders/customer-cases',
+    { orderId, caseType, description },
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not create support case' },
+  );
 }
 
 export async function uploadCustomerCaseEvidence(
@@ -58,9 +60,11 @@ export async function uploadCustomerCaseEvidence(
   asset: { uri: string; name: string; mimeType: string },
   accessToken: string,
 ): Promise<CustomerCaseEvidence> {
-  retainLegacyTokenParameter(accessToken);
   const reservation = await apiClient.post<{ uploadToken: string; uploadUrl: string }>(
     `/api/v1/orders/customer-cases/${customerCase.caseId}/evidence/reservations`,
+    undefined,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not reserve support evidence upload' },
   );
   if (!isTrustedBearerUploadUrl(reservation.uploadUrl, appConfig.apiBaseUrl)) {
     throw new Error('Support evidence upload destination is invalid.');
@@ -74,7 +78,10 @@ export async function uploadCustomerCaseEvidence(
     type: asset.mimeType,
   } as unknown as Blob);
 
-  return apiClient.upload<CustomerCaseEvidence>(reservation.uploadUrl, body);
+  return apiClient.upload<CustomerCaseEvidence>(reservation.uploadUrl, body, {
+    authToken: accessToken,
+    errorFallback: 'Could not upload support evidence',
+  });
 }
 
 export async function getCustomerCaseEvidenceLink(
@@ -82,9 +89,11 @@ export async function getCustomerCaseEvidenceLink(
   evidenceId: string,
   accessToken: string,
 ): Promise<string> {
-  retainLegacyTokenParameter(accessToken);
   const response = await apiClient.post<{ url: string }>(
     `/api/v1/orders/customer-cases/${caseId}/evidence/${evidenceId}/signed-link`,
+    undefined,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not create support evidence link' },
   );
   if (!isSafeHttpsUrl(response.url)) throw new Error('Support evidence link is invalid.');
   return response.url;

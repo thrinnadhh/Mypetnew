@@ -62,18 +62,14 @@ export interface CustomerLoyaltyBalanceResponse {
   rewards: CustomerLoyaltyRewardResponse[];
 }
 
-function retainLegacyTokenParameter(_accessToken: string): void {
-  // AuthContext owns the canonical ApiClient token. Keep the legacy parameter only
-  // while existing screens still pass it explicitly.
-}
-
 export async function fetchCustomerLoyaltyBalance(
   organizationId: string,
   accessToken: string,
 ): Promise<CustomerLoyaltyBalanceResponse> {
-  retainLegacyTokenParameter(accessToken);
   return apiClient.get<CustomerLoyaltyBalanceResponse>(
     `/api/v2/customer/loyalty/${encodeURIComponent(organizationId)}`,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not fetch loyalty balance' },
   );
 }
 
@@ -81,9 +77,10 @@ export async function fetchLoyaltyProgress(
   providerId: string,
   accessToken: string,
 ): Promise<LoyaltyProgressDto> {
-  retainLegacyTokenParameter(accessToken);
   return apiClient.get<LoyaltyProgressDto>(
     `/api/v1/loyalty/progress?providerId=${encodeURIComponent(providerId)}`,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not fetch loyalty progress' },
   );
 }
 
@@ -91,20 +88,28 @@ export async function claimWelcomeStar(
   providerId: string,
   accessToken: string,
 ): Promise<LoyaltyProgressDto> {
-  retainLegacyTokenParameter(accessToken);
   return apiClient.post<LoyaltyProgressDto>(
     `/api/v1/loyalty/welcome-star/claim?providerId=${encodeURIComponent(providerId)}`,
+    undefined,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not claim welcome star' },
   );
 }
 
 export async function fetchCustomerWallet(accessToken: string): Promise<LoyaltyRewardDto[]> {
-  retainLegacyTokenParameter(accessToken);
-  return apiClient.get<LoyaltyRewardDto[]>('/api/v1/loyalty/wallet');
+  return apiClient.get<LoyaltyRewardDto[]>(
+    '/api/v1/loyalty/wallet',
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not fetch loyalty wallet' },
+  );
 }
 
 export async function fetchActivePromotions(accessToken: string): Promise<PromotionDto[]> {
-  retainLegacyTokenParameter(accessToken);
-  const promotions = await apiClient.get<PromotionDto[]>('/api/v1/payments/promotions');
+  const promotions = await apiClient.get<PromotionDto[]>(
+    '/api/v1/payments/promotions',
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not fetch active promotions' },
+  );
   const now = Date.now();
   return promotions
     .filter((promotion) => {
@@ -123,9 +128,12 @@ export async function fetchLoyaltyLedger(
   accessToken: string,
   providerId?: string,
 ): Promise<LoyaltyLedgerEntryDto[]> {
-  retainLegacyTokenParameter(accessToken);
   const path = providerId
     ? `/api/v1/loyalty/ledger?providerId=${encodeURIComponent(providerId)}`
     : '/api/v1/loyalty/ledger';
-  return apiClient.get<LoyaltyLedgerEntryDto[]>(path);
+  return apiClient.get<LoyaltyLedgerEntryDto[]>(
+    path,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not fetch loyalty ledger' },
+  );
 }

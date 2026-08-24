@@ -209,11 +209,7 @@ export async function createDefaultAddress(
     );
     return normalizeLegacyAddress(response);
   } catch (error) {
-    if (
-      (error as { status?: number })?.status === 500 &&
-      error instanceof Error &&
-      error.message === 'Request failed (500)'
-    ) {
+    if ((error as { status?: number })?.status === 500) {
       throw new Error('ADDRESS_500');
     }
     throw error;

@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 import org.springframework.web.multipart.MaxUploadSizeExceededException
+import org.springframework.web.servlet.NoHandlerFoundException
 import org.springframework.web.servlet.resource.NoResourceFoundException
 import java.time.Instant
 import java.util.UUID
@@ -73,7 +74,7 @@ class GlobalExceptionHandler {
     fun binding(request: HttpServletRequest): ResponseEntity<ApiErrorEnvelope> =
         ResponseEntity.badRequest().body(envelope("VALIDATION_FAILED", "Request validation failed", request))
 
-    @ExceptionHandler(NoResourceFoundException::class)
+    @ExceptionHandler(NoResourceFoundException::class, NoHandlerFoundException::class)
     fun noResource(request: HttpServletRequest): ResponseEntity<ApiErrorEnvelope> =
         ResponseEntity.status(HttpStatus.NOT_FOUND)
             .body(envelope("RESOURCE_NOT_FOUND", "The requested resource is unavailable", request))

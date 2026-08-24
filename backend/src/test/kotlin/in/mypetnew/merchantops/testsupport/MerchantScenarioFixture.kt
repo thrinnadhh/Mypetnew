@@ -50,7 +50,7 @@ class MerchantScenarioFixture(dataSource: DataSource) {
             "M0-${scenario.listingId}",
             "M0 product $number",
         ).update()
-        // V24 initializes a canonical zero projection when the listing is inserted. Older test callers
+        // V25 initializes a canonical zero projection when the listing is inserted. Older test callers
         // may still request seeded non-zero values, so update that fixture projection rather than
         // inserting a second row. M3 contract tests use zero and create stock through movements.
         jdbc.sql(

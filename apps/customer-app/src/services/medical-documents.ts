@@ -1,5 +1,4 @@
-import { apiErrorFromResponse } from '@/contracts/api-error';
-import { apiClient, StaleAuthResponseError } from '@/services/api-client';
+import { apiClient } from '@/services/api-client';
 import { appConfig } from '@/utils/app-config';
 import { isSafeHttpsUrl, isTrustedBearerUploadUrl } from '@/utils/customer-navigation-safety';
 
@@ -19,35 +18,14 @@ interface UploadReservation {
   expiresAt: string;
 }
 
-function currentAuthEpoch(): number {
-  const getter = (apiClient as typeof apiClient & { getAuthEpoch?: () => number }).getAuthEpoch;
-  return typeof getter === 'function' ? getter.call(apiClient) : 0;
-}
-
-function assertCurrentAuthEpoch(epoch: number): void {
-  if (currentAuthEpoch() !== epoch) throw new StaleAuthResponseError();
-}
-
-async function authenticated<T>(path: string, accessToken: string, init: RequestInit = {}): Promise<T> {
-  const epoch = currentAuthEpoch();
-  const response = await fetch(`${appConfig.apiBaseUrl}${path}`, {
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      ...((init.headers as Record<string, string> | undefined) ?? {}),
-    },
-  });
-  assertCurrentAuthEpoch(epoch);
-  if (!response.ok) throw await apiErrorFromResponse(response);
-  const body = (await response.json()) as T;
-  assertCurrentAuthEpoch(epoch);
-  return body;
+function retainLegacyTokenParameter(_accessToken: string): void {
+  // AuthContext owns the canonical ApiClient token. Keep the argument only for
+  // source compatibility while existing call sites stop passing access tokens.
 }
 
 export function fetchMedicalDocuments(accessToken: string): Promise<MedicalDocument[]> {
-  return authenticated('/api/v1/appointments/medical-documents', accessToken);
+  retainLegacyTokenParameter(accessToken);
+  return apiClient.get<MedicalDocument[]>('/api/v1/appointments/medical-documents');
 }
 
 export async function uploadMedicalDocument(
@@ -55,14 +33,14 @@ export async function uploadMedicalDocument(
   asset: { uri: string; name: string; mimeType: string },
   accessToken: string,
 ): Promise<MedicalDocument> {
-  const reservation = await authenticated<UploadReservation>(
+  retainLegacyTokenParameter(accessToken);
+  const reservation = await apiClient.post<UploadReservation>(
     `/api/v1/appointments/medical-documents/reservations?appointmentId=${encodeURIComponent(appointmentId)}`,
-    accessToken,
-    { method: 'POST' },
   );
   if (!isTrustedBearerUploadUrl(reservation.uploadUrl, appConfig.apiBaseUrl)) {
     throw new Error('Medical document upload destination is invalid.');
   }
+
   const body = new FormData();
   body.append('uploadToken', reservation.uploadToken);
   body.append('file', {
@@ -70,17 +48,8 @@ export async function uploadMedicalDocument(
     name: asset.name,
     type: asset.mimeType,
   } as unknown as Blob);
-  const epoch = currentAuthEpoch();
-  const response = await fetch(reservation.uploadUrl, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
-    body,
-  });
-  assertCurrentAuthEpoch(epoch);
-  if (!response.ok) throw await apiErrorFromResponse(response);
-  const document = (await response.json()) as MedicalDocument;
-  assertCurrentAuthEpoch(epoch);
-  return document;
+
+  return apiClient.upload<MedicalDocument>(reservation.uploadUrl, body);
 }
 
 export async function getMedicalDocumentLink(
@@ -88,10 +57,9 @@ export async function getMedicalDocumentLink(
   accessToken: string,
   disposition: 'inline' | 'attachment' = 'inline',
 ): Promise<string> {
-  const link = await authenticated<{ url: string }>(
+  retainLegacyTokenParameter(accessToken);
+  const link = await apiClient.post<{ url: string }>(
     `/api/v1/appointments/medical-documents/${encodeURIComponent(documentId)}/signed-link?disposition=${disposition}`,
-    accessToken,
-    { method: 'POST' },
   );
   if (!isSafeHttpsUrl(link.url)) throw new Error('Medical document link is invalid.');
   return link.url;

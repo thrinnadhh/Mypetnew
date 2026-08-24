@@ -231,7 +231,11 @@ class ApiClient {
     }, timeoutMs);
 
     try {
-      return await fetch(url, { ...config, signal: controller.signal });
+      const response = await fetch(url, { ...config, signal: controller.signal });
+      if (!response || typeof response.ok !== 'boolean' || typeof response.status !== 'number') {
+        throw new TypeError('Invalid network response');
+      }
+      return response;
     } catch (error) {
       if (externalSignal?.aborted) throw new RequestCancelledError();
       if (timedOut || isAbortError(error)) {
@@ -267,6 +271,7 @@ class ApiClient {
       : { method, headers, body: requestBody };
     const safeToRetry = this.canRetry(method, headers);
     const retryLimit = safeToRetry ? Math.max(0, Math.min(maxRetries, 4)) : 0;
+    let lastRetryableHttpError: ApiError | null = null;
 
     for (let attempt = 0; ; attempt++) {
       if (this.authEpoch !== requestAuthEpoch) throw new StaleAuthResponseError();
@@ -281,6 +286,9 @@ class ApiClient {
           attempt >= retryLimit ||
           !safeToRetry
         ) {
+          if (lastRetryableHttpError && error instanceof ApiError && error.status === 0) {
+            throw lastRetryableHttpError;
+          }
           throw error;
         }
         await this.delay(this.retryDelay(attempt), signal);
@@ -327,6 +335,7 @@ class ApiClient {
         }
 
         if (RETRYABLE_STATUS.has(response.status) && attempt < retryLimit && safeToRetry) {
+          lastRetryableHttpError = error;
           await this.delay(this.retryDelay(attempt, error.retryAfterSeconds), signal);
           continue;
         }

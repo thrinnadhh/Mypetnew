@@ -116,10 +116,10 @@ SELECT
     on_hand,
     reserved,
     'MIGRATION',
-    'V24_LEGACY_STOCK_OPENING_BALANCE',
+    'V25_LEGACY_STOCK_OPENING_BALANCE',
     '00000000-0000-0000-0000-000000000000'::UUID,
     'm3-opening:' || listing_id::TEXT,
-    'migration-v24',
+    'migration-v25',
     'inventory-opening-balance',
     md5('m3-opening:' || listing_id::TEXT || ':' || quantity_delta::TEXT),
     CURRENT_TIMESTAMP

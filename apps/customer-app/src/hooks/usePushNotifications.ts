@@ -41,21 +41,17 @@ function getNotificationsModule() {
   return Notifications;
 }
 
-function retainLegacyTokenParameter(_accessToken: string): void {
-  // AuthContext owns the canonical ApiClient token. Keep the parameter only for
-  // compatibility with the existing notification hook and sign-out call sites.
-}
-
 export async function revokeDeviceRegistration(
   installationId: string,
   accessToken: string,
 ): Promise<void> {
   if (Platform.OS === 'web' || isExpoGo()) return;
-  retainLegacyTokenParameter(accessToken);
 
   try {
     await apiClient.delete(
       `/api/v1/devices/registrations/${installationId}?appKind=CUSTOMER&environment=${encodeURIComponent(appConfig.environment)}`,
+      undefined,
+      { authToken: accessToken, errorFallback: 'Push registration revoke failed' },
     );
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) return;
@@ -70,7 +66,6 @@ async function registerDeviceRegistration(
   if (Platform.OS === 'web' || isExpoGo()) return null;
   if (Platform.OS !== 'android') return null;
 
-  retainLegacyTokenParameter(accessToken);
   const NotificationsMod = getNotificationsModule();
   if (!NotificationsMod) return null;
   if (!Device.isDevice) return null;
@@ -94,7 +89,7 @@ async function registerDeviceRegistration(
       platform: 'ANDROID',
       nativeToken: '',
       permissionState: 'DENIED',
-    });
+    }, undefined, { authToken: accessToken, errorFallback: 'Push registration failed' });
     return null;
   }
 
@@ -113,7 +108,7 @@ async function registerDeviceRegistration(
     platform: 'ANDROID',
     nativeToken: token,
     permissionState: 'GRANTED',
-  });
+  }, undefined, { authToken: accessToken, errorFallback: 'Push registration failed' });
   return token;
 }
 

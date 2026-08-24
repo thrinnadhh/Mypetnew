@@ -129,7 +129,8 @@ export async function fetchCustomerOrderPage(
   }
   const result = validatePage(await apiClient.get<PageResponse<CustomerOrderSummaryDto>>(
     `/api/v1/customer/orders?${params.toString()}`,
-    { Authorization: `Bearer ${accessToken}` },
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load orders' },
   ));
 
   return {

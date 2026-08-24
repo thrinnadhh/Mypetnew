@@ -3,9 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { OrderFlowStepId } from '@/constants/content';
 import type { CustomerOrderPaymentStatus, CustomerPaymentMethod } from '@/contracts/customer-payment';
 import type { OrderStatus } from '@/contracts/order-contract.generated';
-import { apiClient } from '@/services/api-client';
+import { ApiError, apiClient } from '@/services/api-client';
 import { fetchDeliveryContact } from '@/services/customer-profile';
-import { appConfig } from '@/utils/app-config';
 
 export type OrderTabCategory = 'active' | 'past' | 'subscription';
 
@@ -181,30 +180,13 @@ interface LegacyOrderDetailsDto {
 
 type CreatedOrderDto = CustomerOrderDetailResponse | LegacyOrderDetailsDto;
 
-class OrderHttpError extends Error {
-  constructor(public readonly status: number, message: string) {
-    super(message);
-  }
-}
-
 const CACHE_PREFIX = '@mypet_orders_cache_v2_';
 
-function headers(accessToken?: string | null): Record<string, string> {
-  const result: Record<string, string> = { Accept: 'application/json' };
-  if (accessToken) result.Authorization = `Bearer ${accessToken}`;
-  return result;
-}
-
-async function responseError(response: Response, fallback: string): Promise<OrderHttpError> {
-  const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null;
-  return new OrderHttpError(response.status, body?.message || body?.error || fallback);
-}
-
 function isOfflineFailure(error: unknown): boolean {
-  if (error instanceof OrderHttpError) return false;
+  if (error instanceof ApiError) return error.status === 0;
   if (error instanceof TypeError) return true;
   const message = error instanceof Error ? error.message.toLowerCase() : '';
-  return message.includes('network') || message.includes('fetch') || message.includes('offline');
+  return message.includes('network') || message.includes('fetch') || message.includes('offline') || message.includes('timed out');
 }
 
 function isCanonicalOrder(value: CreatedOrderDto): value is CustomerOrderDetailResponse {
@@ -250,12 +232,11 @@ function canonicalToRecord(order: CustomerOrderDetailResponse): CustomerOrderRec
 async function providerName(providerId: string, accessToken?: string | null): Promise<string> {
   // Legacy-protocol compatibility only. Sprint 4 tracking/detail responses carry provider truth server-side.
   try {
-    const response = await fetch(
-      `${appConfig.apiBaseUrl}/api/v1/providers/${encodeURIComponent(providerId)}`,
-      { headers: headers(accessToken) },
+    const body = await apiClient.get<{ name?: string }>(
+      `/api/v1/providers/${encodeURIComponent(providerId)}`,
+      undefined,
+      { authToken: accessToken, errorFallback: 'Could not load provider details' },
     );
-    if (!response.ok) return `Store ${providerId.slice(0, 8)}`;
-    const body = (await response.json()) as { name?: string };
     return body.name?.trim() || `Store ${providerId.slice(0, 8)}`;
   } catch {
     return `Store ${providerId.slice(0, 8)}`;
@@ -265,12 +246,11 @@ async function providerName(providerId: string, accessToken?: string | null): Pr
 export async function fetchCustomerOrders(customerId: string, accessToken?: string | null): Promise<CustomerOrderRecord[]> {
   const cacheKey = `${CACHE_PREFIX}${customerId}`;
   try {
-    const response = await fetch(
-      `${appConfig.apiBaseUrl}/api/v1/orders/customer/${encodeURIComponent(customerId)}/tracking`,
-      { headers: headers(accessToken) },
+    const rawOrders = await apiClient.get<OrderTrackingDto[]>(
+      `/api/v1/orders/customer/${encodeURIComponent(customerId)}/tracking`,
+      undefined,
+      { authToken: accessToken, errorFallback: 'Could not load order history' },
     );
-    if (!response.ok) throw await responseError(response, 'Could not load order history');
-    const rawOrders = (await response.json()) as OrderTrackingDto[];
     const orders: CustomerOrderRecord[] = await Promise.all(rawOrders.map(async (order) => {
       const rawTotal = Number(order.totalAmount) || 0;
       const canonicalProviderName = order.providerName?.trim();
@@ -313,9 +293,11 @@ export async function fetchCustomerOrders(customerId: string, accessToken?: stri
 }
 
 export async function fetchOrderDetails(orderId: string, accessToken?: string | null): Promise<CustomerOrderRecord> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/orders/${encodeURIComponent(orderId)}`, { headers: headers(accessToken) });
-  if (!response.ok) throw await responseError(response, 'Could not load order details');
-  const order = (await response.json()) as CreatedOrderDto;
+  const order = await apiClient.get<CreatedOrderDto>(
+    `/api/v1/orders/${encodeURIComponent(orderId)}`,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load order details' },
+  );
   if (isCanonicalOrder(order)) return canonicalToRecord(order);
 
   const rawTotal = Number(order.totalAmount) || 0;
@@ -343,17 +325,21 @@ export async function fetchOrderDetails(orderId: string, accessToken?: string | 
 }
 
 export async function cancelOrder(orderId: string, reason: string, accessToken?: string | null): Promise<void> {
-  const url = `${appConfig.apiBaseUrl}/api/v1/orders/${encodeURIComponent(orderId)}/cancel?reason=${encodeURIComponent(reason)}`;
-  const response = await fetch(url, { method: 'POST', headers: headers(accessToken) });
-  if (!response.ok) throw await responseError(response, 'Could not cancel order');
+  await apiClient.post(
+    `/api/v1/orders/${encodeURIComponent(orderId)}/cancel?reason=${encodeURIComponent(reason)}`,
+    undefined,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not cancel order' },
+  );
 }
 
 export async function reorderItems(orderId: string, accessToken?: string | null): Promise<ReorderValidationResult> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/orders/${encodeURIComponent(orderId)}/reorder`, {
-    method: 'POST', headers: headers(accessToken),
-  });
-  if (!response.ok) throw await responseError(response, 'Reorder revalidation failed');
-  return (await response.json()) as ReorderValidationResult;
+  return apiClient.post<ReorderValidationResult>(
+    `/api/v1/orders/${encodeURIComponent(orderId)}/reorder`,
+    undefined,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Reorder revalidation failed' },
+  );
 }
 
 export interface CheckoutQuoteInput {
@@ -434,7 +420,8 @@ export async function fetchCheckoutQuote(input: CheckoutQuoteInput, accessToken?
       outletId: input.providerId,
       lines: input.items.map((item) => ({ listingId: item.offeringId, quantity: item.quantity })),
     },
-    { Authorization: `Bearer ${accessToken}` },
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load checkout quote' },
   );
 
   if (quote.fulfilmentMode !== 'STORE_PICKUP' || quote.paymentMethod !== 'PAY_ON_FULFILMENT') {
@@ -476,19 +463,15 @@ export async function createCustomerOrder(input: CreateOrderInput, accessToken?:
   const contact = await fetchDeliveryContact(accessToken, input.deliveryAddressId);
   if (!contact?.phoneNumber) throw new Error('Add a delivery contact number to this address before placing your order.');
 
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/orders`, {
-    method: 'POST',
-    headers: {
-      ...headers(accessToken),
-      'Content-Type': 'application/json',
+  const order = await apiClient.post<CreatedOrderDto>(
+    '/api/v1/orders',
+    input,
+    {
       'X-Delivery-Contact-Phone': contact.phoneNumber,
       'Idempotency-Key': `checkout:${input.quoteToken}`,
     },
-    body: JSON.stringify(input),
-  });
-  if (!response.ok) throw await responseError(response, 'Could not place order');
-
-  const order = (await response.json()) as CreatedOrderDto;
+    { authToken: accessToken, errorFallback: 'Could not place order' },
+  );
   if (isCanonicalOrder(order)) return canonicalToRecord(order);
 
   const orderId = typeof order.orderId === 'string' ? order.orderId : order.id;

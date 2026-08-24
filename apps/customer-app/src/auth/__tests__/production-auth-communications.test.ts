@@ -12,6 +12,7 @@ function response(body: unknown = {}, status = 200): Response {
     status,
     json: jest.fn().mockResolvedValue(body),
     text: jest.fn().mockResolvedValue(typeof body === 'string' ? body : JSON.stringify(body)),
+    headers: { get: jest.fn().mockReturnValue(null) },
   } as unknown as Response;
 }
 
@@ -43,10 +44,11 @@ describe('communication contact sync', () => {
     await expect(syncCommunicationContact('jwt-token')).resolves.toBeUndefined();
     expect(mockedFetch).toHaveBeenCalledWith(
       'https://api.mypet.test/api/v1/notifications/contact/me',
-      {
+      expect.objectContaining({
         method: 'POST',
         headers: { Accept: 'application/json', Authorization: 'Bearer jwt-token' },
-      },
+        signal: expect.anything(),
+      }),
     );
   });
 

@@ -7,6 +7,7 @@ import {
   nearestEnabledCity,
   requestCurrentCoordinates,
 } from '@/services/device-location';
+import { apiClient } from '@/services/api-client';
 import { appConfig } from '@/utils/app-config';
 
 export interface ServiceRegionFeatureFlags {
@@ -86,11 +87,6 @@ function normalizeSelectablePincode(city: ActiveCity, pincode?: string | null): 
   return city.pincodes.find((value) => /^[1-9][0-9]{5}$/.test(value)) ?? null;
 }
 
-async function responseError(response: Response): Promise<Error> {
-  const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null;
-  return new Error(body?.message || body?.error || `Launch request failed (${response.status})`);
-}
-
 export function LocationProvider({ children }: { children: React.ReactNode }) {
   const initialDemoPincode = appConfig.allowDemoMode
     ? normalizeSelectablePincode(DEFAULT_TIRUPATI_REGION) ?? ''
@@ -109,11 +105,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
 
   const fetchActiveCities = useCallback(async (): Promise<ActiveCity[]> => {
     try {
-      const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/service-regions/active`, {
-        headers: { Accept: 'application/json' },
-      });
-      if (!response.ok) throw await responseError(response);
-      const data = (await response.json()) as ActiveCity[];
+      const data = await apiClient.get<ActiveCity[]>('/api/v1/service-regions/active');
       if (Array.isArray(data) && data.length > 0) return data;
       throw new Error('No active service regions were returned.');
     } catch (error) {
@@ -293,13 +285,10 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/service-regions/launch-requests`, {
-        method: 'POST',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cityName, contactInfo: contact }),
+      const result = await apiClient.post<{ status?: string }>('/api/v1/service-regions/launch-requests', {
+        cityName,
+        contactInfo: contact,
       });
-      if (!response.ok) throw await responseError(response);
-      const result = (await response.json()) as { status?: string };
       Alert.alert(
         result.status === 'ALREADY_REGISTERED' ? 'Already registered' : 'Request saved',
         `MyPet will notify ${contact} when ${cityName} becomes available.`,

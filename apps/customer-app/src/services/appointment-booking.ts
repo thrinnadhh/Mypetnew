@@ -1,3 +1,4 @@
+import { apiClient } from '@/services/api-client';
 import { getDemoAppointmentSlots } from '@/services/demo-customer-data';
 import { appConfig } from '@/utils/app-config';
 import { isUuid } from '@/utils/uuid';
@@ -84,16 +85,6 @@ export interface HoldAppointmentInput {
   accessToken: string | null | undefined;
 }
 
-function authHeaders(accessToken: string | null | undefined): Record<string, string> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  return headers;
-}
-
-function jsonHeaders(accessToken: string | null | undefined): Record<string, string> {
-  return { ...authHeaders(accessToken), 'Content-Type': 'application/json' };
-}
-
 function resolveBookingUserId(userId: string | null | undefined): string {
   if (userId) return userId;
   if (appConfig.allowDemoMode) return DEMO_USER_ID;
@@ -144,13 +135,6 @@ function appointmentAttemptKey(
 ): string {
   const baseKey = `appointment-v2-${slotId}-${petId}-${pincode}`;
   return paymentMethod === 'PAY_AT_PROVIDER' ? baseKey : `${baseKey}-ONLINE_PAYMENT`;
-}
-
-async function apiError(response: Response, fallback: string): Promise<Error> {
-  const body = (await response.json().catch(() => null)) as { code?: string; error?: string; message?: string } | null;
-  const error = new Error(body?.message ?? body?.error ?? fallback);
-  if (body?.code) error.name = body.code;
-  return error;
 }
 
 function validateService(
@@ -214,11 +198,11 @@ async function fetchServicePage(
   const query = new URLSearchParams({ page: String(page), pageSize: String(PUBLIC_PAGE_SIZE) });
   if (input.providerId) query.set('outletId', input.providerId);
   if (input.capability) query.set('capability', input.capability);
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/public/services?${query.toString()}`, {
-    headers: authHeaders(undefined),
-  });
-  if (!response.ok) throw await apiError(response, 'Could not load appointment services.');
-  return (await response.json()) as PageResponse<PublicServiceDto>;
+  return apiClient.get<PageResponse<PublicServiceDto>>(
+    `/api/v1/public/services?${query.toString()}`,
+    undefined,
+    { authToken: null, errorFallback: 'Could not load appointment services.' },
+  );
 }
 
 export async function fetchAppointmentServices(input: {
@@ -332,12 +316,11 @@ async function fetchSlotsForService(
       page: String(page),
       pageSize: String(PUBLIC_PAGE_SIZE),
     });
-    const response = await fetch(
-      `${appConfig.apiBaseUrl}/api/v1/public/services/${encodeURIComponent(service.id)}/availability?${query.toString()}`,
-      { headers: authHeaders(undefined) },
+    const payload = await apiClient.get<PageResponse<PublicServiceSlotDto>>(
+      `/api/v1/public/services/${encodeURIComponent(service.id)}/availability?${query.toString()}`,
+      undefined,
+      { authToken: null, errorFallback: 'Could not load appointment availability.' },
     );
-    if (!response.ok) throw await apiError(response, 'Could not load appointment availability.');
-    const payload = (await response.json()) as PageResponse<PublicServiceSlotDto>;
     if (!Array.isArray(payload.items)) {
       throw contractError('SLOT_RESPONSE_INVALID', 'The provider returned an invalid availability response.');
     }
@@ -399,10 +382,9 @@ async function createAppointmentHold(
   paymentMethod: AppointmentPaymentMethod,
   idempotencyKey: string,
 ): Promise<AppointmentResponse> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/customer/appointments`, {
-    method: 'POST',
-    headers: { ...jsonHeaders(input.accessToken), 'Idempotency-Key': idempotencyKey },
-    body: JSON.stringify({
+  return apiClient.post<AppointmentResponse>(
+    '/api/v1/customer/appointments',
+    {
       outletId: input.slot.providerId,
       serviceId: input.slot.offeringId,
       slotId: input.slot.id,
@@ -411,11 +393,13 @@ async function createAppointmentHold(
       petId: input.petId,
       pincode: input.pincode,
       paymentMethod,
-    }),
-  });
-
-  if (!response.ok) throw await apiError(response, 'This slot was just taken. Please choose another.');
-  return (await response.json()) as AppointmentResponse;
+    },
+    { 'Idempotency-Key': idempotencyKey },
+    {
+      authToken: input.accessToken,
+      errorFallback: 'This slot was just taken. Please choose another.',
+    },
+  );
 }
 
 export async function holdAppointmentSlot(input: HoldAppointmentInput): Promise<string> {
@@ -447,9 +431,10 @@ export async function confirmAppointmentHold(
   if (appConfig.allowDemoMode && appointmentId.startsWith('demo-appointment-')) return;
   if (!accessToken) throw new Error('Please sign in before confirming an appointment.');
 
-  const response = await fetch(
-    `${appConfig.apiBaseUrl}/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}/confirm`,
-    { method: 'POST', headers: authHeaders(accessToken) },
+  await apiClient.post(
+    `/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}/confirm`,
+    undefined,
+    undefined,
+    { authToken: accessToken, errorFallback: 'The appointment was not confirmed. Please retry.' },
   );
-  if (!response.ok) throw await apiError(response, 'The appointment was not confirmed. Please retry.');
 }

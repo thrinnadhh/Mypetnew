@@ -62,6 +62,7 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint --quiet",
+    "check:network-boundaries": "node ./scripts/check-network-boundaries.mjs",
     "test": "jest",
     "test:coverage": "jest --runInBand --coverage",
     "test:merchant-consistency": "jest --runInBand src/__tests__/p5-product-detail-cart-contract.test.ts src/__tests__/p7-checkout-hardening.test.ts src/services/__tests__/checkout-safety.test.ts src/services/__tests__/customer-checkout-contract.test.ts src/services/__tests__/customer-quote-contract.test.ts src/services/__tests__/paginated-catalog.test.ts",

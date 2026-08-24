@@ -11,6 +11,7 @@ function jsonResponse(body: unknown, status = 200) {
     status,
     json: jest.fn().mockResolvedValue(body),
     text: jest.fn().mockResolvedValue(typeof body === 'string' ? body : JSON.stringify(body)),
+    headers: { get: jest.fn().mockReturnValue(null) },
   } as unknown as Response;
 }
 
@@ -20,7 +21,7 @@ describe('appointment booking API failure handling', () => {
     global.fetch = mockedFetch as unknown as typeof fetch;
   });
 
-  it('surfaces availability API failures instead of treating them as an empty slot list', async () => {
+  it('retries transient availability failures and still surfaces the canonical API error', async () => {
     mockedFetch
       .mockResolvedValueOnce(
         jsonResponse({
@@ -41,14 +42,22 @@ describe('appointment booking API failure handling', () => {
       )
       .mockResolvedValueOnce(
         jsonResponse({ code: 'SERVICE_UNAVAILABLE', message: 'Appointment service is temporarily unavailable.' }, 503),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 'SERVICE_UNAVAILABLE', message: 'Appointment service is temporarily unavailable.' }, 503),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 'SERVICE_UNAVAILABLE', message: 'Appointment service is temporarily unavailable.' }, 503),
       );
 
     await expect(
       fetchAvailableAppointmentSlots('44444444-4444-4444-8444-444444444444'),
     ).rejects.toMatchObject({
-      name: 'SERVICE_UNAVAILABLE',
+      code: 'SERVICE_UNAVAILABLE',
       message: 'Appointment service is temporarily unavailable.',
+      status: 503,
     });
+    expect(mockedFetch).toHaveBeenCalledTimes(4);
   });
 
   it('still returns an empty list when the availability API succeeds with no slots', async () => {

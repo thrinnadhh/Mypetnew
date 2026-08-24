@@ -4,8 +4,7 @@ import {
   type RecurringOrderSubscription,
   type RenewalProposal,
 } from '@/contracts/recurring-orders';
-import { apiErrorFromResponse } from '@/contracts/api-error';
-import { appConfig } from '@/utils/app-config';
+import { apiClient } from './api-client';
 
 interface PageResponse<T> {
   items: T[];
@@ -23,26 +22,16 @@ type RecurringOrderChanges = {
 const PAGE_SIZE = 20;
 const MAX_PAGES = 50;
 
-async function request<T>(path: string, accessToken: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${appConfig.apiBaseUrl}${path}`, {
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      ...((init.headers as Record<string, string> | undefined) ?? {}),
-    },
-  });
-  if (!response.ok) throw await apiErrorFromResponse(response);
-  return (await response.json()) as T;
-}
-
 async function fetchAllPages<T>(path: string, id: (item: T) => string, accessToken: string): Promise<T[]> {
   const unique = new Map<string, T>();
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const separator = path.includes('?') ? '&' : '?';
     const requestPath = `${path}${separator}page=${page}&pageSize=${PAGE_SIZE}`;
-    const payload = await request<PageResponse<T> | T[]>(requestPath, accessToken);
+    const payload = await apiClient.get<PageResponse<T> | T[]>(
+      requestPath,
+      undefined,
+      { authToken: accessToken, errorFallback: 'Could not load recurring orders' },
+    );
 
     // Historical P14 returned a single bounded array. Accept it only as a terminal
     // one-page compatibility response; current servers must use PageResponse.
@@ -80,9 +69,10 @@ export function fetchRenewalProposal(
   proposalId: string,
   accessToken: string,
 ): Promise<RenewalProposal> {
-  return request(
+  return apiClient.get<RenewalProposal>(
     `/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}/proposals/${encodeURIComponent(proposalId)}`,
-    accessToken,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load renewal proposal' },
   );
 }
 
@@ -93,11 +83,12 @@ export function createRecurringOrder(
   accessToken: string,
   idempotencyKey = compatibilityCommandKey('create', `${sourceOrderId}:${cadenceDays}:${quantityMultiplier}`),
 ): Promise<RecurringOrderSubscription> {
-  return request('/api/v1/customer/recurring-orders', accessToken, {
-    method: 'POST',
-    headers: { 'Idempotency-Key': idempotencyKey },
-    body: JSON.stringify({ sourceOrderId, cadenceDays, quantityMultiplier }),
-  });
+  return apiClient.post<RecurringOrderSubscription>(
+    '/api/v1/customer/recurring-orders',
+    { sourceOrderId, cadenceDays, quantityMultiplier },
+    { 'Idempotency-Key': idempotencyKey },
+    { authToken: accessToken, errorFallback: 'Could not create recurring order' },
+  );
 }
 
 export function updateRecurringOrder(
@@ -111,11 +102,12 @@ export function updateRecurringOrder(
     ? idempotencyKeyOrChanges
     : compatibilityCommandKey(action, subscriptionId);
   const requestedChanges = typeof idempotencyKeyOrChanges === 'string' ? changes : idempotencyKeyOrChanges;
-  return request(`/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}`, accessToken, {
-    method: 'PATCH',
-    headers: { 'Idempotency-Key': idempotencyKey },
-    body: JSON.stringify({ action, ...requestedChanges }),
-  });
+  return apiClient.patch<RecurringOrderSubscription>(
+    `/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}`,
+    { action, ...requestedChanges },
+    { 'Idempotency-Key': idempotencyKey },
+    { authToken: accessToken, errorFallback: 'Could not update recurring order' },
+  );
 }
 
 export function confirmRecurringProposal(
@@ -124,10 +116,11 @@ export function confirmRecurringProposal(
   accessToken: string,
   idempotencyKey: string,
 ): Promise<RecurringOrderConfirmation> {
-  return request(
+  return apiClient.post<RecurringOrderConfirmation>(
     `/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}/proposals/${encodeURIComponent(proposalId)}/confirm`,
-    accessToken,
-    { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey } },
+    undefined,
+    { 'Idempotency-Key': idempotencyKey },
+    { authToken: accessToken, errorFallback: 'Could not confirm recurring proposal' },
   );
 }
 
@@ -141,10 +134,12 @@ export function confirmRecurringOrder(
   accessToken: string,
   idempotencyKey = compatibilityCommandKey('confirm', subscriptionId),
 ): Promise<RecurringOrderConfirmation> {
-  return request(`/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}/confirm`, accessToken, {
-    method: 'POST',
-    headers: { 'Idempotency-Key': idempotencyKey },
-  });
+  return apiClient.post<RecurringOrderConfirmation>(
+    `/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}/confirm`,
+    undefined,
+    { 'Idempotency-Key': idempotencyKey },
+    { authToken: accessToken, errorFallback: 'Could not confirm recurring order' },
+  );
 }
 
 export function completeRecurringProposal(
@@ -154,14 +149,11 @@ export function completeRecurringProposal(
   accessToken: string,
   checkoutIdempotencyKey: string,
 ): Promise<RenewalProposal> {
-  return request(
+  return apiClient.post<RenewalProposal>(
     `/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}/proposals/${encodeURIComponent(proposalId)}/complete`,
-    accessToken,
-    {
-      method: 'POST',
-      headers: { 'Idempotency-Key': checkoutIdempotencyKey },
-      body: JSON.stringify({ orderId }),
-    },
+    { orderId },
+    { 'Idempotency-Key': checkoutIdempotencyKey },
+    { authToken: accessToken, errorFallback: 'Could not complete recurring proposal' },
   );
 }
 

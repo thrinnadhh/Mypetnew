@@ -34,15 +34,6 @@ jest.mock('@/services/api-client', () => ({
 }));
 
 const mockedApiClient = apiClient as jest.Mocked<typeof apiClient>;
-const mockedFetch = jest.fn();
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: jest.fn().mockResolvedValue(body),
-  } as unknown as Response;
-}
 
 const subscription = {
   subscriptionId: 'sub-1',
@@ -86,66 +77,64 @@ const proposal: RenewalProposal = {
 describe('P14 recurring renewal behavior', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
-    mockedFetch.mockReset();
-    global.fetch = mockedFetch as unknown as typeof fetch;
     await AsyncStorage.clear();
   });
 
   it('sends explicit idempotency keys for create and mutation commands', async () => {
-    mockedFetch
-      .mockResolvedValueOnce(jsonResponse(subscription, 201))
-      .mockResolvedValueOnce(jsonResponse({ ...subscription, status: 'PAUSED', version: 4 }));
+    mockedApiClient.post.mockResolvedValueOnce(subscription);
+    mockedApiClient.patch.mockResolvedValueOnce({ ...subscription, status: 'PAUSED', version: 4 });
 
     await createRecurringOrder('order-1', 15, 2, 'token-a', 'create-key-1');
     await updateRecurringOrder('sub-1', 'PAUSE', 'token-a', 'pause-key-1');
 
-    expect(mockedFetch.mock.calls[0][0]).toBe('https://api.mypet.test/api/v1/customer/recurring-orders');
-    expect(mockedFetch.mock.calls[0][1]).toMatchObject({
-      method: 'POST',
-      headers: expect.objectContaining({
-        Authorization: 'Bearer token-a',
-        'Idempotency-Key': 'create-key-1',
-      }),
-    });
-    expect(JSON.parse(mockedFetch.mock.calls[0][1]?.body as string)).toEqual({
-      sourceOrderId: 'order-1',
-      cadenceDays: 15,
-      quantityMultiplier: 2,
-    });
-    expect(mockedFetch.mock.calls[1][1]).toMatchObject({
-      method: 'PATCH',
-      headers: expect.objectContaining({ 'Idempotency-Key': 'pause-key-1' }),
-    });
+    expect(mockedApiClient.post).toHaveBeenCalledWith(
+      '/api/v1/customer/recurring-orders',
+      { sourceOrderId: 'order-1', cadenceDays: 15, quantityMultiplier: 2 },
+      { 'Idempotency-Key': 'create-key-1' },
+      { authToken: 'token-a', errorFallback: 'Could not create recurring order' },
+    );
+    expect(mockedApiClient.patch).toHaveBeenCalledWith(
+      '/api/v1/customer/recurring-orders/sub-1',
+      { action: 'PAUSE' },
+      { 'Idempotency-Key': 'pause-key-1' },
+      { authToken: 'token-a', errorFallback: 'Could not update recurring order' },
+    );
   });
 
   it('paginates proposal history deterministically and de-duplicates by proposal id', async () => {
-    mockedFetch
-      .mockResolvedValueOnce(jsonResponse({
+    mockedApiClient.get
+      .mockResolvedValueOnce({
         items: [proposal],
         page: 0,
         pageSize: 20,
         hasNext: true,
-      }))
-      .mockResolvedValueOnce(jsonResponse({
+      })
+      .mockResolvedValueOnce({
         items: [proposal, { ...proposal, proposalId: 'proposal-2', status: 'EXPIRED' }],
         page: 1,
         pageSize: 20,
         hasNext: false,
-      }));
+      });
 
     const result = await fetchRenewalProposals('token-a');
 
     expect(result.map((item) => item.proposalId)).toEqual(['proposal-1', 'proposal-2']);
-    expect(mockedFetch.mock.calls.map((call) => call[0])).toEqual([
-      'https://api.mypet.test/api/v1/customer/recurring-orders/proposals?page=0&pageSize=20',
-      'https://api.mypet.test/api/v1/customer/recurring-orders/proposals?page=1&pageSize=20',
+    expect(mockedApiClient.get.mock.calls.map((call) => call[0])).toEqual([
+      '/api/v1/customer/recurring-orders/proposals?page=0&pageSize=20',
+      '/api/v1/customer/recurring-orders/proposals?page=1&pageSize=20',
     ]);
+    expect(mockedApiClient.get).toHaveBeenNthCalledWith(
+      1,
+      '/api/v1/customer/recurring-orders/proposals?page=0&pageSize=20',
+      undefined,
+      { authToken: 'token-a', errorFallback: 'Could not load recurring orders' },
+    );
   });
 
   it('confirms an explicit proposal and preserves integer-paise revalidation data', async () => {
-    mockedFetch.mockResolvedValueOnce(jsonResponse({
+    const confirmation = {
       subscription,
-      proposal: { ...proposal, status: 'CONFIRMED' },
+      proposal: { ...proposal, status: 'CONFIRMED' as const },
       reorder: {
         originalOrderId: 'order-1',
         providerId: 'provider-1',
@@ -161,18 +150,18 @@ describe('P14 recurring renewal behavior', () => {
         }],
       },
       createdOrderId: null,
-    }));
+    };
+    mockedApiClient.post.mockResolvedValueOnce(confirmation);
 
     const result = await confirmRecurringProposal('sub-1', 'proposal-1', 'token-a', 'confirm-key-1');
 
     expect(result.reorder.items[0].unitPricePaise).toBe(12_345);
-    expect(mockedFetch.mock.calls[0][0]).toBe(
-      'https://api.mypet.test/api/v1/customer/recurring-orders/sub-1/proposals/proposal-1/confirm',
+    expect(mockedApiClient.post).toHaveBeenCalledWith(
+      '/api/v1/customer/recurring-orders/sub-1/proposals/proposal-1/confirm',
+      undefined,
+      { 'Idempotency-Key': 'confirm-key-1' },
+      { authToken: 'token-a', errorFallback: 'Could not confirm recurring proposal' },
     );
-    expect(mockedFetch.mock.calls[0][1]).toMatchObject({
-      method: 'POST',
-      headers: expect.objectContaining({ 'Idempotency-Key': 'confirm-key-1' }),
-    });
     expect(JSON.stringify(result)).not.toContain('unitPrice":');
   });
 

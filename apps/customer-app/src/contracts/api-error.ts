@@ -98,8 +98,19 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiErrorFromResponse(response: Response): Promise<ApiError> {
-  const body = await response.text();
+async function readResponseBody(response: Response): Promise<string> {
+  if (typeof response.text === 'function') return response.text();
+  const responseWithJson = response as Response & { json?: () => Promise<unknown> };
+  if (typeof responseWithJson.json === 'function') {
+    const value = await responseWithJson.json();
+    if (value === undefined || value === null) return '';
+    return typeof value === 'string' ? value : JSON.stringify(value);
+  }
+  return '';
+}
+
+export async function apiErrorFromResponse(response: Response, fallbackMessage?: string): Promise<ApiError> {
+  const body = await readResponseBody(response);
   let raw: unknown = body;
   if (body) {
     try {
@@ -117,10 +128,14 @@ export async function apiErrorFromResponse(response: Response): Promise<ApiError
     raw,
     getHeader('x-request-id') ?? getHeader('x-trace-id'),
   );
+  const genericMessage = payload.message.startsWith('Request failed');
+  const finalPayload = fallbackMessage && genericMessage
+    ? { ...payload, message: fallbackMessage }
+    : payload;
 
   return new ApiError(
     response.status,
-    payload,
+    finalPayload,
     raw,
     parseRetryAfter(getHeader('retry-after')),
   );

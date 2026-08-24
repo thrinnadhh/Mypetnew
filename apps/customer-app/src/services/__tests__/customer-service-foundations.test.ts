@@ -71,16 +71,20 @@ describe('customer service foundations', () => {
         apiClient.post('/api/v1/example', { name: 'Bruno' }, { 'X-Request-Id': 'request-1' }),
       ).resolves.toEqual({ id: 'created' });
 
-      expect(mockedFetch).toHaveBeenCalledWith('https://api.mypet.test/api/v1/example', {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer session-token',
-          'X-Request-Id': 'request-1',
-        },
-        body: JSON.stringify({ name: 'Bruno' }),
-      });
+      expect(mockedFetch).toHaveBeenCalledWith(
+        'https://api.mypet.test/api/v1/example',
+        expect.objectContaining({
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer session-token',
+            'X-Request-Id': 'request-1',
+          },
+          body: JSON.stringify({ name: 'Bruno' }),
+          signal: expect.anything(),
+        }),
+      );
     });
 
     it('preserves absolute URLs, raw string bodies and all convenience methods', async () => {
@@ -106,7 +110,7 @@ describe('customer service foundations', () => {
     it('returns empty objects for empty responses and structured ApiError metadata for failures', async () => {
       mockedFetch
         .mockResolvedValueOnce(response())
-        .mockResolvedValueOnce(response({
+        .mockResolvedValue(response({
           status: 429,
           statusText: 'Too Many Requests',
           body: { code: 'RATE_LIMITED', message: 'Retry later', fieldErrors: { phone: ['slow down'] } },
@@ -115,7 +119,7 @@ describe('customer service foundations', () => {
 
       await expect(apiClient.get('/empty')).resolves.toEqual({});
 
-      const error = await apiClient.get('/limited').catch((value) => value as ApiError);
+      const error = await apiClient.get('/limited', undefined, { maxRetries: 0 }).catch((value) => value as ApiError);
       expect(error).toBeInstanceOf(ApiError);
       expect(error).toMatchObject({
         status: 429,
@@ -210,6 +214,8 @@ describe('customer service foundations', () => {
     it('surfaces deterministic content and provider status failures', async () => {
       mockedFetch
         .mockResolvedValueOnce(response({ status: 503 }))
+        .mockResolvedValueOnce(response({ status: 503 }))
+        .mockResolvedValueOnce(response({ status: 503 }))
         .mockResolvedValueOnce(response({ status: 404 }))
         .mockResolvedValueOnce(response({ status: 403 }));
 
@@ -258,7 +264,6 @@ describe('customer service foundations', () => {
         description: 'Packet was damaged',
       });
       expect(mockedFetch.mock.calls[3][1]?.headers).toEqual({
-        Authorization: 'Bearer token',
         Accept: 'application/json',
       });
       expect(mockedFetch.mock.calls[4][0]).toContain('/case/1/evidence/evidence/1/signed-link');

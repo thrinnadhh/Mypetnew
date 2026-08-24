@@ -1,4 +1,4 @@
-import { appConfig } from '@/utils/app-config';
+import { apiClient } from './api-client';
 
 export type ChatContextType = 'ORDER' | 'APPOINTMENT';
 export type ChatMessageType = 'TEXT' | 'IMAGE';
@@ -50,27 +50,6 @@ export interface ChatMessage {
   readAt: string | null;
 }
 
-function authHeaders(accessToken: string | null | undefined): Record<string, string> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  return headers;
-}
-
-function jsonHeaders(accessToken: string | null | undefined): Record<string, string> {
-  return {
-    ...authHeaders(accessToken),
-    'Content-Type': 'application/json',
-  };
-}
-
-async function readJson<T>(response: Response, fallbackMessage: string): Promise<T> {
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
-    throw new Error(body?.error ?? body?.message ?? fallbackMessage);
-  }
-  return (await response.json()) as T;
-}
-
 export async function openConversation(input: {
   contextType: ChatContextType;
   contextId: string;
@@ -79,28 +58,24 @@ export async function openConversation(input: {
   assignedDoctorUserId?: string;
   accessToken: string | null | undefined;
 }): Promise<Conversation> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations`, {
-    method: 'POST',
-    headers: jsonHeaders(input.accessToken),
-    body: JSON.stringify({
-      contextType: input.contextType,
-      contextId: input.contextId,
-      providerId: input.providerId,
-      customerId: input.customerId,
-      assignedDoctorUserId: input.assignedDoctorUserId,
-    }),
-  });
-  return readJson<Conversation>(response, 'Could not open chat.');
+  return apiClient.post<Conversation>('/api/v1/chat/conversations', {
+    contextType: input.contextType,
+    contextId: input.contextId,
+    providerId: input.providerId,
+    customerId: input.customerId,
+    assignedDoctorUserId: input.assignedDoctorUserId,
+  }, undefined, { authToken: input.accessToken, errorFallback: 'Could not open conversation' });
 }
 
 export async function fetchConversation(
   conversationId: string,
   accessToken: string | null | undefined,
 ): Promise<Conversation> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations/${conversationId}`, {
-    headers: authHeaders(accessToken),
-  });
-  return readJson<Conversation>(response, 'Could not load conversation.');
+  return apiClient.get<Conversation>(
+    `/api/v1/chat/conversations/${conversationId}`,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load conversation' },
+  );
 }
 
 export async function fetchMessages(
@@ -109,10 +84,11 @@ export async function fetchMessages(
   after?: string,
 ): Promise<ChatMessage[]> {
   const params = after ? `?after=${encodeURIComponent(after)}` : '';
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations/${conversationId}/messages${params}`, {
-    headers: authHeaders(accessToken),
-  });
-  return readJson<ChatMessage[]>(response, 'Could not load messages.');
+  return apiClient.get<ChatMessage[]>(
+    `/api/v1/chat/conversations/${conversationId}/messages${params}`,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load messages' },
+  );
 }
 
 export async function sendTextMessage(
@@ -120,12 +96,12 @@ export async function sendTextMessage(
   body: string,
   accessToken: string | null | undefined,
 ): Promise<ChatMessage> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations/${conversationId}/messages`, {
-    method: 'POST',
-    headers: jsonHeaders(accessToken),
-    body: JSON.stringify({ messageType: 'TEXT', body }),
-  });
-  return readJson<ChatMessage>(response, 'Could not send message.');
+  return apiClient.post<ChatMessage>(
+    `/api/v1/chat/conversations/${conversationId}/messages`,
+    { messageType: 'TEXT', body },
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not send message' },
+  );
 }
 
 export async function sendImageMessage(
@@ -135,17 +111,12 @@ export async function sendImageMessage(
   body: string | undefined,
   accessToken: string | null | undefined,
 ): Promise<ChatMessage> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations/${conversationId}/messages`, {
-    method: 'POST',
-    headers: jsonHeaders(accessToken),
-    body: JSON.stringify({
-      messageType: 'IMAGE',
-      imageUrl,
-      imageMimeType,
-      body,
-    }),
-  });
-  return readJson<ChatMessage>(response, 'Could not send image.');
+  return apiClient.post<ChatMessage>(
+    `/api/v1/chat/conversations/${conversationId}/messages`,
+    { messageType: 'IMAGE', imageUrl, imageMimeType, body },
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not send image message' },
+  );
 }
 
 export async function uploadChatImage(
@@ -161,27 +132,22 @@ export async function uploadChatImage(
     type: mimeType,
   } as unknown as Blob);
 
-  const headers = authHeaders(accessToken);
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/attachments`, {
-    method: 'POST',
-    headers,
-    body: formData,
+  return apiClient.upload('/api/v1/chat/attachments', formData, {
+    authToken: accessToken,
+    errorFallback: 'Could not upload chat image',
   });
-  return readJson(response, 'Could not upload image.');
 }
 
 export async function markConversationRead(
   conversationId: string,
   accessToken: string | null | undefined,
 ): Promise<void> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations/${conversationId}/read`, {
-    method: 'POST',
-    headers: authHeaders(accessToken),
-  });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(body?.error ?? 'Could not mark messages as read.');
-  }
+  await apiClient.post(
+    `/api/v1/chat/conversations/${conversationId}/read`,
+    undefined,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not mark messages as read' },
+  );
 }
 
 export async function updateConversationPrivacy(
@@ -189,10 +155,10 @@ export async function updateConversationPrivacy(
   privacy: Partial<Pick<ConversationPrivacy, 'customerPhoneVisible' | 'doctorPhoneVisible' | 'assignedDoctorUserId'>>,
   accessToken: string | null | undefined,
 ): Promise<Conversation> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations/${conversationId}/privacy`, {
-    method: 'PATCH',
-    headers: jsonHeaders(accessToken),
-    body: JSON.stringify(privacy),
-  });
-  return readJson<Conversation>(response, 'Could not update privacy settings.');
+  return apiClient.patch<Conversation>(
+    `/api/v1/chat/conversations/${conversationId}/privacy`,
+    privacy,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not update conversation privacy' },
+  );
 }

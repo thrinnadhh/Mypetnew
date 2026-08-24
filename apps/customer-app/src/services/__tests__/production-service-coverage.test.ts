@@ -231,13 +231,20 @@ describe('order production paths', () => {
 
     await AsyncStorage.setItem('@mypet_orders_cache_v2_customer-2', '{broken');
     mockedFetch.mockRejectedValueOnce(new Error('offline'));
-    await expect(fetchCustomerOrders('customer-2', token)).rejects.toThrow('offline');
+    await expect(fetchCustomerOrders('customer-2', token)).rejects.toMatchObject({
+      status: 0,
+      code: 'NETWORK_ERROR',
+      message: 'Network request failed',
+    });
     expect(await AsyncStorage.getItem('@mypet_orders_cache_v2_customer-2')).toBeNull();
   });
 
   it('does not hide server errors behind the offline cache', async () => {
     await AsyncStorage.setItem('@mypet_orders_cache_v2_customer-1', JSON.stringify([{ id: 'old' }]));
-    mockedFetch.mockResolvedValueOnce(response({ error: 'Order service unavailable' }, 503));
+    mockedFetch
+      .mockResolvedValueOnce(response({ error: 'Order service unavailable' }, 503))
+      .mockResolvedValueOnce(response({ error: 'Order service unavailable' }, 503))
+      .mockResolvedValueOnce(response({ error: 'Order service unavailable' }, 503));
     await expect(fetchCustomerOrders('customer-1', token)).rejects.toThrow('Order service unavailable');
   });
 
@@ -472,10 +479,14 @@ describe('appointment booking production paths', () => {
     expect(mockedFetch.mock.calls[3][0]).toContain('appointment%2F1/confirm');
   });
 
-  it('surfaces availability failures and service catalogue errors', async () => {
+  it('surfaces availability failures and service catalogue errors after bounded safe retries', async () => {
     mockedFetch
       .mockResolvedValueOnce(response(servicesPage))
       .mockResolvedValueOnce(response({ message: 'Availability offline' }, 503))
+      .mockResolvedValueOnce(response({ message: 'Availability offline' }, 503))
+      .mockResolvedValueOnce(response({ message: 'Availability offline' }, 503))
+      .mockResolvedValueOnce(response({ message: 'Catalog offline' }, 503))
+      .mockResolvedValueOnce(response({ message: 'Catalog offline' }, 503))
       .mockResolvedValueOnce(response({ message: 'Catalog offline' }, 503));
 
     await expect(fetchAvailableAppointmentSlots('provider-1')).rejects.toThrow('Availability offline');

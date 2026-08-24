@@ -119,7 +119,7 @@ describe('customer service foundations', () => {
 
       await expect(apiClient.get('/empty')).resolves.toEqual({});
 
-      const error = await apiClient.get('/limited').catch((value) => value as ApiError);
+      const error = await apiClient.get('/limited', undefined, { maxRetries: 0 }).catch((value) => value as ApiError);
       expect(error).toBeInstanceOf(ApiError);
       expect(error).toMatchObject({
         status: 429,

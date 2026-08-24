@@ -178,9 +178,10 @@ describe('MyPet customer journey contracts', () => {
     const payments = source('src/services/customer-payments.ts');
 
     expectAll(auth, ['apiClient.setSessionToken(nextSession?.accessToken ?? null)', 'applySessionState(null)']);
-    expectAll(profile, ['/api/v1/customer/profile', '/api/v1/customer/addresses', 'authHeaders(accessToken)']);
+    expectAll(profile, ['/api/v1/customer/profile', '/api/v1/customer/addresses', 'apiClient.', 'authToken: accessToken']);
     expect(profile).not.toContain('/api/v1/addresses/default');
     expect(profile).not.toContain('customerId=');
+    expect(profile).not.toContain('authHeaders(accessToken)');
     expectAll(payments, ["referenceType: 'PRODUCT_ORDER'", "referenceType: 'APPOINTMENT'", "provider: 'CASHFREE'"]);
     expect(payments).not.toContain('normalizedPhone');
     expect(payments).not.toContain('customerPhone');

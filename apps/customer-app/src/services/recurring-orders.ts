@@ -22,17 +22,16 @@ type RecurringOrderChanges = {
 const PAGE_SIZE = 20;
 const MAX_PAGES = 50;
 
-function retainLegacyTokenParameter(_accessToken: string): void {
-  // AuthContext owns the canonical ApiClient token.
-}
-
 async function fetchAllPages<T>(path: string, id: (item: T) => string, accessToken: string): Promise<T[]> {
-  retainLegacyTokenParameter(accessToken);
   const unique = new Map<string, T>();
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const separator = path.includes('?') ? '&' : '?';
     const requestPath = `${path}${separator}page=${page}&pageSize=${PAGE_SIZE}`;
-    const payload = await apiClient.get<PageResponse<T> | T[]>(requestPath);
+    const payload = await apiClient.get<PageResponse<T> | T[]>(
+      requestPath,
+      undefined,
+      { authToken: accessToken, errorFallback: 'Could not load recurring orders' },
+    );
 
     // Historical P14 returned a single bounded array. Accept it only as a terminal
     // one-page compatibility response; current servers must use PageResponse.
@@ -70,9 +69,10 @@ export function fetchRenewalProposal(
   proposalId: string,
   accessToken: string,
 ): Promise<RenewalProposal> {
-  retainLegacyTokenParameter(accessToken);
   return apiClient.get<RenewalProposal>(
     `/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}/proposals/${encodeURIComponent(proposalId)}`,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load renewal proposal' },
   );
 }
 
@@ -83,11 +83,11 @@ export function createRecurringOrder(
   accessToken: string,
   idempotencyKey = compatibilityCommandKey('create', `${sourceOrderId}:${cadenceDays}:${quantityMultiplier}`),
 ): Promise<RecurringOrderSubscription> {
-  retainLegacyTokenParameter(accessToken);
   return apiClient.post<RecurringOrderSubscription>(
     '/api/v1/customer/recurring-orders',
     { sourceOrderId, cadenceDays, quantityMultiplier },
     { 'Idempotency-Key': idempotencyKey },
+    { authToken: accessToken, errorFallback: 'Could not create recurring order' },
   );
 }
 
@@ -98,7 +98,6 @@ export function updateRecurringOrder(
   idempotencyKeyOrChanges: string | RecurringOrderChanges = compatibilityCommandKey(action, subscriptionId),
   changes: RecurringOrderChanges = {},
 ): Promise<RecurringOrderSubscription> {
-  retainLegacyTokenParameter(accessToken);
   const idempotencyKey = typeof idempotencyKeyOrChanges === 'string'
     ? idempotencyKeyOrChanges
     : compatibilityCommandKey(action, subscriptionId);
@@ -107,6 +106,7 @@ export function updateRecurringOrder(
     `/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}`,
     { action, ...requestedChanges },
     { 'Idempotency-Key': idempotencyKey },
+    { authToken: accessToken, errorFallback: 'Could not update recurring order' },
   );
 }
 
@@ -116,11 +116,11 @@ export function confirmRecurringProposal(
   accessToken: string,
   idempotencyKey: string,
 ): Promise<RecurringOrderConfirmation> {
-  retainLegacyTokenParameter(accessToken);
   return apiClient.post<RecurringOrderConfirmation>(
     `/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}/proposals/${encodeURIComponent(proposalId)}/confirm`,
     undefined,
     { 'Idempotency-Key': idempotencyKey },
+    { authToken: accessToken, errorFallback: 'Could not confirm recurring proposal' },
   );
 }
 
@@ -134,11 +134,11 @@ export function confirmRecurringOrder(
   accessToken: string,
   idempotencyKey = compatibilityCommandKey('confirm', subscriptionId),
 ): Promise<RecurringOrderConfirmation> {
-  retainLegacyTokenParameter(accessToken);
   return apiClient.post<RecurringOrderConfirmation>(
     `/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}/confirm`,
     undefined,
     { 'Idempotency-Key': idempotencyKey },
+    { authToken: accessToken, errorFallback: 'Could not confirm recurring order' },
   );
 }
 
@@ -149,11 +149,11 @@ export function completeRecurringProposal(
   accessToken: string,
   checkoutIdempotencyKey: string,
 ): Promise<RenewalProposal> {
-  retainLegacyTokenParameter(accessToken);
   return apiClient.post<RenewalProposal>(
     `/api/v1/customer/recurring-orders/${encodeURIComponent(subscriptionId)}/proposals/${encodeURIComponent(proposalId)}/complete`,
     { orderId },
     { 'Idempotency-Key': checkoutIdempotencyKey },
+    { authToken: accessToken, errorFallback: 'Could not complete recurring proposal' },
   );
 }
 

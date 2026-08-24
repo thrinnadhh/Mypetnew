@@ -2,7 +2,9 @@ package `in`.mypetnew.catalog.infrastructure
 
 import `in`.mypetnew.catalog.domain.BarcodeResolutionLookup
 import `in`.mypetnew.catalog.domain.BarcodeType
+import `in`.mypetnew.catalog.domain.CatalogSearchQuery
 import `in`.mypetnew.catalog.domain.CatalogService
+import `in`.mypetnew.catalog.domain.ListingStatus
 import org.springframework.context.annotation.Profile
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
@@ -46,12 +48,25 @@ class InMemoryBarcodeResolutionLookup(
         outletId: UUID,
         barcodeType: BarcodeType,
         normalizedBarcode: String,
-    ): UUID? = catalog.allListings()
-        .firstOrNull {
-            it.organizationId == organizationId &&
-                it.outletId == outletId &&
-                it.barcodeType == barcodeType &&
-                it.normalizedBarcode == normalizedBarcode
+    ): UUID? {
+        ListingStatus.entries.forEach { status ->
+            var page = 0
+            do {
+                val result = catalog.searchManagedListings(
+                    CatalogSearchQuery(
+                        organizationId = organizationId,
+                        outletId = outletId,
+                        status = status,
+                        page = page,
+                        pageSize = 100,
+                    ),
+                )
+                result.items.firstOrNull {
+                    it.barcodeType == barcodeType && it.normalizedBarcode == normalizedBarcode
+                }?.let { return it.id }
+                page += 1
+            } while (result.hasNext)
         }
-        ?.id
+        return null
+    }
 }

@@ -73,10 +73,6 @@ const CACHE_PREFIX = '@mypet_appointments_cache_v1_';
 const HISTORY_PAGE_SIZE = 20;
 const MAX_HISTORY_PAGES = 50;
 
-function retainLegacyTokenParameter(_accessToken: string | null | undefined): void {
-  // AuthContext owns the canonical ApiClient token.
-}
-
 function isNetworkFailure(error: unknown): boolean {
   if (apiErrorKind(error) === 'network') return true;
   if (!(error instanceof Error)) return false;
@@ -122,9 +118,10 @@ function mapAppointment(appointment: AppointmentDto): CustomerAppointmentRecord 
 }
 
 async function fetchAppointmentPage(page: number, accessToken: string | null | undefined): Promise<PageResponse<AppointmentDto>> {
-  retainLegacyTokenParameter(accessToken);
   const payload = await apiClient.get<PageResponse<AppointmentDto>>(
     `/api/v1/customer/appointments?page=${page}&pageSize=${HISTORY_PAGE_SIZE}`,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load appointment history' },
   );
   if (!Array.isArray(payload.items) || payload.page !== page || !Number.isInteger(payload.pageSize) || payload.pageSize <= 0) {
     const error = new Error('The appointment history response was invalid.');
@@ -165,18 +162,20 @@ export async function fetchCustomerAppointments(customerId: string, accessToken:
 }
 
 export async function fetchAppointmentDetails(appointmentId: string, accessToken: string | null | undefined): Promise<CustomerAppointmentRecord> {
-  retainLegacyTokenParameter(accessToken);
   const appointment = await apiClient.get<AppointmentDto>(
     `/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}`,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load appointment details' },
   );
   return mapAppointment(appointment);
 }
 
 export async function cancelAppointment(appointmentId: string, reason: string, accessToken: string | null | undefined): Promise<void> {
-  retainLegacyTokenParameter(accessToken);
   await apiClient.post<AppointmentDto>(
     `/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}/cancel`,
     { reason: reason.trim() || null },
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not cancel appointment' },
   );
 }
 

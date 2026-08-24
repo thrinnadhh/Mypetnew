@@ -50,11 +50,6 @@ export interface ChatMessage {
   readAt: string | null;
 }
 
-function retainLegacyTokenParameter(_accessToken: string | null | undefined): void {
-  // AuthContext owns the canonical ApiClient token. The argument remains only to avoid
-  // breaking existing call sites while removing per-service Authorization handling.
-}
-
 export async function openConversation(input: {
   contextType: ChatContextType;
   contextId: string;
@@ -63,22 +58,24 @@ export async function openConversation(input: {
   assignedDoctorUserId?: string;
   accessToken: string | null | undefined;
 }): Promise<Conversation> {
-  retainLegacyTokenParameter(input.accessToken);
   return apiClient.post<Conversation>('/api/v1/chat/conversations', {
     contextType: input.contextType,
     contextId: input.contextId,
     providerId: input.providerId,
     customerId: input.customerId,
     assignedDoctorUserId: input.assignedDoctorUserId,
-  });
+  }, undefined, { authToken: input.accessToken, errorFallback: 'Could not open conversation' });
 }
 
 export async function fetchConversation(
   conversationId: string,
   accessToken: string | null | undefined,
 ): Promise<Conversation> {
-  retainLegacyTokenParameter(accessToken);
-  return apiClient.get<Conversation>(`/api/v1/chat/conversations/${conversationId}`);
+  return apiClient.get<Conversation>(
+    `/api/v1/chat/conversations/${conversationId}`,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load conversation' },
+  );
 }
 
 export async function fetchMessages(
@@ -86,9 +83,12 @@ export async function fetchMessages(
   accessToken: string | null | undefined,
   after?: string,
 ): Promise<ChatMessage[]> {
-  retainLegacyTokenParameter(accessToken);
   const params = after ? `?after=${encodeURIComponent(after)}` : '';
-  return apiClient.get<ChatMessage[]>(`/api/v1/chat/conversations/${conversationId}/messages${params}`);
+  return apiClient.get<ChatMessage[]>(
+    `/api/v1/chat/conversations/${conversationId}/messages${params}`,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load messages' },
+  );
 }
 
 export async function sendTextMessage(
@@ -96,11 +96,12 @@ export async function sendTextMessage(
   body: string,
   accessToken: string | null | undefined,
 ): Promise<ChatMessage> {
-  retainLegacyTokenParameter(accessToken);
-  return apiClient.post<ChatMessage>(`/api/v1/chat/conversations/${conversationId}/messages`, {
-    messageType: 'TEXT',
-    body,
-  });
+  return apiClient.post<ChatMessage>(
+    `/api/v1/chat/conversations/${conversationId}/messages`,
+    { messageType: 'TEXT', body },
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not send message' },
+  );
 }
 
 export async function sendImageMessage(
@@ -110,13 +111,12 @@ export async function sendImageMessage(
   body: string | undefined,
   accessToken: string | null | undefined,
 ): Promise<ChatMessage> {
-  retainLegacyTokenParameter(accessToken);
-  return apiClient.post<ChatMessage>(`/api/v1/chat/conversations/${conversationId}/messages`, {
-    messageType: 'IMAGE',
-    imageUrl,
-    imageMimeType,
-    body,
-  });
+  return apiClient.post<ChatMessage>(
+    `/api/v1/chat/conversations/${conversationId}/messages`,
+    { messageType: 'IMAGE', imageUrl, imageMimeType, body },
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not send image message' },
+  );
 }
 
 export async function uploadChatImage(
@@ -125,7 +125,6 @@ export async function uploadChatImage(
   fileName: string,
   accessToken: string | null | undefined,
 ): Promise<{ imageUrl: string; imageMimeType: string }> {
-  retainLegacyTokenParameter(accessToken);
   const formData = new FormData();
   formData.append('file', {
     uri: fileUri,
@@ -133,15 +132,22 @@ export async function uploadChatImage(
     type: mimeType,
   } as unknown as Blob);
 
-  return apiClient.upload('/api/v1/chat/attachments', formData);
+  return apiClient.upload('/api/v1/chat/attachments', formData, {
+    authToken: accessToken,
+    errorFallback: 'Could not upload chat image',
+  });
 }
 
 export async function markConversationRead(
   conversationId: string,
   accessToken: string | null | undefined,
 ): Promise<void> {
-  retainLegacyTokenParameter(accessToken);
-  await apiClient.post(`/api/v1/chat/conversations/${conversationId}/read`);
+  await apiClient.post(
+    `/api/v1/chat/conversations/${conversationId}/read`,
+    undefined,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not mark messages as read' },
+  );
 }
 
 export async function updateConversationPrivacy(
@@ -149,6 +155,10 @@ export async function updateConversationPrivacy(
   privacy: Partial<Pick<ConversationPrivacy, 'customerPhoneVisible' | 'doctorPhoneVisible' | 'assignedDoctorUserId'>>,
   accessToken: string | null | undefined,
 ): Promise<Conversation> {
-  retainLegacyTokenParameter(accessToken);
-  return apiClient.patch<Conversation>(`/api/v1/chat/conversations/${conversationId}/privacy`, privacy);
+  return apiClient.patch<Conversation>(
+    `/api/v1/chat/conversations/${conversationId}/privacy`,
+    privacy,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not update conversation privacy' },
+  );
 }

@@ -18,14 +18,12 @@ interface UploadReservation {
   expiresAt: string;
 }
 
-function retainLegacyTokenParameter(_accessToken: string): void {
-  // AuthContext owns the canonical ApiClient token. Keep the argument only for
-  // source compatibility while existing call sites stop passing access tokens.
-}
-
 export function fetchMedicalDocuments(accessToken: string): Promise<MedicalDocument[]> {
-  retainLegacyTokenParameter(accessToken);
-  return apiClient.get<MedicalDocument[]>('/api/v1/appointments/medical-documents');
+  return apiClient.get<MedicalDocument[]>(
+    '/api/v1/appointments/medical-documents',
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load medical documents' },
+  );
 }
 
 export async function uploadMedicalDocument(
@@ -33,9 +31,11 @@ export async function uploadMedicalDocument(
   asset: { uri: string; name: string; mimeType: string },
   accessToken: string,
 ): Promise<MedicalDocument> {
-  retainLegacyTokenParameter(accessToken);
   const reservation = await apiClient.post<UploadReservation>(
     `/api/v1/appointments/medical-documents/reservations?appointmentId=${encodeURIComponent(appointmentId)}`,
+    undefined,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not reserve medical document upload' },
   );
   if (!isTrustedBearerUploadUrl(reservation.uploadUrl, appConfig.apiBaseUrl)) {
     throw new Error('Medical document upload destination is invalid.');
@@ -49,7 +49,10 @@ export async function uploadMedicalDocument(
     type: asset.mimeType,
   } as unknown as Blob);
 
-  return apiClient.upload<MedicalDocument>(reservation.uploadUrl, body);
+  return apiClient.upload<MedicalDocument>(reservation.uploadUrl, body, {
+    authToken: accessToken,
+    errorFallback: 'Could not upload medical document',
+  });
 }
 
 export async function getMedicalDocumentLink(
@@ -57,9 +60,11 @@ export async function getMedicalDocumentLink(
   accessToken: string,
   disposition: 'inline' | 'attachment' = 'inline',
 ): Promise<string> {
-  retainLegacyTokenParameter(accessToken);
   const link = await apiClient.post<{ url: string }>(
     `/api/v1/appointments/medical-documents/${encodeURIComponent(documentId)}/signed-link?disposition=${disposition}`,
+    undefined,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not create medical document link' },
   );
   if (!isSafeHttpsUrl(link.url)) throw new Error('Medical document link is invalid.');
   return link.url;

@@ -12,7 +12,7 @@ A reconciliation mismatch is surfaced as `INVENTORY_INTEGRITY_ERROR`; ordinary r
 
 ## Schema and transaction boundary
 
-V24 (`V24__merchant_inventory_ledger_foundation.sql`) is forward-only and leaves historical migrations sealed. It:
+V25 (`V25__merchant_inventory_ledger_foundation.sql`) is forward-only and leaves historical migrations sealed. It:
 
 - adds `organization_id` and `outlet_id` scope to inventory projections/movements;
 - establishes scoped foreign keys and history/reference indexes;
@@ -117,10 +117,10 @@ Publication is inserted before commit in the same database transaction. Rejected
 
 ## Legacy stock migration
 
-V24 preserves existing stock rather than reinitializing balances. It backfills inventory tenant scope and calculates, per listing, the difference between the pre-M3 `inventory_balance.on_hand` value and the sum of existing movement deltas. A non-zero difference becomes one deterministic `OPENING_BALANCE` movement with:
+V25 preserves existing stock rather than reinitializing balances. It backfills inventory tenant scope and calculates, per listing, the difference between the pre-M3 `inventory_balance.on_hand` value and the sum of existing movement deltas. A non-zero difference becomes one deterministic `OPENING_BALANCE` movement with:
 
 - `source_type = MIGRATION`;
-- `source_reference = V24_LEGACY_STOCK_OPENING_BALANCE`;
+- `source_reference = V25_LEGACY_STOCK_OPENING_BALANCE`;
 - the zero system actor;
 - deterministic listing-derived identity/key provenance.
 
@@ -162,7 +162,7 @@ Those are owned by later Merchant Operations sprints. M3 provides reusable immut
 
 The M3 PostgreSQL evidence is centered in:
 
-- `backend/src/test/kotlin/in/mypetnew/merchantops/M3InventoryPostgresContractTest.kt` — V23→V24 upgrade/opening stock, immutability, reconciliation, replay/fingerprint rejection, rollback, outbox atomicity, M1 authority and PostgreSQL concurrency races;
+- `backend/src/test/kotlin/in/mypetnew/merchantops/M3InventoryPostgresContractTest.kt` — V23→V25 upgrade/opening stock, immutability, reconciliation, replay/fingerprint rejection, rollback, outbox atomicity, M1 authority and PostgreSQL concurrency races;
 - `backend/src/test/kotlin/in/mypetnew/catalog/JdbcInventoryPersistenceContractTest.kt` — existing order/POS inventory persistence regression;
 - `backend/src/test/kotlin/in/mypetnew/persistence/FlywaySchemaContractTest.kt` — schema contract regression;
 - `apps/merchant-app/src/inventory/api.test.ts` and `apps/merchant-app/app/inventory.test.tsx` — retry-safe Merchant client and minimal screen behavior;

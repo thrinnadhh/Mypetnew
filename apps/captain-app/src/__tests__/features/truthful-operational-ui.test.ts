@@ -94,7 +94,7 @@ describe('Production Truthful Operational UI & State Machine Tests', () => {
     });
 
     it('handles delivery history load failure with explicit error response', async () => {
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
+      (global.fetch as jest.Mock).mockResolvedValue({
         ok: false,
         status: 503,
         json: async () => ({
@@ -109,6 +109,7 @@ describe('Production Truthful Operational UI & State Machine Tests', () => {
         expect(historyResult.error.status).toBe(503);
         expect(historyResult.error.message).toBe('Delivery history service is temporarily unavailable.');
       }
+      expect(global.fetch).toHaveBeenCalledTimes(3);
     });
 
     it('renders active delivery when assigned and null when idle', async () => {

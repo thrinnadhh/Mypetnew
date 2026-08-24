@@ -6,7 +6,9 @@ import {
   getAuthGeneration,
   getStoredRefreshState,
   getRuntimeAccessToken,
+  getRuntimeAccountId,
   refreshCaptainSession,
+  resolveApiBaseUrl,
   setRuntimeAccessTokenForTesting,
   storeSession,
 } from '../../auth/session';
@@ -43,6 +45,21 @@ describe('Captain Session & Auth Security Invariants', () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it('enforces production API configuration even when a web bundle is served from localhost', () => {
+    expect(resolveApiBaseUrl('https://captain-api.example', 'production', 'localhost')).toBe(
+      'https://captain-api.example',
+    );
+    expect(() => resolveApiBaseUrl(undefined, 'production', 'localhost')).toThrow(
+      'EXPO_PUBLIC_API_BASE_URL is required outside development',
+    );
+    expect(() => resolveApiBaseUrl('http://api.example', 'production', 'localhost')).toThrow(
+      'Captain API configuration must use HTTPS in production',
+    );
+    expect(() => resolveApiBaseUrl('https://api.example', 'prod', 'localhost')).toThrow(
+      'EXPO_PUBLIC_APP_ENV must be development, staging, or production',
+    );
   });
 
   it('1. refresh starts -> logout occurs -> refresh returns 200 -> session remains logged out', async () => {
@@ -287,6 +304,27 @@ describe('Captain Session & Auth Security Invariants', () => {
     });
 
     expect(getRuntimeAccessToken()).toBeNull();
+    expect(await getStoredRefreshState()).toBeNull();
+  });
+
+  it('rejects and clears a refresh response issued for a different account', async () => {
+    await storeSession(validCaptainSession);
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ...validCaptainSession,
+        accountId: 'captain-attacker',
+        accessToken: 'wrong-account-token',
+      }),
+    });
+
+    await expect(refreshCaptainSession()).rejects.toMatchObject({
+      kind: 'AuthenticationExpired',
+      code: 'SESSION_ACCOUNT_MISMATCH',
+    });
+    expect(getRuntimeAccessToken()).toBeNull();
+    expect(getRuntimeAccountId()).toBeNull();
     expect(await getStoredRefreshState()).toBeNull();
   });
 

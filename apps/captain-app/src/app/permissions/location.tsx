@@ -17,6 +17,7 @@ export default function LocationPermissionScreen() {
     state: 'UNKNOWN',
     foregroundGranted: false,
     backgroundGranted: false,
+    preciseGranted: null,
     canAskAgain: true,
   });
   const [requestingForeground, setRequestingForeground] = useState(false);
@@ -79,8 +80,20 @@ export default function LocationPermissionScreen() {
               <Text style={styles.stepText}>STEP 1</Text>
             </View>
             <StatusBadge
-              label={status.foregroundGranted ? 'GRANTED' : 'REQUIRED'}
-              variant={status.foregroundGranted ? 'active' : 'error'}
+              label={
+                !status.foregroundGranted
+                  ? 'REQUIRED'
+                  : status.preciseGranted === false
+                    ? 'APPROXIMATE'
+                    : 'GRANTED'
+              }
+              variant={
+                !status.foregroundGranted
+                  ? 'error'
+                  : status.preciseGranted === false
+                    ? 'warning'
+                    : 'active'
+              }
             />
           </View>
 
@@ -88,6 +101,12 @@ export default function LocationPermissionScreen() {
           <Text style={styles.cardDesc}>
             Required while using the app to broadcast availability to the dispatch engine and view nearby orders.
           </Text>
+
+          {status.preciseGranted === false ? (
+            <Text style={styles.precisionWarning}>
+              Precise location is disabled. Enable it in system settings before going online.
+            </Text>
+          ) : null}
 
           {!status.foregroundGranted && (
             <Button
@@ -238,6 +257,12 @@ const styles = StyleSheet.create({
     color: palette.inkMuted,
     marginTop: 4,
     lineHeight: 18,
+    marginBottom: spacing.sm,
+  },
+  precisionWarning: {
+    ...typography.caption,
+    color: '#92400E',
+    fontWeight: '700',
     marginBottom: spacing.sm,
   },
   actionBtn: {

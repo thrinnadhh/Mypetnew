@@ -148,6 +148,23 @@ class CaptainDeliveryApiTest {
 
         val offerId = objectMapper.readTree(offersA.response.contentAsString).get(0).path("offerId").asString()
 
+        // Push/inbox payload is a signal scoped to the offered Captain, never canonical job state.
+        mockMvc.get("/api/v1/notifications") {
+            header("Authorization", "Bearer ${captainA.accessToken}")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items[0].resourceId") { value(offerId) }
+            jsonPath("$.items[0].payload.route") { value("captain/dispatch/offer") }
+            jsonPath("$.items[0].payload.resourceId") { value(offerId) }
+        }
+
+        mockMvc.get("/api/v1/notifications") {
+            header("Authorization", "Bearer ${captainB.accessToken}")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.items") { isEmpty() }
+        }
+
         // 4. Contract: Foreign Captain B CANNOT accept Captain A's offer
         mockMvc.post("/api/v1/captain/dispatch/offers/$offerId/respond") {
             header("Authorization", "Bearer ${captainB.accessToken}")
@@ -167,11 +184,39 @@ class CaptainDeliveryApiTest {
             status { isOk() }
             jsonPath("$.accepted") { value(true) }
             jsonPath("$.jobId") { value(dispatchJob.id.toString()) }
+            jsonPath("$.originLatitude") { value(13.6287) }
+            jsonPath("$.originLongitude") { value(79.4191) }
             jsonPath("$.deliveryAddress.recipientName") { value("Aditi Rao") }
             jsonPath("$.deliveryAddress.phoneNumber") { value("+919876543210") }
         }.andReturn()
 
         val assignedJobId = objectMapper.readTree(acceptedResponse.response.contentAsString).path("jobId").asString()
+
+        // Restart contract: active delivery is a complete owner-only runtime projection.
+        mockMvc.get("/api/v1/captain/dispatch/active") {
+            header("Authorization", "Bearer ${captainA.accessToken}")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.jobId") { value(assignedJobId) }
+            jsonPath("$.state") { value("ASSIGNED") }
+            jsonPath("$.orderReference") { isNotEmpty() }
+            jsonPath("$.outletName") { value(outlet.name) }
+            jsonPath("$.originLatitude") { value(13.6287) }
+            jsonPath("$.originLongitude") { value(79.4191) }
+            jsonPath("$.deliveryAddress.recipientName") { value("Aditi Rao") }
+            jsonPath("$.deliveryAddress.phoneNumber") { value("+919876543210") }
+            jsonPath("$.assignedAt") { isNotEmpty() }
+        }
+
+        // Busy captains cannot locally/server-side disable the tracking lifecycle.
+        mockMvc.put("/api/v1/captain/availability") {
+            header("Authorization", "Bearer ${captainA.accessToken}")
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"online":false}"""
+        }.andExpect {
+            status { isConflict() }
+            jsonPath("$.code") { value("CAPTAIN_ACTIVE_DELIVERY") }
+        }
 
         // 6. Contract: Replay of accepted offer response is IDEMPOTENT
         mockMvc.post("/api/v1/captain/dispatch/offers/$offerId/respond") {
@@ -249,6 +294,25 @@ class CaptainDeliveryApiTest {
         }
 
         assertEquals(OrderStatus.DELIVERED, orders.get(orderId).status)
+
+        // Telemetry is not an availability command: a late fix cannot undo offline.
+        mockMvc.put("/api/v1/captain/availability") {
+            header("Authorization", "Bearer ${captainA.accessToken}")
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"online":false}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.online") { value(false) }
+        }
+        mockMvc.post("/api/v1/captain/location") {
+            header("Authorization", "Bearer ${captainA.accessToken}")
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"latitude":13.6290,"longitude":79.4194,"accuracy":10}"""
+        }.andExpect {
+            status { isConflict() }
+            jsonPath("$.code") { value("CAPTAIN_OFFLINE") }
+        }
+        assertEquals(false, dispatch.captainState(captainA.accountId)?.online)
 
         // 10. Authoritative Job Lookup Contract for Reconciliation:
         // Owner captain fetches delivered job

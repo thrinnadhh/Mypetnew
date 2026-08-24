@@ -186,7 +186,7 @@ describe('Level 2: API Client Contract Tests', () => {
       abortError.name = 'AbortError';
       (global.fetch as jest.Mock).mockRejectedValueOnce(abortError);
 
-      await expect(captainApiFetch('/api/v1/captain/status', { skipAuth: true })).rejects.toMatchObject({
+      await expect(captainApiFetch('/api/v1/captain/status', { skipAuth: true, maxRetries: 0 })).rejects.toMatchObject({
         kind: 'Timeout',
         status: 408,
         retryable: true,
@@ -196,11 +196,120 @@ describe('Level 2: API Client Contract Tests', () => {
     it('classifies Network disconnection / connection reset to retryable NetworkUnavailable', async () => {
       (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network request failed'));
 
-      await expect(captainApiFetch('/api/v1/captain/status', { skipAuth: true })).rejects.toMatchObject({
+      await expect(captainApiFetch('/api/v1/captain/status', { skipAuth: true, maxRetries: 0 })).rejects.toMatchObject({
         kind: 'NetworkUnavailable',
         status: 0,
         retryable: true,
       });
+    });
+
+    it('rejects absolute and protocol-relative endpoints before attaching a bearer token', async () => {
+      await storeSession(validCaptainSession);
+
+      await expect(captainApiFetch('https://attacker.example/collect')).rejects.toMatchObject({
+        kind: 'ValidationRejected',
+        code: 'UNAPPROVED_API_ORIGIN',
+      });
+      await expect(captainApiFetch('//attacker.example/collect')).rejects.toMatchObject({
+        code: 'UNAPPROVED_API_ORIGIN',
+      });
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('honors caller cancellation independently from the request timeout', async () => {
+      (global.fetch as jest.Mock).mockImplementationOnce((_url, opts) =>
+        new Promise((_resolve, reject) => {
+          opts.signal.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          });
+        }),
+      );
+      const controller = new AbortController();
+      const request = captainApiFetch('/api/v1/captain/status', {
+        skipAuth: true,
+        signal: controller.signal,
+        maxRetries: 0,
+      });
+
+      controller.abort();
+
+      await expect(request).rejects.toMatchObject({
+        kind: 'Cancelled',
+        code: 'REQUEST_CANCELLED',
+        retryable: false,
+      });
+    });
+
+    it('retries bounded transient GET failures but never auto-retries a POST mutation', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+        .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+        .mockResolvedValueOnce(new Response('{"ok":true}', { status: 200 }));
+
+      const readResponse = await captainApiFetch('/api/v1/captain/status', {
+        skipAuth: true,
+        retryBaseDelayMs: 0,
+      });
+      expect(readResponse.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledTimes(3);
+
+      (global.fetch as jest.Mock).mockClear();
+      (global.fetch as jest.Mock).mockResolvedValueOnce(new Response('{}', { status: 503 }));
+      const mutationResponse = await captainApiFetch('/api/v1/captain/status', {
+        method: 'POST',
+        skipAuth: true,
+        retryBaseDelayMs: 0,
+      });
+      expect(mutationResponse.status).toBe(503);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects an authenticated response that returns after logout', async () => {
+      await storeSession(validCaptainSession);
+      let resolveRequest!: (response: Response) => void;
+      (global.fetch as jest.Mock).mockImplementationOnce(
+        () => new Promise<Response>((resolve) => {
+          resolveRequest = resolve;
+        }),
+      );
+
+      const request = captainApiFetch('/api/v1/captain/profile', { maxRetries: 0 });
+      await Promise.resolve();
+      await clearSession();
+      resolveRequest(new Response('{"captainId":"captain-acc-101"}', { status: 200 }));
+
+      await expect(request).rejects.toMatchObject({
+        kind: 'AuthenticationExpired',
+        code: 'STALE_AUTH_RESPONSE',
+      });
+    });
+
+    it('rejects Captain A response after Captain B establishes a session', async () => {
+      await storeSession(validCaptainSession);
+      let resolveRequest!: (response: Response) => void;
+      (global.fetch as jest.Mock).mockImplementationOnce(
+        () => new Promise<Response>((resolve) => {
+          resolveRequest = resolve;
+        }),
+      );
+
+      const request = captainApiFetch('/api/v1/captain/profile', { maxRetries: 0 });
+      await Promise.resolve();
+      await storeSession({
+        ...validCaptainSession,
+        accountId: 'captain-acc-202',
+        accessToken: 'captain-b-token',
+        refreshToken: 'captain-b-refresh',
+      });
+      resolveRequest(new Response('{"captainId":"captain-acc-101"}', { status: 200 }));
+
+      await expect(request).rejects.toMatchObject({
+        kind: 'AuthenticationExpired',
+        code: 'STALE_AUTH_RESPONSE',
+      });
+      expect(getRuntimeAccessToken()).toBe('captain-b-token');
     });
   });
 
@@ -279,6 +388,96 @@ describe('Level 2: API Client Contract Tests', () => {
 
       expect(getRuntimeAccessToken()).toBeNull();
       expect(await getStoredRefreshState()).toBeNull();
+    });
+
+    it('uses one refresh when a second old-token 401 arrives after the first refresh completed', async () => {
+      await storeSession(validCaptainSession);
+
+      let profileCallCount = 0;
+      let refreshCallCount = 0;
+      let resolveLateUnauthorized!: (response: Response) => void;
+      (global.fetch as jest.Mock).mockImplementation((url: string) => {
+        if (url.includes('/api/v1/auth/sessions/refresh')) {
+          refreshCallCount += 1;
+          return Promise.resolve(new Response(JSON.stringify({
+            ...validCaptainSession,
+            accessToken: 'rotated-access-token',
+            refreshToken: 'rotated-refresh-token',
+          }), { status: 200 }));
+        }
+
+        profileCallCount += 1;
+        if (profileCallCount === 1) {
+          return Promise.resolve(new Response('{}', { status: 401 }));
+        }
+        if (profileCallCount === 2) {
+          return new Promise<Response>((resolve) => {
+            resolveLateUnauthorized = resolve;
+          });
+        }
+        return Promise.resolve(new Response('{"ok":true}', { status: 200 }));
+      });
+
+      const first = captainApiFetch('/api/v1/captain/profile', { maxRetries: 0 });
+      const late = captainApiFetch('/api/v1/captain/profile', { maxRetries: 0 });
+      await first;
+      resolveLateUnauthorized(new Response('{}', { status: 401 }));
+      await late;
+
+      expect(refreshCallCount).toBe(1);
+      expect(profileCallCount).toBe(4);
+      expect(getRuntimeAccessToken()).toBe('rotated-access-token');
+    });
+
+    it('terminates on a second 401 without recursive refresh and clears the rejected session', async () => {
+      await storeSession(validCaptainSession);
+      let refreshCallCount = 0;
+      (global.fetch as jest.Mock).mockImplementation((url: string) => {
+        if (url.includes('/api/v1/auth/sessions/refresh')) {
+          refreshCallCount += 1;
+          return Promise.resolve(new Response(JSON.stringify({
+            ...validCaptainSession,
+            accessToken: 'still-rejected-token',
+          }), { status: 200 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 401 }));
+      });
+
+      await expect(
+        captainApiFetch('/api/v1/captain/profile', { maxRetries: 0 }),
+      ).rejects.toMatchObject({
+        kind: 'AuthenticationExpired',
+        code: 'SECOND_UNAUTHORIZED_RESPONSE',
+      });
+      expect(refreshCallCount).toBe(1);
+      expect(getRuntimeAccessToken()).toBeNull();
+      expect(await getStoredRefreshState()).toBeNull();
+    });
+  });
+
+  it('classifies 429 as a retryable rate limit error', async () => {
+    const response = new Response(JSON.stringify({ message: 'Slow down' }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    await expect(handleApiResponse(response)).rejects.toMatchObject({
+      kind: 'RateLimited',
+      status: 429,
+      retryable: true,
+    });
+  });
+
+  it('normalizes malformed JSON on a successful response', async () => {
+    const response = new Response('{bad json', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    await expect(handleApiResponse(response)).rejects.toMatchObject({
+      kind: 'ServerFailure',
+      code: 'MALFORMED_SUCCESS_RESPONSE',
+      retryable: false,
     });
   });
 });

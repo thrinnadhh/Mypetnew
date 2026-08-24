@@ -28,6 +28,8 @@ export interface CaptainAssignmentProjection {
   orderId?: string | null;
   outletId?: string | null;
   outletName?: string | null;
+  originLatitude?: number | null;
+  originLongitude?: number | null;
   deliveryAddress?: CaptainDeliveryAddressProjection | null;
 }
 

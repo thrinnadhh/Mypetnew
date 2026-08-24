@@ -228,6 +228,15 @@ data class CaptainAvailabilityRequest(
     val speed: Double? = null,
 )
 
+data class CaptainLocationRequest(
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val accuracy: Double? = null,
+    val capturedAt: Instant? = null,
+    val heading: Double? = null,
+    val speed: Double? = null,
+)
+
 enum class CaptainOfferAction { ACCEPT, REJECT }
 data class CaptainOfferResponseRequest(val action: CaptainOfferAction)
 
@@ -267,7 +276,26 @@ data class CaptainAssignmentProjection(
     val orderId: UUID?,
     val outletId: UUID?,
     val outletName: String?,
+    val originLatitude: Double?,
+    val originLongitude: Double?,
     val deliveryAddress: CaptainDeliveryAddressProjection?,
+)
+
+data class CaptainActiveJobResponse(
+    val jobId: UUID,
+    val orderId: UUID,
+    val orderReference: String,
+    val outletId: UUID,
+    val outletName: String,
+    val originLatitude: Double,
+    val originLongitude: Double,
+    val deliveryAddress: CaptainDeliveryAddressProjection,
+    val state: String,
+    val itemCount: Int,
+    val assignedAt: Instant,
+    val pickedUpAt: Instant?,
+    val deliveredAt: Instant?,
+    val failureReason: String?,
 )
 
 data class DeliveryProofRequest(
@@ -306,6 +334,23 @@ class CaptainDeliveryApiController(
         )
     }
 
+    @PostMapping("/location")
+    fun location(
+        authentication: Authentication,
+        @RequestBody request: CaptainLocationRequest,
+    ) = authentication.domainPrincipal().let { captain ->
+        Authorizer.requireRole(captain, Role.CAPTAIN)
+        dispatch.updateLocation(
+            captain.actorId,
+            request.latitude,
+            request.longitude,
+            request.accuracy,
+            request.capturedAt,
+            request.heading,
+            request.speed,
+        )
+    }
+
     @GetMapping("/dispatch/offers")
     fun offers(authentication: Authentication): List<CaptainOfferProjection> {
         val captain = authentication.domainPrincipal()
@@ -325,7 +370,9 @@ class CaptainDeliveryApiController(
         Authorizer.requireRole(captain, Role.CAPTAIN)
         val accepted = request.action == CaptainOfferAction.ACCEPT
         val job = dispatch.respondToOffer(captain.actorId, offerId, accepted)
-        if (!accepted) return CaptainAssignmentProjection(false, null, null, null, null, null)
+        if (!accepted) {
+            return CaptainAssignmentProjection(false, null, null, null, null, null, null, null)
+        }
         val order = orders.get(job.orderId)
         val quote = quotes.get(order.quoteId)
         val outlet = providers.getOutlet(order.outletId)
@@ -337,6 +384,8 @@ class CaptainDeliveryApiController(
             orderId = order.id,
             outletId = outlet.id,
             outletName = outlet.name,
+            originLatitude = job.originLatitude,
+            originLongitude = job.originLongitude,
             deliveryAddress = CaptainDeliveryAddressProjection(
                 addressId = address.addressId,
                 recipientName = address.recipientName,
@@ -373,22 +422,40 @@ class CaptainDeliveryApiController(
     }
 
     @GetMapping("/dispatch/active")
-    fun getActiveJob(authentication: Authentication): ResponseEntity<CaptainJobResponse> {
+    fun getActiveJob(authentication: Authentication): ResponseEntity<CaptainActiveJobResponse> {
         val captain = authentication.domainPrincipal()
         Authorizer.requireRole(captain, Role.CAPTAIN)
         val job = dispatch.findActiveJob(captain.actorId) ?: return ResponseEntity.noContent().build()
+        val order = orders.get(job.orderId)
+        val quote = quotes.get(order.quoteId)
+        val outlet = providers.getOutlet(order.outletId)
+        val address = quote.deliveryAddress
+            ?: throw DomainException("DELIVERY_ADDRESS_REQUIRED", "The assigned delivery address is unavailable")
         return ResponseEntity.ok(
-            CaptainJobResponse(
+            CaptainActiveJobResponse(
                 jobId = job.id,
                 orderId = job.orderId,
+                orderReference = order.orderNumber,
                 outletId = job.outletId,
-                status = job.status.name,
-                assignedCaptainId = job.assignedCaptainId ?: captain.actorId,
-                assignedAt = job.assignedAt,
+                outletName = outlet.name,
+                originLatitude = job.originLatitude,
+                originLongitude = job.originLongitude,
+                deliveryAddress = CaptainDeliveryAddressProjection(
+                    addressId = address.addressId,
+                    recipientName = address.recipientName,
+                    phoneNumber = address.phoneNumber,
+                    line1 = address.line1,
+                    line2 = address.line2,
+                    city = address.city,
+                    state = address.state,
+                    pincode = address.pincode,
+                ),
+                state = job.status.name,
+                itemCount = order.lines.values.sum(),
+                assignedAt = job.assignedAt ?: job.updatedAt,
                 pickedUpAt = job.pickedUpAt,
                 deliveredAt = job.deliveredAt,
                 failureReason = job.failureReason,
-                updatedAt = job.updatedAt,
             ),
         )
     }

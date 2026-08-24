@@ -33,10 +33,16 @@ jobs:
         run: npm run lint
       - name: Test Captain app
         run: npm test
+      - name: Guard Captain architecture boundaries
+        run: npm run test:architecture
       - name: Export Captain Android bundle
+        env:
+          EXPO_PUBLIC_APP_ENV: production
+          EXPO_PUBLIC_API_BASE_URL: https://api.invalid.example
         run: npx expo export --platform android --output-dir /tmp/captain-android-export
       - name: Export Captain web bundle
         env:
+          EXPO_PUBLIC_APP_ENV: production
           EXPO_PUBLIC_API_BASE_URL: https://api.invalid.example
         run: npx expo export --platform web --output-dir dist-ci
       - name: Upload Captain test evidence

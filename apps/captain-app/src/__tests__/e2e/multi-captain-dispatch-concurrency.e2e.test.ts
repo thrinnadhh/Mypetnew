@@ -26,7 +26,7 @@ describe('E2E: Multi-Captain Concurrency, Isolation & Security Boundary Flow', (
     // 1. CONCURRENT OFFER RACE: Two captains attempt to accept same offer
     // -------------------------------------------------------------
     // Captain A session
-    setRuntimeAccessTokenForTesting('captain-a-jwt');
+    setRuntimeAccessTokenForTesting('captain-a-jwt', 'captain-a');
 
     // Captain A wins race (200 OK)
     (global.fetch as jest.Mock).mockResolvedValueOnce({
@@ -55,7 +55,7 @@ describe('E2E: Multi-Captain Concurrency, Isolation & Security Boundary Flow', (
     expect(captainAClaim.jobId).toBe(jobId);
 
     // Captain B session tries to claim the same offer
-    setRuntimeAccessTokenForTesting('captain-b-jwt');
+    setRuntimeAccessTokenForTesting('captain-b-jwt', 'captain-b');
 
     // Server returns 409 Conflict (Offer already claimed by Captain A)
     (global.fetch as jest.Mock).mockResolvedValueOnce({
@@ -86,7 +86,7 @@ describe('E2E: Multi-Captain Concurrency, Isolation & Security Boundary Flow', (
     // -------------------------------------------------------------
     // 3. SUPPORT TICKET CREATION: Captain A creates support ticket on active job
     // -------------------------------------------------------------
-    setRuntimeAccessTokenForTesting('captain-a-jwt');
+    setRuntimeAccessTokenForTesting('captain-a-jwt', 'captain-a');
 
     (global.fetch as jest.Mock).mockResolvedValueOnce({
       ok: true,

@@ -1,12 +1,50 @@
 import { router } from 'expo-router';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../../components/Button';
 import { StatusBadge } from '../../components/StatusBadge';
 import { palette, radii, spacing, typography } from '../../design/tokens';
+import {
+  CaptainNotificationPermissionState,
+  getCaptainNotificationPermission,
+  registerCaptainNotifications,
+} from '../../notifications/captain-notifications';
 
 export default function NotificationsPermissionScreen() {
+  const [permission, setPermission] = useState<CaptainNotificationPermissionState>('UNDETERMINED');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getCaptainNotificationPermission()
+      .then((state) => {
+        if (active) setPermission(state);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const requestPermission = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setPermission(await registerCaptainNotifications(true));
+    } catch {
+      setError('Notification registration failed. Check your connection and device settings.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const badgeVariant = permission === 'GRANTED' ? 'active' : permission === 'DENIED' ? 'error' : 'warning';
+  const badgeLabel = permission === 'GRANTED' ? 'ACTIVE' : permission.replace('_', ' ');
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
@@ -25,15 +63,26 @@ export default function NotificationsPermissionScreen() {
               <Text style={styles.rowTitle}>Order Notifications</Text>
               <Text style={styles.rowDesc}>Instant audible and visual dispatch alerts</Text>
             </View>
-            <StatusBadge label="ACTIVE" variant="active" />
+            <StatusBadge label={badgeLabel} variant={badgeVariant} />
           </View>
         </View>
 
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
         <View style={styles.actions}>
+          {permission !== 'GRANTED' && permission !== 'UNAVAILABLE' ? (
+            <Button
+              disabled={loading}
+              loading={loading}
+              onPress={requestPermission}
+              title="Enable Notifications"
+              variant="primary"
+            />
+          ) : null}
           <Button
             onPress={() => router.back()}
             title="Return to Profile"
-            variant="primary"
+            variant={permission === 'GRANTED' ? 'primary' : 'secondary'}
           />
         </View>
       </ScrollView>
@@ -108,5 +157,12 @@ const styles = StyleSheet.create({
   },
   actions: {
     width: '100%',
+    gap: spacing.sm,
+  },
+  errorText: {
+    ...typography.bodySmall,
+    color: palette.error,
+    textAlign: 'center',
+    marginBottom: spacing.md,
   },
 });

@@ -1,5 +1,11 @@
-import { commandStore, CommandStore, COMMAND_STORE_KEY, DurableStorageDriver } from '../../sync/command-store';
+import {
+  commandStore,
+  CommandStore,
+  DefaultStorageDriver,
+  DurableStorageDriver,
+} from '../../sync/command-store';
 import { MutationCommand } from '../../domain/command';
+import * as SecureStore from 'expo-secure-store';
 
 describe('Durable CommandStore & Mutation Journal', () => {
   beforeEach(async () => {
@@ -74,6 +80,125 @@ describe('Durable CommandStore & Mutation Journal', () => {
 
     const pendingList = await commandStore.listPending();
     expect(pendingList.some((c) => c.commandId === 'cmd-pending-reboot')).toBe(true);
+  });
+
+  it('uses a native persistent driver across fresh CommandStore instances', async () => {
+    const firstProcess = new CommandStore(new DefaultStorageDriver());
+    await firstProcess.clear();
+    await firstProcess.save({
+      commandId: 'cmd-native-restart',
+      id: 'cmd-native-restart',
+      commandType: 'ACCEPT_OFFER',
+      type: 'ACCEPT_OFFER',
+      resourceType: 'DISPATCH_OFFER',
+      resourceId: 'offer-native-restart',
+      captainId: 'captain-native',
+      idempotencyKey: 'idemp-native-restart',
+      payload: { offerId: 'offer-native-restart' },
+      payloadFingerprint: 'fp-native-restart',
+      createdAt: new Date().toISOString(),
+      state: 'PENDING',
+      attemptCount: 0,
+      updatedAt: new Date().toISOString(),
+    });
+
+    const restartedProcess = new CommandStore(new DefaultStorageDriver());
+    await expect(restartedProcess.get('cmd-native-restart', 'captain-native')).resolves.toMatchObject({
+      state: 'PENDING',
+      resourceId: 'offer-native-restart',
+    });
+  });
+
+  it('keeps proof PINs out of the SQLite journal while preserving active replay identity', async () => {
+    let persisted: string | null = null;
+    const driver: DurableStorageDriver = {
+      async getItem() {
+        return persisted;
+      },
+      async setItem(_key, value) {
+        persisted = value;
+      },
+      async removeItem() {
+        persisted = null;
+      },
+      async clear() {
+        persisted = null;
+      },
+    };
+    const store = new CommandStore(driver);
+    await store.save({
+      commandId: 'cmd-sensitive-proof',
+      id: 'cmd-sensitive-proof',
+      commandType: 'MARK_DELIVERED',
+      type: 'MARK_DELIVERED',
+      resourceType: 'DELIVERY_JOB',
+      resourceId: 'job-sensitive-proof',
+      captainId: 'captain-sensitive',
+      jobId: 'job-sensitive-proof',
+      idempotencyKey: 'idemp-sensitive-proof',
+      payload: {
+        jobId: 'job-sensitive-proof',
+        proof: { type: 'PIN', pinCode: '5678', capturedAt: '2026-08-24T10:00:00Z' },
+      },
+      payloadFingerprint: 'fp-sensitive-proof',
+      createdAt: '2026-08-24T10:00:00Z',
+      state: 'UNKNOWN',
+      attemptCount: 1,
+      updatedAt: '2026-08-24T10:00:01Z',
+    });
+
+    expect(persisted).not.toContain('5678');
+    expect(persisted).toContain('requiresPinReentry');
+
+    const restarted = new CommandStore(driver);
+    const restored = await restarted.get('cmd-sensitive-proof', 'captain-sensitive');
+    expect((restored?.payload as any).proof.pinCode).toBe('5678');
+
+    if (!restored) throw new Error('Expected proof command to be restored');
+    restored.state = 'ACKNOWLEDGED';
+    await restarted.save(restored);
+    expect(persisted).not.toContain('5678');
+    expect((await restarted.get('cmd-sensitive-proof'))?.payload).not.toHaveProperty(
+      'proof.pinCode',
+    );
+  });
+
+  it('clears indexed proof secrets even when the mutation journal is corrupt', async () => {
+    let persisted: string | null = null;
+    const driver: DurableStorageDriver = {
+      async getItem() { return persisted; },
+      async setItem(_key, value) { persisted = value; },
+      async removeItem() { persisted = null; },
+      async clear() { persisted = null; },
+    };
+    const store = new CommandStore(driver);
+    await store.save({
+      commandId: 'cmd-corrupt-proof',
+      id: 'cmd-corrupt-proof',
+      commandType: 'MARK_DELIVERED',
+      type: 'MARK_DELIVERED',
+      resourceType: 'DELIVERY_JOB',
+      resourceId: 'job-corrupt-proof',
+      captainId: 'captain-sensitive',
+      jobId: 'job-corrupt-proof',
+      idempotencyKey: 'idemp-corrupt-proof',
+      payload: { proof: { type: 'PIN', pinCode: '2468' } },
+      payloadFingerprint: 'fp-corrupt-proof',
+      createdAt: '2026-08-24T10:00:00Z',
+      state: 'UNKNOWN',
+      attemptCount: 1,
+      updatedAt: '2026-08-24T10:00:01Z',
+    });
+    expect(await SecureStore.getItemAsync('mypetnew.captain.command_proof.v1.cmd-corrupt-proof'))
+      .toBe('2468');
+
+    persisted = '{{CORRUPT_JOURNAL}}';
+    store.resetMemoryForTesting();
+    await store.clear();
+
+    expect(await SecureStore.getItemAsync('mypetnew.captain.command_proof.v1.cmd-corrupt-proof'))
+      .toBeNull();
+    expect(await SecureStore.getItemAsync('mypetnew.captain.command_proof_index.v1')).toBeNull();
   });
 
   it('Requirement 3: Process restart reloads UNKNOWN command', async () => {

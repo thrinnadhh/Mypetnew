@@ -19,15 +19,22 @@ type RefreshFlight = {
 
 const REFRESH_STATE_KEY = 'mypetnew.captain.refresh.v1';
 const DEVICE_ID_KEY = 'mypetnew.captain.installation.v1';
+const REFRESH_TIMEOUT_MS = 15_000;
 
 let authGeneration = 0;
 let runtimeAccessToken: string | null = null;
+let runtimeAccountId: string | null = null;
 let runtimeWebInstallationId: string | null = null;
+let runtimeNativeInstallationId: string | null = null;
 let refreshInFlight: RefreshFlight | null = null;
 let storageMutationTail: Promise<void> = Promise.resolve();
 
 export function getAuthGeneration(): number {
   return authGeneration;
+}
+
+export function getRuntimeAccountId(): string | null {
+  return runtimeAccountId;
 }
 
 export function validateCaptainSessionEnvelope(payload: unknown): CaptainSessionEnvelope {
@@ -107,20 +114,47 @@ export function validateCaptainSessionEnvelope(payload: unknown): CaptainSession
   };
 }
 
-export function getApiBaseUrl(): string {
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
-    const hostname = window.location.hostname;
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      return `http://${hostname}:8080`;
-    }
+export function resolveApiBaseUrl(
+  configuredValue: string | undefined,
+  environmentValue: string | undefined,
+  browserHostname?: string,
+): string {
+  const configured = configuredValue?.trim();
+  const appEnvironment = environmentValue?.trim().toLowerCase() || 'development';
+
+  if (!['development', 'staging', 'production'].includes(appEnvironment)) {
+    throw new AppError({
+      kind: 'ValidationRejected',
+      code: 'INVALID_APP_ENVIRONMENT',
+      message: 'EXPO_PUBLIC_APP_ENV must be development, staging, or production',
+    });
   }
 
-  const raw = process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || 'http://localhost:8080';
+  const browserDevelopmentBase =
+    !configured &&
+    appEnvironment === 'development' &&
+    (browserHostname === 'localhost' || browserHostname === '127.0.0.1')
+      ? `http://${browserHostname}:8080`
+      : undefined;
+
+  if (!configured && !browserDevelopmentBase && appEnvironment !== 'development') {
+    throw new AppError({
+      kind: 'ValidationRejected',
+      code: 'MISSING_API_CONFIGURATION',
+      message: 'EXPO_PUBLIC_API_BASE_URL is required outside development',
+    });
+  }
+
+  const raw = configured || browserDevelopmentBase || 'http://localhost:8080';
   let parsed: URL;
   try {
     parsed = new URL(raw);
   } catch {
-    return 'http://localhost:8080';
+    throw new AppError({
+      kind: 'ValidationRejected',
+      code: 'INVALID_API_CONFIGURATION',
+      message: 'EXPO_PUBLIC_API_BASE_URL must be a valid absolute URL',
+    });
   }
 
   const localDevHost =
@@ -129,7 +163,8 @@ export function getApiBaseUrl(): string {
     parsed.hostname === '10.0.2.2' ||
     parsed.hostname.startsWith('192.168.');
 
-  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && localDevHost)) {
+  const localHttpAllowed = appEnvironment === 'development' && parsed.protocol === 'http:' && localDevHost;
+  if (parsed.protocol !== 'https:' && !localHttpAllowed) {
     throw new AppError({
       kind: 'ValidationRejected',
       code: 'INSECURE_CONFIGURATION',
@@ -137,6 +172,18 @@ export function getApiBaseUrl(): string {
     });
   }
   return raw.replace(/\/$/, '');
+}
+
+export function getApiBaseUrl(): string {
+  const browserHostname =
+    Platform.OS === 'web' && typeof window !== 'undefined' && window.location
+      ? window.location.hostname
+      : undefined;
+  return resolveApiBaseUrl(
+    process.env.EXPO_PUBLIC_API_BASE_URL,
+    process.env.EXPO_PUBLIC_APP_ENV,
+    browserHostname,
+  );
 }
 
 function serializeStorageMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -209,24 +256,32 @@ function refreshStateJson(session: CaptainSessionEnvelope): string {
 export async function getInstallationDeviceId(): Promise<string> {
   if (Platform.OS === 'web') {
     if (!runtimeWebInstallationId) {
-      runtimeWebInstallationId = `captain-web-${Crypto.randomUUID()}`;
+      runtimeWebInstallationId = Crypto.randomUUID();
     }
     return runtimeWebInstallationId;
   }
   try {
     const existing = await storageGet(DEVICE_ID_KEY);
-    if (existing) return existing;
+    if (existing) {
+      runtimeNativeInstallationId = existing;
+      return existing;
+    }
   } catch {
     // Fail-safe: generate new device id if unreadable
   }
 
-  const created = `captain-device-${Crypto.randomUUID()}`;
+  const created = Crypto.randomUUID();
   try {
     await storageSet(DEVICE_ID_KEY, created);
   } catch {
     // If device ID save fails, still return generated ID
   }
+  runtimeNativeInstallationId = created;
   return created;
+}
+
+export function getCachedInstallationDeviceId(): string | null {
+  return Platform.OS === 'web' ? runtimeWebInstallationId : runtimeNativeInstallationId;
 }
 
 export async function storeSession(session: CaptainSessionEnvelope): Promise<void> {
@@ -240,17 +295,20 @@ export async function storeSession(session: CaptainSessionEnvelope): Promise<voi
     await storageSet(REFRESH_STATE_KEY, value);
   } catch (storageErr) {
     runtimeAccessToken = null;
+    runtimeAccountId = null;
     throw storageErr;
   }
 
   if (authGeneration === targetGen) {
     runtimeAccessToken = validated.accessToken;
+    runtimeAccountId = validated.accountId;
   }
 }
 
 export async function clearSession(): Promise<void> {
   ++authGeneration;
   runtimeAccessToken = null;
+  runtimeAccountId = null;
   refreshInFlight = null;
 
   await storageDelete(REFRESH_STATE_KEY);
@@ -302,11 +360,14 @@ export async function refreshCaptainSession(): Promise<CaptainSessionEnvelope> {
     }
 
     let res: Response;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS);
     try {
       res = await fetch(`${getApiBaseUrl()}/api/v1/auth/sessions/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken: state.refreshToken }),
+        signal: controller.signal,
       });
     } catch (networkErr: any) {
       if (capturedGeneration !== authGeneration) {
@@ -316,7 +377,12 @@ export async function refreshCaptainSession(): Promise<CaptainSessionEnvelope> {
           message: 'Stale refresh failed after session state changed',
         });
       }
+      if (networkErr?.name === 'AbortError') {
+        throw AppError.timeout('Session refresh timed out');
+      }
       throw AppError.network(networkErr?.message || 'Network error during session refresh');
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     // Invariant A2 & A3: Stale refresh response must never resurrect or overwrite
@@ -364,6 +430,18 @@ export async function refreshCaptainSession(): Promise<CaptainSessionEnvelope> {
       throw valErr;
     }
 
+    if (validated.accountId !== state.accountId) {
+      if (capturedGeneration === authGeneration) {
+        await clearSession();
+      }
+      throw new AppError({
+        kind: 'AuthenticationExpired',
+        code: 'SESSION_ACCOUNT_MISMATCH',
+        message: 'Session refresh returned credentials for a different account',
+        status: 401,
+      });
+    }
+
     // Invariant A3: Verify generation again before persisting new tokens
     if (capturedGeneration !== authGeneration) {
       throw new AppError({
@@ -389,6 +467,7 @@ export async function refreshCaptainSession(): Promise<CaptainSessionEnvelope> {
 
     if (capturedGeneration === authGeneration) {
       runtimeAccessToken = validated.accessToken;
+      runtimeAccountId = validated.accountId;
     }
 
     return validated;
@@ -413,7 +492,10 @@ export function getRuntimeAccessToken(): string | null {
   return runtimeAccessToken;
 }
 
-export function setRuntimeAccessTokenForTesting(token: string | null): void {
+export function setRuntimeAccessTokenForTesting(
+  token: string | null,
+  accountId = 'captain-test-runtime',
+): void {
   if (process.env.NODE_ENV !== 'test') {
     throw new AppError({
       kind: 'ValidationRejected',
@@ -422,4 +504,5 @@ export function setRuntimeAccessTokenForTesting(token: string | null): void {
     });
   }
   runtimeAccessToken = token;
+  runtimeAccountId = token ? accountId : null;
 }

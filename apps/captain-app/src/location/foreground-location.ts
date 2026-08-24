@@ -71,8 +71,12 @@ export async function getCurrentCaptainLocation(
       });
     }
 
-    if (accuracy != null && accuracy > maxAccuracyMeters) {
+    if (accuracy == null || !Number.isFinite(accuracy) || accuracy > maxAccuracyMeters) {
       logger.warn('Location', `Low GPS accuracy: ${accuracy}m > ${maxAccuracyMeters}m`);
+      throw AppError.fromHttp(400, {
+        code: 'LOCATION_ACCURACY_INSUFFICIENT',
+        message: 'A precise GPS fix is required before Captain tracking can start.',
+      });
     }
 
     return {

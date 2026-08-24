@@ -333,7 +333,7 @@ class CaptainProofAndContractsTest {
         }.andExpect {
             status { isOk() }
             jsonPath("$.jobId") { value(job.id.toString()) }
-            jsonPath("$.status") { value("ASSIGNED") }
+            jsonPath("$.state") { value("ASSIGNED") }
         }
 
         // 1. Pickup with WRONG pin code fails closed

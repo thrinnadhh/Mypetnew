@@ -1,3 +1,6 @@
+import * as Network from 'expo-network';
+import { Platform } from 'react-native';
+
 type ConnectivityListener = (isConnected: boolean) => void;
 
 class ConnectivityManager {
@@ -5,10 +8,28 @@ class ConnectivityManager {
   private listeners: Set<ConnectivityListener> = new Set();
 
   constructor() {
-    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    if (
+      Platform.OS === 'web' &&
+      typeof window !== 'undefined' &&
+      typeof window.addEventListener === 'function'
+    ) {
       window.addEventListener('online', () => this.setConnected(true));
       window.addEventListener('offline', () => this.setConnected(false));
       this.isConnected = typeof navigator !== 'undefined' ? navigator.onLine : true;
+      return;
+    }
+
+    Network.getNetworkStateAsync()
+      .then((state) => this.applyNetworkState(state))
+      .catch(() => {});
+    Network.addNetworkStateListener((state) => this.applyNetworkState(state));
+  }
+
+  private applyNetworkState(state: Network.NetworkState): void {
+    if (state.isConnected === false || state.isInternetReachable === false) {
+      this.setConnected(false);
+    } else if (state.isConnected === true || state.isInternetReachable === true) {
+      this.setConnected(true);
     }
   }
 

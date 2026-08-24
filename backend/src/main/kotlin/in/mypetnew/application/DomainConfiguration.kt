@@ -24,6 +24,7 @@ import `in`.mypetnew.engagement.domain.DeviceRegistrationService
 import `in`.mypetnew.engagement.domain.InMemoryNotificationRepository
 import `in`.mypetnew.engagement.domain.NotificationRepository
 import `in`.mypetnew.engagement.domain.NotificationService
+import `in`.mypetnew.engagement.domain.SafeRoute
 import `in`.mypetnew.identity.domain.InMemoryOtpProvider
 import `in`.mypetnew.identity.domain.InMemorySessionStore
 import `in`.mypetnew.identity.domain.OtpProvider
@@ -166,7 +167,23 @@ class DomainConfiguration {
         persistence: InMemoryDispatchPersistence,
         geoIndex: InMemoryCaptainGeoIndex,
         orders: OrderService,
-    ) = DispatchService(persistence, geoIndex, orders)
+        notifications: NotificationService,
+    ) = DispatchService(
+        persistence,
+        geoIndex,
+        orders,
+        offerNotifier = { offer ->
+            notifications.enqueue(
+                sourceEventId = offer.id,
+                recipientId = offer.captainId,
+                templateVersion = "captain-dispatch-offer-v1",
+                title = "New delivery assignment",
+                body = "Open MyPet Captain to review an available delivery.",
+                route = SafeRoute.CAPTAIN_OFFER,
+                resourceId = offer.id,
+            )
+        },
+    )
 
     @Bean
     fun deviceRegistrationService(persistence: ObjectProvider<DeviceRegistrationPersistence>) =

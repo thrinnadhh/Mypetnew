@@ -10,6 +10,7 @@
 export type LocationPermissionState =
   | 'UNKNOWN'
   | 'DENIED'
+  | 'APPROXIMATE_ONLY'
   | 'FOREGROUND_ONLY'
   | 'BACKGROUND_ALLOWED';
 

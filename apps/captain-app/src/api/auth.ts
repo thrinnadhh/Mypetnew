@@ -51,3 +51,11 @@ export async function verifyCaptainOtp(
   await storeSession(session);
   return session;
 }
+
+export async function revokeCurrentCaptainSession(): Promise<void> {
+  const response = await captainApiFetch('/api/v1/auth/sessions/current', {
+    method: 'DELETE',
+    timeoutMs: 5_000,
+  });
+  await handleApiResponse<void>(response);
+}

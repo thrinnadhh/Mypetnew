@@ -16,6 +16,28 @@ jest.mock("expo-secure-store", () => ({
   }),
 }));
 
+const mockSQLiteStorageMap = new Map();
+
+jest.mock("expo-sqlite/kv-store", () => ({
+  SQLiteStorage: class MockSQLiteStorage {
+    async getItem(key) {
+      return mockSQLiteStorageMap.get(key) ?? null;
+    }
+
+    async setItem(key, value) {
+      mockSQLiteStorageMap.set(key, String(value));
+    }
+
+    async removeItem(key) {
+      mockSQLiteStorageMap.delete(key);
+    }
+
+    async clear() {
+      mockSQLiteStorageMap.clear();
+    }
+  },
+}));
+
 const mockDefinedTasks = new Map();
 
 jest.mock("expo-task-manager", () => ({
@@ -71,4 +93,33 @@ jest.mock("expo-linking", () => ({
   openURL: jest.fn().mockResolvedValue(true),
   canOpenURL: jest.fn().mockResolvedValue(true),
   createURL: jest.fn((path) => `mypetcaptain://${path}`),
+}));
+
+jest.mock("expo-notifications", () => ({
+  AndroidImportance: { MAX: 5 },
+  setNotificationHandler: jest.fn(),
+  setNotificationChannelAsync: jest.fn().mockResolvedValue(null),
+  getPermissionsAsync: jest.fn().mockResolvedValue({ status: "granted", granted: true }),
+  requestPermissionsAsync: jest.fn().mockResolvedValue({ status: "granted", granted: true }),
+  getDevicePushTokenAsync: jest.fn().mockResolvedValue({ type: "android", data: "test-native-token" }),
+  addPushTokenListener: jest.fn(() => ({ remove: jest.fn() })),
+  addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  getLastNotificationResponseAsync: jest.fn().mockResolvedValue(null),
+  clearLastNotificationResponseAsync: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("expo-network", () => ({
+  getNetworkStateAsync: jest.fn().mockResolvedValue({
+    type: "WIFI",
+    isConnected: true,
+    isInternetReachable: true,
+  }),
+  addNetworkStateListener: jest.fn(() => ({ remove: jest.fn() })),
+  NetworkStateType: {
+    NONE: "NONE",
+    UNKNOWN: "UNKNOWN",
+    CELLULAR: "CELLULAR",
+    WIFI: "WIFI",
+  },
 }));

@@ -1,6 +1,8 @@
 export type AppErrorKind =
   | 'NetworkUnavailable'
   | 'Timeout'
+  | 'Cancelled'
+  | 'RateLimited'
   | 'AuthenticationExpired'
   | 'AuthorizationDenied'
   | 'ResourceNotFound'
@@ -31,7 +33,15 @@ export class AppError extends Error {
     this.name = 'AppError';
     this.kind = details.kind;
     this.code = details.code ?? details.kind;
-    this.status = details.status ?? (details.kind === 'Timeout' ? 408 : details.kind === 'NetworkUnavailable' ? 0 : 500);
+    this.status =
+      details.status ??
+      (details.kind === 'Timeout'
+        ? 408
+        : details.kind === 'NetworkUnavailable' || details.kind === 'Cancelled'
+          ? 0
+          : details.kind === 'RateLimited'
+            ? 429
+            : 500);
     this.traceId = details.traceId;
     this.retryable = details.retryable ?? (details.kind === 'NetworkUnavailable' || details.kind === 'Timeout' || details.kind === 'ServerFailure');
     Object.setPrototypeOf(this, AppError.prototype);
@@ -74,12 +84,17 @@ export class AppError extends Error {
         kind = 'Conflict';
         message = extractedMessage ?? 'State conflict occurred on the server';
         break;
+      case 429:
+        kind = 'RateLimited';
+        message = extractedMessage ?? 'Too many requests. Please try again shortly.';
+        retryable = true;
+        break;
       case 500:
       case 502:
       case 503:
       case 504:
         kind = 'ServerFailure';
-        message = extractedMessage ?? 'Server encounter an error';
+        message = extractedMessage ?? 'Server encountered an error';
         retryable = true;
         break;
     }
@@ -109,6 +124,16 @@ export class AppError extends Error {
       message,
       status: 408,
       retryable: true,
+    });
+  }
+
+  static cancelled(message = 'Request was cancelled.'): AppError {
+    return new AppError({
+      kind: 'Cancelled',
+      code: 'REQUEST_CANCELLED',
+      message,
+      status: 0,
+      retryable: false,
     });
   }
 

@@ -3,11 +3,13 @@ import { commandStore } from '../../sync/command-store';
 import { DispatchRepository } from '../../repositories/dispatch-repository';
 import { DeliveryRepository } from '../../repositories/delivery-repository';
 import { AppError } from '../../domain/result';
+import { setRuntimeAccessTokenForTesting } from '../../auth/session';
 
 describe('Server-Authoritative Contract Tests', () => {
   beforeEach(async () => {
     await commandStore.clear();
     jest.restoreAllMocks();
+    setRuntimeAccessTokenForTesting('server-authority-token');
   });
 
   describe('Dispatch Offer Acceptance', () => {

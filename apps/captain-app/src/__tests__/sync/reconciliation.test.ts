@@ -16,6 +16,58 @@ describe('ReconciliationService & Authoritative Command Reconciliation', () => {
     connectivity.setConnected(true);
   });
 
+  it('fails closed without crashing bootstrap when the persisted journal is corrupt', async () => {
+    commandStore.setStorageDriver({
+      async getItem() {
+        return '{{CORRUPT_JSON_DATA}}';
+      },
+      async setItem() {},
+      async removeItem() {},
+      async clear() {},
+    });
+
+    await expect(reconciliationService.reconcile()).resolves.toBeUndefined();
+    await expect(commandStore.load()).rejects.toThrow(/STORAGE_CORRUPTION_DETECTED/);
+  });
+
+  it('requires deliberate PIN re-entry only after server truth proves pickup did not commit', async () => {
+    const command: MutationCommand = {
+      commandId: 'cmd-proof-reentry',
+      id: 'cmd-proof-reentry',
+      commandType: 'MARK_PICKED_UP',
+      type: 'MARK_PICKED_UP',
+      resourceType: 'DELIVERY_JOB',
+      resourceId: 'job-proof-reentry',
+      jobId: 'job-proof-reentry',
+      idempotencyKey: 'idemp-proof-reentry',
+      payload: {
+        jobId: 'job-proof-reentry',
+        proof: { type: 'PIN', requiresPinReentry: true },
+      },
+      payloadFingerprint: 'fp-proof-reentry',
+      state: 'UNKNOWN',
+      createdAt: new Date().toISOString(),
+      attemptCount: 1,
+      updatedAt: new Date().toISOString(),
+    };
+    await commandStore.save(command);
+    jest.spyOn(deliveryRepository, 'getDispatchJob').mockResolvedValue(ok({
+      jobId: 'job-proof-reentry',
+      orderId: 'order-proof-reentry',
+      outletId: 'outlet-proof-reentry',
+      status: 'ASSIGNED',
+    }));
+    const retry = jest.spyOn(deliveryRepository, 'markPickedUp');
+
+    await reconciliationService.reconcile();
+
+    await expect(commandStore.get(command.commandId)).resolves.toMatchObject({
+      state: 'SUPERSEDED',
+      lastErrorCode: 'PROOF_REENTRY_REQUIRED',
+    });
+    expect(retry).not.toHaveBeenCalled();
+  });
+
   it('1. UNKNOWN delivery + activeDelivery null remains UNKNOWN (no positive mutation from absence)', async () => {
     const cmdId = 'cmd-deliv-unknown-01';
     const idempKey = 'idemp-deliv-unknown-01';

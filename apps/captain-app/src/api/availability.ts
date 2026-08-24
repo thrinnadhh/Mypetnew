@@ -18,6 +18,8 @@ export interface CaptainAvailabilityParams {
   speed?: number | null;
 }
 
+export type CaptainLocationParams = Omit<CaptainAvailabilityParams, 'online'>;
+
 export async function updateCaptainAvailability(
   params: CaptainAvailabilityParams,
   idempotencyKey?: string,
@@ -35,6 +37,26 @@ export async function updateCaptainAvailability(
       speed: params.speed ?? null,
     }),
     idempotencyKey,
+    timeoutMs: 8000,
+  });
+
+  return await handleApiResponse<CaptainDeliveryStateResponse>(response);
+}
+
+export async function publishCaptainLocation(
+  params: CaptainLocationParams,
+): Promise<CaptainDeliveryStateResponse> {
+  const response = await captainApiFetch('/api/v1/captain/location', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      latitude: params.latitude ?? null,
+      longitude: params.longitude ?? null,
+      accuracy: params.accuracy ?? null,
+      capturedAt: params.capturedAt ?? null,
+      heading: params.heading ?? null,
+      speed: params.speed ?? null,
+    }),
     timeoutMs: 8000,
   });
 

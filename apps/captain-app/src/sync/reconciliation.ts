@@ -1,21 +1,24 @@
+import { getAuthGeneration, getRuntimeAccountId } from '../auth/session';
 import { DeliveryJob } from '../domain/delivery';
 import { ok } from '../domain/result';
 import { availabilityRepository } from '../repositories/availability-repository';
 import { deliveryRepository } from '../repositories/delivery-repository';
 import { dispatchRepository } from '../repositories/dispatch-repository';
-import { commandStore } from './command-store';
+import { commandRequiresPinReentry, commandStore } from './command-store';
 import { connectivity } from './connectivity';
+import { logger } from '../utils/privacy';
 
 type ReconciliationListener = (updatedJob?: DeliveryJob | Partial<DeliveryJob> | null) => void;
 
 export class ReconciliationService {
-  private isReconciling = false;
+  private reconcileInFlight: Promise<void> | null = null;
+  private reconcileRequested = false;
   private listeners: Set<ReconciliationListener> = new Set();
 
   constructor() {
     connectivity.subscribe((online) => {
       if (online) {
-        this.reconcile();
+        this.reconcile().catch(() => {});
       }
     });
   }
@@ -38,11 +41,42 @@ export class ReconciliationService {
   }
 
   async reconcile(): Promise<void> {
-    if (this.isReconciling) return;
-    this.isReconciling = true;
-
+    this.reconcileRequested = true;
+    if (this.reconcileInFlight) return this.reconcileInFlight;
+    const flight = (async () => {
+      do {
+        this.reconcileRequested = false;
+        await this.runReconciliation();
+      } while (this.reconcileRequested);
+    })();
+    this.reconcileInFlight = flight;
     try {
-      const pending = await commandStore.listPending();
+      await flight;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.startsWith('STORAGE_CORRUPTION_DETECTED:')
+      ) {
+        // Fail closed for mutations, but do not crash authenticated bootstrap. A future
+        // logout/reset can still clear the corrupt journal, and no command is replayed.
+        logger.error('Reconciliation', 'Mutation journal is corrupt; automatic replay is blocked');
+        return;
+      }
+      throw error;
+    } finally {
+      if (this.reconcileInFlight === flight) this.reconcileInFlight = null;
+    }
+  }
+
+  private async runReconciliation(): Promise<void> {
+    try {
+      const captainId = getRuntimeAccountId();
+      if (!captainId && process.env.NODE_ENV !== 'test') return;
+      const authGeneration = getAuthGeneration();
+      const sessionIsCurrent = () =>
+        getRuntimeAccountId() === captainId && getAuthGeneration() === authGeneration;
+
+      const pending = await commandStore.listPending(captainId || undefined);
       if (pending.length === 0) return;
 
       // 1. Availability Supersession Pre-pass:
@@ -65,15 +99,21 @@ export class ReconciliationService {
       }
 
       // Re-read pending after availability supersession
-      const activePending = await commandStore.listPending();
+      const activePending = await commandStore.listPending(captainId || undefined);
 
       for (const cmd of activePending) {
+        if (!sessionIsCurrent()) return;
         const cmdType = cmd.commandType || cmd.type;
         const jobId = cmd.jobId || (cmd.payload as any)?.jobId || cmd.resourceId;
+        const commandIsStillActive = async () => {
+          const latest = await commandStore.get(cmd.commandId, captainId || undefined);
+          return !!latest && ['PENDING', 'SENDING', 'UNKNOWN'].includes(latest.state);
+        };
 
         if (cmdType === 'MARK_PICKED_UP' && jobId) {
           // Authoritative lookup for this specific job
           let jobRes = await deliveryRepository.getDispatchJob(jobId);
+          if (!(await commandIsStillActive())) continue;
           if (!jobRes.success) {
             const activeRes = await deliveryRepository.getActiveDelivery();
             if (activeRes.success && activeRes.data && activeRes.data.jobId === jobId) {
@@ -111,13 +151,29 @@ export class ReconciliationService {
               await commandStore.save(cmd);
             } else if (status === 'ASSIGNED' || status === 'SEARCHING' || status === 'OFFERED') {
               // Server has not processed pickup yet
+              if (status === 'ASSIGNED' && commandRequiresPinReentry(cmd)) {
+                // The secure proof secret did not survive process restoration. The
+                // authoritative lookup proves the old mutation did not commit, so retire
+                // its key and let the Captain submit a newly entered PIN intentionally.
+                cmd.state = 'SUPERSEDED';
+                cmd.lastErrorCode = 'PROOF_REENTRY_REQUIRED';
+                cmd.updatedAt = new Date().toISOString();
+                await commandStore.save(cmd);
+                this.notify({
+                  jobId: job.id || job.jobId || jobId,
+                  orderId: job.orderId,
+                  outletId: job.outletId,
+                  state: 'ASSIGNED',
+                });
+                continue;
+              }
               if (cmd.state === 'UNKNOWN' || cmd.state === 'SENDING') {
                 cmd.state = 'PENDING';
                 cmd.updatedAt = new Date().toISOString();
                 await commandStore.save(cmd);
               }
               // If connected, retry with exact same idempotency key and command ID
-              if (connectivity.online) {
+              if (connectivity.online && !commandRequiresPinReentry(cmd)) {
                 const outcome = await deliveryRepository.markPickedUp(
                   jobId,
                   (cmd.payload as any)?.proof,
@@ -143,6 +199,7 @@ export class ReconciliationService {
         } else if (cmdType === 'MARK_DELIVERED' && jobId) {
           // Authoritative lookup for this specific job
           let jobRes = await deliveryRepository.getDispatchJob(jobId);
+          if (!(await commandIsStillActive())) continue;
           if (!jobRes.success) {
             const activeRes = await deliveryRepository.getActiveDelivery();
             if (activeRes.success && activeRes.data && activeRes.data.jobId === jobId) {
@@ -181,13 +238,27 @@ export class ReconciliationService {
               await commandStore.save(cmd);
             } else if (status === 'PICKED_UP' || status === 'ASSIGNED') {
               // Server has not processed delivery yet
+              if (status === 'PICKED_UP' && commandRequiresPinReentry(cmd)) {
+                cmd.state = 'SUPERSEDED';
+                cmd.lastErrorCode = 'PROOF_REENTRY_REQUIRED';
+                cmd.updatedAt = new Date().toISOString();
+                await commandStore.save(cmd);
+                this.notify({
+                  jobId: job.id || job.jobId || jobId,
+                  orderId: job.orderId,
+                  outletId: job.outletId,
+                  state: 'PICKED_UP',
+                  pickedUpAt: job.pickedUpAt || new Date().toISOString(),
+                });
+                continue;
+              }
               if (cmd.state === 'UNKNOWN' || cmd.state === 'SENDING') {
                 cmd.state = 'PENDING';
                 cmd.updatedAt = new Date().toISOString();
                 await commandStore.save(cmd);
               }
               // If connected, retry with exact same idempotency key and command ID
-              if (connectivity.online) {
+              if (connectivity.online && !commandRequiresPinReentry(cmd)) {
                 const outcome = await deliveryRepository.markDelivered(
                   jobId,
                   (cmd.payload as any)?.proof,
@@ -284,7 +355,7 @@ export class ReconciliationService {
         }
       }
     } finally {
-      this.isReconciling = false;
+      // Public reconcile() owns and clears the single-flight promise.
     }
   }
 }

@@ -4,19 +4,27 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { palette, spacing, typography } from '../../../design/tokens';
 import { useDeliveryStore } from '../../../state/delivery-store';
+import { isUuid } from '../../../utils/uuid';
 
 export default function DeliveryJobRouter() {
   const { jobId } = useLocalSearchParams<{ jobId: string }>();
   const { activeDelivery, restoreActiveDelivery } = useDeliveryStore();
 
   useEffect(() => {
+    let cancelled = false;
     async function determineRoute() {
-      let current = activeDelivery;
-      if (!current || current.jobId !== jobId) {
-        await restoreActiveDelivery();
+      if (!isUuid(jobId)) {
+        router.replace('/(tabs)/home');
+        return;
       }
 
-      if (!current) {
+      let current = activeDelivery;
+      if (!current || current.jobId !== jobId) {
+        current = await restoreActiveDelivery();
+      }
+
+      if (cancelled) return;
+      if (!current || current.jobId !== jobId) {
         router.replace('/(tabs)/home');
         return;
       }
@@ -45,6 +53,9 @@ export default function DeliveryJobRouter() {
     }
 
     determineRoute();
+    return () => {
+      cancelled = true;
+    };
   }, [jobId, activeDelivery, restoreActiveDelivery]);
 
   return (

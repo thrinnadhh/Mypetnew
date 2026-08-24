@@ -1,6 +1,7 @@
 package `in`.mypetnew.api
 
 import `in`.mypetnew.application.MyPetNewApplication
+import `in`.mypetnew.delivery.domain.DispatchService
 import `in`.mypetnew.identity.domain.InMemoryOtpProvider
 import `in`.mypetnew.identity.domain.OtpProvider
 import org.junit.jupiter.api.Test
@@ -13,6 +14,7 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.post
 import org.springframework.test.web.servlet.put
 import tools.jackson.databind.ObjectMapper
+import java.util.UUID
 
 @SpringBootTest(
     classes = [MyPetNewApplication::class],
@@ -32,6 +34,7 @@ class CaptainIdentityApiTest {
     @Autowired private lateinit var mockMvc: MockMvc
     @Autowired private lateinit var json: ObjectMapper
     @Autowired private lateinit var otpProvider: OtpProvider
+    @Autowired private lateinit var dispatch: DispatchService
 
     @Test
     fun `captain verification fixes role server side and refresh preserves it`() {
@@ -74,6 +77,8 @@ class CaptainIdentityApiTest {
             contentType = MediaType.APPLICATION_JSON
             content = """{"online":true,"latitude":13.6288,"longitude":79.4192}"""
         }.andExpect { status { isUnauthorized() } }
+
+        dispatch.approveCaptain(UUID.fromString(session.path("accountId").asString()))
 
         mockMvc.put("/api/v1/captain/availability") {
             header("Authorization", "Bearer $refreshedAccessToken")

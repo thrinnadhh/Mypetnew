@@ -31,6 +31,7 @@ describe('Location Lifecycle & State Machine Tests', () => {
     it('computes correct permission states for all permutations', () => {
       expect(computeLocationPermissionState(false, false, true, false)).toBe('UNKNOWN');
       expect(computeLocationPermissionState(false, false, true, true)).toBe('DENIED');
+      expect(computeLocationPermissionState(true, false, true, true, false)).toBe('APPROXIMATE_ONLY');
       expect(computeLocationPermissionState(true, false, true, true)).toBe('FOREGROUND_ONLY');
       expect(computeLocationPermissionState(true, true, true, true)).toBe('BACKGROUND_ALLOWED');
     });
@@ -89,7 +90,7 @@ describe('Location Lifecycle & State Machine Tests', () => {
       expect(bgResult.backgroundGranted).toBe(false);
 
       // startBackgroundLocation should return false when background permission is missing
-      const started = await startBackgroundLocation();
+      const started = await startBackgroundLocation({ accountId: 'captain-location-test' });
       expect(started).toBe(false);
     });
   });
@@ -134,6 +135,23 @@ describe('Location Lifecycle & State Machine Tests', () => {
 
       await expect(getCurrentCaptainLocation({ maxAgeMs: 60000 })).rejects.toMatchObject({
         code: 'LOCATION_STALE',
+      });
+    });
+
+    it('rejects an approximate fix instead of pretending dispatch tracking is precise', async () => {
+      (Location.getCurrentPositionAsync as jest.Mock).mockResolvedValueOnce({
+        coords: {
+          latitude: 13.6288,
+          longitude: 79.4192,
+          accuracy: 850,
+          heading: null,
+          speed: null,
+        },
+        timestamp: Date.now(),
+      });
+
+      await expect(getCurrentCaptainLocation()).rejects.toMatchObject({
+        code: 'LOCATION_ACCURACY_INSUFFICIENT',
       });
     });
   });
@@ -238,7 +256,7 @@ describe('Location Lifecycle & State Machine Tests', () => {
         granted: true,
       });
 
-      const started = await startBackgroundLocation();
+      const started = await startBackgroundLocation({ accountId: 'captain-location-test' });
       expect(started).toBe(true);
       expect(await isBackgroundLocationActive()).toBe(true);
 

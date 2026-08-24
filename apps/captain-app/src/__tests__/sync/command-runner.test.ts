@@ -2,15 +2,83 @@ import { CommandRunner } from '../../sync/command-runner';
 import { commandStore, DurableStorageDriver } from '../../sync/command-store';
 import { connectivity } from '../../sync/connectivity';
 import { AppError } from '../../domain/result';
+import { clearSession, storeSession } from '../../auth/session';
 
 describe('CommandRunner and Synchronization Pipeline', () => {
   let runner: CommandRunner;
 
   beforeEach(async () => {
+    await clearSession();
     commandStore.resetStorageDriverForTesting();
     runner = new CommandRunner();
     await commandStore.clear();
     connectivity.setConnected(true);
+  });
+
+  const sessionFor = (accountId: string) => ({
+    accountId,
+    accessToken: `${accountId}-access`,
+    refreshToken: `${accountId}-refresh`,
+    accessTokenExpiresAt: '2026-08-23T12:00:00Z',
+    refreshTokenExpiresAt: '2026-09-23T12:00:00Z',
+    role: 'CAPTAIN',
+  });
+
+  it('does not reuse Captain A pending command or idempotency key for Captain B', async () => {
+    connectivity.setConnected(false);
+    await storeSession(sessionFor('captain-a'));
+    const captainA = await runner.execute(
+      {
+        type: 'ACCEPT_OFFER',
+        resourceType: 'DISPATCH_OFFER',
+        resourceId: 'shared-offer',
+        payload: { offerId: 'shared-offer' },
+      },
+      async () => ({ accepted: true }),
+    );
+
+    await storeSession(sessionFor('captain-b'));
+    const captainB = await runner.execute(
+      {
+        type: 'ACCEPT_OFFER',
+        resourceType: 'DISPATCH_OFFER',
+        resourceId: 'shared-offer',
+        payload: { offerId: 'shared-offer' },
+      },
+      async () => ({ accepted: true }),
+    );
+
+    expect(captainA.commandId).not.toBe(captainB.commandId);
+    expect(captainA.idempotencyKey).not.toBe(captainB.idempotencyKey);
+    expect((await commandStore.listPending('captain-a'))).toHaveLength(1);
+    expect((await commandStore.listPending('captain-b'))).toHaveLength(1);
+  });
+
+  it('does not acknowledge Captain A mutation after an account switch', async () => {
+    await storeSession(sessionFor('captain-a'));
+    let resolveMutation!: (value: { accepted: boolean }) => void;
+    const pending = runner.execute(
+      {
+        type: 'ACCEPT_OFFER',
+        resourceType: 'DISPATCH_OFFER',
+        resourceId: 'offer-race',
+        payload: { offerId: 'offer-race' },
+      },
+      () => new Promise((resolve) => {
+        resolveMutation = resolve;
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await storeSession(sessionFor('captain-b'));
+    resolveMutation({ accepted: true });
+
+    await expect(pending).resolves.toMatchObject({
+      outcome: 'UNKNOWN',
+      error: { code: 'STALE_COMMAND_SESSION' },
+    });
+    expect((await commandStore.listAll('captain-b'))).toHaveLength(0);
+    expect((await commandStore.listAll('captain-a'))[0].state).toBe('SENDING');
   });
 
   it('generates idempotency keys and executes successful mutations with ACKNOWLEDGED', async () => {

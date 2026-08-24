@@ -1,4 +1,4 @@
-import { updateCaptainAvailability } from '../../api/availability';
+import { publishCaptainLocation, updateCaptainAvailability } from '../../api/availability';
 import { setRuntimeAccessTokenForTesting } from '../../auth/session';
 
 describe('Level 2: Availability API Contract Tests', () => {
@@ -78,5 +78,36 @@ describe('Level 2: Availability API Contract Tests', () => {
 
     const body = JSON.parse(capturedOpts.body);
     expect(body.online).toBe(false);
+  });
+
+  it('publishes telemetry without carrying an availability mutation', async () => {
+    let capturedUrl = '';
+    let capturedOpts: any = {};
+    (global.fetch as jest.Mock).mockImplementationOnce((url, opts) => {
+      capturedUrl = url;
+      capturedOpts = opts;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          captainId: 'captain-101',
+          approved: true,
+          online: true,
+          busy: false,
+          lastLocationAt: '2026-08-23T12:00:00Z',
+        }),
+      });
+    });
+
+    await publishCaptainLocation({
+      latitude: 13.6288,
+      longitude: 79.4192,
+      accuracy: 10,
+      capturedAt: '2026-08-23T12:00:00Z',
+    });
+
+    expect(capturedUrl).toContain('/api/v1/captain/location');
+    expect(capturedOpts.method).toBe('POST');
+    expect(JSON.parse(capturedOpts.body)).not.toHaveProperty('online');
   });
 });

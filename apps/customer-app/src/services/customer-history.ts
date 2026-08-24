@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { appConfig } from '@/utils/app-config';
+import { apiErrorKind } from '@/contracts/api-error';
+import { apiClient } from './api-client';
 
 export type HistoryAppointmentStatus =
   | 'SLOT_HELD'
@@ -72,30 +73,15 @@ const CACHE_PREFIX = '@mypet_appointments_cache_v1_';
 const HISTORY_PAGE_SIZE = 20;
 const MAX_HISTORY_PAGES = 50;
 
-function authHeaders(accessToken: string | null | undefined): Record<string, string> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  return headers;
-}
-
-function jsonHeaders(accessToken: string | null | undefined): Record<string, string> {
-  return { ...authHeaders(accessToken), 'Content-Type': 'application/json' };
-}
-
-async function readJson<T>(response: Response, fallbackMessage: string): Promise<T> {
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { code?: string; error?: string; message?: string } | null;
-    const error = new Error(body?.message ?? body?.error ?? fallbackMessage);
-    if (body?.code) error.name = body.code;
-    throw error;
-  }
-  return (await response.json()) as T;
+function retainLegacyTokenParameter(_accessToken: string | null | undefined): void {
+  // AuthContext owns the canonical ApiClient token.
 }
 
 function isNetworkFailure(error: unknown): boolean {
+  if (apiErrorKind(error) === 'network') return true;
   if (!(error instanceof Error)) return false;
   const value = `${error.name} ${error.message}`.toLowerCase();
-  return error instanceof TypeError || value.includes('network') || value.includes('offline') || value.includes('failed to fetch');
+  return value.includes('network') || value.includes('offline') || value.includes('failed to fetch') || value.includes('timeout');
 }
 
 function mapStatus(status: AppointmentDto['status']): HistoryAppointmentStatus {
@@ -136,11 +122,10 @@ function mapAppointment(appointment: AppointmentDto): CustomerAppointmentRecord 
 }
 
 async function fetchAppointmentPage(page: number, accessToken: string | null | undefined): Promise<PageResponse<AppointmentDto>> {
-  const response = await fetch(
-    `${appConfig.apiBaseUrl}/api/v1/customer/appointments?page=${page}&pageSize=${HISTORY_PAGE_SIZE}`,
-    { headers: authHeaders(accessToken) },
+  retainLegacyTokenParameter(accessToken);
+  const payload = await apiClient.get<PageResponse<AppointmentDto>>(
+    `/api/v1/customer/appointments?page=${page}&pageSize=${HISTORY_PAGE_SIZE}`,
   );
-  const payload = await readJson<PageResponse<AppointmentDto>>(response, 'Could not load appointment history.');
   if (!Array.isArray(payload.items) || payload.page !== page || !Number.isInteger(payload.pageSize) || payload.pageSize <= 0) {
     const error = new Error('The appointment history response was invalid.');
     error.name = 'APPOINTMENT_HISTORY_RESPONSE_INVALID';
@@ -180,19 +165,19 @@ export async function fetchCustomerAppointments(customerId: string, accessToken:
 }
 
 export async function fetchAppointmentDetails(appointmentId: string, accessToken: string | null | undefined): Promise<CustomerAppointmentRecord> {
-  const response = await fetch(
-    `${appConfig.apiBaseUrl}/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}`,
-    { headers: authHeaders(accessToken) },
+  retainLegacyTokenParameter(accessToken);
+  const appointment = await apiClient.get<AppointmentDto>(
+    `/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}`,
   );
-  return mapAppointment(await readJson<AppointmentDto>(response, 'Could not load appointment details.'));
+  return mapAppointment(appointment);
 }
 
 export async function cancelAppointment(appointmentId: string, reason: string, accessToken: string | null | undefined): Promise<void> {
-  const response = await fetch(
-    `${appConfig.apiBaseUrl}/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}/cancel`,
-    { method: 'POST', headers: jsonHeaders(accessToken), body: JSON.stringify({ reason: reason.trim() || null }) },
+  retainLegacyTokenParameter(accessToken);
+  await apiClient.post<AppointmentDto>(
+    `/api/v1/customer/appointments/${encodeURIComponent(appointmentId)}/cancel`,
+    { reason: reason.trim() || null },
   );
-  await readJson<AppointmentDto>(response, 'Could not cancel appointment.');
 }
 
 export async function rescheduleAppointment(_appointmentId: string, _newSlotId: string, _accessToken: string | null | undefined): Promise<void> {

@@ -2,7 +2,7 @@ package `in`.mypetnew.catalog.domain
 
 import java.util.UUID
 
-interface BarcodeResolutionLookup {
+fun interface BarcodeResolutionLookup {
     fun findListingId(
         organizationId: UUID,
         outletId: UUID,

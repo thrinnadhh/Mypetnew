@@ -1,5 +1,4 @@
-import { apiErrorFromResponse } from '@/contracts/api-error';
-import { apiClient, StaleAuthResponseError } from '@/services/api-client';
+import { apiClient } from '@/services/api-client';
 import { appConfig } from '@/utils/app-config';
 import { isSafeHttpsUrl, isTrustedBearerUploadUrl } from '@/utils/customer-navigation-safety';
 
@@ -34,35 +33,14 @@ export interface CustomerCase {
   resolvedAt?: string | null;
 }
 
-function currentAuthEpoch(): number {
-  const getter = (apiClient as typeof apiClient & { getAuthEpoch?: () => number }).getAuthEpoch;
-  return typeof getter === 'function' ? getter.call(apiClient) : 0;
-}
-
-function assertCurrentAuthEpoch(epoch: number): void {
-  if (currentAuthEpoch() !== epoch) throw new StaleAuthResponseError();
-}
-
-async function request<T>(path: string, accessToken: string, init: RequestInit = {}): Promise<T> {
-  const epoch = currentAuthEpoch();
-  const response = await fetch(`${appConfig.apiBaseUrl}${path}`, {
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      ...((init.headers as Record<string, string> | undefined) ?? {}),
-    },
-  });
-  assertCurrentAuthEpoch(epoch);
-  if (!response.ok) throw await apiErrorFromResponse(response);
-  const body = (await response.json()) as T;
-  assertCurrentAuthEpoch(epoch);
-  return body;
+function retainLegacyTokenParameter(_accessToken: string): void {
+  // AuthContext owns the canonical ApiClient token. Keep this parameter only for
+  // source compatibility with existing screen/service call sites.
 }
 
 export function fetchCustomerCases(accessToken: string): Promise<CustomerCase[]> {
-  return request('/api/v1/orders/customer-cases', accessToken);
+  retainLegacyTokenParameter(accessToken);
+  return apiClient.get<CustomerCase[]>('/api/v1/orders/customer-cases');
 }
 
 export function createCustomerCase(
@@ -71,10 +49,8 @@ export function createCustomerCase(
   description: string,
   accessToken: string,
 ): Promise<CustomerCase> {
-  return request('/api/v1/orders/customer-cases', accessToken, {
-    method: 'POST',
-    body: JSON.stringify({ orderId, caseType, description }),
-  });
+  retainLegacyTokenParameter(accessToken);
+  return apiClient.post<CustomerCase>('/api/v1/orders/customer-cases', { orderId, caseType, description });
 }
 
 export async function uploadCustomerCaseEvidence(
@@ -82,14 +58,14 @@ export async function uploadCustomerCaseEvidence(
   asset: { uri: string; name: string; mimeType: string },
   accessToken: string,
 ): Promise<CustomerCaseEvidence> {
-  const reservation = await request<{ uploadToken: string; uploadUrl: string }>(
+  retainLegacyTokenParameter(accessToken);
+  const reservation = await apiClient.post<{ uploadToken: string; uploadUrl: string }>(
     `/api/v1/orders/customer-cases/${customerCase.caseId}/evidence/reservations`,
-    accessToken,
-    { method: 'POST' },
   );
   if (!isTrustedBearerUploadUrl(reservation.uploadUrl, appConfig.apiBaseUrl)) {
     throw new Error('Support evidence upload destination is invalid.');
   }
+
   const body = new FormData();
   body.append('uploadToken', reservation.uploadToken);
   body.append('file', {
@@ -97,17 +73,8 @@ export async function uploadCustomerCaseEvidence(
     name: asset.name,
     type: asset.mimeType,
   } as unknown as Blob);
-  const epoch = currentAuthEpoch();
-  const response = await fetch(reservation.uploadUrl, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
-    body,
-  });
-  assertCurrentAuthEpoch(epoch);
-  if (!response.ok) throw await apiErrorFromResponse(response);
-  const evidence = (await response.json()) as CustomerCaseEvidence;
-  assertCurrentAuthEpoch(epoch);
-  return evidence;
+
+  return apiClient.upload<CustomerCaseEvidence>(reservation.uploadUrl, body);
 }
 
 export async function getCustomerCaseEvidenceLink(
@@ -115,10 +82,9 @@ export async function getCustomerCaseEvidenceLink(
   evidenceId: string,
   accessToken: string,
 ): Promise<string> {
-  const response = await request<{ url: string }>(
+  retainLegacyTokenParameter(accessToken);
+  const response = await apiClient.post<{ url: string }>(
     `/api/v1/orders/customer-cases/${caseId}/evidence/${evidenceId}/signed-link`,
-    accessToken,
-    { method: 'POST' },
   );
   if (!isSafeHttpsUrl(response.url)) throw new Error('Support evidence link is invalid.');
   return response.url;

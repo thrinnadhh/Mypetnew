@@ -28,11 +28,11 @@ class MerchantScenarioFixture(dataSource: DataSource) {
             "INSERT INTO mypet.identity_account(id, mobile_e164, role, status) VALUES (?, ?, 'MERCHANT', 'ACTIVE')",
         ).params(scenario.accountId, "+919${number.toString().padStart(9, '0')}").update()
         jdbc.sql(
-            "INSERT INTO mypet.merchant_organization(id, name, status) VALUES (?, ?, 'ACTIVE')",
-        ).params(scenario.organizationId, "M0 organization $number").update()
+            "INSERT INTO mypet.merchant_organization(id, name, status, owner_actor_id) VALUES (?, ?, 'ACTIVE', ?)",
+        ).params(scenario.organizationId, "M0 organization $number", scenario.accountId).update()
         jdbc.sql(
-            "INSERT INTO mypet.provider_outlet(id, organization_id, owner_actor_id, name, status, pickup_enabled) VALUES (?, ?, ?, ?, 'ACTIVE', TRUE)",
-        ).params(scenario.outletId, scenario.organizationId, scenario.accountId, "M0 outlet $number").update()
+            "INSERT INTO mypet.provider_outlet(id, organization_id, name, status, pickup_enabled) VALUES (?, ?, ?, 'ACTIVE', TRUE)",
+        ).params(scenario.outletId, scenario.organizationId, "M0 outlet $number").update()
         jdbc.sql(
             "INSERT INTO mypet.merchant_staff(account_id, organization_id, outlet_id, permission, active) VALUES (?, ?, ?, 'OWNER', TRUE)",
         ).params(scenario.accountId, scenario.organizationId, scenario.outletId).update()

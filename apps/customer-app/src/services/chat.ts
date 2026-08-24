@@ -1,4 +1,4 @@
-import { appConfig } from '@/utils/app-config';
+import { apiClient } from './api-client';
 
 export type ChatContextType = 'ORDER' | 'APPOINTMENT';
 export type ChatMessageType = 'TEXT' | 'IMAGE';
@@ -50,25 +50,9 @@ export interface ChatMessage {
   readAt: string | null;
 }
 
-function authHeaders(accessToken: string | null | undefined): Record<string, string> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  return headers;
-}
-
-function jsonHeaders(accessToken: string | null | undefined): Record<string, string> {
-  return {
-    ...authHeaders(accessToken),
-    'Content-Type': 'application/json',
-  };
-}
-
-async function readJson<T>(response: Response, fallbackMessage: string): Promise<T> {
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
-    throw new Error(body?.error ?? body?.message ?? fallbackMessage);
-  }
-  return (await response.json()) as T;
+function retainLegacyTokenParameter(_accessToken: string | null | undefined): void {
+  // AuthContext owns the canonical ApiClient token. The argument remains only to avoid
+  // breaking existing call sites while removing per-service Authorization handling.
 }
 
 export async function openConversation(input: {
@@ -79,28 +63,22 @@ export async function openConversation(input: {
   assignedDoctorUserId?: string;
   accessToken: string | null | undefined;
 }): Promise<Conversation> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations`, {
-    method: 'POST',
-    headers: jsonHeaders(input.accessToken),
-    body: JSON.stringify({
-      contextType: input.contextType,
-      contextId: input.contextId,
-      providerId: input.providerId,
-      customerId: input.customerId,
-      assignedDoctorUserId: input.assignedDoctorUserId,
-    }),
+  retainLegacyTokenParameter(input.accessToken);
+  return apiClient.post<Conversation>('/api/v1/chat/conversations', {
+    contextType: input.contextType,
+    contextId: input.contextId,
+    providerId: input.providerId,
+    customerId: input.customerId,
+    assignedDoctorUserId: input.assignedDoctorUserId,
   });
-  return readJson<Conversation>(response, 'Could not open chat.');
 }
 
 export async function fetchConversation(
   conversationId: string,
   accessToken: string | null | undefined,
 ): Promise<Conversation> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations/${conversationId}`, {
-    headers: authHeaders(accessToken),
-  });
-  return readJson<Conversation>(response, 'Could not load conversation.');
+  retainLegacyTokenParameter(accessToken);
+  return apiClient.get<Conversation>(`/api/v1/chat/conversations/${conversationId}`);
 }
 
 export async function fetchMessages(
@@ -108,11 +86,9 @@ export async function fetchMessages(
   accessToken: string | null | undefined,
   after?: string,
 ): Promise<ChatMessage[]> {
+  retainLegacyTokenParameter(accessToken);
   const params = after ? `?after=${encodeURIComponent(after)}` : '';
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations/${conversationId}/messages${params}`, {
-    headers: authHeaders(accessToken),
-  });
-  return readJson<ChatMessage[]>(response, 'Could not load messages.');
+  return apiClient.get<ChatMessage[]>(`/api/v1/chat/conversations/${conversationId}/messages${params}`);
 }
 
 export async function sendTextMessage(
@@ -120,12 +96,11 @@ export async function sendTextMessage(
   body: string,
   accessToken: string | null | undefined,
 ): Promise<ChatMessage> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations/${conversationId}/messages`, {
-    method: 'POST',
-    headers: jsonHeaders(accessToken),
-    body: JSON.stringify({ messageType: 'TEXT', body }),
+  retainLegacyTokenParameter(accessToken);
+  return apiClient.post<ChatMessage>(`/api/v1/chat/conversations/${conversationId}/messages`, {
+    messageType: 'TEXT',
+    body,
   });
-  return readJson<ChatMessage>(response, 'Could not send message.');
 }
 
 export async function sendImageMessage(
@@ -135,17 +110,13 @@ export async function sendImageMessage(
   body: string | undefined,
   accessToken: string | null | undefined,
 ): Promise<ChatMessage> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations/${conversationId}/messages`, {
-    method: 'POST',
-    headers: jsonHeaders(accessToken),
-    body: JSON.stringify({
-      messageType: 'IMAGE',
-      imageUrl,
-      imageMimeType,
-      body,
-    }),
+  retainLegacyTokenParameter(accessToken);
+  return apiClient.post<ChatMessage>(`/api/v1/chat/conversations/${conversationId}/messages`, {
+    messageType: 'IMAGE',
+    imageUrl,
+    imageMimeType,
+    body,
   });
-  return readJson<ChatMessage>(response, 'Could not send image.');
 }
 
 export async function uploadChatImage(
@@ -154,6 +125,7 @@ export async function uploadChatImage(
   fileName: string,
   accessToken: string | null | undefined,
 ): Promise<{ imageUrl: string; imageMimeType: string }> {
+  retainLegacyTokenParameter(accessToken);
   const formData = new FormData();
   formData.append('file', {
     uri: fileUri,
@@ -161,27 +133,15 @@ export async function uploadChatImage(
     type: mimeType,
   } as unknown as Blob);
 
-  const headers = authHeaders(accessToken);
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/attachments`, {
-    method: 'POST',
-    headers,
-    body: formData,
-  });
-  return readJson(response, 'Could not upload image.');
+  return apiClient.upload('/api/v1/chat/attachments', formData);
 }
 
 export async function markConversationRead(
   conversationId: string,
   accessToken: string | null | undefined,
 ): Promise<void> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations/${conversationId}/read`, {
-    method: 'POST',
-    headers: authHeaders(accessToken),
-  });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(body?.error ?? 'Could not mark messages as read.');
-  }
+  retainLegacyTokenParameter(accessToken);
+  await apiClient.post(`/api/v1/chat/conversations/${conversationId}/read`);
 }
 
 export async function updateConversationPrivacy(
@@ -189,10 +149,6 @@ export async function updateConversationPrivacy(
   privacy: Partial<Pick<ConversationPrivacy, 'customerPhoneVisible' | 'doctorPhoneVisible' | 'assignedDoctorUserId'>>,
   accessToken: string | null | undefined,
 ): Promise<Conversation> {
-  const response = await fetch(`${appConfig.apiBaseUrl}/api/v1/chat/conversations/${conversationId}/privacy`, {
-    method: 'PATCH',
-    headers: jsonHeaders(accessToken),
-    body: JSON.stringify(privacy),
-  });
-  return readJson<Conversation>(response, 'Could not update privacy settings.');
+  retainLegacyTokenParameter(accessToken);
+  return apiClient.patch<Conversation>(`/api/v1/chat/conversations/${conversationId}/privacy`, privacy);
 }

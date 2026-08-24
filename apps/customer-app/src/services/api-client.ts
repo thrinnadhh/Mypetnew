@@ -31,6 +31,12 @@ export interface RequestOptions {
   signal?: AbortSignal;
   maxRetries?: number;
   correlationId?: string;
+  /**
+   * Transitional per-call token support for service APIs that still accept an
+   * accessToken argument. Header construction remains owned by ApiClient.
+   */
+  authToken?: string | null;
+  errorFallback?: string;
   _isRetry?: boolean;
 }
 
@@ -119,6 +125,7 @@ class ApiClient {
     customHeaders?: Record<string, string>,
     authAllowed = true,
     correlationId?: string,
+    authToken?: string | null,
   ): Record<string, string> {
     const headers: Record<string, string> = { Accept: 'application/json' };
 
@@ -140,8 +147,9 @@ class ApiClient {
       headers['X-Request-ID'] = correlationId;
     }
 
-    if (authAllowed && this.sessionToken && !headerValue(headers, 'authorization')) {
-      headers.Authorization = `Bearer ${this.sessionToken}`;
+    const effectiveToken = authToken === undefined ? this.sessionToken : authToken;
+    if (authAllowed && effectiveToken && !headerValue(headers, 'authorization')) {
+      headers.Authorization = `Bearer ${effectiveToken}`;
     }
 
     return headers;
@@ -194,6 +202,17 @@ class ApiClient {
     return JSON.stringify(body);
   }
 
+  private async readResponseBody(response: Response): Promise<string> {
+    if (typeof response.text === 'function') return response.text();
+    const responseWithJson = response as Response & { json?: () => Promise<unknown> };
+    if (typeof responseWithJson.json === 'function') {
+      const value = await responseWithJson.json();
+      if (value === undefined || value === null) return '';
+      return typeof value === 'string' ? value : JSON.stringify(value);
+    }
+    return '';
+  }
+
   private async performFetch(
     url: string,
     config: RequestInit,
@@ -234,13 +253,18 @@ class ApiClient {
       signal,
       maxRetries = DEFAULT_MAX_RETRIES,
       correlationId,
+      authToken,
+      errorFallback,
       _isRetry = false,
     } = options;
     const method = requestedMethod.toUpperCase();
     const requestAuthEpoch = this.authEpoch;
     const { url, authAllowed } = this.resolveUrl(path);
-    const headers = this.buildHeaders(body, customHeaders, authAllowed, correlationId);
-    const config: RequestInit = { method, headers, body: this.buildBody(method, body) };
+    const headers = this.buildHeaders(body, customHeaders, authAllowed, correlationId, authToken);
+    const requestBody = this.buildBody(method, body);
+    const config: RequestInit = requestBody === undefined
+      ? { method, headers }
+      : { method, headers, body: requestBody };
     const safeToRetry = this.canRetry(method, headers);
     const retryLimit = safeToRetry ? Math.max(0, Math.min(maxRetries, 4)) : 0;
 
@@ -266,7 +290,7 @@ class ApiClient {
       if (this.authEpoch !== requestAuthEpoch) throw new StaleAuthResponseError();
 
       if (!response.ok) {
-        const error = await apiErrorFromResponse(response);
+        const error = await apiErrorFromResponse(response, errorFallback);
         if (this.authEpoch !== requestAuthEpoch) throw new StaleAuthResponseError();
 
         if (response.status === 401) {
@@ -291,7 +315,7 @@ class ApiClient {
             if (this.authEpoch !== startEpoch) throw error;
 
             if (newToken) {
-              return this.request<T>(path, { ...options, _isRetry: true });
+              return this.request<T>(path, { ...options, authToken: undefined, _isRetry: true });
             }
 
             this.clearAuthHandler?.();
@@ -311,7 +335,7 @@ class ApiClient {
 
       if (response.status === 204) return {} as T;
 
-      const responseBody = await response.text();
+      const responseBody = await this.readResponseBody(response);
       if (this.authEpoch !== requestAuthEpoch) throw new StaleAuthResponseError();
       if (!responseBody) return {} as T;
 

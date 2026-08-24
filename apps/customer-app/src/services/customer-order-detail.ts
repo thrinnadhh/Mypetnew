@@ -108,7 +108,8 @@ export async function fetchCustomerOrderDetail(
   if (!accessToken) throw new Error('Sign in before viewing an order.');
   const order = await apiClient.get<CustomerOrderDetail>(
     `/api/v1/customer/orders/${encodeURIComponent(orderId)}`,
-    { Authorization: `Bearer ${accessToken}` },
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load order details' },
   );
   return validateCanonicalOrder(order);
 }
@@ -124,10 +125,8 @@ export async function cancelCustomerOrder(
   const order = await apiClient.post<CustomerOrderDetail>(
     `/api/v1/customer/orders/${encodeURIComponent(orderId)}/cancel`,
     { reason: normalizedReason },
-    {
-      Authorization: `Bearer ${accessToken}`,
-      'Idempotency-Key': cancellationIntentKey(orderId, normalizedReason),
-    },
+    { 'Idempotency-Key': cancellationIntentKey(orderId, normalizedReason) },
+    { authToken: accessToken, errorFallback: 'Could not cancel order' },
   );
   return validateCanonicalOrder(order);
 }

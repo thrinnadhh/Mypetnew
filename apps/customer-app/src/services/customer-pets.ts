@@ -44,8 +44,6 @@ const demoPets: CustomerPet[] = [
   },
 ];
 
-const authHeaders = (accessToken: string) => ({ Authorization: `Bearer ${accessToken}` });
-
 export async function fetchCustomerPetPage(
   accessToken: string,
   page = 0,
@@ -58,7 +56,8 @@ export async function fetchCustomerPetPage(
   }
   return apiClient.get<CustomerPetPage>(
     `/api/v1/customer/pets?page=${page}&pageSize=${pageSize}`,
-    authHeaders(accessToken),
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load pets' },
   );
 }
 
@@ -66,7 +65,8 @@ export async function fetchCustomerPets(accessToken: string): Promise<CustomerPe
   if (appConfig.allowDemoMode) return (await fetchCustomerPetPage(accessToken, 0, 100)).items;
   const response = await apiClient.get<CustomerPetPage | CustomerPet[]>(
     '/api/v1/customer/pets?page=0&pageSize=100',
-    authHeaders(accessToken),
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load pets' },
   );
   return Array.isArray(response) ? response : response.items;
 }
@@ -86,7 +86,12 @@ export async function createCustomerPet(
     demoPets.push(created);
     return { ...created };
   }
-  return apiClient.post<CustomerPet>('/api/v1/customer/pets', input, authHeaders(accessToken));
+  return apiClient.post<CustomerPet>(
+    '/api/v1/customer/pets',
+    input,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not create pet' },
+  );
 }
 
 export async function updateCustomerPet(
@@ -103,7 +108,8 @@ export async function updateCustomerPet(
   return apiClient.patch<CustomerPet>(
     `/api/v1/customer/pets/${encodeURIComponent(petId)}`,
     input,
-    authHeaders(accessToken),
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not update pet' },
   );
 }
 
@@ -113,5 +119,9 @@ export async function deleteCustomerPet(petId: string, accessToken: string): Pro
     if (index >= 0) demoPets.splice(index, 1);
     return;
   }
-  await apiClient.delete<void>(`/api/v1/customer/pets/${encodeURIComponent(petId)}`, authHeaders(accessToken));
+  await apiClient.delete<void>(
+    `/api/v1/customer/pets/${encodeURIComponent(petId)}`,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not delete pet' },
+  );
 }

@@ -11,16 +11,14 @@ export interface VaccinationReminder {
   enabled: boolean;
 }
 
-function retainLegacyTokenParameter(_accessToken?: string | null): void {
-  // AuthContext owns the canonical ApiClient token. Keep the argument only for
-  // source compatibility while callers stop plumbing access tokens explicitly.
-}
-
 export async function fetchLocale(accessToken?: string | null): Promise<LanguageId> {
   if (appConfig.allowDemoMode) return 'en';
-  retainLegacyTokenParameter(accessToken);
   try {
-    const body = await apiClient.get<{ locale: LanguageId }>('/api/v1/profiles/me/locale');
+    const body = await apiClient.get<{ locale: LanguageId }>(
+      '/api/v1/profiles/me/locale',
+      undefined,
+      { authToken: accessToken, errorFallback: 'Could not load locale' },
+    );
     return body.locale;
   } catch {
     return 'en';
@@ -29,8 +27,12 @@ export async function fetchLocale(accessToken?: string | null): Promise<Language
 
 export async function updateLocale(locale: LanguageId, accessToken?: string | null): Promise<void> {
   if (appConfig.allowDemoMode) return;
-  retainLegacyTokenParameter(accessToken);
-  await apiClient.patch('/api/v1/profiles/me/locale', { locale });
+  await apiClient.patch(
+    '/api/v1/profiles/me/locale',
+    { locale },
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not update locale' },
+  );
 }
 
 export async function fetchVaccinationReminders(accessToken?: string | null): Promise<VaccinationReminder[]> {
@@ -54,8 +56,11 @@ export async function fetchVaccinationReminders(accessToken?: string | null): Pr
       },
     ];
   }
-  retainLegacyTokenParameter(accessToken);
-  const rows = await apiClient.get<Array<VaccinationReminder & { reminderId: string }>>('/api/v1/vaccination-reminders');
+  const rows = await apiClient.get<Array<VaccinationReminder & { reminderId: string }>>(
+    '/api/v1/vaccination-reminders',
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load vaccination reminders' },
+  );
   return rows.map((row) => ({ ...row, reminderId: String(row.reminderId) }));
 }
 
@@ -65,6 +70,10 @@ export async function setVaccinationReminderEnabled(
   accessToken?: string | null,
 ): Promise<void> {
   if (appConfig.allowDemoMode) return;
-  retainLegacyTokenParameter(accessToken);
-  await apiClient.patch(`/api/v1/vaccination-reminders/${reminderId}`, { enabled });
+  await apiClient.patch(
+    `/api/v1/vaccination-reminders/${reminderId}`,
+    { enabled },
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not update vaccination reminder' },
+  );
 }

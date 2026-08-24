@@ -62,8 +62,6 @@ export interface ServiceabilityResponse {
   reasonCode: string;
 }
 
-const authHeaders = (accessToken: string) => ({ Authorization: `Bearer ${accessToken}` });
-
 export function normalizeDeliveryPhone(value: string): string {
   const digits = value.replace(/\D/g, '');
   if (digits.length === 10 && /^[6-9]/.test(digits)) return `+91${digits}`;
@@ -72,18 +70,31 @@ export function normalizeDeliveryPhone(value: string): string {
 }
 
 export async function fetchCustomerProfile(accessToken: string): Promise<CustomerProfile> {
-  return apiClient.get<CustomerProfile>('/api/v1/customer/profile', authHeaders(accessToken));
+  return apiClient.get<CustomerProfile>(
+    '/api/v1/customer/profile',
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load profile' },
+  );
 }
 
 export async function updateCustomerProfile(
   accessToken: string,
   input: { name?: string | null; email?: string | null },
 ): Promise<CustomerProfile> {
-  return apiClient.patch<CustomerProfile>('/api/v1/customer/profile', input, authHeaders(accessToken));
+  return apiClient.patch<CustomerProfile>(
+    '/api/v1/customer/profile',
+    input,
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not update profile' },
+  );
 }
 
 export async function fetchCustomerAddresses(accessToken: string): Promise<CustomerAddress[]> {
-  return apiClient.get<CustomerAddress[]>('/api/v1/customer/addresses', authHeaders(accessToken));
+  return apiClient.get<CustomerAddress[]>(
+    '/api/v1/customer/addresses',
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not load addresses' },
+  );
 }
 
 export async function createCustomerAddress(
@@ -93,7 +104,8 @@ export async function createCustomerAddress(
   return apiClient.post<CustomerAddress>(
     '/api/v1/customer/addresses',
     { ...input, phoneNumber: normalizeDeliveryPhone(input.phoneNumber) },
-    authHeaders(accessToken),
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not create address' },
   );
 }
 
@@ -105,14 +117,16 @@ export async function updateCustomerAddress(
   return apiClient.patch<CustomerAddress>(
     `/api/v1/customer/addresses/${encodeURIComponent(addressId)}`,
     { ...input, phoneNumber: normalizeDeliveryPhone(input.phoneNumber) },
-    authHeaders(accessToken),
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not update address' },
   );
 }
 
 export async function deleteCustomerAddress(accessToken: string, addressId: string): Promise<void> {
   await apiClient.delete<void>(
     `/api/v1/customer/addresses/${encodeURIComponent(addressId)}`,
-    authHeaders(accessToken),
+    undefined,
+    { authToken: accessToken, errorFallback: 'Could not delete address' },
   );
 }
 
@@ -157,7 +171,8 @@ export async function fetchDefaultAddress(accessToken: string): Promise<LegacyDe
   try {
     const response = await apiClient.get<CustomerAddress[] | LegacyDefaultAddress>(
       '/api/v1/customer/addresses',
-      authHeaders(accessToken),
+      undefined,
+      { authToken: accessToken, errorFallback: 'Could not load default address' },
     );
     if (!Array.isArray(response)) return normalizeLegacyAddress(response);
     const address = response.find((item) => item.isDefault) ?? response[0] ?? null;
@@ -189,7 +204,8 @@ export async function createDefaultAddress(
     const response = await apiClient.post<LegacyDefaultAddress>(
       '/api/v1/customer/addresses',
       { ...canonical, isDefault: true },
-      authHeaders(accessToken),
+      undefined,
+      { authToken: accessToken, errorFallback: 'Could not create default address' },
     );
     return normalizeLegacyAddress(response);
   } catch (error) {
@@ -212,6 +228,8 @@ export async function checkOutletServiceability(
   if (!/^[1-9]\d{5}$/.test(pincode)) throw new Error('Enter a valid six-digit PIN code.');
   return apiClient.get<ServiceabilityResponse>(
     `/api/v1/public/outlets/${encodeURIComponent(outletId)}/serviceability?pincode=${encodeURIComponent(pincode)}&mode=${mode}`,
+    undefined,
+    { authToken: null, errorFallback: 'Could not check serviceability' },
   );
 }
 

@@ -180,7 +180,8 @@ describe('customer end-to-end regression contracts', () => {
     expect(location).toMatch(/\/api\/v1\/service-regions\/launch-requests/);
     expect(location).toMatch(/PIN_STORAGE_KEY/);
     expect(location).toMatch(/selectedPincode/);
-    expect(location).toMatch(/method: 'POST'/);
+    expect(location).toMatch(/apiClient\.post/);
+    expect(location).not.toMatch(/\bfetch\s*\(/);
   });
 
   it('uses foreground device coordinates to select a service city and service PIN', () => {
@@ -201,7 +202,8 @@ describe('customer end-to-end regression contracts', () => {
   it('does not expose cached orders after authorization or server failures', () => {
     const orders = source('src/services/customer-orders.ts');
     expect(orders).toMatch(/if \(!isOfflineFailure\(error\)\) throw error/);
-    expect(orders).toMatch(/error instanceof OrderHttpError/);
+    expect(orders).toMatch(/error instanceof ApiError/);
+    expect(orders).toMatch(/error\.status === 0/);
   });
 
   it('uses the canonical authenticated API client for favourites and push registration', () => {
@@ -211,7 +213,8 @@ describe('customer end-to-end regression contracts', () => {
     expect(favourites).toMatch(/apiClient\.put/);
     expect(favourites).toMatch(/apiClient\.delete/);
     expect(favourites).toMatch(/apiClient\.getAuthEpoch/);
-    expect(notifications).toMatch(/if \(!response\.ok\) throw await responseError/);
+    expect(notifications).toMatch(/apiClient\.(post|delete)/);
+    expect(notifications).not.toMatch(/\bfetch\s*\(/);
     expect(notifications).not.toContain('/api/v1/notifications/push-tokens');
     expect(notifications).not.toContain('getExpoPushTokenAsync');
     expect(notifications).toContain('/api/v1/devices/registrations');

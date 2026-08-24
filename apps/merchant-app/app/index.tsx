@@ -84,6 +84,11 @@ export default function MerchantEntryScreen() {
             <Link href="/catalog" accessibilityRole="button" style={styles.primaryLink}>Open catalog</Link>
           </View>
           <View style={styles.primaryLinkBox}>
+            <Text style={styles.primaryLinkTitle}>Barcode lookup</Text>
+            <Text style={styles.primaryLinkBody}>Validate GTIN or internal barcodes and resolve existing listings inside the selected Merchant outlet.</Text>
+            <Link href="/barcode" accessibilityRole="button" style={styles.primaryLink}>Open barcode lookup</Link>
+          </View>
+          <View style={styles.primaryLinkBox}>
             <Text style={styles.primaryLinkTitle}>Inventory ledger</Text>
             <Text style={styles.primaryLinkBody}>Review canonical stock, commit whole-unit adjustments, retry safely, and inspect immutable movement history.</Text>
             <Link href="/inventory" accessibilityRole="button" style={styles.primaryLink}>Open inventory</Link>

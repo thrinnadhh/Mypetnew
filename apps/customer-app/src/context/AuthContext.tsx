@@ -259,9 +259,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        await apiClient.delete('/api/v1/auth/sessions/current', {
-          Authorization: `Bearer ${currentToken}`,
-        });
+        await apiClient.delete(
+          '/api/v1/auth/sessions/current',
+          undefined,
+          { authToken: currentToken, errorFallback: 'Backend logout failed' },
+        );
       } catch (error) {
         console.warn('Backend logout call failed, session cleared locally:', error);
       }

@@ -3,7 +3,22 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const roots = ['src/services', 'src/hooks', 'src/context'];
+const defaultRoots = ['src/services', 'src/hooks', 'src/context'];
+
+const rootsFlagIndex = process.argv.indexOf('--roots');
+let roots = defaultRoots;
+if (rootsFlagIndex !== -1) {
+  const rawValue = process.argv[rootsFlagIndex + 1];
+  if (!rawValue || rawValue.startsWith('-')) {
+    console.error('--roots requires a comma-separated list of source directories (e.g. --roots src/app,src/screens).');
+    process.exit(2);
+  }
+  roots = rawValue.split(',').map((entry) => entry.trim()).filter(Boolean);
+  if (roots.length === 0) {
+    console.error('--roots resolved to an empty directory list.');
+    process.exit(2);
+  }
+}
 const approvedRawFetch = new Set([
   'src/services/api-client.ts',
 ]);

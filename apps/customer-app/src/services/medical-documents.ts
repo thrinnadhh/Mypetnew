@@ -1,4 +1,5 @@
 import { apiClient } from '@/services/api-client';
+import { assertCapabilityAvailable } from '@/services/backend-capabilities';
 import { appConfig } from '@/utils/app-config';
 import { isSafeHttpsUrl, isTrustedBearerUploadUrl } from '@/utils/customer-navigation-safety';
 
@@ -19,6 +20,7 @@ interface UploadReservation {
 }
 
 export function fetchMedicalDocuments(accessToken: string): Promise<MedicalDocument[]> {
+  assertCapabilityAvailable('medicalDocuments');
   return apiClient.get<MedicalDocument[]>(
     '/api/v1/appointments/medical-documents',
     undefined,
@@ -31,6 +33,7 @@ export async function uploadMedicalDocument(
   asset: { uri: string; name: string; mimeType: string },
   accessToken: string,
 ): Promise<MedicalDocument> {
+  assertCapabilityAvailable('medicalDocuments');
   const reservation = await apiClient.post<UploadReservation>(
     `/api/v1/appointments/medical-documents/reservations?appointmentId=${encodeURIComponent(appointmentId)}`,
     undefined,
@@ -60,6 +63,7 @@ export async function getMedicalDocumentLink(
   accessToken: string,
   disposition: 'inline' | 'attachment' = 'inline',
 ): Promise<string> {
+  assertCapabilityAvailable('medicalDocuments');
   const link = await apiClient.post<{ url: string }>(
     `/api/v1/appointments/medical-documents/${encodeURIComponent(documentId)}/signed-link?disposition=${disposition}`,
     undefined,

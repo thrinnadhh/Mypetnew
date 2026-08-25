@@ -27,6 +27,7 @@ import {
   type CustomerCase,
   type CustomerCaseType,
 } from '@/services/customer-cases';
+import { isCapabilityAvailable } from '@/services/backend-capabilities';
 import { singleRouteParam } from '@/utils/customer-navigation-safety';
 import { isUuid } from '@/utils/uuid';
 
@@ -85,7 +86,7 @@ export default function CustomerSupportScreen() {
   }, []);
 
   const load = useCallback(async () => {
-    if (!session) {
+    if (!session || !isCapabilityAvailable('supportCases')) {
       setCases([]);
       setLoading(false);
       return;
@@ -186,6 +187,18 @@ export default function CustomerSupportScreen() {
           message="Support cases are restricted to the customer who owns the order."
           actionLabel="Sign in"
           onAction={() => void requireAuth({ action: 'ORDER_HISTORY', returnTo: '/support' })}
+        />
+      </ScreenShell>
+    );
+  }
+
+  if (!isCapabilityAvailable('supportCases')) {
+    return (
+      <ScreenShell scroll={false} header={<AppBar title="Support and disputes" subtitle="Order-specific help and refund tracking" />}>
+        <StateView
+          kind="empty"
+          title="Support cases unavailable"
+          message="Order-specific cases and refund tracking are not enabled in this release yet. Your orders remain fully protected by the standard delivery and payment policies."
         />
       </ScreenShell>
     );

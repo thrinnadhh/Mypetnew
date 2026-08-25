@@ -60,6 +60,15 @@ describe('customer service foundations', () => {
     mockedFetch.mockReset();
     global.fetch = mockedFetch as unknown as typeof fetch;
     apiClient.setSessionToken(null);
+    // Dev-only registry overrides: content and support-case backend routes are
+    // deferred/fail-closed, so these transport tests opt in explicitly.
+    process.env.EXPO_PUBLIC_ENABLE_CONTENT_ENGAGEMENT = 'true';
+    process.env.EXPO_PUBLIC_ENABLE_SUPPORT_CASES = 'true';
+  });
+
+  afterAll(() => {
+    delete process.env.EXPO_PUBLIC_ENABLE_CONTENT_ENGAGEMENT;
+    delete process.env.EXPO_PUBLIC_ENABLE_SUPPORT_CASES;
   });
 
   describe('api client', () => {

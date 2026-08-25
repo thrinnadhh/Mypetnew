@@ -13,6 +13,7 @@ import {
   uploadCustomerCaseEvidence,
   type CustomerCase,
 } from '../customer-cases';
+import { CapabilityUnavailableError } from '../backend-capabilities';
 
 jest.mock('@/utils/app-config', () => ({
   appConfig: { apiBaseUrl: 'https://api.mypet.test', allowDemoMode: false },
@@ -38,6 +39,12 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockedFetch.mockReset();
   global.fetch = mockedFetch as unknown as typeof fetch;
+});
+
+afterEach(() => {
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith('EXPO_PUBLIC_ENABLE_')) delete process.env[key];
+  }
 });
 
 describe('recurring-order security and failure paths', () => {
@@ -76,40 +83,54 @@ describe('recurring-order security and failure paths', () => {
 });
 
 describe('private medical-document security failures', () => {
-  it('rejects foreign document listings with the server trace', async () => {
-    mockedFetch.mockResolvedValueOnce(response({
-      code: 'MEDICAL_DOCUMENT_FORBIDDEN', message: 'Document access denied',
-    }, 403, { 'x-trace-id': 'trace-medical' }));
-
-    await expect(fetchMedicalDocuments('token')).rejects.toMatchObject({
-      status: 403,
-      code: 'MEDICAL_DOCUMENT_FORBIDDEN',
-      traceId: 'trace-medical',
-    });
-  });
-
-  it('stops when reservation fails and surfaces upload validation failures', async () => {
-    mockedFetch.mockResolvedValueOnce(response({
-      code: 'APPOINTMENT_FORBIDDEN', message: 'Appointment access denied',
-    }, 403));
+  it('fails closed with CapabilityUnavailableError and no request while the backend route is deferred', async () => {
+    await expect(fetchMedicalDocuments('token')).rejects.toBeInstanceOf(CapabilityUnavailableError);
     await expect(uploadMedicalDocument('appointment-1', {
       uri: 'file:///report.pdf', name: 'report.pdf', mimeType: 'application/pdf',
-    }, 'token')).rejects.toMatchObject({ code: 'APPOINTMENT_FORBIDDEN' });
-    expect(mockedFetch).toHaveBeenCalledTimes(1);
+    }, 'token')).rejects.toMatchObject({ capabilityId: 'medicalDocuments' });
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
 
-    mockedFetch
-      .mockResolvedValueOnce(response({
-        uploadToken: 'upload-token', uploadUrl: 'https://uploads.mypet.test/medical',
-        expiresAt: '2026-08-06T12:10:00Z',
-      }))
-      .mockResolvedValueOnce(response({
-        code: 'UPLOAD_TYPE_REJECTED', message: 'Unsupported medical document type',
-      }, 422));
-    await expect(uploadMedicalDocument('appointment-1', {
-      uri: 'file:///script.exe', name: 'script.exe', mimeType: 'application/octet-stream',
-    }, 'token')).rejects.toMatchObject({
-      status: 422,
-      code: 'UPLOAD_TYPE_REJECTED',
+  describe('with the dev-only registry override enabled', () => {
+    beforeEach(() => {
+      process.env.EXPO_PUBLIC_ENABLE_MEDICAL_DOCUMENTS = 'true';
+    });
+
+    it('rejects foreign document listings with the server trace', async () => {
+      mockedFetch.mockResolvedValueOnce(response({
+        code: 'MEDICAL_DOCUMENT_FORBIDDEN', message: 'Document access denied',
+      }, 403, { 'x-trace-id': 'trace-medical' }));
+
+      await expect(fetchMedicalDocuments('token')).rejects.toMatchObject({
+        status: 403,
+        code: 'MEDICAL_DOCUMENT_FORBIDDEN',
+        traceId: 'trace-medical',
+      });
+    });
+
+    it('stops when reservation fails and surfaces upload validation failures', async () => {
+      mockedFetch.mockResolvedValueOnce(response({
+        code: 'APPOINTMENT_FORBIDDEN', message: 'Appointment access denied',
+      }, 403));
+      await expect(uploadMedicalDocument('appointment-1', {
+        uri: 'file:///report.pdf', name: 'report.pdf', mimeType: 'application/pdf',
+      }, 'token')).rejects.toMatchObject({ code: 'APPOINTMENT_FORBIDDEN' });
+      expect(mockedFetch).toHaveBeenCalledTimes(1);
+
+      mockedFetch
+        .mockResolvedValueOnce(response({
+          uploadToken: 'upload-token', uploadUrl: 'https://uploads.mypet.test/medical',
+          expiresAt: '2026-08-06T12:10:00Z',
+        }))
+        .mockResolvedValueOnce(response({
+          code: 'UPLOAD_TYPE_REJECTED', message: 'Unsupported medical document type',
+        }, 422));
+      await expect(uploadMedicalDocument('appointment-1', {
+        uri: 'file:///script.exe', name: 'script.exe', mimeType: 'application/octet-stream',
+      }, 'token')).rejects.toMatchObject({
+        status: 422,
+        code: 'UPLOAD_TYPE_REJECTED',
+      });
     });
   });
 });
@@ -122,34 +143,47 @@ describe('customer-case evidence security failures', () => {
     createdAt: '2026-08-06T00:00:00Z', updatedAt: '2026-08-06T00:00:00Z',
   };
 
-  it('rejects foreign case access and case creation against another customer order', async () => {
-    mockedFetch
-      .mockResolvedValueOnce(response({ code: 'CASE_FORBIDDEN', message: 'Case access denied' }, 403))
-      .mockResolvedValueOnce(response({ code: 'ORDER_FORBIDDEN', message: 'Order access denied' }, 403));
-
-    await expect(fetchCustomerCases('token')).rejects.toMatchObject({ code: 'CASE_FORBIDDEN' });
-    await expect(createCustomerCase('foreign-order', 'DAMAGED_ITEM', 'Damaged', 'token'))
-      .rejects.toMatchObject({ code: 'ORDER_FORBIDDEN' });
+  it('fails closed with CapabilityUnavailableError and no request while case routes are deferred', async () => {
+    await expect(fetchCustomerCases('token')).rejects.toBeInstanceOf(CapabilityUnavailableError);
+    await expect(createCustomerCase('order-1', 'DAMAGED_ITEM', 'Damaged', 'token'))
+      .rejects.toMatchObject({ capabilityId: 'supportCases' });
+    expect(mockedFetch).not.toHaveBeenCalled();
   });
 
-  it('does not upload after reservation denial and reports rejected evidence types', async () => {
-    mockedFetch.mockResolvedValueOnce(response({
-      code: 'CASE_EVIDENCE_FORBIDDEN', message: 'Evidence access denied',
-    }, 403));
-    await expect(uploadCustomerCaseEvidence(customerCase, {
-      uri: 'file:///photo.jpg', name: 'photo.jpg', mimeType: 'image/jpeg',
-    }, 'token')).rejects.toMatchObject({ code: 'CASE_EVIDENCE_FORBIDDEN' });
-    expect(mockedFetch).toHaveBeenCalledTimes(1);
+  describe('with the dev-only registry override enabled', () => {
+    beforeEach(() => {
+      process.env.EXPO_PUBLIC_ENABLE_SUPPORT_CASES = 'true';
+    });
 
-    mockedFetch
-      .mockResolvedValueOnce(response({
-        uploadToken: 'upload-token', uploadUrl: 'https://uploads.mypet.test/case',
-      }))
-      .mockResolvedValueOnce(response({
-        code: 'EVIDENCE_TYPE_REJECTED', message: 'Unsupported evidence type',
-      }, 422));
-    await expect(uploadCustomerCaseEvidence(customerCase, {
-      uri: 'file:///payload.exe', name: 'payload.exe', mimeType: 'application/octet-stream',
-    }, 'token')).rejects.toMatchObject({ code: 'EVIDENCE_TYPE_REJECTED' });
+    it('rejects foreign case access and case creation against another customer order', async () => {
+      mockedFetch
+        .mockResolvedValueOnce(response({ code: 'CASE_FORBIDDEN', message: 'Case access denied' }, 403))
+        .mockResolvedValueOnce(response({ code: 'ORDER_FORBIDDEN', message: 'Order access denied' }, 403));
+
+      await expect(fetchCustomerCases('token')).rejects.toMatchObject({ code: 'CASE_FORBIDDEN' });
+      await expect(createCustomerCase('foreign-order', 'DAMAGED_ITEM', 'Damaged', 'token'))
+        .rejects.toMatchObject({ code: 'ORDER_FORBIDDEN' });
+    });
+
+    it('does not upload after reservation denial and reports rejected evidence types', async () => {
+      mockedFetch.mockResolvedValueOnce(response({
+        code: 'CASE_EVIDENCE_FORBIDDEN', message: 'Evidence access denied',
+      }, 403));
+      await expect(uploadCustomerCaseEvidence(customerCase, {
+        uri: 'file:///photo.jpg', name: 'photo.jpg', mimeType: 'image/jpeg',
+      }, 'token')).rejects.toMatchObject({ code: 'CASE_EVIDENCE_FORBIDDEN' });
+      expect(mockedFetch).toHaveBeenCalledTimes(1);
+
+      mockedFetch
+        .mockResolvedValueOnce(response({
+          uploadToken: 'upload-token', uploadUrl: 'https://uploads.mypet.test/case',
+        }))
+        .mockResolvedValueOnce(response({
+          code: 'EVIDENCE_TYPE_REJECTED', message: 'Unsupported evidence type',
+        }, 422));
+      await expect(uploadCustomerCaseEvidence(customerCase, {
+        uri: 'file:///payload.exe', name: 'payload.exe', mimeType: 'application/octet-stream',
+      }, 'token')).rejects.toMatchObject({ code: 'EVIDENCE_TYPE_REJECTED' });
+    });
   });
 });

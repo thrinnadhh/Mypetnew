@@ -35,6 +35,7 @@ import {
   type ChatMessage,
   type Conversation,
 } from '@/services/chat';
+import { isCapabilityAvailable } from '@/services/backend-capabilities';
 
 const POLL_MS = 5000;
 
@@ -105,6 +106,14 @@ export default function ChatScreen() {
     if (appConfig.allowDemoMode) {
       setConversation(DEMO_CONVERSATION);
       setMessages(DEMO_MESSAGES);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    if (!isCapabilityAvailable('chat')) {
+      setConversation(null);
+      setMessages([]);
       setError(null);
       setLoading(false);
       return;
@@ -282,6 +291,20 @@ export default function ChatScreen() {
     },
     [theme.backgroundElement, theme.border, theme.cta, theme.text, theme.textSecondary],
   );
+
+  if (!appConfig.allowDemoMode && !isCapabilityAvailable('chat')) {
+    return (
+      <ThemedView style={styles.centered}>
+        <AppIcon name="message" color={theme.textSecondary} size={28} />
+        <ThemedText type="small" style={{ color: theme.textSecondary, textAlign: 'center' }}>
+          Provider chat is not enabled in this release yet. You can reach providers through appointment requests.
+        </ThemedText>
+        <TouchableOpacity onPress={() => router.back()} style={[styles.backButton, { borderColor: theme.border }]}>
+          <ThemedText style={{ fontWeight: '800' }}>{t('common.back')}</ThemedText>
+        </TouchableOpacity>
+      </ThemedView>
+    );
+  }
 
   if (loading) {
     return (

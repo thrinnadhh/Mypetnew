@@ -40,6 +40,7 @@ import {
   getMedicalDocumentLink,
   uploadMedicalDocument,
 } from '../medical-documents';
+import { CapabilityUnavailableError } from '../backend-capabilities';
 
 jest.mock('@/utils/app-config', () => ({
   appConfig: {
@@ -110,6 +111,14 @@ describe('high-risk customer service contracts', () => {
     mockedFetch.mockReset();
     global.fetch = mockedFetch as unknown as typeof fetch;
     await AsyncStorage.clear();
+  });
+
+  // Dev-only registry overrides let these suites keep exercising real transport
+  // paths for capabilities whose backend routes are still deferred/fail-closed.
+  afterEach(() => {
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('EXPO_PUBLIC_ENABLE_')) delete process.env[key];
+    }
   });
 
   describe('payments', () => {
@@ -223,6 +232,10 @@ describe('high-risk customer service contracts', () => {
   });
 
   describe('chat', () => {
+    beforeEach(() => {
+      process.env.EXPO_PUBLIC_ENABLE_CHAT = 'true';
+    });
+
     it('opens a conversation and sends text, image and privacy mutations', async () => {
       const conversation = { conversationId: 'conversation-1' };
       const message = { messageId: 'message-1' };
@@ -356,6 +369,9 @@ describe('high-risk customer service contracts', () => {
 });
 
     it('loads and updates locale and vaccination reminder settings', async () => {
+      process.env.EXPO_PUBLIC_ENABLE_LOCALE_SYNC = 'true';
+      process.env.EXPO_PUBLIC_ENABLE_VACCINATION_REMINDERS = 'true';
+
       mockedFetch
         .mockResolvedValueOnce(jsonResponse({ locale: 'te' }))
         .mockResolvedValueOnce(jsonResponse({}))
@@ -380,7 +396,25 @@ describe('high-risk customer service contracts', () => {
     });
   });
 
+  describe('private medical documents fail closed without backend capability', () => {
+    it('rejects with CapabilityUnavailableError before any network request', async () => {
+      await expect(fetchMedicalDocuments('token')).rejects.toBeInstanceOf(CapabilityUnavailableError);
+      await expect(uploadMedicalDocument('appointment-1', {
+        uri: 'file:///report.pdf', name: 'report.pdf', mimeType: 'application/pdf',
+      }, 'token')).rejects.toMatchObject({ capabilityId: 'medicalDocuments' });
+      await expect(getMedicalDocumentLink('document-1', 'token')).rejects.toMatchObject({
+        name: 'CapabilityUnavailableError',
+        capabilityId: 'medicalDocuments',
+      });
+      expect(mockedFetch).not.toHaveBeenCalled();
+    });
+  });
+
   describe('private medical documents', () => {
+    beforeEach(() => {
+      process.env.EXPO_PUBLIC_ENABLE_MEDICAL_DOCUMENTS = 'true';
+    });
+
     it('lists, reserves, uploads and requests a signed link without forcing multipart content type', async () => {
       const document = {
         documentId: 'document-1',

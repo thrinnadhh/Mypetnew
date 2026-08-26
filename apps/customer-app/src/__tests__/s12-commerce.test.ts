@@ -1,4 +1,4 @@
-import { SAMPLE_PRODUCTS, SHOPS_DATA } from '../services/catalog-data';
+import { SAMPLE_PRODUCTS, SHOPS_DATA } from '../demo/catalog-data';
 
 describe('Sprint S12 Commerce Catalogs & Business Rules', () => {
   test('SAMPLE_PRODUCTS contains valid category taxonomy items', () => {

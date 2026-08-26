@@ -47,6 +47,25 @@ export interface CustomerPaymentView {
 
 export type CashfreeCallbackSignal = 'VERIFY' | 'ERROR';
 
+function validateCanonicalPaymentContract(
+  payment: CustomerPaymentView,
+  expectedReferenceType: CustomerPaymentView['referenceType'],
+  expectedReferenceId: string,
+): CustomerPaymentView {
+  if (
+    !payment.paymentId ||
+    payment.referenceType !== expectedReferenceType ||
+    payment.referenceId !== expectedReferenceId ||
+    payment.provider !== 'CASHFREE' ||
+    payment.currency !== 'INR' ||
+    !Number.isSafeInteger(payment.amountPaise) ||
+    payment.amountPaise < 0
+  ) {
+    throw new Error('Payment service returned an unsupported canonical payment contract.');
+  }
+  return payment;
+}
+
 export async function initiateOrderPayment(
   orderId: string,
   idempotencyKey = Crypto.randomUUID(),
@@ -60,6 +79,7 @@ export async function initiateOrderPayment(
     },
     { 'Idempotency-Key': idempotencyKey },
   );
+  validateCanonicalPaymentContract(payment, 'PRODUCT_ORDER', orderId);
   await rememberPendingPayment(payment.paymentId, orderId);
   return payment;
 }
@@ -81,6 +101,7 @@ export async function initiateAppointmentPayment(
   if (payment.referenceType !== 'APPOINTMENT' || payment.referenceId !== appointmentId) {
     throw new Error('Payment initiation returned a different appointment reference.');
   }
+  validateCanonicalPaymentContract(payment, 'APPOINTMENT', appointmentId);
   await rememberPendingAppointmentPayment(payment.paymentId, appointmentId, customerId);
   return payment;
 }
@@ -166,14 +187,4 @@ export async function waitForPaymentOutcome(
     }
   }
   return latest;
-}
-
-/**
- * Legacy compatibility helper. A reference alone is not enough to prove payment
- * success, so callers must first initiate a canonical payment and use its ID.
- */
-export async function waitForReferencePaymentOutcome(
-  _referenceId: string,
-): Promise<{ status: 'SUCCESS' | 'PENDING' | 'FAILED'; transactionId: string }> {
-  throw new Error('Use the canonical payment ID to verify appointment payment status.');
 }

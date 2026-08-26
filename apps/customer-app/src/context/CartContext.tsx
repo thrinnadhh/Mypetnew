@@ -3,7 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { Alert } from 'react-native';
 
 import { useAuth } from '@/context/AuthContext';
-import type { CommerceProduct, ProductVariant } from '@/services/catalog-data';
+import type { CommerceProduct, ProductVariant } from '@/services/catalog-types';
 import { isCommerceEligible } from '@/services/commerce-eligibility';
 
 export interface CartItem {

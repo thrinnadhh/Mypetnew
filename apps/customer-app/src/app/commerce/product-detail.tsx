@@ -17,7 +17,7 @@ import { useFavourites } from '@/context/FavouritesContext';
 import { useLocation } from '@/context/LocationContext';
 import { radii, shadows, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
-import type { CommerceProduct, ProductVariant } from '@/services/catalog-data';
+import type { CommerceProduct, ProductVariant } from '@/services/catalog-types';
 import { isCommerceEligible } from '@/services/commerce-eligibility';
 import { isOfflineError } from '@/services/customer-profile';
 import { fetchServiceableCommerceProduct } from '@/services/paginated-catalog';
@@ -92,7 +92,7 @@ export default function ProductDetailScreen() {
       if (requestGeneration.current !== generation) return;
 
       const nextVariant =
-        nextProduct.variants.find((variant) => variant.inStock && variant.stockCount > 0)
+        nextProduct.variants.find((variant: ProductVariant) => variant.inStock && variant.stockCount > 0)
         ?? nextProduct.variants[0]
         ?? null;
       setProduct(nextProduct);

@@ -5,7 +5,6 @@ import {
   initiateAppointmentPayment,
   loadPendingAppointmentPayment,
   waitForPaymentOutcome,
-  waitForReferencePaymentOutcome,
 } from '../customer-payments';
 
 jest.mock('../api-client', () => ({
@@ -122,14 +121,6 @@ describe('customer appointment Cashfree client', () => {
     await expect(waitForPaymentOutcome('payment-1', 1, 0)).rejects.toThrow(
       'Current customer identity is required to verify an appointment payment.',
     );
-    expect(mockedApiClient.post).not.toHaveBeenCalled();
-  });
-
-  it('keeps reference-only payment success checks fail closed', async () => {
-    await expect(waitForReferencePaymentOutcome('appointment/1')).rejects.toThrow(
-      'Use the canonical payment ID to verify appointment payment status.',
-    );
-    expect(mockedApiClient.get).not.toHaveBeenCalled();
     expect(mockedApiClient.post).not.toHaveBeenCalled();
   });
 });

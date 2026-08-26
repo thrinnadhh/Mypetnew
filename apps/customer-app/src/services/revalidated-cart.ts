@@ -1,6 +1,7 @@
 import type { CartItem } from '@/context/CartContext';
 import { isCommerceEligible } from '@/services/commerce-eligibility';
 import { fetchCommerceProduct } from '@/services/customer-catalog';
+import type { CommerceProduct } from '@/services/catalog-types';
 
 interface CartRevalidationResult {
   providerId: string;
@@ -29,7 +30,7 @@ export async function buildCartFromRevalidation(
     availableItems.map((item) => fetchCommerceProduct(item.offeringId)),
   );
 
-  return products.map((product, index) => {
+  return products.map((product: CommerceProduct, index: number) => {
     if (product.providerId !== result.providerId) {
       throw new Error('Revalidated item belongs to a different provider.');
     }

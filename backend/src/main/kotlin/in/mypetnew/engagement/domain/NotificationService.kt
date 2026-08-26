@@ -267,7 +267,8 @@ class DeviceRegistrationService(private val persistence: DeviceRegistrationPersi
             it.public.userId != userId &&
                 it.public.installationId == installationId &&
                 it.public.appKind == appKind &&
-                it.public.environment == environment
+                it.public.environment == environment &&
+                it.public.status != RegistrationStatus.REVOKED
         }
         if (belongsToAnotherUser) {
             throw DomainException("DEVICE_REGISTRATION_INVALID", "The device registration is invalid")

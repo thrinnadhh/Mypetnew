@@ -10,13 +10,29 @@ describe('auth intents', () => {
     expect(parseAuthIntent(serializeAuthIntent(intent))).toEqual(intent);
   });
 
-  it('rejects non-app, unknown, legacy, and protocol-relative destinations', () => {
+  it('round-trips strict UUID-bound order and appointment detail destinations', () => {
+    const order = {
+      action: 'ORDER_HISTORY' as const,
+      returnTo: '/orders/99999999-9999-4999-8999-999999999999',
+    };
+    const appointment = {
+      action: 'ORDER_HISTORY' as const,
+      returnTo: '/appointments/88888888-8888-4888-8888-888888888888',
+    };
+    expect(parseAuthIntent(serializeAuthIntent(order))).toEqual(order);
+    expect(parseAuthIntent(serializeAuthIntent(appointment))).toEqual(appointment);
+  });
+
+  it('rejects non-app, unknown, legacy, protocol-relative, and malformed detail destinations', () => {
     const encoded = (value: unknown) => encodeURIComponent(JSON.stringify(value));
     expect(parseAuthIntent(encoded({ action: 'ADMIN', returnTo: '/(tabs)/home' }))).toBeNull();
     expect(parseAuthIntent(encoded({ action: 'CHECKOUT', returnTo: 'https://evil.example' }))).toBeNull();
     expect(parseAuthIntent(encoded({ action: 'CHECKOUT', returnTo: '//evil.example' }))).toBeNull();
     expect(parseAuthIntent(encoded({ action: 'CHECKOUT', returnTo: '/admin' }))).toBeNull();
     expect(parseAuthIntent(encoded({ action: 'CHECKOUT', returnTo: '/legacy-checkout' }))).toBeNull();
+    expect(parseAuthIntent(encoded({ action: 'ORDER_HISTORY', returnTo: '/orders/not-a-uuid' }))).toBeNull();
+    expect(parseAuthIntent(encoded({ action: 'ORDER_HISTORY', returnTo: '/orders/99999999-9999-4999-8999-999999999999/../../admin' }))).toBeNull();
+    expect(parseAuthIntent(encoded({ action: 'ORDER_HISTORY', returnTo: '/appointments/88888888-8888-6888-8888-888888888888' }))).toBeNull();
   });
 
   it('rejects malformed params instead of forwarding them into Expo Router', () => {

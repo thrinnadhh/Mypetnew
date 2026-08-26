@@ -8,6 +8,7 @@ import * as Notifications from 'expo-notifications';
 import type { NotificationResponse } from 'expo-notifications';
 
 import type { AuthIntent } from '@/auth/auth-intent';
+import { isUuid } from '@/utils/uuid';
 import { ApiError, apiClient } from '@/services/api-client';
 import { appConfig } from '@/utils/app-config';
 import { getOrCreateInstallationId } from '@/utils/installation-id';
@@ -134,6 +135,13 @@ export function notificationIntent(data: Record<string, unknown>): AuthIntent | 
 
   if (route === 'inbox') {
     return { action: 'ORDER_HISTORY', returnTo: '/(tabs)/home' };
+  }
+
+  if (route === 'customer/orders/detail' || route === 'customer/appointments/detail') {
+    const resourceId = typeof data.resourceId === 'string' ? data.resourceId.trim() : '';
+    const base = route === 'customer/orders/detail' ? '/orders' : '/appointments';
+    if (!resourceId || !isUuid(resourceId)) return null;
+    return { action: 'ORDER_HISTORY', returnTo: `${base}/${resourceId}` };
   }
 
   return null;

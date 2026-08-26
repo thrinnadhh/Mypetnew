@@ -520,7 +520,36 @@ class MerchantCommerceApiController(
                 ?: throw DomainException("DELIVERY_DISPATCH_ORIGIN_REQUIRED", "The outlet dispatch origin is unavailable")
             dispatch.start(updated, latitude, longitude)
         }
+        notifyCustomerOfOrderTransition(principal.role, updated, request.target)
         return updated
+    }
+
+    private fun notifyCustomerOfOrderTransition(actorRole: Role, order: ProductOrder, target: OrderStatus) {
+        if (actorRole == Role.CUSTOMER) return
+        val template = when (target) {
+            OrderStatus.ACCEPTED -> Triple("customer-order-accepted-v1", "Order accepted", "The store accepted your order and is preparing it.")
+            OrderStatus.READY_FOR_PICKUP ->
+                if (order.fulfilmentMode == DispatchService.DELIVERY_MODE) {
+                    null
+                } else {
+                    Triple("customer-order-ready-v1", "Order ready", "Your order is ready at the store counter.")
+                }
+            OrderStatus.DELIVERED -> Triple("customer-order-delivered-v1", "Order delivered", "Your order was delivered. Thank you for shopping with MyPet.")
+            OrderStatus.REJECTED, OrderStatus.CANCELLED ->
+                Triple("customer-order-cancelled-v1", "Order update", "Your order was cancelled by the store. Open MyPet for details.")
+            else -> null
+        } ?: return
+        runCatching {
+            notifications.enqueue(
+                sourceEventId = order.id,
+                recipientId = order.customerId,
+                templateVersion = template.first,
+                title = template.second,
+                body = template.third,
+                route = SafeRoute.CUSTOMER_ORDER,
+                resourceId = order.id,
+            )
+        }
     }
 
     @GetMapping("/orders/{orderId}")

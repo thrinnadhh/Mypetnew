@@ -184,13 +184,17 @@ class WalkingSkeletonApiTest {
             status { isOk() }
             jsonPath("$.availableStars") { value(1) }
         }
-        mockMvc.get("/api/v1/notifications") {
+        val customerNotifications = mockMvc.get("/api/v1/notifications") {
             header("Authorization", "Bearer $customerToken")
         }.andExpect {
             status { isOk() }
-            jsonPath("$.items.length()") { value(1) }
-            jsonPath("$.items[0].payload.route") { value("customer/loyalty") }
-        }
+        }.andReturn().response.contentAsString
+        // Merchant ACCEPTED + READY_FOR_PICKUP + DELIVERED transitions notify the
+        // customer, and the POS sale awards one loyalty star notification.
+        val routes = com.jayway.jsonpath.JsonPath.read<List<String>>(customerNotifications, "$.items[*].payload.route")
+        assertEquals(4, routes.size)
+        assertEquals(3, routes.count { it == "customer/orders/detail" })
+        assertEquals(1, routes.count { it == "customer/loyalty" })
 
         mockMvc.get("/api/v1/merchant/orders/$orderId") {
             header("Authorization", "Bearer ${tokens.issue(merchant.copy(outletIds = setOf(UUID.randomUUID())))}")

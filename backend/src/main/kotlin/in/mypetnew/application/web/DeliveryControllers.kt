@@ -13,6 +13,8 @@ import `in`.mypetnew.common.auth.Authorizer
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.customer.domain.CustomerDataService
+import `in`.mypetnew.engagement.domain.NotificationService
+import `in`.mypetnew.engagement.domain.SafeRoute
 import `in`.mypetnew.delivery.domain.CaptainDeliveryHistoryItem
 import `in`.mypetnew.delivery.domain.CaptainDeliveryState
 import `in`.mypetnew.delivery.domain.CaptainEarningsService
@@ -315,6 +317,7 @@ class CaptainDeliveryApiController(
     private val orders: OrderService,
     private val quotes: QuoteService,
     private val providers: ProviderService,
+    private val notifications: NotificationService,
 ) {
     @PutMapping("/availability")
     fun availability(
@@ -469,7 +472,7 @@ class CaptainDeliveryApiController(
     ): DispatchJob {
         val captain = authentication.domainPrincipal()
         Authorizer.requireRole(captain, Role.CAPTAIN)
-        return dispatch.markPickedUp(
+        val job = dispatch.markPickedUp(
             captainId = captain.actorId,
             jobId = jobId,
             proof = DeliveryProof(
@@ -479,6 +482,8 @@ class CaptainDeliveryApiController(
             ),
             idempotencyKey = idempotencyKey,
         )
+        notifyCustomer(job, "customer-order-out-for-delivery-v1", "Order on the way", "A Captain picked up your order. Follow live tracking in MyPet.")
+        return job
     }
 
     @PostMapping("/dispatch/{jobId}/delivered")
@@ -490,7 +495,7 @@ class CaptainDeliveryApiController(
     ): DispatchJob {
         val captain = authentication.domainPrincipal()
         Authorizer.requireRole(captain, Role.CAPTAIN)
-        return dispatch.markDelivered(
+        val job = dispatch.markDelivered(
             captainId = captain.actorId,
             jobId = jobId,
             proof = DeliveryProof(
@@ -500,6 +505,22 @@ class CaptainDeliveryApiController(
             ),
             idempotencyKey = idempotencyKey,
         )
+        notifyCustomer(job, "customer-order-delivered-v1", "Order delivered", "Your order was delivered. Thank you for shopping with MyPet.")
+        return job
+    }
+
+    private fun notifyCustomer(job: DispatchJob, templateVersion: String, title: String, body: String) {
+        runCatching {
+            notifications.enqueue(
+                sourceEventId = job.orderId,
+                recipientId = orders.get(job.orderId).customerId,
+                templateVersion = templateVersion,
+                title = title,
+                body = body,
+                route = SafeRoute.CUSTOMER_ORDER,
+                resourceId = job.orderId,
+            )
+        }
     }
 }
 

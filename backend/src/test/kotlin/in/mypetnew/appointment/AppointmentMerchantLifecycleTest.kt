@@ -2,6 +2,7 @@ package `in`.mypetnew.appointment
 
 import `in`.mypetnew.appointment.domain.AppointmentPaymentMethod
 import `in`.mypetnew.appointment.domain.AppointmentService
+import `in`.mypetnew.engagement.domain.NotificationService
 import `in`.mypetnew.appointment.domain.AppointmentStatus
 import `in`.mypetnew.appointment.domain.InMemoryAppointmentPersistence
 import `in`.mypetnew.appointment.domain.ServiceCapability
@@ -124,7 +125,7 @@ class AppointmentMerchantLifecycleTest {
     @Test
     fun `merchant appointment controller delegates authenticated outlet-owned status change`() {
         val booked = bookedAppointment("merchant-controller")
-        val controller = MerchantAppointmentApiController(appointments)
+        val controller = MerchantAppointmentApiController(appointments, NotificationService())
         val authentication = TestingAuthenticationToken(merchant, null)
 
         val response = controller.transition(

@@ -16,6 +16,8 @@ class M4CatalogMediaSourceGuardContractTest {
         assertTrue(controller.contains("listing.status != ListingStatus.ACTIVE"))
         assertTrue(controller.contains("actorId = principal.actorId"))
         assertFalse(controller.contains("organizationId: UUID"))
+        assertFalse(controller.contains("objectKey"))
+        assertFalse(controller.contains("publicUrl"))
     }
 
     @Test
@@ -30,7 +32,7 @@ class M4CatalogMediaSourceGuardContractTest {
     }
 
     @Test
-    fun `storage is catalog-specific private credential never client supplied object key`() {
+    fun `storage is catalog-specific and server credential is redacted`() {
         val store = source("src/main/kotlin/in/mypetnew/catalog/infrastructure/SupabaseCatalogMediaObjectStore.kt")
         val service = source("src/main/kotlin/in/mypetnew/catalog/domain/CatalogMediaService.kt")
         assertTrue(store.contains("mypet.supabase.catalog-media"))
@@ -38,7 +40,6 @@ class M4CatalogMediaSourceGuardContractTest {
         assertTrue(store.contains("x-upsert"))
         assertFalse(store.contains("private-bucket"))
         assertTrue(service.contains("catalog/$organizationId/$outletId/$listingId/$mediaId"))
-        assertFalse(service.contains("objectKey:"))
     }
 
     @Test

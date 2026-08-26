@@ -1,3 +1,5 @@
+import { isUuid } from '@/utils/uuid';
+
 export const PROTECTED_ACTIONS = [
   'FAVOURITE',
   'BOOKING',
@@ -31,15 +33,12 @@ export type AuthIntentDestination =
   | `/orders/${string}`
   | `/appointments/${string}`;
 
-/**
- * Dynamic detail destinations reachable through authenticated continuation
- * flows such as push-notification taps. Only strict RFC-4122 UUID resource ids
- * qualify, so a crafted returnTo cannot address arbitrary or traversal paths.
- */
-const DETAIL_DESTINATION_PATTERNS: ReadonlyArray<RegExp> = [
-  /^\/orders\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-  /^\/appointments\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-];
+const DETAIL_DESTINATION_PATTERN = /^\/(orders|appointments)\/([^/?#]+)$/;
+
+function isSafeDetailDestination(value: string): boolean {
+  const match = DETAIL_DESTINATION_PATTERN.exec(value);
+  return Boolean(match && isUuid(match[2]));
+}
 
 export interface AuthIntent {
   action: ProtectedAction;
@@ -63,7 +62,7 @@ function normalizeParams(value: unknown): Record<string, string> | undefined | n
 export function isSafeAuthDestination(value: unknown): value is AuthIntentDestination {
   if (typeof value !== 'string') return false;
   if ((AUTH_INTENT_DESTINATIONS as readonly string[]).includes(value)) return true;
-  return DETAIL_DESTINATION_PATTERNS.some((pattern) => pattern.test(value));
+  return isSafeDetailDestination(value);
 }
 
 export function normalizeAuthIntent(value: unknown): AuthIntent | null {

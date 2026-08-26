@@ -1,5 +1,6 @@
 import { appConfig } from '@/utils/app-config';
 import type { LanguageId } from '@/constants/content';
+import { isCapabilityAvailable } from './backend-capabilities';
 import { apiClient } from './api-client';
 
 export interface VaccinationReminder {
@@ -12,7 +13,7 @@ export interface VaccinationReminder {
 }
 
 export async function fetchLocale(accessToken?: string | null): Promise<LanguageId> {
-  if (appConfig.allowDemoMode) return 'en';
+  if (!isCapabilityAvailable('localeSync') || appConfig.allowDemoMode) return 'en';
   try {
     const body = await apiClient.get<{ locale: LanguageId }>(
       '/api/v1/profiles/me/locale',
@@ -26,7 +27,7 @@ export async function fetchLocale(accessToken?: string | null): Promise<Language
 }
 
 export async function updateLocale(locale: LanguageId, accessToken?: string | null): Promise<void> {
-  if (appConfig.allowDemoMode) return;
+  if (!isCapabilityAvailable('localeSync') || appConfig.allowDemoMode) return;
   await apiClient.patch(
     '/api/v1/profiles/me/locale',
     { locale },
@@ -36,6 +37,7 @@ export async function updateLocale(locale: LanguageId, accessToken?: string | nu
 }
 
 export async function fetchVaccinationReminders(accessToken?: string | null): Promise<VaccinationReminder[]> {
+  if (!isCapabilityAvailable('vaccinationReminders')) return [];
   if (appConfig.allowDemoMode) {
     return [
       {
@@ -69,7 +71,7 @@ export async function setVaccinationReminderEnabled(
   enabled: boolean,
   accessToken?: string | null,
 ): Promise<void> {
-  if (appConfig.allowDemoMode) return;
+  if (!isCapabilityAvailable('vaccinationReminders') || appConfig.allowDemoMode) return;
   await apiClient.patch(
     `/api/v1/vaccination-reminders/${reminderId}`,
     { enabled },

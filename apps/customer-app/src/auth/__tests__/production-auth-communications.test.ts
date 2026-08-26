@@ -2,8 +2,6 @@ jest.mock('@/utils/app-config', () => ({
   appConfig: { apiBaseUrl: 'https://api.mypet.test' },
 }));
 
-import { syncCommunicationContact } from '@/services/communication-contact';
-
 const actualProfile = jest.requireActual('@/services/customer-profile') as typeof import('@/services/customer-profile');
 
 function response(body: unknown = {}, status = 200): Response {
@@ -30,36 +28,6 @@ const savedAddress = {
   createdAt: '2026-08-15T00:00:00Z',
   updatedAt: '2026-08-15T00:00:00Z',
 };
-
-describe('communication contact sync', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    global.fetch = jest.fn() as unknown as typeof fetch;
-  });
-
-  it('sends only the bearer token to the trusted contact sync endpoint', async () => {
-    const mockedFetch = global.fetch as jest.MockedFunction<typeof fetch>;
-    mockedFetch.mockResolvedValue(response({}, 204));
-
-    await expect(syncCommunicationContact('jwt-token')).resolves.toBeUndefined();
-    expect(mockedFetch).toHaveBeenCalledWith(
-      'https://api.mypet.test/api/v1/notifications/contact/me',
-      expect.objectContaining({
-        method: 'POST',
-        headers: { Accept: 'application/json', Authorization: 'Bearer jwt-token' },
-        signal: expect.anything(),
-      }),
-    );
-  });
-
-  it('surfaces bounded provider errors', async () => {
-    const mockedFetch = global.fetch as jest.MockedFunction<typeof fetch>;
-    mockedFetch.mockResolvedValue(response('provider unavailable', 503));
-    await expect(syncCommunicationContact('jwt-token')).rejects.toThrow(
-      'Communication contact sync failed (503): provider unavailable',
-    );
-  });
-});
 
 describe('delivery contact compatibility contract', () => {
   beforeEach(() => {

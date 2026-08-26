@@ -5,12 +5,12 @@ import type {
   CommerceProduct,
   ProductVariant,
   ShopProfileData,
-} from '@/services/catalog-data';
-import { SAMPLE_PRODUCTS } from '@/services/catalog-data';
+} from '@/services/catalog-types';
+import { SAMPLE_PRODUCTS } from '@/demo/catalog-data';
 import {
   DEMO_PROVIDER_FIXTURES,
   demoShopImage,
-} from '@/services/demo-customer-data';
+} from '@/demo/customer-data';
 import { appConfig } from '@/utils/app-config';
 
 export interface PublicOutletSummary {

@@ -1,4 +1,5 @@
 import { apiClient } from './api-client';
+import { assertCapabilityAvailable } from './backend-capabilities';
 
 export type ChatContextType = 'ORDER' | 'APPOINTMENT';
 export type ChatMessageType = 'TEXT' | 'IMAGE';
@@ -58,6 +59,7 @@ export async function openConversation(input: {
   assignedDoctorUserId?: string;
   accessToken: string | null | undefined;
 }): Promise<Conversation> {
+  assertCapabilityAvailable('chat');
   return apiClient.post<Conversation>('/api/v1/chat/conversations', {
     contextType: input.contextType,
     contextId: input.contextId,
@@ -71,6 +73,7 @@ export async function fetchConversation(
   conversationId: string,
   accessToken: string | null | undefined,
 ): Promise<Conversation> {
+  assertCapabilityAvailable('chat');
   return apiClient.get<Conversation>(
     `/api/v1/chat/conversations/${conversationId}`,
     undefined,
@@ -83,6 +86,7 @@ export async function fetchMessages(
   accessToken: string | null | undefined,
   after?: string,
 ): Promise<ChatMessage[]> {
+  assertCapabilityAvailable('chat');
   const params = after ? `?after=${encodeURIComponent(after)}` : '';
   return apiClient.get<ChatMessage[]>(
     `/api/v1/chat/conversations/${conversationId}/messages${params}`,
@@ -96,6 +100,7 @@ export async function sendTextMessage(
   body: string,
   accessToken: string | null | undefined,
 ): Promise<ChatMessage> {
+  assertCapabilityAvailable('chat');
   return apiClient.post<ChatMessage>(
     `/api/v1/chat/conversations/${conversationId}/messages`,
     { messageType: 'TEXT', body },
@@ -111,6 +116,7 @@ export async function sendImageMessage(
   body: string | undefined,
   accessToken: string | null | undefined,
 ): Promise<ChatMessage> {
+  assertCapabilityAvailable('chat');
   return apiClient.post<ChatMessage>(
     `/api/v1/chat/conversations/${conversationId}/messages`,
     { messageType: 'IMAGE', imageUrl, imageMimeType, body },
@@ -125,6 +131,7 @@ export async function uploadChatImage(
   fileName: string,
   accessToken: string | null | undefined,
 ): Promise<{ imageUrl: string; imageMimeType: string }> {
+  assertCapabilityAvailable('chat');
   const formData = new FormData();
   formData.append('file', {
     uri: fileUri,
@@ -142,6 +149,7 @@ export async function markConversationRead(
   conversationId: string,
   accessToken: string | null | undefined,
 ): Promise<void> {
+  assertCapabilityAvailable('chat');
   await apiClient.post(
     `/api/v1/chat/conversations/${conversationId}/read`,
     undefined,
@@ -155,6 +163,7 @@ export async function updateConversationPrivacy(
   privacy: Partial<Pick<ConversationPrivacy, 'customerPhoneVisible' | 'doctorPhoneVisible' | 'assignedDoctorUserId'>>,
   accessToken: string | null | undefined,
 ): Promise<Conversation> {
+  assertCapabilityAvailable('chat');
   return apiClient.patch<Conversation>(
     `/api/v1/chat/conversations/${conversationId}/privacy`,
     privacy,

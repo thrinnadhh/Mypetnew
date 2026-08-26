@@ -1,4 +1,5 @@
 import type { PromoBanner } from '@/constants/content';
+import { isCapabilityAvailable } from '@/services/backend-capabilities';
 import { appConfig } from '@/utils/app-config';
 import { apiClient } from './api-client';
 
@@ -22,6 +23,7 @@ export interface GuideLikeResult {
 }
 
 export async function fetchBanners(accessToken?: string | null): Promise<PromoBanner[]> {
+  if (!isCapabilityAvailable('contentEngagement')) return [];
   if (appConfig.allowDemoMode) {
     const { PROMO_BANNERS } = await import('@/constants/content');
     return PROMO_BANNERS.map((banner) => ({ ...banner }));
@@ -34,6 +36,7 @@ export async function fetchBanners(accessToken?: string | null): Promise<PromoBa
 }
 
 export async function fetchGuides(category: string | null, accessToken?: string | null): Promise<GuideArticle[]> {
+  if (!isCapabilityAvailable('contentEngagement')) return [];
   if (appConfig.allowDemoMode) {
     const { GUIDE_ARTICLES } = await import('@/constants/content');
     return GUIDE_ARTICLES.filter((g) => !category || g.category === category).map((g) => ({
@@ -59,6 +62,8 @@ export async function toggleGuideLike(
   articleId: string,
   accessToken?: string | null,
 ): Promise<GuideLikeResult> {
+  // No-op instead of rejecting so Home and Guides degrade cleanly without the backend.
+  if (!isCapabilityAvailable('contentEngagement')) return { liked: false, likeCount: 0 };
   return apiClient.post<GuideLikeResult>(
     `/api/v1/content/guides/${articleId}/likes`,
     undefined,

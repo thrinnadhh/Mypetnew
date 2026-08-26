@@ -7,7 +7,7 @@ import {
   sanitizeStoredCartItems,
   type CartItem,
 } from '../context/CartContext';
-import type { CommerceProduct } from '../services/catalog-data';
+import type { CommerceProduct } from '../services/catalog-types';
 import { revalidateCartItemsAgainstCatalog } from '../services/cart-revalidation';
 import { fetchServiceableCommerceProduct } from '../services/paginated-catalog';
 

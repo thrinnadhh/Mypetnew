@@ -15,7 +15,7 @@ import { useLocation } from '@/context/LocationContext';
 import { radii, shadows, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { ApiError } from '@/services/api-client';
-import type { CommerceProduct } from '@/services/catalog-data';
+import type { CommerceProduct } from '@/services/catalog-types';
 import type { PublicOutletSummary } from '@/services/customer-catalog';
 import { isOfflineError } from '@/services/customer-profile';
 import {

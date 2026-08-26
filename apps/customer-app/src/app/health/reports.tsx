@@ -19,6 +19,7 @@ import {
   uploadMedicalDocument,
   type MedicalDocument,
 } from '@/services/medical-documents';
+import { isCapabilityAvailable } from '@/services/backend-capabilities';
 import { isSafeHttpsUrl } from '@/utils/customer-navigation-safety';
 
 type ReportFilter = 'ALL' | 'PROVIDER' | 'UPLOADED';
@@ -75,7 +76,7 @@ export default function MedicalReportsScreen() {
   const [documentError, setDocumentError] = useState<unknown>(null);
 
   const loadDocuments = useCallback(async () => {
-    if (!session) {
+    if (!session || !isCapabilityAvailable('medicalDocuments')) {
       setUploadedDocuments([]);
       setDocumentLoading(false);
       return;
@@ -187,6 +188,19 @@ export default function MedicalReportsScreen() {
       setUploading(false);
     }
   }, [selectedAppointmentId, session, uploading]);
+
+  if (!isCapabilityAvailable('medicalDocuments')) {
+    return (
+      <View style={[styles.container, { backgroundColor: theme.background }]}>
+        <ScreenHeader title="Medical reports" subtitle="Private health documents for your appointments" />
+        <StateView
+          kind="empty"
+          title="Medical reports unavailable"
+          message="Private document storage is not enabled for this release yet. Prescriptions issued by your provider stay available with each appointment."
+        />
+      </View>
+    );
+  }
 
   if (!user || !session) {
     return (

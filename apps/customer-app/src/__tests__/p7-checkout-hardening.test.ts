@@ -65,4 +65,33 @@ describe('P7 checkout transaction safety', () => {
     expect(checkout).toContain('server price ₹');
     expect(checkout).toContain('Server-authoritative total');
   });
+
+  it('pins the place-order double-submit guard around the placing flag lifecycle', () => {
+    const checkout = source('src/app/checkout/index.tsx');
+
+    // The guard state exists exactly once.
+    expect(checkout).toContain('const [placing, setPlacing] = useState(false);');
+
+    // Both guarded handlers early-return while an order or payment action is
+    // already in flight: resume-payment and place-order.
+    expect(checkout).toMatch(/if \(!pendingRecovery \|\| placing\) return;/);
+    expect(checkout).toMatch(/checkoutItems\.length === 0 \|\| placing\) return;/);
+
+    // The flag is raised by exactly those two handlers.
+    expect(checkout.match(/setPlacing\(true\);/g)).toHaveLength(2);
+
+    // Each handler lowers the flag in a finally block so a thrown error can
+    // never wedge the button into a permanently disabled state.
+    expect(checkout.match(/\} finally \{\s*setPlacing\(false\);\s*\n\s*\}/g)).toHaveLength(2);
+  });
+
+  it('raises the double-submit guard before any order request is issued', () => {
+    const checkout = source('src/app/checkout/index.tsx');
+
+    const guardIndex = checkout.indexOf('checkoutItems.length === 0 || placing) return;');
+    const orderRequestIndex = checkout.indexOf('createProductOrder(');
+
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(orderRequestIndex).toBeGreaterThan(guardIndex);
+  });
 });

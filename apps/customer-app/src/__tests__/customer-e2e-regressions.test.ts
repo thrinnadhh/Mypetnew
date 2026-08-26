@@ -65,7 +65,7 @@ describe('customer end-to-end regression contracts', () => {
     expect(payment).toMatch(/Send booking request · Pay at provider/);
     expect(payment).toMatch(/initiateAppointmentPayment\(action\.appointmentId, action\.userId\)/);
     expect(payment).toMatch(/openCashfreeOrder\(payment\)/);
-    expect(payment).toMatch(/waitForPaymentOutcome\(payment\.paymentId, 30, 2_000, action\.userId\)/);
+    expect(payment).toMatch(/waitForPaymentOutcome\(payment\.paymentId, 30, 2_000, action\.userId, \{[\s\S]*?referenceType: 'APPOINTMENT',[\s\S]*?referenceId: action\.appointmentId,[\s\S]*?\}\)/);
     expect(payment).toMatch(/Payment successful · waiting for provider/);
     expect(payment).toMatch(/refund workflow automatically/);
     expect(payment).toMatch(/confirmAppointmentHold\(action\.appointmentId, action\.accessToken\)/);

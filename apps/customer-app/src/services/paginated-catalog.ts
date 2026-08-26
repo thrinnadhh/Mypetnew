@@ -1,6 +1,6 @@
 import { apiClient } from '@/services/api-client';
-import type { CommerceProduct } from '@/services/catalog-data';
-import { SAMPLE_PRODUCTS } from '@/services/catalog-data';
+import type { CommerceProduct } from '@/services/catalog-types';
+import { SAMPLE_PRODUCTS } from '@/demo/catalog-data';
 import {
   fetchCatalogPage,
   fetchCommerceProduct,

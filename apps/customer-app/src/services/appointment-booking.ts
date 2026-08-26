@@ -1,5 +1,5 @@
 import { apiClient } from '@/services/api-client';
-import { getDemoAppointmentSlots } from '@/services/demo-customer-data';
+import { getDemoAppointmentSlots } from '@/demo/customer-data';
 import { appConfig } from '@/utils/app-config';
 import { isUuid } from '@/utils/uuid';
 

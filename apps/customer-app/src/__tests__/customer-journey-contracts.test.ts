@@ -43,7 +43,7 @@ describe('MyPet customer journey contracts', () => {
     const catalog = source('src/services/customer-catalog.ts');
     const providers = source('src/services/provider-discovery.ts');
     const pets = source('src/services/customer-pets.ts');
-    const demoData = source('src/services/demo-customer-data.ts');
+    const demoData = source('src/demo/customer-data.ts');
 
     expect(config).toContain('allowDemoMode');
     expectAll(catalog, ['allowDemoMode', 'SAMPLE_PRODUCTS', 'DEMO_PROVIDER_FIXTURES']);
@@ -80,7 +80,8 @@ describe('MyPet customer journey contracts', () => {
     expectAll(payment, [
       'Provider confirmation required', 'PAYMENT FIRST · PROVIDER ACCEPTANCE NEXT', 'Pay online & send request',
       'Send booking request · Pay at provider', 'initiateAppointmentPayment(action.appointmentId, action.userId)',
-      'openCashfreeOrder(payment)', 'waitForPaymentOutcome(payment.paymentId, 30, 2_000, action.userId)',
+      'openCashfreeOrder(payment)', "waitForPaymentOutcome(payment.paymentId, 30, 2_000, action.userId, {",
+      "referenceType: 'APPOINTMENT',", 'referenceId: action.appointmentId,',
       'Payment successful · waiting for provider', 'refund workflow automatically',
       'confirmAppointmentHold(action.appointmentId, action.accessToken)',
       "appointment.status !== 'SLOT_HELD'", 'samePaymentContext(paymentContextRef.current, action)',

@@ -66,6 +66,13 @@ beforeEach(async () => {
   mockedFetch.mockReset();
   global.fetch = mockedFetch as unknown as typeof fetch;
   await AsyncStorage.clear();
+  // Dev-only registry override: chat routes are deferred/fail-closed in the backend
+  // registry, so these transport-coverage tests opt in explicitly.
+  process.env.EXPO_PUBLIC_ENABLE_CHAT = 'true';
+});
+
+afterAll(() => {
+  delete process.env.EXPO_PUBLIC_ENABLE_CHAT;
 });
 
 describe('loyalty production paths', () => {

@@ -4,7 +4,7 @@ import {
   DEMO_PROVIDER_FIXTURES,
   demoShopImage,
   getDemoAppointmentSlots,
-} from '../demo-customer-data';
+} from '../customer-data';
 
 describe('demo customer marketplace fixtures', () => {
   it('keeps distinct media and providers for customer self-testing', () => {

@@ -1,4 +1,4 @@
-import { SAMPLE_PRODUCTS } from '../services/catalog-data';
+import { SAMPLE_PRODUCTS } from '../demo/catalog-data';
 
 describe('food category filter tags', () => {
   const food = SAMPLE_PRODUCTS.filter((product) => product.category === 'food');

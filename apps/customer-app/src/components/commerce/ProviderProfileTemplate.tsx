@@ -14,9 +14,9 @@ import { useCart } from '@/context/CartContext';
 import { useFavourites } from '@/context/FavouritesContext';
 import { radii, shadows, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
-import { type CommerceProduct, type ShopProfileData } from '@/services/catalog-data';
+import { type CommerceProduct, type ShopProfileData } from '@/services/catalog-types';
 import { isCommerceEligible } from '@/services/commerce-eligibility';
-import { DEMO_MEDIA } from '@/services/demo-customer-data';
+import { DEMO_MEDIA } from '@/demo/customer-data';
 import { appConfig } from '@/utils/app-config';
 
 interface ProviderProfileTemplateProps {

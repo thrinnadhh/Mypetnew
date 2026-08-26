@@ -1,11 +1,11 @@
 package `in`.mypetnew.engagement
 
+import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.engagement.domain.NotificationService
 import `in`.mypetnew.engagement.domain.SafeRoute
-import `in`.mypetnew.common.error.DomainException
 import java.util.UUID
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
@@ -101,7 +101,7 @@ class CustomerNotificationTemplateContractTest {
     @Test
     fun `customer routes are exposed to the safe route allowlist`() {
         val wireValues = SafeRoute.entries.map(SafeRoute::wireValue)
-        assertNotNull(wireValues.contains("customer/orders/detail"))
-        assertNotNull(wireValues.contains("customer/appointments/detail"))
+        assertTrue("customer/orders/detail" in wireValues)
+        assertTrue("customer/appointments/detail" in wireValues)
     }
 }

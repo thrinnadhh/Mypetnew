@@ -254,9 +254,9 @@ export async function waitForPaymentOutcome(
     latest = await fetchPaymentStatus(paymentId, expectedReference);
   }
   if (latest.status === 'CAPTURED' || latest.status === 'FAILED' || latest.status === 'EXPIRED') {
-    if (latest.referenceType === 'APPOINTMENT') {
-      await clearPendingAppointmentPayment(appointmentCustomerId as string, paymentId);
-    } else {
+    if (latest.referenceType === 'APPOINTMENT' && appointmentCustomerId) {
+      await clearPendingAppointmentPayment(appointmentCustomerId, paymentId);
+    } else if (latest.referenceType !== 'APPOINTMENT') {
       await clearPendingPayment(paymentId);
     }
   }

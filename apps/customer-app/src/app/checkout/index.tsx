@@ -376,7 +376,11 @@ export default function CheckoutScreen() {
   ) => {
     setVerifying(true);
     try {
-      validateCanonicalPayment(initial, { referenceType: 'PRODUCT_ORDER', referenceId: orderId });
+      validateCanonicalPayment(initial, {
+        expectedPaymentId: initial.paymentId,
+        referenceType: 'PRODUCT_ORDER',
+        referenceId: orderId,
+      });
       if (launchProvider && initial.status !== 'CAPTURED' && initial.paymentSessionId) {
         // The callback result is deliberately ignored as payment truth. Both
         // success and error callbacks flow into the same backend verification.

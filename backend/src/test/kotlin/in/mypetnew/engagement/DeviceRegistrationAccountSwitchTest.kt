@@ -21,27 +21,28 @@ import org.springframework.transaction.support.TransactionTemplate
 
 class DeviceRegistrationAccountSwitchTest {
     @Test
-    fun `in-memory binding blocks foreign active owner but can be reused after revoke`() {
+    fun `in-memory binding blocks foreign active owner but can be reused after revoke with the same token`() {
         val service = DeviceRegistrationService()
         val userA = UUID.randomUUID()
         val userB = UUID.randomUUID()
         val installation = UUID.randomUUID()
+        val token = "shared-token"
 
-        service.register(userA, AppKind.CUSTOMER, Platform.ANDROID, installation, "token-a", "development")
+        service.register(userA, AppKind.CUSTOMER, Platform.ANDROID, installation, token, "development")
         val foreign = assertThrows(DomainException::class.java) {
-            service.register(userB, AppKind.CUSTOMER, Platform.ANDROID, installation, "token-b", "development")
+            service.register(userB, AppKind.CUSTOMER, Platform.ANDROID, installation, token, "development")
         }
         assertEquals("DEVICE_REGISTRATION_INVALID", foreign.code)
 
         assertTrue(service.revoke(userA, AppKind.CUSTOMER, installation, "development"))
-        val rebound = service.register(userB, AppKind.CUSTOMER, Platform.ANDROID, installation, "token-b", "development")
+        val rebound = service.register(userB, AppKind.CUSTOMER, Platform.ANDROID, installation, token, "development")
         assertEquals(userB, rebound.userId)
         assertEquals(0, service.activeFor(userA).size)
         assertEquals(1, service.activeFor(userB).size)
     }
 
     @Test
-    fun `jdbc binding preserves active ownership and releases it after explicit revoke`() {
+    fun `jdbc binding preserves active ownership and releases same-token binding after explicit revoke`() {
         val dataSource = DriverManagerDataSource(
             "jdbc:h2:mem:device_switch_${UUID.randomUUID().toString().replace("-", "")};MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
             "sa",
@@ -59,17 +60,18 @@ class DeviceRegistrationAccountSwitchTest {
         val sessionA = UUID.randomUUID()
         val sessionB = UUID.randomUUID()
         val installation = UUID.randomUUID()
+        val token = "shared-token"
         insertIdentity(template, userA, sessionA, "+919876543210")
         insertIdentity(template, userB, sessionB, "+919876543211")
 
-        persistence.register(userA, Role.CUSTOMER, sessionA, AppKind.CUSTOMER, Platform.ANDROID, installation, "token-a", "development")
+        persistence.register(userA, Role.CUSTOMER, sessionA, AppKind.CUSTOMER, Platform.ANDROID, installation, token, "development")
         val foreign = assertThrows(DomainException::class.java) {
-            persistence.register(userB, Role.CUSTOMER, sessionB, AppKind.CUSTOMER, Platform.ANDROID, installation, "token-b", "development")
+            persistence.register(userB, Role.CUSTOMER, sessionB, AppKind.CUSTOMER, Platform.ANDROID, installation, token, "development")
         }
         assertEquals("DEVICE_REGISTRATION_INVALID", foreign.code)
 
         assertTrue(persistence.revoke(userA, AppKind.CUSTOMER, installation, "development"))
-        val rebound = persistence.register(userB, Role.CUSTOMER, sessionB, AppKind.CUSTOMER, Platform.ANDROID, installation, "token-b", "development")
+        val rebound = persistence.register(userB, Role.CUSTOMER, sessionB, AppKind.CUSTOMER, Platform.ANDROID, installation, token, "development")
         assertEquals(userB, rebound.userId)
         assertEquals(0, persistence.activeFor(userA).size)
         assertEquals(1, persistence.activeFor(userB).size)
@@ -110,6 +112,7 @@ class DeviceRegistrationAccountSwitchTest {
             )
             """.trimIndent(),
         )
+        template.execute("CREATE INDEX ix_device_binding_lookup ON mypet.device_registration(environment, app_kind, installation_id, token_fingerprint)")
     }
 
     companion object {

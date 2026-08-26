@@ -3,7 +3,9 @@ package `in`.mypetnew.application.web
 import `in`.mypetnew.catalog.domain.CatalogMediaAttachment
 import `in`.mypetnew.catalog.domain.CatalogMediaService
 import `in`.mypetnew.catalog.domain.CatalogService
+import `in`.mypetnew.catalog.domain.ListingStatus
 import `in`.mypetnew.common.auth.MerchantPermission
+import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.provider.domain.ProviderService
 import java.util.UUID
 import org.springframework.http.MediaType
@@ -39,16 +41,29 @@ class MerchantCatalogMediaController(
             outletId,
             MerchantPermission.CATALOG_WRITE,
         )
-        catalog.getManagedListing(outlet.organizationId, outlet.id, listingId)
+        val listing = catalog.getManagedListing(outlet.organizationId, outlet.id, listingId)
+        if (listing.status != ListingStatus.ACTIVE) resourceUnavailable()
+        val filename = file.originalFilename?.takeIf { it.isNotBlank() } ?: invalidMedia()
         return media.uploadAndAttach(
+            actorId = principal.actorId,
             organizationId = outlet.organizationId,
             outletId = outlet.id,
             listingId = listingId,
             expectedVersion = expectedVersion,
-            filename = file.originalFilename ?: "upload",
+            filename = filename,
             contentType = file.contentType.orEmpty(),
             bytes = file.bytes,
             idempotencyKey = idempotencyKey,
         )
     }
+
+    private fun invalidMedia(): Nothing = throw DomainException(
+        "CATALOG_MEDIA_INVALID",
+        "The catalog image cannot be accepted",
+    )
+
+    private fun resourceUnavailable(): Nothing = throw DomainException(
+        "RESOURCE_NOT_FOUND",
+        "The requested resource is unavailable",
+    )
 }

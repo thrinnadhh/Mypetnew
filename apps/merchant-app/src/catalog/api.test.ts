@@ -1,12 +1,14 @@
 import * as Crypto from 'expo-crypto';
 import { merchantApiFetch } from '../auth/session';
 import {
+  catalogMediaCommandKey,
   changeListingStatus,
   createListing,
   fetchCatalogPage,
   fetchMerchantCatalogContext,
   type MerchantListing,
   updateListing,
+  uploadCatalogMedia,
 } from './api';
 
 jest.mock('../auth/session', () => ({ merchantApiFetch: jest.fn() }));
@@ -43,7 +45,7 @@ beforeEach(() => {
   uuidMock.mockReturnValue('command-uuid');
 });
 
-describe('Merchant M2 catalog client', () => {
+describe('Merchant catalog client', () => {
   it('loads current Merchant outlet context', async () => {
     const context = { organizationId: 'org-1', outletIds: ['outlet-1'], permissionsByOutlet: { 'outlet-1': ['CATALOG_WRITE'] } };
     fetchMock.mockResolvedValue(response(true, context));
@@ -128,6 +130,53 @@ describe('Merchant M2 catalog client', () => {
       headers: { 'Idempotency-Key': 'catalog-activate:command-uuid' },
       body: JSON.stringify({ outletId: 'outlet-1', expectedVersion: 3 }),
     });
+  });
+
+  it('uploads only multipart bytes to the managed media endpoint and keeps caller-owned retry key stable', async () => {
+    const attachment = {
+      mediaId: 'media-1',
+      listingId: listing.id,
+      position: 0,
+      publicUrl: 'https://catalog.example/catalog/org-1/outlet-1/listing-1/media-1',
+      contentType: 'image/jpeg' as const,
+      sizeBytes: 4,
+      listingVersion: 4,
+    };
+    fetchMock.mockResolvedValue(response(true, attachment));
+    const file = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0x00])], { type: 'image/jpeg' });
+    const key = 'catalog-media:stable-retry-key';
+
+    await expect(uploadCatalogMedia(listing, {
+      uri: 'blob:local-image',
+      name: 'pet.jpg',
+      type: 'image/jpeg',
+      size: 4,
+      file,
+    }, key)).resolves.toEqual(attachment);
+
+    const [path, init] = fetchMock.mock.calls[0];
+    expect(path).toBe('/api/v1/merchant/listings/listing-1/media?outletId=outlet-1&expectedVersion=3');
+    expect(init?.method).toBe('POST');
+    expect(init?.headers).toMatchObject({
+      'Idempotency-Key': key,
+      'Content-Type': 'multipart/form-data; boundary=mypetnew-commanduuid',
+    });
+    expect(init?.body).toBeInstanceOf(Blob);
+    expect(String(init?.body)).not.toContain('https://');
+
+    fetchMock.mockResolvedValue(response(true, attachment));
+    await uploadCatalogMedia(listing, {
+      uri: 'blob:local-image',
+      name: 'pet.jpg',
+      type: 'image/jpeg',
+      size: 4,
+      file,
+    }, key);
+    expect(fetchMock.mock.calls[1][1]?.headers).toMatchObject({ 'Idempotency-Key': key });
+  });
+
+  it('creates a dedicated media idempotency key for a new selection', () => {
+    expect(catalogMediaCommandKey()).toBe('catalog-media:command-uuid');
   });
 
   it.each([

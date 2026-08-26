@@ -27,6 +27,11 @@ class JdbcCatalogMediaPersistence(
         val attachment: CatalogMediaAttachment,
     )
 
+    private data class ListingLock(
+        val version: Long,
+        val active: Boolean,
+    )
+
     override fun findReplay(
         outletId: UUID,
         listingId: UUID,
@@ -42,23 +47,29 @@ class JdbcCatalogMediaPersistence(
                     upload.listingId,
                     upload.idempotencyKey,
                     upload.requestFingerprint,
-                )?.let { return@execute CatalogMediaAttachResult(it, replayed = true) }
+                )?.let { existing ->
+                    requireFinalizationAuthority(upload)
+                    return@execute CatalogMediaAttachResult(existing, replayed = true)
+                }
 
-                val currentVersion = jdbc.query(
+                val listing = jdbc.query(
                     """
-                    SELECT version
+                    SELECT version, active
                     FROM mypet.catalog_listing
                     WHERE id = ? AND organization_id = ? AND outlet_id = ?
                     FOR UPDATE
                     """.trimIndent(),
-                    { rows, _ -> rows.getLong("version") },
+                    { rows, _ -> ListingLock(rows.getLong("version"), rows.getBoolean("active")) },
                     upload.listingId,
                     upload.organizationId,
                     upload.outletId,
                 ).firstOrNull() ?: resourceUnavailable()
 
-                // Another request with this key can commit while this transaction
-                // waits for the listing row. Re-read after lock acquisition.
+                if (!listing.active) resourceUnavailable()
+                requireFinalizationAuthority(upload)
+
+                // Another request with this key can commit while this transaction waits for the listing
+                // lock. Re-read after acquiring both the listing and current authorization locks.
                 replay(
                     upload.outletId,
                     upload.listingId,
@@ -66,7 +77,7 @@ class JdbcCatalogMediaPersistence(
                     upload.requestFingerprint,
                 )?.let { return@execute CatalogMediaAttachResult(it, replayed = true) }
 
-                if (currentVersion != expectedVersion) versionConflict()
+                if (listing.version != expectedVersion) versionConflict()
 
                 val imageCount = jdbc.queryForObject(
                     "SELECT COUNT(*) FROM mypet.catalog_listing_image WHERE listing_id = ?",
@@ -79,12 +90,13 @@ class JdbcCatalogMediaPersistence(
                 jdbc.update(
                     """
                     INSERT INTO mypet.catalog_media (
-                        id, organization_id, outlet_id, listing_id, object_key, public_url,
+                        id, actor_id, organization_id, outlet_id, listing_id, object_key, public_url,
                         content_type, size_bytes, checksum, position, idempotency_key,
                         request_fingerprint, listing_version, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """.trimIndent(),
                     upload.id,
+                    upload.actorId,
                     upload.organizationId,
                     upload.outletId,
                     upload.listingId,
@@ -109,7 +121,7 @@ class JdbcCatalogMediaPersistence(
                     """
                     UPDATE mypet.catalog_listing
                     SET version = version + 1, updated_at = ?
-                    WHERE id = ? AND organization_id = ? AND outlet_id = ? AND version = ?
+                    WHERE id = ? AND organization_id = ? AND outlet_id = ? AND active = TRUE AND version = ?
                     """.trimIndent(),
                     Timestamp.from(Instant.now()),
                     upload.listingId,
@@ -131,7 +143,7 @@ class JdbcCatalogMediaPersistence(
                     ),
                     replayed = false,
                 )
-            }
+            } ?: persistenceError()
         } catch (duplicate: DuplicateKeyException) {
             replay(
                 upload.outletId,
@@ -141,6 +153,38 @@ class JdbcCatalogMediaPersistence(
             )?.let { return CatalogMediaAttachResult(it, replayed = true) }
             throw DomainException("CATALOG_MEDIA_CONFLICT", "The listing media changed concurrently; refresh and retry")
         }
+    }
+
+    /**
+     * Linearizes media finalization with current Merchant authority. FOR SHARE locks mean a concurrent
+     * permission revocation, account suspension, or outlet suspension either wins before this query
+     * (and the media write fails closed) or waits until this transaction commits.
+     */
+    private fun requireFinalizationAuthority(upload: CatalogMediaUpload) {
+        val granted = jdbc.query(
+            """
+            SELECT s.permission
+            FROM mypet.merchant_staff s
+            JOIN mypet.identity_account a ON a.id = s.account_id
+            JOIN mypet.provider_outlet o
+              ON o.id = s.outlet_id
+             AND o.organization_id = s.organization_id
+            WHERE s.account_id = ?
+              AND s.organization_id = ?
+              AND s.outlet_id = ?
+              AND s.active = TRUE
+              AND s.permission IN ('OWNER', 'CATALOG_WRITE')
+              AND a.role = 'MERCHANT'
+              AND a.status = 'ACTIVE'
+              AND o.status = 'ACTIVE'
+            FOR SHARE OF s, a, o
+            """.trimIndent(),
+            { rows, _ -> rows.getString("permission") },
+            upload.actorId,
+            upload.organizationId,
+            upload.outletId,
+        ).isNotEmpty()
+        if (!granted) permissionRequired()
     }
 
     private fun replay(
@@ -184,6 +228,11 @@ class JdbcCatalogMediaPersistence(
         "The requested resource is unavailable",
     )
 
+    private fun permissionRequired(): Nothing = throw DomainException(
+        "MERCHANT_PERMISSION_REQUIRED",
+        "The required merchant permission is missing",
+    )
+
     private fun quotaExceeded(): Nothing = throw DomainException(
         "CATALOG_MEDIA_QUOTA_EXCEEDED",
         "A listing can have at most five images",
@@ -197,5 +246,10 @@ class JdbcCatalogMediaPersistence(
     private fun replayConflict(): Nothing = throw DomainException(
         "IDEMPOTENCY_KEY_REUSED",
         "The idempotency key was already used for a different request",
+    )
+
+    private fun persistenceError(): Nothing = throw DomainException(
+        "CATALOG_MEDIA_FINALIZATION_FAILED",
+        "Catalog media could not be finalized",
     )
 }

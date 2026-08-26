@@ -1,8 +1,8 @@
 import { ApiError } from '@/contracts/api-error';
-import { SAMPLE_PRODUCTS } from '@/services/catalog-data';
+import { SAMPLE_PRODUCTS } from '@/demo/catalog-data';
 import { apiClient } from '@/services/api-client';
 import { fetchShopProfile, fetchCommerceProduct, fetchCommerceProducts } from '@/services/customer-catalog';
-import { DEMO_PROVIDER_FIXTURES } from '@/services/demo-customer-data';
+import { DEMO_PROVIDER_FIXTURES } from '@/demo/customer-data';
 import { fetchCommerceCatalogPage, fetchServiceableProductStore } from '@/services/paginated-catalog';
 
 /**

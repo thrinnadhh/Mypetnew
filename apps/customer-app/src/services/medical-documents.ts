@@ -19,7 +19,7 @@ interface UploadReservation {
   expiresAt: string;
 }
 
-export function fetchMedicalDocuments(accessToken: string): Promise<MedicalDocument[]> {
+export async function fetchMedicalDocuments(accessToken: string): Promise<MedicalDocument[]> {
   assertCapabilityAvailable('medicalDocuments');
   return apiClient.get<MedicalDocument[]>(
     '/api/v1/appointments/medical-documents',

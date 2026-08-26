@@ -4,7 +4,7 @@ import { StyleSheet, View, type ImageStyle, type StyleProp } from 'react-native'
 
 import { AppIcon } from '@/components/app-icon';
 import { useTheme } from '@/hooks/use-theme';
-import { DEMO_MEDIA } from '@/services/demo-customer-data';
+import { DEMO_MEDIA } from '@/demo/customer-data';
 import { appConfig } from '@/utils/app-config';
 
 const DEMO_MEDIA_URIS = new Set<string>(Object.values(DEMO_MEDIA));

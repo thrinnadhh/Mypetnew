@@ -5,7 +5,7 @@ import { ProviderProfileTemplate } from '@/components/commerce/ProviderProfileTe
 import { AppBar, StateView } from '@/components/foundation/primitives';
 import { ScreenShell } from '@/components/foundation/screen-shell';
 import { useLocation } from '@/context/LocationContext';
-import type { ShopProfileData } from '@/services/catalog-data';
+import type { ShopProfileData } from '@/services/catalog-types';
 import { fetchShopProfile } from '@/services/customer-catalog';
 import { isOfflineError } from '@/services/customer-profile';
 import {

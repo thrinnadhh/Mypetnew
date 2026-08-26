@@ -10,7 +10,7 @@ import { PrimaryButton } from '@/components/ui/primary-button';
 import { useLocation } from '@/context/LocationContext';
 import { radii, shadows, spacing, touchTarget, typography } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
-import type { CommerceProduct } from '@/services/catalog-data';
+import type { CommerceProduct } from '@/services/catalog-types';
 import { isOfflineError } from '@/services/customer-profile';
 import {
   CUSTOMER_CATALOG_PAGE_SIZE,

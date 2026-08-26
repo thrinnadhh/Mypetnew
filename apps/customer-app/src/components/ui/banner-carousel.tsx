@@ -15,7 +15,7 @@ import { ResilientRemoteImage } from '@/components/ui/resilient-remote-image';
 import { type PromoBanner } from '@/constants/content';
 import { Radius, Shadows, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { DEMO_MEDIA } from '@/services/demo-customer-data';
+import { DEMO_MEDIA } from '@/demo/customer-data';
 
 export function BannerCarousel({
   banners = [],

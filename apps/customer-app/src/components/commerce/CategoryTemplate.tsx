@@ -28,11 +28,11 @@ import {
   typography,
 } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
-import type { CommerceProduct } from '@/services/catalog-data';
+import type { CommerceProduct } from '@/services/catalog-types';
 import { isCommerceEligible } from '@/services/commerce-eligibility';
 import type { PublicCatalogQuery } from '@/services/customer-catalog';
 import { isOfflineError } from '@/services/customer-profile';
-import { DEMO_MEDIA } from '@/services/demo-customer-data';
+import { DEMO_MEDIA } from '@/demo/customer-data';
 import {
   CUSTOMER_CATALOG_PAGE_SIZE,
   fetchCommerceCatalogPage,

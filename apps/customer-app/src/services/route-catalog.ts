@@ -1,4 +1,4 @@
-import type { CommerceProduct } from '@/services/catalog-data';
+import type { CommerceProduct } from '@/services/catalog-types';
 
 export type CatalogRouteDefinition = {
   slug: string;

@@ -43,7 +43,7 @@ describe('MyPet customer journey contracts', () => {
     const catalog = source('src/services/customer-catalog.ts');
     const providers = source('src/services/provider-discovery.ts');
     const pets = source('src/services/customer-pets.ts');
-    const demoData = source('src/services/demo-customer-data.ts');
+    const demoData = source('src/demo/customer-data.ts');
 
     expect(config).toContain('allowDemoMode');
     expectAll(catalog, ['allowDemoMode', 'SAMPLE_PRODUCTS', 'DEMO_PROVIDER_FIXTURES']);

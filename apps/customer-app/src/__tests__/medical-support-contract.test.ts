@@ -62,7 +62,7 @@ describe('medical documents and support cases', () => {
 
     // Services must assert the registry before any network or URL work.
     expect(medical.indexOf("assertCapabilityAvailable('medicalDocuments');")).toBeGreaterThan(-1);
-    expect(medical).toMatch(/export function fetchMedicalDocuments[\s\S]*?assertCapabilityAvailable\('medicalDocuments'\);[\s\S]*?apiClient\.get/);
-    expect(cases).toMatch(/export function fetchCustomerCases[\s\S]*?assertCapabilityAvailable\('supportCases'\);[\s\S]*?apiClient\.get/);
+    expect(medical).toMatch(/export (async )?function fetchMedicalDocuments[\s\S]*?assertCapabilityAvailable\('medicalDocuments'\);[\s\S]*?apiClient\.get/);
+    expect(cases).toMatch(/export (async )?function fetchCustomerCases[\s\S]*?assertCapabilityAvailable\('supportCases'\);[\s\S]*?apiClient\.get/);
   });
 });

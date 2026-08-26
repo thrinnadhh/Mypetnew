@@ -1,4 +1,5 @@
 import { apiClient } from '@/services/api-client';
+import { assertCapabilityAvailable } from '@/services/backend-capabilities';
 import { appConfig } from '@/utils/app-config';
 import { isSafeHttpsUrl, isTrustedBearerUploadUrl } from '@/utils/customer-navigation-safety';
 
@@ -33,7 +34,8 @@ export interface CustomerCase {
   resolvedAt?: string | null;
 }
 
-export function fetchCustomerCases(accessToken: string): Promise<CustomerCase[]> {
+export async function fetchCustomerCases(accessToken: string): Promise<CustomerCase[]> {
+  assertCapabilityAvailable('supportCases');
   return apiClient.get<CustomerCase[]>(
     '/api/v1/orders/customer-cases',
     undefined,
@@ -41,12 +43,13 @@ export function fetchCustomerCases(accessToken: string): Promise<CustomerCase[]>
   );
 }
 
-export function createCustomerCase(
+export async function createCustomerCase(
   orderId: string,
   caseType: CustomerCaseType,
   description: string,
   accessToken: string,
 ): Promise<CustomerCase> {
+  assertCapabilityAvailable('supportCases');
   return apiClient.post<CustomerCase>(
     '/api/v1/orders/customer-cases',
     { orderId, caseType, description },
@@ -60,6 +63,7 @@ export async function uploadCustomerCaseEvidence(
   asset: { uri: string; name: string; mimeType: string },
   accessToken: string,
 ): Promise<CustomerCaseEvidence> {
+  assertCapabilityAvailable('supportCases');
   const reservation = await apiClient.post<{ uploadToken: string; uploadUrl: string }>(
     `/api/v1/orders/customer-cases/${customerCase.caseId}/evidence/reservations`,
     undefined,
@@ -89,6 +93,7 @@ export async function getCustomerCaseEvidenceLink(
   evidenceId: string,
   accessToken: string,
 ): Promise<string> {
+  assertCapabilityAvailable('supportCases');
   const response = await apiClient.post<{ url: string }>(
     `/api/v1/orders/customer-cases/${caseId}/evidence/${evidenceId}/signed-link`,
     undefined,

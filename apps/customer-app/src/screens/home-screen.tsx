@@ -17,10 +17,10 @@ import { useLocation } from '@/context/LocationContext';
 import { touchTarget } from '@/design/tokens';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/i18n';
-import { type CommerceProduct } from '@/services/catalog-data';
+import type { CommerceProduct } from '@/services/catalog-types';
 import { fetchBanners, fetchGuides, type GuideArticle, type PromoBanner } from '@/services/content';
 import { fetchCommerceProducts } from '@/services/customer-catalog';
-import { DEMO_MEDIA } from '@/services/demo-customer-data';
+import { DEMO_MEDIA } from '@/demo/customer-data';
 import { fetchProviderPage, type ProviderSummary } from '@/services/provider-discovery';
 import { appConfig } from '@/utils/app-config';
 

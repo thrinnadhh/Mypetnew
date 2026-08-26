@@ -87,16 +87,20 @@ describe('customer end-to-end regression contracts', () => {
     expect(service).not.toMatch(/\/api\/v1\/catalog\/offerings|\/api\/v1\/appointments\/hold/);
 
     const appointmentPayment = payments.slice(
-      payments.indexOf('export async function initiateAppointmentPayment'),
+      payments.indexOf('function invalidCanonicalPayment'),
       payments.indexOf('export async function fetchPaymentStatus'),
     );
-    const appointmentRequest = appointmentPayment.slice(
-      appointmentPayment.indexOf('apiClient.post<CustomerPaymentView>'),
-      appointmentPayment.indexOf("{ 'Idempotency-Key': idempotencyKey }"),
+    const appointmentRequestSlice = payments.slice(
+      payments.indexOf('async function requestAppointmentPayment'),
+      payments.indexOf('export async function initiateOrderPayment'),
+    );
+    const appointmentRequest = appointmentRequestSlice.slice(
+      appointmentRequestSlice.indexOf('apiClient.post<CustomerPaymentView>'),
+      appointmentRequestSlice.indexOf("{ 'Idempotency-Key': idempotencyKey }"),
     );
     expect(appointmentRequest).toMatch(/referenceType: 'APPOINTMENT'/);
     expect(appointmentRequest).not.toMatch(/amountPaise|currency:|customerId:|userId:/);
-    expect(appointmentPayment).toMatch(/Payment initiation returned a different appointment reference/);
+    expect(appointmentPayment).toMatch(/Payment service returned an invalid canonical payment response/);
   });
 
   it('does not retain the obsolete mock appointment modal or timer hook', () => {

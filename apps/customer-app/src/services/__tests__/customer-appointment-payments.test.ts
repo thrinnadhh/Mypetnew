@@ -77,7 +77,7 @@ describe('customer appointment Cashfree client', () => {
 
     await expect(
       initiateAppointmentPayment('appointment/1', CUSTOMER_A, 'appointment-reference-mismatch'),
-    ).rejects.toThrow('Payment initiation returned a different appointment reference.');
+    ).rejects.toThrow('Payment service returned an invalid canonical payment response.');
     await expect(loadPendingAppointmentPayment(CUSTOMER_A)).resolves.toBeNull();
   });
 
@@ -92,11 +92,18 @@ describe('customer appointment Cashfree client', () => {
     await expect(loadPendingAppointmentPayment(CUSTOMER_B)).resolves.toBeNull();
   });
 
-  it('loads canonical backend payment state by payment ID', async () => {
+  it('loads canonical backend payment state by payment ID with runtime canonical validation', async () => {
     mockedApiClient.get.mockResolvedValueOnce({ ...pendingPayment, status: 'CAPTURED' as const });
 
-    await expect(fetchPaymentStatus('payment/1')).resolves.toMatchObject({ status: 'CAPTURED' });
-    expect(mockedApiClient.get).toHaveBeenCalledWith('/api/v1/customer/payments/payment%2F1');
+    await expect(
+      fetchPaymentStatus('payment-1', { referenceType: 'APPOINTMENT', referenceId: 'appointment/1' }),
+    ).resolves.toMatchObject({ status: 'CAPTURED' });
+    expect(mockedApiClient.get).toHaveBeenCalledWith('/api/v1/customer/payments/payment-1');
+
+    mockedApiClient.get.mockResolvedValueOnce({ ...pendingPayment, status: 'CAPTURED' as const, paymentId: 'other' });
+    await expect(
+      fetchPaymentStatus('payment-1', { referenceType: 'APPOINTMENT', referenceId: 'appointment/1' }),
+    ).rejects.toThrow('Payment service returned an invalid canonical payment response.');
   });
 
   it('polls backend state until the appointment payment becomes captured and clears only that accounts recovery', async () => {

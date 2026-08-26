@@ -309,7 +309,10 @@ export default function AppointmentPaymentScreen() {
         if (recoveryAtStart.customerId !== action.userId || recoveryAtStart.appointmentId !== action.appointmentId) {
           throw new Error('The pending payment belongs to a different account or appointment.');
         }
-        const pending = await fetchPaymentStatus(recoveryAtStart.paymentId);
+        const pending = await fetchPaymentStatus(recoveryAtStart.paymentId, {
+          referenceType: 'APPOINTMENT',
+          referenceId: action.appointmentId,
+        });
         if (!isCurrentPaymentAction(action)) return;
         await verifyOnlinePayment(pending, true, action);
         return;

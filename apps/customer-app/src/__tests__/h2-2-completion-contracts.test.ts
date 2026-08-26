@@ -29,9 +29,14 @@ describe('H2.2 production completion contracts', () => {
       );
     });
 
-    it('maps ROUTE targets only when they are in-app absolute paths', () => {
+    it('maps only safe internal ROUTE targets and rejects traversal or protocol-relative forms', () => {
       expect(bannerRoute(banner({ targetType: 'ROUTE', targetValue: '/groom' }))).toBe('/groom');
+      expect(bannerRoute(banner({ targetType: 'ROUTE', targetValue: '/search?q=dog%20food' }))).toBe('/search?q=dog%20food');
       expect(bannerRoute(banner({ targetType: 'ROUTE', targetValue: 'https://evil.example/x' }))).toBe('/stores');
+      expect(bannerRoute(banner({ targetType: 'ROUTE', targetValue: '//evil.example/x' }))).toBe('/stores');
+      expect(bannerRoute(banner({ targetType: 'ROUTE', targetValue: '/orders/../admin' }))).toBe('/stores');
+      expect(bannerRoute(banner({ targetType: 'ROUTE', targetValue: '/orders/%2e%2e/admin' }))).toBe('/stores');
+      expect(bannerRoute(banner({ targetType: 'ROUTE', targetValue: '/orders\\..\\admin' }))).toBe('/stores');
     });
 
     it('maps PRODUCT and STORE targets to their canonical detail routes', () => {

@@ -2,19 +2,20 @@ package `in`.mypetnew.appointment
 
 import `in`.mypetnew.appointment.domain.AppointmentPaymentMethod
 import `in`.mypetnew.appointment.domain.AppointmentService
-import `in`.mypetnew.engagement.domain.NotificationService
 import `in`.mypetnew.appointment.domain.AppointmentStatus
 import `in`.mypetnew.appointment.domain.InMemoryAppointmentPersistence
 import `in`.mypetnew.appointment.domain.ServiceCapability
 import `in`.mypetnew.application.web.MerchantAppointmentApiController
 import `in`.mypetnew.application.web.MerchantAppointmentStatusRequest
 import `in`.mypetnew.common.auth.AdminPermission
+import `in`.mypetnew.common.auth.MerchantPermission
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.customer.domain.CustomerDataService
 import `in`.mypetnew.customer.domain.InMemoryCustomerDataPersistence
 import `in`.mypetnew.customer.domain.PetSpecies
+import `in`.mypetnew.engagement.domain.NotificationService
 import `in`.mypetnew.provider.domain.ProviderCapability
 import `in`.mypetnew.provider.domain.ProviderService
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -29,6 +30,7 @@ import java.util.UUID
 
 class AppointmentMerchantLifecycleTest {
     private val now = Instant.parse("2026-08-16T06:00:00Z")
+    private lateinit var providers: ProviderService
     private lateinit var appointments: AppointmentService
     private lateinit var merchant: Principal
     private lateinit var customer: Principal
@@ -38,7 +40,7 @@ class AppointmentMerchantLifecycleTest {
 
     @BeforeEach
     fun setUp() {
-        val providers = ProviderService()
+        providers = ProviderService()
         val customerData = CustomerDataService(InMemoryCustomerDataPersistence(), Clock.fixed(now, ZoneOffset.UTC))
         appointments = AppointmentService(
             InMemoryAppointmentPersistence(),
@@ -63,7 +65,11 @@ class AppointmentMerchantLifecycleTest {
             "lifecycle-approve-${UUID.randomUUID()}",
         )
         outletId = outlet.id
-        merchant = submittingMerchant.copy(organizationId = outlet.organizationId, outletIds = setOf(outlet.id))
+        merchant = submittingMerchant.copy(
+            organizationId = outlet.organizationId,
+            outletIds = setOf(outlet.id),
+            merchantPermissionsByOutlet = mapOf(outlet.id to setOf(MerchantPermission.OWNER)),
+        )
         serviceId = appointments.createOffering(
             merchant,
             outletId,
@@ -123,10 +129,13 @@ class AppointmentMerchantLifecycleTest {
     }
 
     @Test
-    fun `merchant appointment controller delegates authenticated outlet-owned status change`() {
+    fun `merchant appointment controller delegates an authorized outlet-owned status change`() {
         val booked = bookedAppointment("merchant-controller")
-        val controller = MerchantAppointmentApiController(appointments, NotificationService())
-        val authentication = TestingAuthenticationToken(merchant, null)
+        val controller = MerchantAppointmentApiController(providers, appointments, NotificationService())
+        val operator = merchant.copy(
+            merchantPermissionsByOutlet = mapOf(outletId to setOf(MerchantPermission.ORDER_FULFIL)),
+        )
+        val authentication = TestingAuthenticationToken(operator, null)
 
         val response = controller.transition(
             authentication,
@@ -137,6 +146,48 @@ class AppointmentMerchantLifecycleTest {
         assertEquals(booked.id, response.appointmentId)
         assertEquals(AppointmentStatus.CONFIRMED, response.status)
         assertEquals(outletId, response.outletId)
+    }
+
+    @Test
+    fun `merchant appointment controller requires fulfilment permission`() {
+        val booked = bookedAppointment("merchant-controller-permission")
+        val controller = MerchantAppointmentApiController(providers, appointments, NotificationService())
+        val noPermission = merchant.copy(merchantPermissionsByOutlet = emptyMap())
+
+        val failure = assertThrows(DomainException::class.java) {
+            controller.transition(
+                TestingAuthenticationToken(noPermission, null),
+                booked.id,
+                MerchantAppointmentStatusRequest(outletId, AppointmentStatus.CONFIRMED),
+            )
+        }
+
+        assertEquals("MERCHANT_PERMISSION_REQUIRED", failure.code)
+        assertEquals(AppointmentStatus.BOOKED, appointments.get(customer, booked.id).status)
+    }
+
+    @Test
+    fun `merchant appointment controller hides cross-organization outlet targets even with forged scope`() {
+        val booked = bookedAppointment("merchant-controller-tenant")
+        val controller = MerchantAppointmentApiController(providers, appointments, NotificationService())
+        val forged = Principal(
+            actorId = UUID.randomUUID(),
+            role = Role.MERCHANT,
+            organizationId = UUID.randomUUID(),
+            outletIds = setOf(outletId),
+            merchantPermissionsByOutlet = mapOf(outletId to setOf(MerchantPermission.ORDER_FULFIL)),
+        )
+
+        val failure = assertThrows(DomainException::class.java) {
+            controller.transition(
+                TestingAuthenticationToken(forged, null),
+                booked.id,
+                MerchantAppointmentStatusRequest(outletId, AppointmentStatus.CONFIRMED),
+            )
+        }
+
+        assertEquals("RESOURCE_NOT_FOUND", failure.code)
+        assertEquals(AppointmentStatus.BOOKED, appointments.get(customer, booked.id).status)
     }
 
     @Test

@@ -9,10 +9,12 @@ import `in`.mypetnew.appointment.domain.ServiceCapability
 import `in`.mypetnew.appointment.domain.ServiceOffering
 import `in`.mypetnew.appointment.domain.ServiceSlot
 import `in`.mypetnew.common.auth.Authorizer
+import `in`.mypetnew.common.auth.MerchantPermission
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.engagement.domain.NotificationService
 import `in`.mypetnew.engagement.domain.SafeRoute
+import `in`.mypetnew.provider.domain.ProviderService
 import org.springframework.http.HttpStatus
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.GetMapping
@@ -158,6 +160,7 @@ class MerchantServiceApiController(private val appointments: AppointmentService)
 @RestController
 @RequestMapping("/api/v1/merchant/appointments")
 class MerchantAppointmentApiController(
+    private val providers: ProviderService,
     private val appointments: AppointmentService,
     private val notifications: NotificationService,
 ) {
@@ -167,7 +170,12 @@ class MerchantAppointmentApiController(
         @PathVariable appointmentId: UUID,
         @RequestBody request: MerchantAppointmentStatusRequest,
     ): CustomerAppointmentResponse {
-        val appointment = appointments.merchantTransition(merchant(authentication), request.outletId, appointmentId, request.status)
+        val principal = merchant(authentication)
+        // Defense in depth: request-supplied outlet IDs are targets only. The
+        // authenticated merchant must still hold fulfilment authority for an
+        // ACTIVE outlet in the same server-owned organization.
+        providers.requireActiveOutlet(principal, request.outletId, MerchantPermission.ORDER_FULFIL)
+        val appointment = appointments.merchantTransition(principal, request.outletId, appointmentId, request.status)
         notifyCustomer(appointment)
         return appointmentResponse(appointment)
     }

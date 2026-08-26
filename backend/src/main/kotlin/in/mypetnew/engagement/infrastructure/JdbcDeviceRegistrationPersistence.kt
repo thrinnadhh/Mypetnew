@@ -275,6 +275,7 @@ class JdbcDeviceRegistrationPersistence(
             SELECT COUNT(*) FROM mypet.device_registration
             WHERE environment = :environment AND app_kind = :app_kind
               AND installation_id = :installation_id AND user_id <> :user_id
+              AND status <> 'REVOKED'
             """.trimIndent(),
         ).params(bindingParameters(environment, appKind, installationId))
             .param("user_id", userId)

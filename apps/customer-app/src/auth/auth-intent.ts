@@ -1,3 +1,5 @@
+import { isUuid } from '@/utils/uuid';
+
 export const PROTECTED_ACTIONS = [
   'FAVOURITE',
   'BOOKING',
@@ -25,7 +27,18 @@ export const AUTH_INTENT_DESTINATIONS = [
   '/wallet',
 ] as const;
 
-type AuthIntentDestination = (typeof AUTH_INTENT_DESTINATIONS)[number];
+type StaticAuthIntentDestination = (typeof AUTH_INTENT_DESTINATIONS)[number];
+export type AuthIntentDestination =
+  | StaticAuthIntentDestination
+  | `/orders/${string}`
+  | `/appointments/${string}`;
+
+const DETAIL_DESTINATION_PATTERN = /^\/(orders|appointments)\/([^/?#]+)$/;
+
+function isSafeDetailDestination(value: string): boolean {
+  const match = DETAIL_DESTINATION_PATTERN.exec(value);
+  return Boolean(match && isUuid(match[2]));
+}
 
 export interface AuthIntent {
   action: ProtectedAction;
@@ -47,8 +60,9 @@ function normalizeParams(value: unknown): Record<string, string> | undefined | n
 }
 
 export function isSafeAuthDestination(value: unknown): value is AuthIntentDestination {
-  return typeof value === 'string'
-    && (AUTH_INTENT_DESTINATIONS as readonly string[]).includes(value);
+  if (typeof value !== 'string') return false;
+  if ((AUTH_INTENT_DESTINATIONS as readonly string[]).includes(value)) return true;
+  return isSafeDetailDestination(value);
 }
 
 export function normalizeAuthIntent(value: unknown): AuthIntent | null {

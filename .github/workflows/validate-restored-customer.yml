@@ -44,6 +44,10 @@ jobs:
         run: npm run test:merchant-consistency
       - name: Test Customer app
         run: npm test -- --runInBand
+      - name: Enforce high-risk module coverage gates
+        run: |
+          npx jest --runInBand --coverage --coverageReporters=json-summary
+          node ./scripts/check-production-coverage.cjs
       - name: Export Android Customer bundle
         env:
           EXPO_PUBLIC_APP_ENV: production

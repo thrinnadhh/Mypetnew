@@ -15,6 +15,8 @@ enum class RegistrationStatus { ACTIVE, ROTATED, DISABLED, REVOKED, INVALID, STA
 
 enum class SafeRoute(val wireValue: String) {
     CUSTOMER_LOYALTY("customer/loyalty"),
+    CUSTOMER_ORDER("customer/orders/detail"),
+    CUSTOMER_APPOINTMENT("customer/appointments/detail"),
     MERCHANT_ORDER("merchant/orders/detail"),
     CAPTAIN_OFFER("captain/dispatch/offer"),
     INBOX("inbox"),
@@ -265,7 +267,8 @@ class DeviceRegistrationService(private val persistence: DeviceRegistrationPersi
             it.public.userId != userId &&
                 it.public.installationId == installationId &&
                 it.public.appKind == appKind &&
-                it.public.environment == environment
+                it.public.environment == environment &&
+                it.public.status != RegistrationStatus.REVOKED
         }
         if (belongsToAnotherUser) {
             throw DomainException("DEVICE_REGISTRATION_INVALID", "The device registration is invalid")
@@ -396,6 +399,41 @@ class NotificationService(private val repository: NotificationRepository = InMem
                 "New delivery assignment",
                 "Open MyPet Captain to review an available delivery.",
                 SafeRoute.CAPTAIN_OFFER,
+            ),
+            "customer-order-accepted-v1" to ApprovedTemplate(
+                "Order accepted",
+                "The store accepted your order and is preparing it.",
+                SafeRoute.CUSTOMER_ORDER,
+            ),
+            "customer-order-ready-v1" to ApprovedTemplate(
+                "Order ready",
+                "Your order is ready at the store counter.",
+                SafeRoute.CUSTOMER_ORDER,
+            ),
+            "customer-order-out-for-delivery-v1" to ApprovedTemplate(
+                "Order on the way",
+                "A Captain picked up your order. Follow live tracking in MyPet.",
+                SafeRoute.CUSTOMER_ORDER,
+            ),
+            "customer-order-delivered-v1" to ApprovedTemplate(
+                "Order delivered",
+                "Your order was delivered. Thank you for shopping with MyPet.",
+                SafeRoute.CUSTOMER_ORDER,
+            ),
+            "customer-order-cancelled-v1" to ApprovedTemplate(
+                "Order update",
+                "Your order was cancelled by the store. Open MyPet for details.",
+                SafeRoute.CUSTOMER_ORDER,
+            ),
+            "customer-appointment-confirmed-v1" to ApprovedTemplate(
+                "Appointment confirmed",
+                "The provider confirmed your booking request.",
+                SafeRoute.CUSTOMER_APPOINTMENT,
+            ),
+            "customer-appointment-declined-v1" to ApprovedTemplate(
+                "Appointment update",
+                "The provider could not accept your booking request. Open MyPet for details.",
+                SafeRoute.CUSTOMER_APPOINTMENT,
             ),
         )
         private val RESTRICTED_NOTIFICATION_CONTENT = Regex(

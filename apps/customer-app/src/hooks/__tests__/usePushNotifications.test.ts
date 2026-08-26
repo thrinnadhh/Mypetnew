@@ -375,3 +375,30 @@ describe('usePushNotifications behavioral test suite', () => {
     expect(sourceCode).toContain('getDevicePushTokenAsync');
   });
 });
+
+describe('H2.2 customer resource notification intents', () => {
+  it('routes customer order notifications to the order detail after auth', () => {
+    expect(
+      notificationIntent({ route: 'customer/orders/detail', resourceId: '99999999-9999-4999-8999-999999999999' }),
+    ).toEqual({
+      action: 'ORDER_HISTORY',
+      returnTo: '/orders/99999999-9999-4999-8999-999999999999',
+    });
+  });
+
+  it('routes customer appointment notifications to the appointment detail after auth', () => {
+    expect(
+      notificationIntent({ route: 'customer/appointments/detail', resourceId: '88888888-8888-4888-8888-888888888888' }),
+    ).toEqual({
+      action: 'ORDER_HISTORY',
+      returnTo: '/appointments/88888888-8888-4888-8888-888888888888',
+    });
+  });
+
+  it('fails closed on malformed or foreign resource ids', () => {
+    expect(notificationIntent({ route: 'customer/orders/detail', resourceId: 'not-a-uuid' })).toBeNull();
+    expect(notificationIntent({ route: 'customer/orders/detail' })).toBeNull();
+    expect(notificationIntent({ route: 'customer/orders/detail', resourceId: 42 })).toBeNull();
+    expect(notificationIntent({ route: 'customer/appointments/detail', resourceId: '../admin' })).toBeNull();
+  });
+});

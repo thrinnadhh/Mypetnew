@@ -327,6 +327,28 @@ export default function OrderDetailRoute() {
               </ThemedText>
             </Pressable>
           ) : null}
+
+          {order.status === 'DELIVERED' ? (
+            <Pressable
+              style={({ pressed }) => [styles.cancelButton, { borderColor: theme.primary }, pressed && styles.pressed]}
+              onPress={() => router.push({ pathname: '/subscriptions', params: { sourceOrderId: order.orderId } } as never)}
+              accessibilityRole="button"
+              accessibilityLabel="Subscribe to recurring delivery from this order"
+            >
+              <ThemedText style={{ color: theme.primary, fontWeight: '700' }}>
+                Subscribe &amp; save · repeat this order
+              </ThemedText>
+            </Pressable>
+          ) : null}
+
+          <Pressable
+            style={({ pressed }) => [styles.cancelButton, { borderColor: theme.border }, pressed && styles.pressed]}
+            onPress={() => router.push({ pathname: '/support', params: { orderId: order.orderId } } as never)}
+            accessibilityRole="button"
+            accessibilityLabel="Get help with this order"
+          >
+            <ThemedText style={{ color: theme.textSecondary, fontWeight: '700' }}>Get help with this order</ThemedText>
+          </Pressable>
         </View>
       )}
     </ScreenShell>

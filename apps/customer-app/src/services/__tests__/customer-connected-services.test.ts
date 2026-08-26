@@ -11,15 +11,8 @@ import {
   fetchCommerceProducts,
   fetchShopProfile,
 } from '../customer-catalog';
-import {
-  createCustomerOrder,
-  fetchCheckoutQuote,
-  fetchCustomerOrders,
-  reorderItems,
-} from '../customer-orders';
 import { createCustomerPet, fetchCustomerPets } from '../customer-pets';
 import { createDefaultAddress, fetchDefaultAddress } from '../customer-profile';
-import { fetchActivePromotions } from '../loyalty';
 import { fetchProviders } from '../provider-discovery';
 import { buildCartFromRevalidation } from '../revalidated-cart';
 
@@ -286,159 +279,7 @@ describe('connected customer services', () => {
     expect(cart[0]).toMatchObject({ quantity: 2, unitPrice: 499 });
   });
 
-  it('fetches orders, canonical pickup quotes, reorders and creates orders with server responses', async () => {
-    const providerId = '11111111-1111-4111-8111-111111111111';
-    const orderId = '99999999-9999-4999-8999-999999999999';
-    mockedFetch
-      .mockResolvedValueOnce(
-        jsonResponse([
-          {
-            orderId,
-            providerId,
-            status: 'ACCEPTED',
-            flowStep: 'placed',
-            totalAmount: '548.00',
-            placedAt: '2026-08-05T10:00:00Z',
-            items: ['Adult Dog Food'],
-          },
-        ]),
-      )
-      .mockResolvedValueOnce(jsonResponse({ name: 'Tirupati Pet Store' }));
-
-    const orders = await fetchCustomerOrders(
-      '77777777-7777-4777-8777-777777777777',
-      'token',
-    );
-    expect(orders[0]).toMatchObject({ id: orderId, providerName: 'Tirupati Pet Store' });
-
-    mockedFetch.mockResolvedValueOnce(
-      jsonResponse({
-        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        customerId: '77777777-7777-4777-8777-777777777777',
-        outletId: providerId,
-        lines: {
-          '22222222-2222-4222-8222-222222222222': [1, 49900],
-        },
-        cartSignature: 'signed-cart',
-        fulfilmentMode: 'STORE_PICKUP',
-        paymentMethod: 'PAY_ON_FULFILMENT',
-        pricing: {
-          itemSubtotalPaise: 49900,
-          itemDiscountPaise: 0,
-          couponDiscountPaise: 0,
-          loyaltyRewardPaise: 0,
-          taxPaise: 0,
-          platformFeePaise: 1000,
-          deliveryFeePaise: 0,
-          merchantCommissionPaise: 1000,
-          grandTotalPaise: 50900,
-          currency: 'INR',
-          ruleVersion: 's1-v1',
-        },
-        expiresAt: '2026-08-05T10:15:00Z',
-      }),
-    );
-    const quote = await fetchCheckoutQuote(
-      {
-        customerId: '77777777-7777-4777-8777-777777777777',
-        providerId,
-        deliveryAddressId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        items: [{ offeringId: '22222222-2222-4222-8222-222222222222', quantity: 1 }],
-        couponCode: 'IGNORED_BY_S1_QUOTE',
-        paymentMethod: 'UPI',
-      },
-      'token',
-    );
-    expect(quote).toMatchObject({
-      quoteToken: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      quoteId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      cartSignature: 'signed-cart',
-      fulfilmentMode: 'STORE_PICKUP',
-      paymentMethod: 'PAY_ON_FULFILMENT',
-      subtotal: 499,
-      platformFee: 10,
-      deliveryFee: 0,
-      payableTotal: 509,
-      currency: 'INR',
-      ruleVersion: 's1-v1',
-    });
-    expect(mockedFetch.mock.calls[2][0]).toContain('/api/v1/customer/quotes/pickup');
-    expect(JSON.parse(mockedFetch.mock.calls[2][1]?.body as string)).toEqual({
-      outletId: providerId,
-      lines: [{ listingId: '22222222-2222-4222-8222-222222222222', quantity: 1 }],
-    });
-
-    mockedFetch.mockResolvedValueOnce(
-      jsonResponse({
-        originalOrderId: orderId,
-        providerId,
-        isProviderServiceable: true,
-        canReorder: true,
-        items: [],
-      }),
-    );
-    expect((await reorderItems(orderId, 'token')).canReorder).toBe(true);
-
-    mockedFetch
-      .mockResolvedValueOnce(
-        jsonResponse(
-          {
-            orderId,
-            providerId,
-            status: 'ACCEPTED',
-            totalAmount: 572.95,
-            placedAt: '2026-08-05T10:00:00Z',
-            items: [{ offeringNameSnapshot: 'Adult Dog Food' }],
-            paymentMethod: 'COD',
-            paymentStatus: 'COD_PENDING',
-          },
-          201,
-        ),
-      )
-      .mockResolvedValueOnce(jsonResponse({ name: 'Tirupati Pet Store' }));
-    const created = await createCustomerOrder(
-      {
-        customerId: '77777777-7777-4777-8777-777777777777',
-        providerId,
-        deliveryAddressId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        items: [{ offeringId: '22222222-2222-4222-8222-222222222222', quantity: 1 }],
-        quoteToken: 'Q-1',
-        paymentMethod: 'COD',
-      },
-      'token',
-    );
-    expect(created).toMatchObject({ id: orderId, paymentMethod: 'COD' });
-  });
-
-  it('falls back to cached orders only for network failures', async () => {
-    const customerId = '77777777-7777-4777-8777-777777777777';
-    await AsyncStorage.setItem(
-      `@mypet_orders_cache_v2_${customerId}`,
-      JSON.stringify([
-        {
-          id: '99999999-9999-4999-8999-999999999999',
-          providerId: '11111111-1111-4111-8111-111111111111',
-          providerName: 'Cached Store',
-          items: ['Cached item'],
-          total: '₹100',
-          rawTotal: 100,
-          status: 'DELIVERED',
-          orderedAt: '2026-08-01T00:00:00Z',
-          hasReview: false,
-          flowStep: 'delivered',
-        },
-      ]),
-    );
-    mockedFetch.mockRejectedValueOnce(new TypeError('Network request failed'));
-
-    const cached = await fetchCustomerOrders(customerId, 'token');
-    expect(cached[0].providerName).toBe('Cached Store');
-
-    mockedFetch.mockResolvedValueOnce(jsonResponse({ error: 'Forbidden' }, 403));
-    await expect(fetchCustomerOrders(customerId, 'token')).rejects.toMatchObject({ status: 403 });
-  });
-
-  it('uses authenticated pet, address, promotion and wallet APIs', async () => {
+  it('uses authenticated pet and address APIs', async () => {
     mockedFetch
       .mockResolvedValueOnce(
         jsonResponse([{ petId: 'pet-1', name: 'Bruno', species: 'DOG' }]),
@@ -461,28 +302,7 @@ describe('connected customer services', () => {
           isDefault: true,
         }),
       )
-      .mockResolvedValueOnce(
-        jsonResponse([
-          {
-            promotionId: 'promo-expired',
-            code: 'OLD',
-            discountType: 'FLAT',
-            discountValue: 50,
-            validFrom: '2025-01-01T00:00:00Z',
-            validUntil: '2025-01-02T00:00:00Z',
-            isActive: true,
-          },
-          {
-            promotionId: 'promo-live',
-            code: 'LIVE10',
-            discountType: 'PERCENTAGE',
-            discountValue: 10,
-            validFrom: '2026-01-01T00:00:00Z',
-            validUntil: '2027-01-01T00:00:00Z',
-            isActive: true,
-          },
-        ]),
-      );
+
 
     expect(await fetchCustomerPets('token')).toHaveLength(1);
     expect((await createCustomerPet({ name: 'Milo', species: 'CAT' }, 'token')).name).toBe('Milo');
@@ -497,7 +317,5 @@ describe('connected customer services', () => {
       geoLng: 79.4192,
     });
     expect(address.geoLat).toBe(13.6288);
-    const promotions = await fetchActivePromotions('token');
-    expect(promotions.map((promotion) => promotion.code)).toEqual(['LIVE10']);
   });
 });

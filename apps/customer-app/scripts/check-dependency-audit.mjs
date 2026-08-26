@@ -1,12 +1,21 @@
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 
+// Bounded exception, re-evaluated 2026-11-30:
+// GHSA-w3rx-r6r6-pgpr / GHSA-5p2g-fcmc-qvqq affect image-size's ICNS/JXL/HEIF
+// parsers. In this app image-size@1.x is reached ONLY transitively through the
+// Metro bundler (expo -> @expo/metro -> metro) while packaging local static
+// assets on a build machine. It is absent from every shipped runtime bundle
+// (verified against dist-web output), receives no user-controlled input at
+// runtime, and upstream has no fixed release yet (all published metro and
+// image-size versions are flagged). Do not extend past the expiry without
+// re-running `npm audit` and re-verifying bundle absence.
 const allowed = new Set([
   'https://github.com/advisories/GHSA-w3rx-r6r6-pgpr',
   'https://github.com/advisories/GHSA-5p2g-fcmc-qvqq',
 ]);
 
-const exceptionExpiresAtMs = Date.parse('2026-09-11T00:00:00Z');
+const exceptionExpiresAtMs = Date.parse('2026-11-30T00:00:00Z');
 
 const audit = spawnSync('npm', ['audit', '--omit=dev', '--json'], { encoding: 'utf8' });
 

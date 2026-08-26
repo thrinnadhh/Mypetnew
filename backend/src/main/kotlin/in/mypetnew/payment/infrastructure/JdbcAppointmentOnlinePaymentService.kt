@@ -627,7 +627,9 @@ class JdbcAppointmentOnlinePaymentService(
         ) {
             throw DomainException("APPOINTMENT_NOT_PAYABLE", "The appointment is not payable online")
         }
-        if (appointment.currency != "INR" || appointment.pricePaise < 0) {
+        // A zero-paise online payment cannot be collected through the provider.
+        // Zero-priced services must be booked with PAY_AT_PROVIDER instead.
+        if (appointment.currency != "INR" || appointment.pricePaise <= 0) {
             throw DomainException("PAYMENT_AMOUNT_INVALID", "The appointment price is invalid")
         }
         if (appointment.holdExpiresAt == null || !appointment.holdExpiresAt.isAfter(now)) {

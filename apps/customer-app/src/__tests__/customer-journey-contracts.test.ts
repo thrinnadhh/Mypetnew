@@ -80,7 +80,8 @@ describe('MyPet customer journey contracts', () => {
     expectAll(payment, [
       'Provider confirmation required', 'PAYMENT FIRST · PROVIDER ACCEPTANCE NEXT', 'Pay online & send request',
       'Send booking request · Pay at provider', 'initiateAppointmentPayment(action.appointmentId, action.userId)',
-      'openCashfreeOrder(payment)', 'waitForPaymentOutcome(payment.paymentId, 30, 2_000, action.userId)',
+      'openCashfreeOrder(payment)', "waitForPaymentOutcome(payment.paymentId, 30, 2_000, action.userId, {",
+      "referenceType: 'APPOINTMENT',", 'referenceId: action.appointmentId,',
       'Payment successful · waiting for provider', 'refund workflow automatically',
       'confirmAppointmentHold(action.appointmentId, action.accessToken)',
       "appointment.status !== 'SLOT_HELD'", 'samePaymentContext(paymentContextRef.current, action)',

@@ -172,4 +172,42 @@ describe('H2 duplicate verification and outcome recovery', () => {
     expect(outcome.status).toBe('PENDING');
     await expect(loadPendingPayment()).resolves.toEqual({ paymentId: 'payment-1', orderId: 'order-1' });
   });
+
+  it('rejects a captured status payload bound to a different order and keeps recovery recoverable', async () => {
+    mockedApiClient.post.mockResolvedValueOnce(canonicalPayment);
+    await initiateOrderPayment('order-1', 'idem-verify-echo');
+    mockedApiClient.get.mockResolvedValue({ ...canonicalPayment, referenceId: 'order-other', status: 'CAPTURED' });
+
+    await expect(
+      waitForPaymentOutcome('payment-1', 3, 0, undefined, { referenceType: 'PRODUCT_ORDER', referenceId: 'order-1' }),
+    ).rejects.toThrow('Payment verification returned a different order reference.');
+
+    expect(mockedApiClient.post).toHaveBeenCalledTimes(1);
+    await expect(loadPendingPayment()).resolves.toEqual({ paymentId: 'payment-1', orderId: 'order-1' });
+  });
+
+  it('rejects mid-poll reference drift before any recovery clear', async () => {
+    mockedApiClient.post.mockResolvedValueOnce(canonicalPayment);
+    await initiateOrderPayment('order-1', 'idem-drift');
+    mockedApiClient.get
+      .mockResolvedValueOnce(canonicalPayment)
+      .mockResolvedValueOnce({ ...canonicalPayment, referenceType: 'APPOINTMENT' });
+
+    await expect(
+      waitForPaymentOutcome('payment-1', 3, 0, undefined, { referenceType: 'PRODUCT_ORDER', referenceId: 'order-1' }),
+    ).rejects.toThrow('Payment verification returned a different order reference.');
+
+    await expect(loadPendingPayment()).resolves.toEqual({ paymentId: 'payment-1', orderId: 'order-1' });
+  });
+
+  it('binds appointment verification to its own reference during polling', async () => {
+    mockedApiClient.get.mockResolvedValue({ ...canonicalPayment, status: 'CAPTURED' });
+
+    await expect(
+      waitForPaymentOutcome('payment-1', 3, 0, 'customer-1', {
+        referenceType: 'APPOINTMENT',
+        referenceId: 'appointment-1',
+      }),
+    ).rejects.toThrow('Payment verification returned a different order reference.');
+  });
 });

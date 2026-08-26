@@ -47,6 +47,21 @@ export interface CustomerPaymentView {
 
 export type CashfreeCallbackSignal = 'VERIFY' | 'ERROR';
 
+export interface ExpectedPaymentReference {
+  referenceType: CustomerPaymentView['referenceType'];
+  referenceId: string;
+}
+
+function assertPaymentReference(
+  payment: CustomerPaymentView,
+  expected?: ExpectedPaymentReference,
+): void {
+  if (!expected) return;
+  if (payment.referenceType !== expected.referenceType || payment.referenceId !== expected.referenceId) {
+    throw new Error('Payment verification returned a different order reference.');
+  }
+}
+
 function validateCanonicalPaymentContract(
   payment: CustomerPaymentView,
   expectedReferenceType: CustomerPaymentView['referenceType'],
@@ -147,8 +162,10 @@ export async function waitForPaymentOutcome(
   attempts = 30,
   delayMs = 2_000,
   appointmentCustomerId?: string,
+  expectedReference?: ExpectedPaymentReference,
 ): Promise<CustomerPaymentView> {
   let latest = await fetchPaymentStatus(paymentId);
+  assertPaymentReference(latest, expectedReference);
   if (latest.referenceType === 'APPOINTMENT' && !appointmentCustomerId) {
     throw new Error('Current customer identity is required to verify an appointment payment.');
   }
@@ -165,9 +182,11 @@ export async function waitForPaymentOutcome(
       throw new Error('Payment recovery returned an inconsistent server payment.');
     }
     latest = resumed;
+    assertPaymentReference(latest, expectedReference);
     if (latest.paymentSessionId) {
       await openCashfreeOrder(latest).catch(() => 'ERROR' as const);
       latest = await fetchPaymentStatus(paymentId);
+      assertPaymentReference(latest, expectedReference);
     }
   }
 
@@ -178,6 +197,7 @@ export async function waitForPaymentOutcome(
   ) {
     await new Promise((resolve) => setTimeout(resolve, delayMs));
     latest = await fetchPaymentStatus(paymentId);
+    assertPaymentReference(latest, expectedReference);
   }
   if (latest.status === 'CAPTURED' || latest.status === 'FAILED' || latest.status === 'EXPIRED') {
     if (latest.referenceType === 'APPOINTMENT') {

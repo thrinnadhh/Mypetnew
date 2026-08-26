@@ -375,6 +375,9 @@ export default function CheckoutScreen() {
   ) => {
     setVerifying(true);
     try {
+      if (initial.referenceType !== 'PRODUCT_ORDER' || initial.referenceId !== orderId) {
+        throw new Error('Payment verification returned a different order reference.');
+      }
       if (launchProvider && initial.status !== 'CAPTURED' && initial.paymentSessionId) {
         // The callback result is deliberately ignored as payment truth. Both
         // success and error callbacks flow into the same backend verification.
@@ -382,7 +385,10 @@ export default function CheckoutScreen() {
       }
       const finalPayment = initial.status === 'CAPTURED'
         ? initial
-        : await waitForPaymentOutcome(initial.paymentId);
+        : await waitForPaymentOutcome(initial.paymentId, undefined, undefined, undefined, {
+          referenceType: 'PRODUCT_ORDER',
+          referenceId: orderId,
+        });
       await finishVerifiedPayment(finalPayment, orderId);
     } finally {
       setVerifying(false);

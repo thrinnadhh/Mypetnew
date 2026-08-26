@@ -22,7 +22,7 @@ describe('P13 appointment payment and history contract', () => {
     const payment = source('src/app/appointments/payment.tsx');
     const service = source('src/services/customer-payments.ts');
 
-    expect(payment).toContain('waitForPaymentOutcome(payment.paymentId, 30, 2_000, action.userId)');
+    expect(payment).toContain("waitForPaymentOutcome(payment.paymentId, 30, 2_000, action.userId, {\n      referenceType: 'APPOINTMENT',\n      referenceId: action.appointmentId,\n    })");
     expect(payment).toContain("verified.referenceType !== 'APPOINTMENT'");
     expect(payment).toContain('verified.referenceId !== action.appointmentId');
     expect(payment).toContain('const canonical = await fetchAppointmentDetails(action.appointmentId, action.accessToken)');

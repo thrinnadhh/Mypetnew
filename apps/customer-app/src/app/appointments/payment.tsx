@@ -229,7 +229,10 @@ export default function AppointmentPaymentScreen() {
   };
 
   const finishOnlinePayment = async (payment: CustomerPaymentView, action: PaymentActionContext) => {
-    const verified = await waitForPaymentOutcome(payment.paymentId, 30, 2_000, action.userId);
+    const verified = await waitForPaymentOutcome(payment.paymentId, 30, 2_000, action.userId, {
+      referenceType: 'APPOINTMENT',
+      referenceId: action.appointmentId,
+    });
     if (!isCurrentPaymentAction(action)) return;
     if (verified.referenceType !== 'APPOINTMENT' || verified.referenceId !== action.appointmentId) {
       throw new Error('Payment verification returned a different appointment.');

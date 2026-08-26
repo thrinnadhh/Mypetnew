@@ -28,9 +28,9 @@ describe('P13 appointment payment and history contract', () => {
     expect(payment).toContain('const canonical = await fetchAppointmentDetails(action.appointmentId, action.accessToken)');
     expect(payment).toContain('Payment captured · refund pending');
     expect(service).toContain('The Cashfree native callback is never payment truth');
-    expect(service).toContain('fetchPaymentStatus(paymentId)');
+    expect(service).toContain('validateCanonicalPayment');
     expect(service).toContain("latest.status === 'CAPTURED'");
-    expect(service).toContain('Payment initiation returned a different appointment reference.');
+    expect(service).toContain('Payment service returned an invalid canonical payment response.');
   });
 
   it('recovers an existing appointment payment only for the current account', () => {
@@ -41,7 +41,7 @@ describe('P13 appointment payment and history contract', () => {
 
     expect(payment).toContain('loadPendingAppointmentPayment(expectedUserId)');
     expect(payment).toContain('recovery?.customerId === expectedUserId');
-    expect(payment).toContain('fetchPaymentStatus(recoveryAtStart.paymentId)');
+    expect(payment).toContain('fetchPaymentStatus(recoveryAtStart.paymentId, {');
     expect(payment).toContain('Resume payment');
     expect(service).toContain('rememberPendingAppointmentPayment(payment.paymentId, appointmentId, customerId)');
     expect(recovery).toContain("RECOVERY_PREFIX = 'mypet.customer.pending-appointment-payment.v2.'");

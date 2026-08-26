@@ -47,44 +47,78 @@ export interface CustomerPaymentView {
 
 export type CashfreeCallbackSignal = 'VERIFY' | 'ERROR';
 
+const CUSTOMER_PAYMENT_STATUSES: readonly CustomerPaymentStatus[] = [
+  'PENDING',
+  'AUTHORIZED',
+  'CAPTURED',
+  'FAILED',
+  'EXPIRED',
+];
+
 export interface ExpectedPaymentReference {
-  referenceType: CustomerPaymentView['referenceType'];
-  referenceId: string;
+  referenceType?: CustomerPaymentView['referenceType'];
+  referenceId?: string;
 }
 
-function assertPaymentReference(
-  payment: CustomerPaymentView,
-  expected?: ExpectedPaymentReference,
-): void {
-  if (!expected) return;
-  if (payment.referenceType !== expected.referenceType || payment.referenceId !== expected.referenceId) {
-    throw new Error('Payment verification returned a different order reference.');
-  }
+export interface CanonicalPaymentExpectations {
+  expectedPaymentId?: string;
+  referenceType?: CustomerPaymentView['referenceType'];
+  referenceId?: string;
 }
 
-function validateCanonicalPaymentContract(
-  payment: CustomerPaymentView,
-  expectedReferenceType: CustomerPaymentView['referenceType'],
-  expectedReferenceId: string,
+function invalidCanonicalPayment(): Error {
+  return new Error('Payment service returned an invalid canonical payment response.');
+}
+
+/**
+ * Network payment payloads are untrusted runtime data. Every canonical
+ * CustomerPaymentView crossing this module is structurally and semantically
+ * validated here — TypeScript interfaces alone are not validation.
+ *
+ * Zero-amount payments (amountPaise === 0) are intentionally accepted: the
+ * backend schema does not prohibit them (e.g. fully discounted totals) and the
+ * backend remains the monetary authority.
+ */
+export function validateCanonicalPayment(
+  payment: unknown,
+  expected: CanonicalPaymentExpectations = {},
 ): CustomerPaymentView {
+  if (typeof payment !== 'object' || payment === null) throw invalidCanonicalPayment();
+  const p = payment as Record<string, unknown>;
   if (
-    !payment.paymentId ||
-    payment.referenceType !== expectedReferenceType ||
-    payment.referenceId !== expectedReferenceId ||
-    payment.provider !== 'CASHFREE' ||
-    payment.currency !== 'INR' ||
-    !Number.isSafeInteger(payment.amountPaise) ||
-    payment.amountPaise < 0
+    typeof p.paymentId !== 'string' ||
+    !p.paymentId ||
+    (expected.expectedPaymentId !== undefined && p.paymentId !== expected.expectedPaymentId) ||
+    (p.referenceType !== 'PRODUCT_ORDER' && p.referenceType !== 'APPOINTMENT') ||
+    (expected.referenceType !== undefined && p.referenceType !== expected.referenceType) ||
+    typeof p.referenceId !== 'string' ||
+    !p.referenceId ||
+    (expected.referenceId !== undefined && p.referenceId !== expected.referenceId) ||
+    p.provider !== 'CASHFREE' ||
+    typeof p.providerOrderId !== 'string' ||
+    !p.providerOrderId ||
+    p.currency !== 'INR' ||
+    !Number.isSafeInteger(p.amountPaise) ||
+    (p.amountPaise as number) < 0 ||
+    !CUSTOMER_PAYMENT_STATUSES.includes(p.status as CustomerPaymentStatus) ||
+    (p.paymentSessionId !== null &&
+      (typeof p.paymentSessionId !== 'string' || !p.paymentSessionId)) ||
+    typeof p.expiresAt !== 'string' ||
+    !p.expiresAt ||
+    Number.isNaN(Date.parse(p.expiresAt))
   ) {
-    throw new Error('Payment service returned an unsupported canonical payment contract.');
+    throw invalidCanonicalPayment();
   }
-  return payment;
+  return payment as CustomerPaymentView;
 }
 
-export async function initiateOrderPayment(
-  orderId: string,
-  idempotencyKey = Crypto.randomUUID(),
-): Promise<CustomerPaymentView> {
+/**
+ * Non-persisting initiation primitive. Requests a canonical payment from the
+ * backend and validates the response, but NEVER touches recovery storage.
+ * Persistence is the exclusive responsibility of the public initiate* wrappers,
+ * so an inconsistent recovery response can never overwrite a valid pointer.
+ */
+async function requestOrderPayment(orderId: string, idempotencyKey: string): Promise<CustomerPaymentView> {
   const payment = await apiClient.post<CustomerPaymentView>(
     '/api/v1/customer/payments',
     {
@@ -94,15 +128,13 @@ export async function initiateOrderPayment(
     },
     { 'Idempotency-Key': idempotencyKey },
   );
-  validateCanonicalPaymentContract(payment, 'PRODUCT_ORDER', orderId);
-  await rememberPendingPayment(payment.paymentId, orderId);
-  return payment;
+  return validateCanonicalPayment(payment, { referenceType: 'PRODUCT_ORDER', referenceId: orderId });
 }
 
-export async function initiateAppointmentPayment(
+async function requestAppointmentPayment(
   appointmentId: string,
   customerId: string,
-  idempotencyKey = Crypto.randomUUID(),
+  idempotencyKey: string,
 ): Promise<CustomerPaymentView> {
   const payment = await apiClient.post<CustomerPaymentView>(
     '/api/v1/customer/payments',
@@ -113,18 +145,36 @@ export async function initiateAppointmentPayment(
     },
     { 'Idempotency-Key': idempotencyKey },
   );
-  if (payment.referenceType !== 'APPOINTMENT' || payment.referenceId !== appointmentId) {
-    throw new Error('Payment initiation returned a different appointment reference.');
-  }
-  validateCanonicalPaymentContract(payment, 'APPOINTMENT', appointmentId);
+  return validateCanonicalPayment(payment, { referenceType: 'APPOINTMENT', referenceId: appointmentId });
+}
+
+export async function initiateOrderPayment(
+  orderId: string,
+  idempotencyKey = Crypto.randomUUID(),
+): Promise<CustomerPaymentView> {
+  const payment = await requestOrderPayment(orderId, idempotencyKey);
+  await rememberPendingPayment(payment.paymentId, orderId);
+  return payment;
+}
+
+export async function initiateAppointmentPayment(
+  appointmentId: string,
+  customerId: string,
+  idempotencyKey = Crypto.randomUUID(),
+): Promise<CustomerPaymentView> {
+  const payment = await requestAppointmentPayment(appointmentId, customerId, idempotencyKey);
   await rememberPendingAppointmentPayment(payment.paymentId, appointmentId, customerId);
   return payment;
 }
 
-export async function fetchPaymentStatus(paymentId: string): Promise<CustomerPaymentView> {
-  return apiClient.get<CustomerPaymentView>(
+export async function fetchPaymentStatus(
+  paymentId: string,
+  expected?: ExpectedPaymentReference,
+): Promise<CustomerPaymentView> {
+  const payment = await apiClient.get<CustomerPaymentView>(
     `/api/v1/customer/payments/${encodeURIComponent(paymentId)}`,
   );
+  return validateCanonicalPayment(payment, { ...expected, expectedPaymentId: paymentId });
 }
 
 /**
@@ -144,6 +194,14 @@ export async function openCashfreeOrder(payment: CustomerPaymentView): Promise<C
   });
 }
 
+/**
+ * Recovery re-entry uses the non-persisting request primitives exclusively:
+ * identity consistency (resumed paymentId === original paymentId) is proven by
+ * the caller BEFORE any recovery-pointer mutation or provider launch. The
+ * backend reuses the existing payment for the same customer+reference+provider,
+ * so a different paymentId here is a genuine inconsistency and must fail closed
+ * with the existing pointer untouched.
+ */
 async function resumePayment(
   payment: CustomerPaymentView,
   appointmentCustomerId?: string,
@@ -152,9 +210,9 @@ async function resumePayment(
     if (!appointmentCustomerId) {
       throw new Error('Current customer identity is required to recover an appointment payment.');
     }
-    return initiateAppointmentPayment(payment.referenceId, appointmentCustomerId);
+    return requestAppointmentPayment(payment.referenceId, appointmentCustomerId, Crypto.randomUUID());
   }
-  return initiateOrderPayment(payment.referenceId);
+  return requestOrderPayment(payment.referenceId, Crypto.randomUUID());
 }
 
 export async function waitForPaymentOutcome(
@@ -164,8 +222,7 @@ export async function waitForPaymentOutcome(
   appointmentCustomerId?: string,
   expectedReference?: ExpectedPaymentReference,
 ): Promise<CustomerPaymentView> {
-  let latest = await fetchPaymentStatus(paymentId);
-  assertPaymentReference(latest, expectedReference);
+  let latest = await fetchPaymentStatus(paymentId, expectedReference);
   if (latest.referenceType === 'APPOINTMENT' && !appointmentCustomerId) {
     throw new Error('Current customer identity is required to verify an appointment payment.');
   }
@@ -182,11 +239,9 @@ export async function waitForPaymentOutcome(
       throw new Error('Payment recovery returned an inconsistent server payment.');
     }
     latest = resumed;
-    assertPaymentReference(latest, expectedReference);
     if (latest.paymentSessionId) {
       await openCashfreeOrder(latest).catch(() => 'ERROR' as const);
-      latest = await fetchPaymentStatus(paymentId);
-      assertPaymentReference(latest, expectedReference);
+      latest = await fetchPaymentStatus(paymentId, expectedReference);
     }
   }
 
@@ -196,13 +251,12 @@ export async function waitForPaymentOutcome(
     attempt += 1
   ) {
     await new Promise((resolve) => setTimeout(resolve, delayMs));
-    latest = await fetchPaymentStatus(paymentId);
-    assertPaymentReference(latest, expectedReference);
+    latest = await fetchPaymentStatus(paymentId, expectedReference);
   }
   if (latest.status === 'CAPTURED' || latest.status === 'FAILED' || latest.status === 'EXPIRED') {
-    if (latest.referenceType === 'APPOINTMENT') {
-      await clearPendingAppointmentPayment(appointmentCustomerId as string, paymentId);
-    } else {
+    if (latest.referenceType === 'APPOINTMENT' && appointmentCustomerId) {
+      await clearPendingAppointmentPayment(appointmentCustomerId, paymentId);
+    } else if (latest.referenceType !== 'APPOINTMENT') {
       await clearPendingPayment(paymentId);
     }
   }

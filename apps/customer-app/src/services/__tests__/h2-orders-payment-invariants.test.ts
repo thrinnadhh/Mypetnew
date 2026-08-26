@@ -1,8 +1,13 @@
 import { apiClient } from '../api-client';
 import {
+  clearPendingAppointmentPayment,
+  fetchPaymentStatus,
   initiateAppointmentPayment,
   initiateOrderPayment,
+  loadPendingAppointmentPayment,
   loadPendingPayment,
+  rememberPendingAppointmentPayment,
+  rememberPendingPayment,
   waitForPaymentOutcome,
 } from '../customer-payments';
 import type { CustomerPaymentView } from '../customer-payments';
@@ -55,7 +60,7 @@ describe('H2 order payment initiation contract', () => {
     mockedApiClient.post.mockResolvedValueOnce({ ...canonicalPayment, referenceId: 'order-other' });
 
     await expect(initiateOrderPayment('order-1', 'idem-echo')).rejects.toThrow(
-      'Payment service returned an unsupported canonical payment contract.',
+      'Payment service returned an invalid canonical payment response.',
     );
     expect(mockedApiClient.post).toHaveBeenCalledWith(
       '/api/v1/customer/payments',
@@ -68,12 +73,12 @@ describe('H2 order payment initiation contract', () => {
   it('rejects a payment whose provider or type is not the canonical Cashfree product payment', async () => {
     mockedApiClient.post.mockResolvedValueOnce({ ...canonicalPayment, provider: 'UNKNOWN_PSP' });
     await expect(initiateOrderPayment('order-1', 'idem-provider')).rejects.toThrow(
-      'Payment service returned an unsupported canonical payment contract.',
+      'Payment service returned an invalid canonical payment response.',
     );
 
     mockedApiClient.post.mockResolvedValueOnce({ ...canonicalPayment, referenceType: 'APPOINTMENT' });
     await expect(initiateOrderPayment('order-1', 'idem-type')).rejects.toThrow(
-      'Payment service returned an unsupported canonical payment contract.',
+      'Payment service returned an invalid canonical payment response.',
     );
     await expect(loadPendingPayment()).resolves.toBeNull();
   });
@@ -82,7 +87,7 @@ describe('H2 order payment initiation contract', () => {
     mockedApiClient.post.mockResolvedValueOnce({ ...canonicalPayment, currency: 'USD' });
 
     await expect(initiateOrderPayment('order-1', 'idem-currency')).rejects.toThrow(
-      'Payment service returned an unsupported canonical payment contract.',
+      'Payment service returned an invalid canonical payment response.',
     );
     await expect(loadPendingPayment()).resolves.toBeNull();
   });
@@ -90,17 +95,17 @@ describe('H2 order payment initiation contract', () => {
   it('rejects missing, fractional or negative server amounts without tracking them', async () => {
     mockedApiClient.post.mockResolvedValueOnce({ ...canonicalPayment, amountPaise: undefined });
     await expect(initiateOrderPayment('order-1', 'idem-amount-1')).rejects.toThrow(
-      'Payment service returned an unsupported canonical payment contract.',
+      'Payment service returned an invalid canonical payment response.',
     );
 
     mockedApiClient.post.mockResolvedValueOnce({ ...canonicalPayment, amountPaise: 100.5 });
     await expect(initiateOrderPayment('order-1', 'idem-amount-2')).rejects.toThrow(
-      'Payment service returned an unsupported canonical payment contract.',
+      'Payment service returned an invalid canonical payment response.',
     );
 
     mockedApiClient.post.mockResolvedValueOnce({ ...canonicalPayment, amountPaise: -1 });
     await expect(initiateOrderPayment('order-1', 'idem-amount-3')).rejects.toThrow(
-      'Payment service returned an unsupported canonical payment contract.',
+      'Payment service returned an invalid canonical payment response.',
     );
 
     expect(mockedApiClient.post).toHaveBeenCalledTimes(3);
@@ -124,7 +129,7 @@ describe('H2 order payment initiation contract', () => {
     };
     mockedApiClient.post.mockResolvedValueOnce({ ...appointmentPayment, currency: 'EUR' });
     await expect(initiateAppointmentPayment('appointment-1', 'customer-1', 'idem-appt-1')).rejects.toThrow(
-      'Payment service returned an unsupported canonical payment contract.',
+      'Payment service returned an invalid canonical payment response.',
     );
 
     mockedApiClient.post.mockResolvedValueOnce(appointmentPayment);
@@ -180,7 +185,7 @@ describe('H2 duplicate verification and outcome recovery', () => {
 
     await expect(
       waitForPaymentOutcome('payment-1', 3, 0, undefined, { referenceType: 'PRODUCT_ORDER', referenceId: 'order-1' }),
-    ).rejects.toThrow('Payment verification returned a different order reference.');
+    ).rejects.toThrow('Payment service returned an invalid canonical payment response.');
 
     expect(mockedApiClient.post).toHaveBeenCalledTimes(1);
     await expect(loadPendingPayment()).resolves.toEqual({ paymentId: 'payment-1', orderId: 'order-1' });
@@ -195,7 +200,7 @@ describe('H2 duplicate verification and outcome recovery', () => {
 
     await expect(
       waitForPaymentOutcome('payment-1', 3, 0, undefined, { referenceType: 'PRODUCT_ORDER', referenceId: 'order-1' }),
-    ).rejects.toThrow('Payment verification returned a different order reference.');
+    ).rejects.toThrow('Payment service returned an invalid canonical payment response.');
 
     await expect(loadPendingPayment()).resolves.toEqual({ paymentId: 'payment-1', orderId: 'order-1' });
   });
@@ -208,6 +213,165 @@ describe('H2 duplicate verification and outcome recovery', () => {
         referenceType: 'APPOINTMENT',
         referenceId: 'appointment-1',
       }),
-    ).rejects.toThrow('Payment verification returned a different order reference.');
+    ).rejects.toThrow('Payment service returned an invalid canonical payment response.');
+  });
+});
+
+const CUSTOMER_A = '11111111-1111-4111-8111-111111111111';
+
+describe('H2.1 recovery atomicity: pointer never mutates before identity proof', () => {
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    await clearPendingAppointmentPayment(CUSTOMER_A);
+  });
+
+  it('Case A: product-order recovery returning a different paymentId rejects and preserves the original pointer', async () => {
+    await rememberPendingPayment('payment-A', 'order-1');
+    mockedApiClient.get.mockResolvedValueOnce({
+      ...canonicalPayment,
+      paymentId: 'payment-A',
+      status: 'PENDING',
+      paymentSessionId: null,
+    });
+    mockedApiClient.post.mockResolvedValueOnce({ ...canonicalPayment, paymentId: 'payment-B' });
+
+    await expect(
+      waitForPaymentOutcome('payment-A', 3, 0, undefined, {
+        referenceType: 'PRODUCT_ORDER',
+        referenceId: 'order-1',
+      }),
+    ).rejects.toThrow('Payment recovery returned an inconsistent server payment.');
+
+    expect(mockedApiClient.post).toHaveBeenCalledTimes(1);
+    expect(mockedApiClient.get).toHaveBeenCalledTimes(1);
+    await expect(loadPendingPayment()).resolves.toEqual({ paymentId: 'payment-A', orderId: 'order-1' });
+  });
+
+  it('Case B: appointment recovery returning a different paymentId rejects and preserves the account-scoped pointer', async () => {
+    await rememberPendingAppointmentPayment('payment-A', 'appointment-1', CUSTOMER_A);
+    mockedApiClient.get.mockResolvedValueOnce({
+      ...canonicalPayment,
+      paymentId: 'payment-A',
+      referenceType: 'APPOINTMENT',
+      referenceId: 'appointment-1',
+      status: 'PENDING',
+      paymentSessionId: null,
+    });
+    mockedApiClient.post.mockResolvedValueOnce({
+      ...canonicalPayment,
+      paymentId: 'payment-B',
+      referenceType: 'APPOINTMENT',
+      referenceId: 'appointment-1',
+    });
+
+    await expect(
+      waitForPaymentOutcome('payment-A', 3, 0, CUSTOMER_A, {
+        referenceType: 'APPOINTMENT',
+        referenceId: 'appointment-1',
+      }),
+    ).rejects.toThrow('Payment recovery returned an inconsistent server payment.');
+
+    await expect(loadPendingAppointmentPayment(CUSTOMER_A)).resolves.toEqual({
+      paymentId: 'payment-A',
+      appointmentId: 'appointment-1',
+      customerId: CUSTOMER_A,
+    });
+  });
+
+  it('Case C: recovery returning the same paymentId succeeds normally without corrupting the pointer', async () => {
+    mockedApiClient.post.mockResolvedValueOnce(canonicalPayment);
+    await initiateOrderPayment('order-1', 'idem-case-c');
+
+    mockedApiClient.get.mockResolvedValueOnce({
+      ...canonicalPayment,
+      status: 'PENDING',
+      paymentSessionId: null,
+    });
+    mockedApiClient.post.mockResolvedValueOnce(canonicalPayment);
+    mockedApiClient.get.mockResolvedValueOnce({ ...canonicalPayment, status: 'CAPTURED' });
+
+    await expect(waitForPaymentOutcome('payment-1', 3, 0)).resolves.toMatchObject({ status: 'CAPTURED' });
+    await expect(loadPendingPayment()).resolves.toBeNull();
+  });
+});
+
+describe('H2.1 canonical runtime validation of polled status payloads', () => {
+  beforeEach(async () => {
+    jest.clearAllMocks();
+  });
+
+  const verificationDrifts: Array<[string, Partial<CustomerPaymentView> | Record<string, unknown>]> = [
+    ['a different payment ID', { paymentId: 'payment-B' }],
+    ['a non-Cashfree provider', { provider: 'SOMETHING_OTHER_THAN_CASHFREE' }],
+    ['a non-INR currency', { currency: 'USD' }],
+    ['a fractional amount', { amountPaise: 100.5 }],
+    ['a negative amount', { amountPaise: -1 }],
+    ['a missing amount', { amountPaise: undefined }],
+    ['an unsupported status', { status: 'MAGIC_SUCCESS' }],
+  ];
+
+  for (const [label, mutation] of verificationDrifts) {
+    it(`fails closed when a captured status payload carries ${label}`, async () => {
+      mockedApiClient.post.mockResolvedValueOnce(canonicalPayment);
+      await initiateOrderPayment('order-1', `idem-drift-${label.replace(/\W+/g, '-')}`);
+      await expect(loadPendingPayment()).resolves.toEqual({ paymentId: 'payment-1', orderId: 'order-1' });
+
+      mockedApiClient.get.mockResolvedValue({ ...canonicalPayment, status: 'CAPTURED', ...mutation });
+      await expect(
+        waitForPaymentOutcome('payment-1', 3, 0, undefined, {
+          referenceType: 'PRODUCT_ORDER',
+          referenceId: 'order-1',
+        }),
+      ).rejects.toThrow('Payment service returned an invalid canonical payment response.');
+
+      await expect(loadPendingPayment()).resolves.toEqual({ paymentId: 'payment-1', orderId: 'order-1' });
+    });
+  }
+
+  it('clears the recovery pointer only for a fully canonical CAPTURED response', async () => {
+    mockedApiClient.post.mockResolvedValueOnce(canonicalPayment);
+    await initiateOrderPayment('order-1', 'idem-captured-clean');
+    mockedApiClient.get.mockResolvedValue({ ...canonicalPayment, status: 'CAPTURED' });
+
+    await expect(
+      waitForPaymentOutcome('payment-1', 3, 0, undefined, {
+        referenceType: 'PRODUCT_ORDER',
+        referenceId: 'order-1',
+      }),
+    ).resolves.toMatchObject({ status: 'CAPTURED' });
+    await expect(loadPendingPayment()).resolves.toBeNull();
+  });
+
+  it('keeps the recovery pointer intact for a canonical PENDING response', async () => {
+    mockedApiClient.post.mockResolvedValueOnce(canonicalPayment);
+    await initiateOrderPayment('order-1', 'idem-pending-clean');
+    mockedApiClient.get.mockResolvedValue(canonicalPayment);
+
+    await expect(
+      waitForPaymentOutcome('payment-1', 3, 0, undefined, {
+        referenceType: 'PRODUCT_ORDER',
+        referenceId: 'order-1',
+      }),
+    ).resolves.toMatchObject({ status: 'PENDING' });
+    await expect(loadPendingPayment()).resolves.toEqual({ paymentId: 'payment-1', orderId: 'order-1' });
+  });
+
+  it('documents the H2 decision that zero-amount canonical payments remain accepted', async () => {
+    mockedApiClient.post.mockResolvedValueOnce({ ...canonicalPayment, amountPaise: 0 });
+    await expect(initiateOrderPayment('order-1', 'idem-zero')).resolves.toMatchObject({ amountPaise: 0 });
+    await expect(loadPendingPayment()).resolves.toEqual({ paymentId: 'payment-1', orderId: 'order-1' });
+  });
+
+  it('binds direct fetchPaymentStatus consumers to the expected payment identity and reference', async () => {
+    mockedApiClient.get.mockResolvedValue({ ...canonicalPayment, status: 'CAPTURED' });
+
+    await expect(
+      fetchPaymentStatus('payment-1', { referenceType: 'PRODUCT_ORDER', referenceId: 'order-1' }),
+    ).resolves.toMatchObject({ status: 'CAPTURED' });
+
+    mockedApiClient.get.mockResolvedValue({ ...canonicalPayment, status: 'CAPTURED', paymentId: 'payment-B' });
+    await expect(
+      fetchPaymentStatus('payment-1', { referenceType: 'PRODUCT_ORDER', referenceId: 'order-1' }),
+    ).rejects.toThrow('Payment service returned an invalid canonical payment response.');
   });
 });

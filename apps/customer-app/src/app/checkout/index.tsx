@@ -28,6 +28,7 @@ import {
   initiateOrderPayment,
   loadPendingPayment,
   openCashfreeOrder,
+  validateCanonicalPayment,
   waitForPaymentOutcome,
   type CustomerPaymentView,
   type PendingPaymentRecovery,
@@ -375,9 +376,11 @@ export default function CheckoutScreen() {
   ) => {
     setVerifying(true);
     try {
-      if (initial.referenceType !== 'PRODUCT_ORDER' || initial.referenceId !== orderId) {
-        throw new Error('Payment verification returned a different order reference.');
-      }
+      validateCanonicalPayment(initial, {
+        expectedPaymentId: initial.paymentId,
+        referenceType: 'PRODUCT_ORDER',
+        referenceId: orderId,
+      });
       if (launchProvider && initial.status !== 'CAPTURED' && initial.paymentSessionId) {
         // The callback result is deliberately ignored as payment truth. Both
         // success and error callbacks flow into the same backend verification.
@@ -399,7 +402,10 @@ export default function CheckoutScreen() {
     if (!pendingRecovery || placing) return;
     setPlacing(true);
     try {
-      const payment = await fetchPaymentStatus(pendingRecovery.paymentId);
+      const payment = await fetchPaymentStatus(pendingRecovery.paymentId, {
+        referenceType: 'PRODUCT_ORDER',
+        referenceId: pendingRecovery.orderId,
+      });
       await verifyCanonicalPayment(payment, pendingRecovery.orderId, true);
     } catch (error) {
       Alert.alert('Could not resume payment', error instanceof Error ? error.message : 'Try again shortly.');

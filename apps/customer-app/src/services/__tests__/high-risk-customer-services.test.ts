@@ -174,8 +174,8 @@ describe('high-risk customer service contracts', () => {
     it('reads owned server payment status and recovery storage contains safe ids only', async () => {
       mockedApiClient.get.mockResolvedValueOnce({ ...payment, status: 'AUTHORIZED' });
 
-      await expect(fetchPaymentStatus('payment/1')).resolves.toMatchObject({ status: 'AUTHORIZED' });
-      expect(mockedApiClient.get).toHaveBeenCalledWith('/api/v1/customer/payments/payment%2F1');
+      await expect(fetchPaymentStatus('payment-1')).resolves.toMatchObject({ status: 'AUTHORIZED' });
+      expect(mockedApiClient.get).toHaveBeenCalledWith('/api/v1/customer/payments/payment-1');
 
       await AsyncStorage.setItem(
         'mypet.customer.pending-payment.v1',

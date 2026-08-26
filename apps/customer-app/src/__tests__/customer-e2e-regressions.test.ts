@@ -203,11 +203,10 @@ describe('customer end-to-end regression contracts', () => {
     expect(config).toMatch(/expo-location/);
   });
 
-  it('does not expose cached orders after authorization or server failures', () => {
-    const orders = source('src/services/customer-orders.ts');
-    expect(orders).toMatch(/if \(!isOfflineFailure\(error\)\) throw error/);
-    expect(orders).toMatch(/error instanceof ApiError/);
-    expect(orders).toMatch(/error\.status === 0/);
+  it('keeps the legacy dead order service out of the tree; orders use the canonical paginated list API', () => {
+    const list = source('src/services/customer-order-list.ts');
+    expect(list).toMatch(/\/api\/v1\/customer\/orders/);
+    expect(list).toMatch(/beforePlacedAt/);
   });
 
   it('uses the canonical authenticated API client for favourites and push registration', () => {

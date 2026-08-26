@@ -11,6 +11,7 @@ import { ResilientRemoteImage } from '@/components/ui/resilient-remote-image';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { INITIAL_MARKET } from '@/config/markets';
 import { PROMO_BANNERS } from '@/constants/content';
+import { bannerRoute } from '@/utils/banner-route';
 import { Radius, Shadows, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { useLocation } from '@/context/LocationContext';
@@ -29,6 +30,7 @@ const CARD_GAP = 12;
 const HOME_PROVIDER_PREVIEW_SIZE = 6;
 
 type LiveDiscoveryState = 'loading' | 'ready' | 'empty' | 'error';
+
 
 interface ShortcutItem {
   id: string;
@@ -490,18 +492,9 @@ export default function HomeScreen() {
               if (value) router.push({ pathname: '/search', params: { q: value } } as never);
             }}
           />
-          <View style={[styles.searchDivider, { backgroundColor: theme.border }]} />
-          <Pressable
-            accessibilityLabel="Open voice search"
-            accessibilityRole="button"
-            onPress={() => router.push({ pathname: '/search', params: { mic: 'true' } } as never)}
-            style={styles.searchAccessory}
-          >
-            <AppIcon name="sparkle" color={theme.primary} size={19} />
-          </Pressable>
         </View>
 
-        <BannerCarousel banners={banners} onPress={() => router.push('/category/new-arrivals' as never)} />
+        <BannerCarousel banners={banners} onPress={(banner) => router.push(bannerRoute(banner) as never)} />
 
         <View style={[styles.quickActions, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
           {QUICK_ACTIONS.map((action, index) => (
@@ -734,8 +727,6 @@ const styles = StyleSheet.create({
   avatar: { width: 39, height: 39, borderRadius: 20, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   searchField: { height: touchTarget, borderWidth: 1, borderRadius: 13, paddingLeft: 13, flexDirection: 'row', alignItems: 'center', gap: 10, ...Shadows.card },
   searchInput: { flex: 1, height: touchTarget, fontSize: 14, paddingVertical: 0 },
-  searchDivider: { width: 1, height: 20 },
-  searchAccessory: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
   quickActions: { minHeight: 68, borderWidth: 1, borderRadius: Radius.xl, flexDirection: 'row', alignItems: 'center', paddingVertical: 6, ...Shadows.card },
   quickAction: { flex: 1, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 7 },
   quickDivider: { width: 1, height: 32 },

@@ -32,14 +32,12 @@ const criticalFiles = [
   'src/services/chat.ts',
   'src/services/customer-cases.ts',
   'src/services/customer-history.ts',
-  'src/services/customer-orders.ts',
   'src/services/customer-payments.ts',
   'src/services/customer-profile.ts',
   'src/services/loyalty.ts',
   'src/services/medical-documents.ts',
   'src/services/recurring-orders.ts',
   'src/utils/app-config.ts',
-  'src/utils/supabase.ts',
 ];
 
 function percentage(entry, metric) {

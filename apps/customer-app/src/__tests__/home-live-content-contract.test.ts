@@ -45,9 +45,7 @@ describe('home live-content contract', () => {
     const home = source('src/screens/home-screen.tsx');
 
     expect(home).toContain("import { touchTarget } from '@/design/tokens'");
-    expect(home).toContain('accessibilityLabel="Open voice search"');
-    expect(home).toContain('style={styles.searchAccessory}');
-    expect(home).toMatch(/searchAccessory:\s*\{[^}]*width:\s*touchTarget[^}]*height:\s*touchTarget/s);
+    expect(home).not.toMatch(/voice search|mic=/);
     expect(home).toContain('style={styles.sectionActionTarget}');
     expect(home).toMatch(/sectionActionTarget:\s*\{[^}]*minHeight:\s*touchTarget[^}]*minWidth:\s*touchTarget/s);
     expect(home).toMatch(/filterChip:\s*\{[^}]*minHeight:\s*touchTarget/s);

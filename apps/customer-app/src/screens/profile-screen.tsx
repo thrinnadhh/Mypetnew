@@ -470,7 +470,9 @@ export default function ProfileScreen() {
           </Pressable>
         ))}
       </View>
+      <PrimaryAction label="Loyalty wallet" onPress={() => router.push('/wallet' as never)} />
       <PrimaryAction label="Privacy Centre" onPress={() => router.push('/privacy' as never)} />
+      <PrimaryAction label="Legal & policies" onPress={() => router.push('/legal' as never)} />
       <PrimaryAction label={t('common.signOut')} onPress={() => void signOut()} />
     </ScreenShell>
   );

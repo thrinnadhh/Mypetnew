@@ -5,6 +5,7 @@ export type ListingStatus = 'ACTIVE' | 'INACTIVE';
 export type ListingKind = 'PRODUCT' | 'MEDICINE';
 export type CommerceMode = 'COMMERCE' | 'VIEW_ONLY';
 export type BarcodeType = 'GTIN_8' | 'GTIN_12' | 'GTIN_13' | 'GTIN_14' | 'INTERNAL';
+export type CatalogMediaContentType = 'image/jpeg' | 'image/png' | 'image/webp';
 
 export type MerchantCatalogContext = {
   organizationId: string | null;
@@ -44,6 +45,24 @@ export type CatalogPage = {
   hasNext: boolean;
 };
 
+export type CatalogMediaAsset = {
+  uri: string;
+  name: string;
+  type: CatalogMediaContentType;
+  size?: number | null;
+  file?: Blob | null;
+};
+
+export type CatalogMediaAttachment = {
+  mediaId: string;
+  listingId: string;
+  position: number;
+  publicUrl: string;
+  contentType: CatalogMediaContentType;
+  sizeBytes: number;
+  listingVersion: number;
+};
+
 export type CreateListingInput = {
   barcodeType: BarcodeType;
   barcode: string;
@@ -73,6 +92,10 @@ async function apiError(response: Response, fallback: string): Promise<Error> {
 
 function commandKey(prefix: string): string {
   return `${prefix}:${Crypto.randomUUID()}`;
+}
+
+export function catalogMediaCommandKey(): string {
+  return commandKey('catalog-media');
 }
 
 export async function fetchMerchantCatalogContext(): Promise<MerchantCatalogContext> {
@@ -132,4 +155,40 @@ export async function changeListingStatus(
   );
   if (!response.ok) throw await apiError(response, `Could not ${action} listing.`);
   return (await response.json()) as MerchantListing;
+}
+
+export async function uploadCatalogMedia(
+  listing: MerchantListing,
+  asset: CatalogMediaAsset,
+  idempotencyKey: string,
+): Promise<CatalogMediaAttachment> {
+  const boundary = `mypetnew-${Crypto.randomUUID().replace(/-/g, '')}`;
+  const safeFilename = asset.name.replace(/["\r\n\\/]/g, '_');
+  const file = asset.file ?? await fetch(asset.uri).then(async (response) => {
+    if (!response.ok) throw new Error('Could not read the selected image.');
+    return response.blob();
+  });
+  const body = new Blob([
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeFilename}"\r\nContent-Type: ${asset.type}\r\n\r\n`,
+    file,
+    `\r\n--${boundary}--\r\n`,
+  ], { type: `multipart/form-data; boundary=${boundary}` });
+
+  const params = new URLSearchParams({
+    outletId: listing.outletId,
+    expectedVersion: String(listing.version),
+  });
+  const response = await merchantApiFetch(
+    `/api/v1/merchant/listings/${encodeURIComponent(listing.id)}/media?${params.toString()}`,
+    {
+      method: 'POST',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      },
+      body,
+    },
+  );
+  if (!response.ok) throw await apiError(response, 'Could not upload the catalog image.');
+  return (await response.json()) as CatalogMediaAttachment;
 }

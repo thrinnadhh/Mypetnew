@@ -142,10 +142,12 @@ describe('P9 grooming discovery contract', () => {
     expect(backend).toContain('data class PublicOutletSummary(');
     expect(backend).not.toContain('data class PublicOutletSummary(\n    val ownerActorId');
 
-    expect(apiTest).toContain('ACTIVE only & q case-insensitive search');
-    expect(apiTest).toContain('Exact capability filter matching');
-    expect(apiTest).toContain('Unapproved/inactive outlet -> 404');
-    expect(apiTest).toContain('Data minimization verification');
+    // Assert executable request/response behavior in the backend test rather than
+    // coupling this Customer contract to prose comments inside that test file.
+    expect(apiTest).toContain('param("q", "happy pets")');
+    expect(apiTest).toContain('param("capability", "PRODUCT_STORE")');
+    expect(apiTest).toContain('mockMvc.get("/api/v1/public/outlets/$outlet2Id")');
+    expect(apiTest).toContain('jsonPath("$.items[0].ownerActorId") { doesNotExist() }');
   });
 
   it('preserves fail-closed direct groomer validation for P10 handoff', () => {

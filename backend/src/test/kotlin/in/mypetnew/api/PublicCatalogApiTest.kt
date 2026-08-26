@@ -62,7 +62,6 @@ class PublicCatalogApiTest {
         )
         val outlet2Id = outlet2Node.uuid("id")
 
-        // 1. ACTIVE only & q case-insensitive search
         mockMvc.get("/api/v1/public/outlets") {
             param("q", "happy pets")
         }.andExpect {
@@ -71,7 +70,6 @@ class PublicCatalogApiTest {
             jsonPath("$.items[0].id") { value(outlet1Id.toString()) }
             jsonPath("$.items[0].name") { value("Happy Pets Outlet Alpha") }
             jsonPath("$.items[0].pickupEnabled") { value(true) }
-            // Data minimization verification
             jsonPath("$.items[0].ownerActorId") { doesNotExist() }
             jsonPath("$.items[0].servicePinCodes") { doesNotExist() }
             jsonPath("$.items[0].merchantStaff") { doesNotExist() }
@@ -79,7 +77,6 @@ class PublicCatalogApiTest {
             jsonPath("$.items[0].tax") { doesNotExist() }
         }
 
-        // 2. Exact capability filter matching
         mockMvc.get("/api/v1/public/outlets") {
             param("capability", "PRODUCT_STORE")
         }.andExpect {
@@ -87,7 +84,6 @@ class PublicCatalogApiTest {
             jsonPath("$.items.length()") { value(1) }
         }
 
-        // 3. Capability mismatch returns empty list
         mockMvc.get("/api/v1/public/outlets") {
             param("capability", "MEDICINE_CATALOG_VIEW_ONLY")
         }.andExpect {
@@ -95,7 +91,6 @@ class PublicCatalogApiTest {
             jsonPath("$.items.length()") { value(0) }
         }
 
-        // 4. Overflow safety page = Int.MAX_VALUE
         mockMvc.get("/api/v1/public/outlets") {
             param("page", Int.MAX_VALUE.toString())
             param("pageSize", "20")
@@ -106,7 +101,6 @@ class PublicCatalogApiTest {
             jsonPath("$.hasNext") { value(false) }
         }
 
-        // 5. Invalid pagination returns ApiErrorEnvelope (400)
         mockMvc.get("/api/v1/public/outlets") {
             param("page", "-1")
         }.andExpect {
@@ -122,14 +116,12 @@ class PublicCatalogApiTest {
             jsonPath("$.code") { value("PAGE_SIZE_INVALID") }
         }
 
-        // 6. Detail GET /api/v1/public/outlets/{outletId}
         mockMvc.get("/api/v1/public/outlets/$outlet1Id")
             .andExpect {
                 status { isOk() }
                 jsonPath("$.id") { value(outlet1Id.toString()) }
             }
 
-        // Unapproved/inactive outlet -> 404
         mockMvc.get("/api/v1/public/outlets/$outlet2Id")
             .andExpect {
                 status { isNotFound() }
@@ -156,7 +148,8 @@ class PublicCatalogApiTest {
             Principal(merchantActor, Role.MERCHANT, organizationId = orgId, outletIds = setOf(outletId)),
         )
 
-        // 1. Create COMMERCE product listing with 0 stock initially
+        // M4 forbids arbitrary external image URL injection during listing creation.
+        // Managed images are attached through the dedicated media lifecycle instead.
         val productNode = post(
             "/api/v1/merchant/listings",
             merchantToken,
@@ -174,13 +167,11 @@ class PublicCatalogApiTest {
                 "petType": "DOG",
                 "lifeStage": "ADULT",
                 "packLabel": "3 kg",
-                "sku": "RC-ADULT-3KG",
-                "imageUrls": ["https://cdn.example.com/rc1.jpg"]
+                "sku": "RC-ADULT-3KG"
             }""",
         )
         val productId = productNode.uuid("id")
 
-        // 2. Create MEDICINE listing
         val medNode = post(
             "/api/v1/merchant/listings",
             merchantToken,
@@ -199,7 +190,6 @@ class PublicCatalogApiTest {
         )
         val medId = medNode.uuid("id")
 
-        // Zero-stock visibility check & MEDICINE VIEW_ONLY check
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
         }.andExpect {
@@ -210,14 +200,12 @@ class PublicCatalogApiTest {
             jsonPath("$.items[1].id") { value(productId.toString()) }
             jsonPath("$.items[1].availableQuantity") { value(0) }
             jsonPath("$.items[1].commerceMode") { value("COMMERCE") }
-            // Data minimization checks
             jsonPath("$.items[0].normalizedBarcode") { doesNotExist() }
             jsonPath("$.items[0].rawBarcodeAudit") { doesNotExist() }
             jsonPath("$.items[0].inventoryMovementHistory") { doesNotExist() }
             jsonPath("$.items[0].verificationDocuments") { doesNotExist() }
         }
 
-        // Receive stock -> quantity updates to 10
         post(
             "/api/v1/merchant/inventory/receive",
             merchantToken,
@@ -225,7 +213,6 @@ class PublicCatalogApiTest {
             """{"outletId":"$outletId","listingId":"$productId","quantity":10}""",
         )
 
-        // Filter: kind = PRODUCT
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
             param("kind", "PRODUCT")
@@ -235,7 +222,6 @@ class PublicCatalogApiTest {
             jsonPath("$.items[0].id") { value(productId.toString()) }
         }
 
-        // Filter: kind = MEDICINE
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
             param("kind", "MEDICINE")
@@ -245,7 +231,6 @@ class PublicCatalogApiTest {
             jsonPath("$.items[0].id") { value(medId.toString()) }
         }
 
-        // Filter: availability = IN_STOCK
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
             param("availability", "IN_STOCK")
@@ -255,7 +240,6 @@ class PublicCatalogApiTest {
             jsonPath("$.items[0].id") { value(productId.toString()) }
         }
 
-        // Filter: availability = OUT_OF_STOCK
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
             param("availability", "OUT_OF_STOCK")
@@ -265,7 +249,6 @@ class PublicCatalogApiTest {
             jsonPath("$.items[0].id") { value(medId.toString()) }
         }
 
-        // Search q by name, brand, category (returns 1 item)
         listOf("Antibiotic", "VetMed", "health").forEach { query ->
             mockMvc.get("/api/v1/public/catalog") {
                 param("outletId", outletId.toString())
@@ -277,7 +260,6 @@ class PublicCatalogApiTest {
             }
         }
 
-        // Search q by outlet name (returns 2 items)
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
             param("q", "Tirupati")
@@ -286,7 +268,6 @@ class PublicCatalogApiTest {
             jsonPath("$.items.length()") { value(2) }
         }
 
-        // Pagination overflow safety page = Int.MAX_VALUE
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
             param("page", Int.MAX_VALUE.toString())
@@ -297,7 +278,6 @@ class PublicCatalogApiTest {
             jsonPath("$.hasNext") { value(false) }
         }
 
-        // Invalid query enum parameter uses ApiErrorEnvelope
         mockMvc.get("/api/v1/public/catalog") {
             param("kind", "INVALID_KIND")
         }.andExpect {
@@ -306,7 +286,6 @@ class PublicCatalogApiTest {
             jsonPath("$.traceId") { exists() }
         }
 
-        // Invalid UUID uses ApiErrorEnvelope
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", "not-a-uuid")
         }.andExpect {
@@ -314,7 +293,6 @@ class PublicCatalogApiTest {
             jsonPath("$.code") { value("VALIDATION_FAILED") }
         }
 
-        // Detail GET /api/v1/public/catalog/{listingId}
         mockMvc.get("/api/v1/public/catalog/$productId")
             .andExpect {
                 status { isOk() }
@@ -323,13 +301,11 @@ class PublicCatalogApiTest {
                 jsonPath("$.category") { value("food") }
                 jsonPath("$.brand") { value("Royal Canin") }
                 jsonPath("$.sku") { value("RC-ADULT-3KG") }
-                jsonPath("$.imageUrls.length()") { value(1) }
+                jsonPath("$.imageUrls.length()") { value(0) }
                 jsonPath("$.availableQuantity") { value(10) }
-                // Data minimization verification
                 jsonPath("$.normalizedBarcode") { doesNotExist() }
             }
 
-        // Detail 404 for nonexistent listing
         mockMvc.get("/api/v1/public/catalog/${UUID.randomUUID()}")
             .andExpect {
                 status { isNotFound() }
@@ -374,9 +350,6 @@ class PublicCatalogApiTest {
             """{"outletId":"$outletId","barcodeType":"INTERNAL","barcode":"INT-ITEM-C","name":"Item Charlie","kind":"PRODUCT","mrpPaise":20000,"sellingPricePaise":20000,"category":"testsort"}""",
         ).uuid("id")
 
-        // PRICE_DESC sort before pagination with pageSize=2
-        // Order by price DESC: B (30000), C (20000), A (10000)
-        // Page 0 -> B and C
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
             param("category", "testsort")
@@ -391,9 +364,6 @@ class PublicCatalogApiTest {
             jsonPath("$.hasNext") { value(true) }
         }
 
-        // PRICE_ASC sort before pagination with pageSize=2
-        // Order by price ASC: A (10000), C (20000), B (30000)
-        // Page 0 -> A and C
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
             param("category", "testsort")
@@ -408,7 +378,6 @@ class PublicCatalogApiTest {
             jsonPath("$.hasNext") { value(true) }
         }
 
-        // Page 1 for PRICE_DESC -> A
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
             param("category", "testsort")

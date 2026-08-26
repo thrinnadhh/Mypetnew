@@ -36,6 +36,10 @@ mypet:
       url: ${SUPABASE_URL:}
       service-key: ${SUPABASE_SERVICE_ROLE_KEY:}
       private-bucket: ${SUPABASE_PRIVATE_EVIDENCE_BUCKET:}
+    catalog-media:
+      url: ${SUPABASE_URL:}
+      service-key: ${SUPABASE_SERVICE_ROLE_KEY:}
+      bucket: ${SUPABASE_CATALOG_MEDIA_BUCKET:catalog-media}
   firebase:
     project-id: ${FIREBASE_PROJECT_ID:}
     environment: ${MYPET_ENVIRONMENT:}

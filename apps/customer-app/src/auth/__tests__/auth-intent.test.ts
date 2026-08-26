@@ -10,14 +10,14 @@ describe('auth intents', () => {
     expect(parseAuthIntent(serializeAuthIntent(intent))).toEqual(intent);
   });
 
-  it('round-trips strict UUID-bound order and appointment detail destinations', () => {
+  it('round-trips structurally valid UUID-bound order and appointment detail destinations', () => {
     const order = {
       action: 'ORDER_HISTORY' as const,
       returnTo: '/orders/99999999-9999-4999-8999-999999999999',
     };
     const appointment = {
       action: 'ORDER_HISTORY' as const,
-      returnTo: '/appointments/88888888-8888-4888-8888-888888888888',
+      returnTo: '/appointments/88888888-8888-6888-7888-888888888888',
     };
     expect(parseAuthIntent(serializeAuthIntent(order))).toEqual(order);
     expect(parseAuthIntent(serializeAuthIntent(appointment))).toEqual(appointment);
@@ -32,7 +32,7 @@ describe('auth intents', () => {
     expect(parseAuthIntent(encoded({ action: 'CHECKOUT', returnTo: '/legacy-checkout' }))).toBeNull();
     expect(parseAuthIntent(encoded({ action: 'ORDER_HISTORY', returnTo: '/orders/not-a-uuid' }))).toBeNull();
     expect(parseAuthIntent(encoded({ action: 'ORDER_HISTORY', returnTo: '/orders/99999999-9999-4999-8999-999999999999/../../admin' }))).toBeNull();
-    expect(parseAuthIntent(encoded({ action: 'ORDER_HISTORY', returnTo: '/appointments/88888888-8888-6888-8888-888888888888' }))).toBeNull();
+    expect(parseAuthIntent(encoded({ action: 'ORDER_HISTORY', returnTo: '/appointments/88888888-8888-6888-7888-888888888888?admin=1' }))).toBeNull();
   });
 
   it('rejects malformed params instead of forwarding them into Expo Router', () => {

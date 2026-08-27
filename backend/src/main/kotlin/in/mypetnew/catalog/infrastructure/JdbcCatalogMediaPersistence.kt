@@ -181,7 +181,7 @@ class JdbcCatalogMediaPersistence(
                     ),
                     replayed = false,
                 )
-            } ?: persistenceError()
+            }
         } catch (duplicate: DuplicateKeyException) {
             findAuthorizedReplay(
                 upload.actorId,
@@ -308,10 +308,5 @@ class JdbcCatalogMediaPersistence(
     private fun replayConflict(): Nothing = throw DomainException(
         "IDEMPOTENCY_KEY_REUSED",
         "The idempotency key was already used for a different request",
-    )
-
-    private fun persistenceError(): Nothing = throw DomainException(
-        "CATALOG_MEDIA_FINALIZATION_FAILED",
-        "Catalog media could not be finalized",
     )
 }

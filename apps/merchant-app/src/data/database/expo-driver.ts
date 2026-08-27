@@ -1,3 +1,5 @@
+import * as SQLite from 'expo-sqlite';
+import { Platform } from 'react-native';
 import type { SqliteDatabase, SqliteRunResult, SqliteTransaction } from './driver';
 
 export type NativeExpoTransaction = {
@@ -12,6 +14,8 @@ export type NativeExpoSqliteInstance = NativeExpoTransaction & {
   withTransactionAsync?(task: () => Promise<void>): Promise<void>;
   closeAsync?(): Promise<void>;
 };
+
+type DatabaseLifecycleState = 'OPEN' | 'CLOSING' | 'CLOSED';
 
 function createScopedTransaction(nativeTx: NativeExpoTransaction): SqliteTransaction {
   return {
@@ -38,19 +42,20 @@ function createScopedTransaction(nativeTx: NativeExpoTransaction): SqliteTransac
 
 export class ExpoSqliteDriver implements SqliteDatabase {
   private readonly db: NativeExpoSqliteInstance;
-  private open = true;
+  private state: DatabaseLifecycleState = 'OPEN';
   private operationGate: Promise<unknown> = Promise.resolve();
+  private pendingClose: Promise<void> | null = null;
 
   constructor(dbInstance: NativeExpoSqliteInstance) {
     this.db = dbInstance;
   }
 
   isOpen(): boolean {
-    return this.open;
+    return this.state === 'OPEN';
   }
 
   private async withGate<T>(op: () => Promise<T>): Promise<T> {
-    if (!this.isOpen()) throw new Error('DATABASE_CLOSED');
+    if (this.state !== 'OPEN') throw new Error('DATABASE_CLOSED');
 
     const previousLock = this.operationGate;
     let releaseLock!: () => void;
@@ -60,7 +65,7 @@ export class ExpoSqliteDriver implements SqliteDatabase {
     this.operationGate = previousLock.then(() => currentLock, () => currentLock);
 
     await previousLock;
-    if (!this.isOpen()) {
+    if (this.state !== 'OPEN') {
       releaseLock();
       throw new Error('DATABASE_CLOSED');
     }
@@ -104,7 +109,8 @@ export class ExpoSqliteDriver implements SqliteDatabase {
 
   async transaction<T>(action: (tx: SqliteTransaction) => Promise<T>): Promise<T> {
     return this.withGate(async () => {
-      if (typeof this.db.withExclusiveTransactionAsync === 'function') {
+      const isNativePlatform = Platform.OS !== 'web';
+      if (isNativePlatform && typeof this.db.withExclusiveTransactionAsync === 'function') {
         let result!: T;
         await this.db.withExclusiveTransactionAsync(async (nativeTx) => {
           const scopedTx = createScopedTransaction(nativeTx ?? this.db);
@@ -141,18 +147,62 @@ export class ExpoSqliteDriver implements SqliteDatabase {
   }
 
   async close(): Promise<void> {
-    if (!this.open) return;
-    this.open = false;
-    if (this.db && typeof this.db.closeAsync === 'function') {
-      await this.db.closeAsync();
+    if (this.state === 'CLOSED') {
+      return;
     }
+    if (this.state === 'CLOSING' && this.pendingClose) {
+      return this.pendingClose;
+    }
+
+    this.state = 'CLOSING';
+
+    const performClose = async (): Promise<void> => {
+      const previousLock = this.operationGate;
+      let releaseLock!: () => void;
+      const currentLock = new Promise<void>((resolve) => {
+        releaseLock = resolve;
+      });
+      this.operationGate = previousLock.then(() => currentLock, () => currentLock);
+
+      await previousLock;
+      try {
+        if (typeof this.db.closeAsync === 'function') {
+          await this.db.closeAsync();
+        }
+        this.state = 'CLOSED';
+      } catch (error) {
+        this.state = 'OPEN';
+        this.pendingClose = null;
+        throw error;
+      } finally {
+        releaseLock();
+      }
+    };
+
+    this.pendingClose = performClose();
+    return this.pendingClose;
   }
 }
 
-export async function createExpoSqliteDatabase(dbName = 'mypetnew_merchant.db'): Promise<SqliteDatabase> {
-  const SQLite = await import('expo-sqlite');
-  const db = await SQLite.openDatabaseAsync(dbName);
-  await db.execAsync('PRAGMA journal_mode = WAL;');
-  await db.execAsync('PRAGMA foreign_keys = ON;');
-  return new ExpoSqliteDriver(db as unknown as NativeExpoSqliteInstance);
+export async function createExpoSqliteDatabase(
+  dbName = 'mypetnew_merchant.db',
+  openDatabase: (name: string) => Promise<NativeExpoSqliteInstance> = SQLite.openDatabaseAsync as unknown as (
+    name: string,
+  ) => Promise<NativeExpoSqliteInstance>,
+): Promise<SqliteDatabase> {
+  const db = await openDatabase(dbName);
+  try {
+    await db.execAsync('PRAGMA journal_mode = WAL;');
+    await db.execAsync('PRAGMA foreign_keys = ON;');
+    return new ExpoSqliteDriver(db);
+  } catch (error) {
+    if (typeof db.closeAsync === 'function') {
+      try {
+        await db.closeAsync();
+      } catch {
+        // ignore secondary close error
+      }
+    }
+    throw error;
+  }
 }

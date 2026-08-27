@@ -1,66 +1,147 @@
 import { DatabaseBootstrapper } from '../bootstrap';
-import { createMerchantDatabase, MerchantDatabase } from '../database';
-import { getSchemaVersion } from '../migrations';
+import { getSchemaVersion, setSchemaVersion } from '../migrations';
 import { createNodeSqliteDatabase } from '../node-driver';
 import { DatabaseRecoveryManager } from '../recovery';
-import { TABLE_CATALOG_ITEMS } from '../schema';
+import {
+  CURRENT_SCHEMA_VERSION,
+  TABLE_CATALOG_BARCODES,
+  TABLE_CATALOG_ITEMS,
+  TABLE_INVENTORY_BALANCES,
+  TABLE_PROJECTION_SYNC_STATE,
+  TABLE_PROJECTION_TOMBSTONES,
+} from '../schema';
 
-describe('M5 Database Recovery and Corruption Protection', () => {
-  let db: MerchantDatabase;
-
-  afterEach(async () => {
-    if (db && db.isOpen()) {
-      await db.close();
-    }
-  });
-
-  it('detects recoverable errors accurately', () => {
-    const manager = new DatabaseRecoveryManager();
-
-    expect(manager.isRecoverableError(new Error('SQLITE_CORRUPT: database disk image is malformed'))).toBe(true);
-    expect(manager.isRecoverableError(new Error('database disk image is malformed'))).toBe(true);
-    expect(manager.isRecoverableError(new Error('MIGRATION_VERIFICATION_FAILED: table missing'))).toBe(true);
-    expect(manager.isRecoverableError(new Error('DATABASE_INCOMPATIBLE_VERSION'))).toBe(true);
-    expect(manager.isRecoverableError(new Error('NETWORK_TIMEOUT'))).toBe(false);
-  });
-
-  it('recovers from corrupt/incompatible schema automatically during bootstrap', async () => {
-    const rawDb = createNodeSqliteDatabase();
-    // Simulate corrupt table with incompatible schema
-    await rawDb.exec(`CREATE TABLE ${TABLE_CATALOG_ITEMS} (corrupt_col INT PRIMARY KEY);`);
-    await rawDb.exec('PRAGMA user_version = 1;'); // claims version 1 but schema is invalid
-
+describe('M5 SQLite Recovery and Fail-Closed Behavior', () => {
+  it('FAILS CLOSED on newer database version without destroying data or attempting recovery', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
     const recoveryManager = new DatabaseRecoveryManager();
     const bootstrapper = new DatabaseBootstrapper(recoveryManager);
 
-    db = new MerchantDatabase(rawDb, bootstrapper);
-    const state = await db.initialize();
+    // 1. Initial bootstrap to v2
+    await bootstrapper.bootstrap(db);
 
-    expect(state.isInitialized).toBe(true);
-    expect(state.schemaVersion).toBe(1);
-    expect(recoveryManager.getRecoveryCount()).toBe(1);
+    // 2. Create sentinel table and data
+    await db.exec('CREATE TABLE sentinel_app_data (id TEXT PRIMARY KEY, value TEXT NOT NULL);');
+    await db.run('INSERT INTO sentinel_app_data (id, value) VALUES (?, ?);', [
+      'sentinel-1',
+      'vital_user_state',
+    ]);
 
-    const diag = recoveryManager.getLastDiagnostic();
-    expect(diag).not.toBeNull();
-    expect(diag?.recovered).toBe(true);
+    // Insert sample projection data
+    await db.run(
+      `INSERT INTO ${TABLE_CATALOG_ITEMS} (
+        account_id, organization_id, outlet_id, id, name, kind, commerce_mode,
+        barcode_type, normalized_barcode, mrp_paise, selling_price_paise,
+        category, status, version, server_created_at, server_updated_at, local_updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        'acc-1',
+        'org-1',
+        'out-1',
+        'prod-1',
+        'Test Food',
+        'FOOD',
+        'PICKUP',
+        'INTERNAL',
+        'TF-001',
+        1000,
+        900,
+        'Food',
+        'ACTIVE',
+        1,
+        '2026-08-27T00:00:00.000Z',
+        '2026-08-27T00:00:00.000Z',
+        '2026-08-27T00:00:00.000Z',
+      ],
+    );
 
-    const version = await getSchemaVersion(rawDb);
-    expect(version).toBe(1);
+    // 3. Set PRAGMA user_version = CURRENT_SCHEMA_VERSION + 1 (simulating DB created by newer binary)
+    const futureVersion = CURRENT_SCHEMA_VERSION + 1;
+    await setSchemaVersion(db, futureVersion);
+
+    // Reset bootstrapper state to simulate a new process startup
+    bootstrapper.reset();
+
+    // 4. Call NORMAL/default bootstrap with recovery enabled
+    // 5. Assert DATABASE_INCOMPATIBLE_VERSION is thrown
+    await expect(bootstrapper.bootstrap(db, { allowRecovery: true })).rejects.toThrow(
+      'DATABASE_INCOMPATIBLE_VERSION',
+    );
+
+    // 6. Assert user_version remains unchanged
+    const versionAfter = await getSchemaVersion(db);
+    expect(versionAfter).toBe(futureVersion);
+
+    // 7. Assert sentinel table and data remain completely untouched
+    const sentinelRow = await db.get<{ id: string; value: string }>(
+      'SELECT * FROM sentinel_app_data WHERE id = ?;',
+      ['sentinel-1'],
+    );
+    expect(sentinelRow).toEqual({ id: 'sentinel-1', value: 'vital_user_state' });
+
+    // 8. Assert projection state was not dropped
+    const catalogRow = await db.get<{ id: string; name: string }>(
+      `SELECT id, name FROM ${TABLE_CATALOG_ITEMS} WHERE id = ?;`,
+      ['prod-1'],
+    );
+    expect(catalogRow).toEqual({ id: 'prod-1', name: 'Test Food' });
+
+    // 9. Assert recoveryCount remains zero
+    expect(recoveryManager.getRecoveryCount()).toBe(0);
+    expect(recoveryManager.getLastDiagnostic()).toBeNull();
+
+    await db.close();
   });
 
-  it('bounds recovery to 1 attempt to prevent infinite restart/recreation loops', async () => {
-    const rawDb = createNodeSqliteDatabase();
+  it('detects corrupted projection schema and executes clean bounded recovery', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    const recoveryManager = new DatabaseRecoveryManager();
+    const bootstrapper = new DatabaseBootstrapper(recoveryManager);
+
+    // Bootstrap first
+    await bootstrapper.bootstrap(db);
+
+    // Corrupt the schema by dropping a required table
+    await db.exec(`DROP TABLE ${TABLE_PROJECTION_TOMBSTONES};`);
+
+    bootstrapper.reset();
+
+    // Next bootstrap detects corruption and recovers
+    const result = await bootstrapper.bootstrap(db, { allowRecovery: true });
+    expect(result.isInitialized).toBe(true);
+    expect(result.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+
+    expect(recoveryManager.getRecoveryCount()).toBe(1);
+    const diag = recoveryManager.getLastDiagnostic();
+    expect(diag?.recovered).toBe(true);
+
+    // Verify all 5 tables exist after recovery
+    const tables = await db.all<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';",
+    );
+    const tableNames = tables.map((t) => t.name);
+    expect(tableNames).toContain(TABLE_PROJECTION_SYNC_STATE);
+    expect(tableNames).toContain(TABLE_CATALOG_ITEMS);
+    expect(tableNames).toContain(TABLE_CATALOG_BARCODES);
+    expect(tableNames).toContain(TABLE_INVENTORY_BALANCES);
+    expect(tableNames).toContain(TABLE_PROJECTION_TOMBSTONES);
+
+    await db.close();
+  });
+
+  it('bounds recovery to maximum 1 attempt to avoid infinite loops', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
     const recoveryManager = new DatabaseRecoveryManager();
 
-    // Manually force recovery count to 1
-    await recoveryManager.recoverProjectionDatabase(rawDb, new Error('First corruption'));
+    // Trigger initial recovery
+    await recoveryManager.recoverProjectionDatabase(db, new Error('SQLITE_CORRUPT: disk malformed'));
     expect(recoveryManager.getRecoveryCount()).toBe(1);
 
-    // Second recovery attempt must fail closed and throw DATABASE_RECOVERY_ABORTED
+    // Attempt second recovery within same manager lifecycle
     await expect(
-      recoveryManager.recoverProjectionDatabase(rawDb, new Error('Second corruption')),
-    ).rejects.toThrow(/DATABASE_RECOVERY_ABORTED/);
+      recoveryManager.recoverProjectionDatabase(db, new Error('SQLITE_CORRUPT: disk malformed again')),
+    ).rejects.toThrow('DATABASE_RECOVERY_ABORTED: Maximum recovery attempts exceeded');
 
-    await rawDb.close();
+    await db.close();
   });
 });

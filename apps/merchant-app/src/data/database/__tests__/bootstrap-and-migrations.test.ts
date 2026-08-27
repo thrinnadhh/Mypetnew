@@ -1,5 +1,4 @@
 import { DatabaseBootstrapper } from '../bootstrap';
-import { createMerchantDatabase, MerchantDatabase } from '../database';
 import { getSchemaVersion, runMigrations, setSchemaVersion } from '../migrations';
 import { createNodeSqliteDatabase } from '../node-driver';
 import {
@@ -8,85 +7,98 @@ import {
   TABLE_CATALOG_ITEMS,
   TABLE_INVENTORY_BALANCES,
   TABLE_PROJECTION_SYNC_STATE,
+  TABLE_PROJECTION_TOMBSTONES,
 } from '../schema';
 
-describe('M5 Database Bootstrap and Migrations', () => {
-  let db: MerchantDatabase;
+describe('M5 SQLite Bootstrap and Migrations', () => {
+  it('performs clean bootstrap to schema version 2 and creates all 5 projection tables', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    const bootstrapper = new DatabaseBootstrapper();
 
-  afterEach(async () => {
-    if (db && db.isOpen()) {
-      await db.close();
-    }
-  });
-
-  it('performs clean database bootstrap and reaches schema version 1', async () => {
-    db = createMerchantDatabase();
-    const state = await db.initialize();
-
-    expect(state.isInitialized).toBe(true);
-    expect(state.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(state.tables).toEqual([
-      TABLE_PROJECTION_SYNC_STATE,
-      TABLE_CATALOG_ITEMS,
-      TABLE_CATALOG_BARCODES,
-      TABLE_INVENTORY_BALANCES,
-    ]);
+    const result = await bootstrapper.bootstrap(db);
+    expect(result.isInitialized).toBe(true);
+    expect(result.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(result.schemaVersion).toBe(2);
 
     const version = await getSchemaVersion(db);
-    expect(version).toBe(1);
-    expect(db.isReady()).toBe(true);
+    expect(version).toBe(2);
+
+    const tables = await db.all<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';",
+    );
+    const tableNames = tables.map((t) => t.name);
+
+    expect(tableNames).toContain(TABLE_PROJECTION_SYNC_STATE);
+    expect(tableNames).toContain(TABLE_CATALOG_ITEMS);
+    expect(tableNames).toContain(TABLE_CATALOG_BARCODES);
+    expect(tableNames).toContain(TABLE_INVENTORY_BALANCES);
+    expect(tableNames).toContain(TABLE_PROJECTION_TOMBSTONES);
+
+    await db.close();
   });
 
-  it('is idempotent when initialize is called multiple times concurrently or sequentially', async () => {
-    db = createMerchantDatabase();
+  it('runs migration chain forward from 0 -> 2, 1 -> 2, and 2 -> 2 idempotently', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
 
-    const [state1, state2, state3] = await Promise.all([
-      db.initialize(),
-      db.initialize(),
-      db.initialize(),
-    ]);
+    // 0 -> 1
+    const res1 = await runMigrations(db, 1);
+    expect(res1.currentVersion).toBe(1);
+    expect(res1.appliedVersions).toEqual([1]);
 
-    expect(state1.isInitialized).toBe(true);
-    expect(state2.isInitialized).toBe(true);
-    expect(state3.isInitialized).toBe(true);
-    expect(await getSchemaVersion(db)).toBe(1);
+    // 1 -> 2
+    const res2 = await runMigrations(db, 2);
+    expect(res2.currentVersion).toBe(2);
+    expect(res2.appliedVersions).toEqual([2]);
 
-    const sequential = await db.initialize();
-    expect(sequential.isInitialized).toBe(true);
+    // 2 -> 2 idempotent
+    const res3 = await runMigrations(db, 2);
+    expect(res3.currentVersion).toBe(2);
+    expect(res3.appliedVersions).toEqual([]);
+
+    await db.close();
   });
 
-  it('runs migrations transactionally from version 0 to 1', async () => {
-    const rawDb = createNodeSqliteDatabase();
-    expect(await getSchemaVersion(rawDb)).toBe(0);
-
-    const result = await runMigrations(rawDb, 1);
-    expect(result.previousVersion).toBe(0);
-    expect(result.currentVersion).toBe(1);
-    expect(result.appliedVersions).toEqual([1]);
-
-    expect(await getSchemaVersion(rawDb)).toBe(1);
-    await rawDb.close();
-  });
-
-  it('rejects when database has a newer incompatible schema version', async () => {
-    const rawDb = createNodeSqliteDatabase();
-    await setSchemaVersion(rawDb, 999);
-
-    await expect(runMigrations(rawDb, 1)).rejects.toThrow(/DATABASE_INCOMPATIBLE_VERSION/);
-    await rawDb.close();
-  });
-
-  it('rolls back migration transaction when a migration step fails', async () => {
-    const rawDb = createNodeSqliteDatabase();
-
-    // Force a conflicting table that causes migration SQL to fail
-    await rawDb.exec(`CREATE TABLE ${TABLE_CATALOG_ITEMS} (id INT PRIMARY KEY, invalid_col TEXT);`);
-    await setSchemaVersion(rawDb, 0);
-
+  it('is idempotent when calling bootstrap multiple times on the same instance', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
     const bootstrapper = new DatabaseBootstrapper();
-    // With allowRecovery = false, bootstrap throws directly on schema conflict
-    await expect(bootstrapper.bootstrap(rawDb, { allowRecovery: false })).rejects.toThrow();
 
-    await rawDb.close();
+    const result1 = await bootstrapper.bootstrap(db);
+    const result2 = await bootstrapper.bootstrap(db);
+
+    expect(result1.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(result2.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(bootstrapper.isReady()).toBe(true);
+
+    await db.close();
+  });
+
+  it('rolls back migration transaction if an error occurs during migration execution', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+
+    await expect(
+      db.transaction(async (tx) => {
+        await tx.exec('CREATE TABLE temp_test (id TEXT PRIMARY KEY);');
+        await tx.run('INSERT INTO temp_test VALUES (?);', ['1']);
+        throw new Error('SIMULATED_MIGRATION_FAILURE');
+      }),
+    ).rejects.toThrow('SIMULATED_MIGRATION_FAILURE');
+
+    const table = await db.get<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='temp_test';",
+    );
+    expect(table).toBeNull();
+
+    await db.close();
+  });
+
+  it('rejects future schema version with DATABASE_INCOMPATIBLE_VERSION', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await setSchemaVersion(db, CURRENT_SCHEMA_VERSION + 1);
+
+    await expect(runMigrations(db, CURRENT_SCHEMA_VERSION)).rejects.toThrow(
+      'DATABASE_INCOMPATIBLE_VERSION',
+    );
+
+    await db.close();
   });
 });

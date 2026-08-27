@@ -1,6 +1,6 @@
 import { DatabaseBootstrapper, type DatabaseBootstrapState } from './bootstrap';
 import type { SqliteDatabase, SqliteRunResult, SqliteTransaction } from './driver';
-import { createNodeSqliteDatabase } from './node-driver';
+import { createExpoSqliteDatabase } from './expo-driver';
 import { DatabaseRecoveryManager } from './recovery';
 
 export class MerchantDatabase implements SqliteDatabase {
@@ -59,10 +59,16 @@ export class MerchantDatabase implements SqliteDatabase {
 }
 
 export function createMerchantDatabase(options: {
-  db?: SqliteDatabase;
-  filename?: string;
+  db: SqliteDatabase;
   bootstrapper?: DatabaseBootstrapper;
-} = {}): MerchantDatabase {
-  const driver = options.db ?? createNodeSqliteDatabase(options.filename ?? ':memory:');
-  return new MerchantDatabase(driver, options.bootstrapper);
+}): MerchantDatabase {
+  return new MerchantDatabase(options.db, options.bootstrapper);
+}
+
+export async function createProductionMerchantDatabase(
+  dbName = 'mypetnew_merchant.db',
+  bootstrapper?: DatabaseBootstrapper,
+): Promise<MerchantDatabase> {
+  const driver = await createExpoSqliteDatabase(dbName);
+  return new MerchantDatabase(driver, bootstrapper);
 }

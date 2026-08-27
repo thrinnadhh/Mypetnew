@@ -5,6 +5,7 @@ import {
   TABLE_CATALOG_ITEMS,
   TABLE_INVENTORY_BALANCES,
   TABLE_PROJECTION_SYNC_STATE,
+  TABLE_PROJECTION_TOMBSTONES,
 } from './schema';
 
 export type DatabaseRecoveryDiagnostic = {
@@ -29,14 +30,17 @@ export class DatabaseRecoveryManager {
   isRecoverableError(error: unknown): boolean {
     if (!(error instanceof Error)) return false;
     const msg = error.message.toLowerCase();
+    // Incompatible newer database schema must FAIL CLOSED and NEVER trigger destructive recovery
+    if (msg.includes('database_incompatible_version')) {
+      return false;
+    }
     return (
       msg.includes('sqlite_corrupt') ||
       msg.includes('corrupt') ||
       msg.includes('malformed') ||
       msg.includes('database disk image is malformed') ||
       msg.includes('migration_verification_failed') ||
-      msg.includes('schema_verification_failed') ||
-      msg.includes('database_incompatible_version')
+      msg.includes('schema_verification_failed')
     );
   }
 
@@ -51,6 +55,7 @@ export class DatabaseRecoveryManager {
 
     try {
       // Clean slate table drop for projection cache tables
+      await db.exec(`DROP TABLE IF EXISTS ${TABLE_PROJECTION_TOMBSTONES};`);
       await db.exec(`DROP TABLE IF EXISTS ${TABLE_CATALOG_BARCODES};`);
       await db.exec(`DROP TABLE IF EXISTS ${TABLE_CATALOG_ITEMS};`);
       await db.exec(`DROP TABLE IF EXISTS ${TABLE_INVENTORY_BALANCES};`);

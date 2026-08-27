@@ -3,6 +3,12 @@ import type { SqliteDatabase, SqliteTransaction } from '../database/driver';
 import { TABLE_INVENTORY_BALANCES, TABLE_PROJECTION_SYNC_STATE } from '../database/schema';
 import type { InventoryProjectionBatch, LocalInventoryBalance } from '../models/inventory-types';
 import type { MerchantPartitionContext } from '../models/partition-context';
+import {
+  clearTombstoneInTx,
+  getTombstoneInTx,
+  isServerUpdateStrictlyNewer,
+  recordTombstoneInTx,
+} from './tombstone-helper';
 
 type InventoryBalanceDbRow = {
   account_id: string;
@@ -54,20 +60,26 @@ export class InventoryLocalRepository {
     context: MerchantPartitionContext,
     balance: InventoryBalance,
     localUpdatedAt: string = new Date().toISOString(),
-  ): Promise<LocalInventoryBalance> {
+  ): Promise<LocalInventoryBalance | null> {
     await this.db.transaction(async (tx) => {
       await this.upsertBalanceInTx(tx, context, balance, localUpdatedAt);
     });
 
-    const stored = await this.getBalance(context, balance.listingId);
-    if (!stored) throw new Error('FAILED_TO_PERSIST_INVENTORY_BALANCE');
+    const stored = await this.getBalance(context, balance.listingId, true);
+    if (!stored) return null;
+
+    const row = await this.db.get<InventoryBalanceDbRow>(
+      `SELECT is_tombstone, tombstoned_at FROM ${TABLE_INVENTORY_BALANCES}
+       WHERE account_id = ? AND organization_id = ? AND outlet_id = ? AND listing_id = ?;`,
+      [context.accountId, context.organizationId, context.outletId, balance.listingId],
+    );
 
     return {
       accountId: context.accountId,
       ...stored,
       localUpdatedAt,
-      isTombstone: false,
-      tombstonedAt: null,
+      isTombstone: row ? Boolean(row.is_tombstone) : false,
+      tombstonedAt: row ? row.tombstoned_at : null,
       serverUpdatedAt: balance.updatedAt,
     };
   }
@@ -78,6 +90,53 @@ export class InventoryLocalRepository {
     balance: InventoryBalance,
     localUpdatedAt: string,
   ): Promise<void> {
+    // 1. Check tombstone ledger
+    const tombstone = await getTombstoneInTx(tx, context, 'INVENTORY', balance.listingId);
+    if (tombstone) {
+      const isNewer = isServerUpdateStrictlyNewer(
+        balance.version,
+        balance.updatedAt,
+        tombstone.serverVersion,
+        tombstone.serverUpdatedAt,
+      );
+      if (!isNewer) {
+        // Stale or equal authority balance; do not revive
+        return;
+      }
+      // Genuinely newer authoritative row; clear tombstone
+      await clearTombstoneInTx(tx, context, 'INVENTORY', balance.listingId);
+    }
+
+    // 2. Check existing row authority
+    const existing = await tx.get<InventoryBalanceDbRow>(
+      `SELECT version, server_updated_at, is_tombstone, tombstoned_at FROM ${TABLE_INVENTORY_BALANCES}
+       WHERE account_id = ? AND organization_id = ? AND outlet_id = ? AND listing_id = ?;`,
+      [context.accountId, context.organizationId, context.outletId, balance.listingId],
+    );
+
+    if (existing) {
+      if (existing.is_tombstone) {
+        const isNewer = isServerUpdateStrictlyNewer(
+          balance.version,
+          balance.updatedAt,
+          existing.version,
+          existing.tombstoned_at ?? existing.server_updated_at,
+        );
+        if (!isNewer) return;
+      } else {
+        const isNewerOrEqual =
+          balance.version === existing.version && balance.updatedAt === existing.server_updated_at
+            ? true
+            : isServerUpdateStrictlyNewer(
+                balance.version,
+                balance.updatedAt,
+                existing.version,
+                existing.server_updated_at,
+              );
+        if (!isNewerOrEqual) return;
+      }
+    }
+
     await tx.run(
       `INSERT INTO ${TABLE_INVENTORY_BALANCES} (
         account_id, organization_id, outlet_id, listing_id,
@@ -131,6 +190,7 @@ export class InventoryLocalRepository {
             context,
             tombstone.listingId,
             tombstone.updatedAt,
+            null,
             nowIso,
           );
           tombstoneCount += 1;
@@ -239,6 +299,7 @@ export class InventoryLocalRepository {
     context: MerchantPartitionContext,
     listingId: string,
     serverUpdatedAt: string = new Date().toISOString(),
+    serverVersion: number | null = null,
   ): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       return this.markTombstoneInTx(
@@ -246,6 +307,7 @@ export class InventoryLocalRepository {
         context,
         listingId,
         serverUpdatedAt,
+        serverVersion,
         new Date().toISOString(),
       );
     });
@@ -256,9 +318,21 @@ export class InventoryLocalRepository {
     context: MerchantPartitionContext,
     listingId: string,
     serverUpdatedAt: string,
+    serverVersion: number | null,
     localUpdatedAt: string,
   ): Promise<boolean> {
-    const result = await tx.run(
+    // Record into durable tombstone ledger
+    await recordTombstoneInTx(
+      tx,
+      context,
+      'INVENTORY',
+      listingId,
+      serverUpdatedAt,
+      serverVersion,
+      localUpdatedAt,
+    );
+
+    await tx.run(
       `UPDATE ${TABLE_INVENTORY_BALANCES}
        SET is_tombstone = 1,
            tombstoned_at = ?,
@@ -275,6 +349,7 @@ export class InventoryLocalRepository {
         listingId,
       ],
     );
-    return result.changes > 0;
+
+    return true;
   }
 }

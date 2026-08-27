@@ -1,9 +1,10 @@
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 export const TABLE_PROJECTION_SYNC_STATE = 'projection_sync_state';
 export const TABLE_CATALOG_ITEMS = 'catalog_items';
 export const TABLE_CATALOG_BARCODES = 'catalog_barcodes';
 export const TABLE_INVENTORY_BALANCES = 'inventory_balances';
+export const TABLE_PROJECTION_TOMBSTONES = 'projection_tombstones';
 
 export const V1_SCHEMA_STATEMENTS = [
   // 1. Sync metadata
@@ -97,4 +98,27 @@ export const V1_SCHEMA_STATEMENTS = [
 
   `CREATE INDEX IF NOT EXISTS idx_sync_state_partition
     ON ${TABLE_PROJECTION_SYNC_STATE} (account_id, organization_id, outlet_id);`,
+];
+
+export const V2_SCHEMA_STATEMENTS = [
+  // 5. Partitioned durable tombstone ledger
+  `CREATE TABLE IF NOT EXISTS ${TABLE_PROJECTION_TOMBSTONES} (
+    account_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    outlet_id TEXT NOT NULL,
+    projection_name TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    server_updated_at TEXT NOT NULL,
+    server_version INTEGER NULL,
+    deleted_at TEXT NOT NULL,
+    PRIMARY KEY (account_id, organization_id, outlet_id, projection_name, entity_id)
+  );`,
+
+  `CREATE INDEX IF NOT EXISTS idx_projection_tombstones_lookup
+    ON ${TABLE_PROJECTION_TOMBSTONES} (account_id, organization_id, outlet_id, projection_name, entity_id);`,
+];
+
+export const ALL_SCHEMA_STATEMENTS = [
+  ...V1_SCHEMA_STATEMENTS,
+  ...V2_SCHEMA_STATEMENTS,
 ];

@@ -7,6 +7,7 @@ import {
   TABLE_CATALOG_ITEMS,
   TABLE_INVENTORY_BALANCES,
   TABLE_PROJECTION_SYNC_STATE,
+  TABLE_PROJECTION_TOMBSTONES,
 } from './schema';
 
 export type DatabaseBootstrapOptions = {
@@ -51,6 +52,7 @@ export class DatabaseBootstrapper {
           TABLE_CATALOG_ITEMS,
           TABLE_CATALOG_BARCODES,
           TABLE_INVENTORY_BALANCES,
+          TABLE_PROJECTION_TOMBSTONES,
         ],
       };
     }
@@ -96,6 +98,7 @@ export class DatabaseBootstrapper {
         TABLE_CATALOG_ITEMS,
         TABLE_CATALOG_BARCODES,
         TABLE_INVENTORY_BALANCES,
+        TABLE_PROJECTION_TOMBSTONES,
       ],
     };
   }
@@ -111,6 +114,7 @@ export class DatabaseBootstrapper {
       TABLE_CATALOG_ITEMS,
       TABLE_CATALOG_BARCODES,
       TABLE_INVENTORY_BALANCES,
+      TABLE_PROJECTION_TOMBSTONES,
     ];
 
     for (const req of required) {

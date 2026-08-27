@@ -14,7 +14,7 @@ describe('M5 Barcode Local Repository', () => {
   const context = createPartitionContext('acc-1', 'org-1', 'outlet-1');
 
   beforeEach(async () => {
-    db = createMerchantDatabase();
+    db = createMerchantDatabase({ db: createNodeSqliteDatabase(':memory:') });
     await db.initialize();
     barcodeRepo = new BarcodeLocalRepository(db);
     catalogRepo = new CatalogLocalRepository(db);

@@ -3,7 +3,6 @@ export * from './database/database';
 export * from './database/driver';
 export * from './database/expo-driver';
 export * from './database/migrations';
-export * from './database/node-driver';
 export * from './database/recovery';
 export * from './database/schema';
 
@@ -16,3 +15,6 @@ export * from './repositories/barcode-local-repository';
 export * from './repositories/catalog-local-repository';
 export * from './repositories/inventory-local-repository';
 export * from './repositories/sync-state-repository';
+export * from './repositories/tombstone-helper';
+
+export * from './context/merchant-database-context';

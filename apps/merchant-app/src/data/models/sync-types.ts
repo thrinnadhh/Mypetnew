@@ -16,6 +16,17 @@ export type SyncStateRecord = {
   lastError: string | null;
 };
 
+export type TombstoneRecord = {
+  accountId: string;
+  organizationId: string;
+  outletId: string;
+  projectionName: ProjectionName;
+  entityId: string;
+  serverUpdatedAt: string;
+  serverVersion: number | null;
+  deletedAt: string;
+};
+
 export type FreshnessOptions = {
   maxAgeMs?: number;
   nowMs?: number;

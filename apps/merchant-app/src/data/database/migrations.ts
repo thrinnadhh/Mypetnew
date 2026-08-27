@@ -1,5 +1,5 @@
 import type { SqliteDatabase, SqliteTransaction } from './driver';
-import { CURRENT_SCHEMA_VERSION, V1_SCHEMA_STATEMENTS } from './schema';
+import { CURRENT_SCHEMA_VERSION, V1_SCHEMA_STATEMENTS, V2_SCHEMA_STATEMENTS } from './schema';
 
 export type Migration = {
   version: number;
@@ -13,6 +13,15 @@ export const MIGRATIONS: Migration[] = [
     description: 'Initial schema: projection_sync_state, catalog_items, catalog_barcodes, inventory_balances',
     up: async (db: SqliteDatabase | SqliteTransaction) => {
       for (const statement of V1_SCHEMA_STATEMENTS) {
+        await db.exec(statement);
+      }
+    },
+  },
+  {
+    version: 2,
+    description: 'Add partitioned durable tombstone ledger: projection_tombstones',
+    up: async (db: SqliteDatabase | SqliteTransaction) => {
+      for (const statement of V2_SCHEMA_STATEMENTS) {
         await db.exec(statement);
       }
     },

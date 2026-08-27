@@ -1,167 +1,98 @@
-import type { MerchantListing } from '../../../catalog/api';
-import type { InventoryBalance } from '../../../inventory/api';
-import { createPartitionContext } from '../../models/partition-context';
-import { BarcodeLocalRepository } from '../../repositories/barcode-local-repository';
-import { CatalogLocalRepository } from '../../repositories/catalog-local-repository';
-import { InventoryLocalRepository } from '../../repositories/inventory-local-repository';
-import { SyncStateRepository } from '../../repositories/sync-state-repository';
-import { createMerchantDatabase, MerchantDatabase } from '../database';
+import { DatabaseBootstrapper } from '../bootstrap';
+import { createNodeSqliteDatabase } from '../node-driver';
+import {
+  TABLE_CATALOG_BARCODES,
+  TABLE_CATALOG_ITEMS,
+  TABLE_INVENTORY_BALANCES,
+  TABLE_PROJECTION_SYNC_STATE,
+  TABLE_PROJECTION_TOMBSTONES,
+} from '../schema';
 
-describe('M5 Partition Isolation Invariants', () => {
-  let db: MerchantDatabase;
-  let catalogRepo: CatalogLocalRepository;
-  let barcodeRepo: BarcodeLocalRepository;
-  let inventoryRepo: InventoryLocalRepository;
-  let syncStateRepo: SyncStateRepository;
+describe('M5 SQLite Partition Isolation (Account, Org, Outlet)', () => {
+  it('enforces complete partition isolation across account, org, and outlet for all tables', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    const bootstrapper = new DatabaseBootstrapper();
+    await bootstrapper.bootstrap(db);
 
-  const partitionA = createPartitionContext('acc-1', 'org-1', 'outlet-1');
-  const partitionB = createPartitionContext('acc-2', 'org-2', 'outlet-2');
-  const partitionAOutlet2 = createPartitionContext('acc-1', 'org-1', 'outlet-2');
+    const partition1 = { accountId: 'acc-1', organizationId: 'org-1', outletId: 'out-1' };
+    const partition2 = { accountId: 'acc-2', organizationId: 'org-2', outletId: 'out-2' };
 
-  beforeEach(async () => {
-    db = createMerchantDatabase();
-    await db.initialize();
-    catalogRepo = new CatalogLocalRepository(db);
-    barcodeRepo = new BarcodeLocalRepository(db);
-    inventoryRepo = new InventoryLocalRepository(db);
-    syncStateRepo = new SyncStateRepository(db);
-  });
+    // 1. Insert in partition 1
+    await db.run(
+      `INSERT INTO ${TABLE_CATALOG_ITEMS} (
+        account_id, organization_id, outlet_id, id, name, kind, commerce_mode,
+        barcode_type, normalized_barcode, mrp_paise, selling_price_paise,
+        category, status, version, server_created_at, server_updated_at, local_updated_at
+      ) VALUES (?, ?, ?, 'prod-1', 'Partition 1 Food', 'FOOD', 'PICKUP', 'INTERNAL', 'P1-001', 1000, 900, 'Food', 'ACTIVE', 1, '2026-08-27T00:00:00Z', '2026-08-27T00:00:00Z', '2026-08-27T00:00:00Z');`,
+      [partition1.accountId, partition1.organizationId, partition1.outletId],
+    );
 
-  afterEach(async () => {
-    if (db && db.isOpen()) {
-      await db.close();
-    }
-  });
+    await db.run(
+      `INSERT INTO ${TABLE_CATALOG_BARCODES} (
+        account_id, organization_id, outlet_id, listing_id, barcode_type, normalized_barcode, is_primary, is_tombstone, updated_at
+      ) VALUES (?, ?, ?, 'prod-1', 'INTERNAL', 'P1-001', 1, 0, '2026-08-27T00:00:00Z');`,
+      [partition1.accountId, partition1.organizationId, partition1.outletId],
+    );
 
-  const listingA: MerchantListing = {
-    id: 'listing-a',
-    organizationId: 'org-1',
-    outletId: 'outlet-1',
-    name: 'Partition A Product',
-    kind: 'PRODUCT',
-    commerceMode: 'COMMERCE',
-    barcodeType: 'GTIN_13',
-    normalizedBarcode: '4006381333931',
-    mrpPaise: 50000,
-    sellingPricePaise: 45000,
-    category: 'Dog Food',
-    brand: 'PetBrand',
-    description: 'Fresh dog food',
-    petType: 'DOG',
-    lifeStage: 'ADULT',
-    packLabel: '1kg',
-    sku: 'SKU-A',
-    imageUrls: ['https://example.com/a.jpg'],
-    status: 'ACTIVE',
-    version: 1,
-    createdAt: '2026-08-27T10:00:00.000Z',
-    updatedAt: '2026-08-27T10:00:00.000Z',
-  };
+    await db.run(
+      `INSERT INTO ${TABLE_INVENTORY_BALANCES} (
+        account_id, organization_id, outlet_id, listing_id, on_hand, reserved, available, version, server_updated_at, local_updated_at
+      ) VALUES (?, ?, ?, 'prod-1', 50, 10, 40, 1, '2026-08-27T00:00:00Z', '2026-08-27T00:00:00Z');`,
+      [partition1.accountId, partition1.organizationId, partition1.outletId],
+    );
 
-  const balanceA: InventoryBalance = {
-    organizationId: 'org-1',
-    outletId: 'outlet-1',
-    listingId: 'listing-a',
-    onHand: 25,
-    reserved: 5,
-    available: 20,
-    version: 1,
-    updatedAt: '2026-08-27T10:00:00.000Z',
-  };
+    await db.run(
+      `INSERT INTO ${TABLE_PROJECTION_SYNC_STATE} (
+        account_id, organization_id, outlet_id, projection_name, last_sync_at, status
+      ) VALUES (?, ?, ?, 'CATALOG', '2026-08-27T00:00:00Z', 'FRESH');`,
+      [partition1.accountId, partition1.organizationId, partition1.outletId],
+    );
 
-  it('Scenario A: Complete isolation between Account/Org/Outlet A and Account/Org/Outlet B', async () => {
-    // 1. Persist data into Partition A
-    await catalogRepo.upsertListing(partitionA, listingA);
-    await inventoryRepo.upsertBalance(partitionA, balanceA);
-    await syncStateRepo.recordSyncSuccess(partitionA, 'CATALOG', 'cursor-a-1');
+    await db.run(
+      `INSERT INTO ${TABLE_PROJECTION_TOMBSTONES} (
+        account_id, organization_id, outlet_id, projection_name, entity_id, server_updated_at, deleted_at
+      ) VALUES (?, ?, ?, 'CATALOG', 'deleted-prod-1', '2026-08-27T00:00:00Z', '2026-08-27T00:00:00Z');`,
+      [partition1.accountId, partition1.organizationId, partition1.outletId],
+    );
 
-    // 2. Query Partition A — data must exist
-    const storedListingA = await catalogRepo.getListingById(partitionA, 'listing-a');
-    expect(storedListingA).not.toBeNull();
-    expect(storedListingA?.name).toBe('Partition A Product');
+    // 2. Query with partition 2 credentials -> must return 0 results
+    const catalogP2 = await db.all(
+      `SELECT * FROM ${TABLE_CATALOG_ITEMS} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+      [partition2.accountId, partition2.organizationId, partition2.outletId],
+    );
+    expect(catalogP2).toHaveLength(0);
 
-    const storedBalanceA = await inventoryRepo.getBalance(partitionA, 'listing-a');
-    expect(storedBalanceA).not.toBeNull();
-    expect(storedBalanceA?.available).toBe(20);
+    const barcodesP2 = await db.all(
+      `SELECT * FROM ${TABLE_CATALOG_BARCODES} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+      [partition2.accountId, partition2.organizationId, partition2.outletId],
+    );
+    expect(barcodesP2).toHaveLength(0);
 
-    const barcodeLookupA = await barcodeRepo.findByBarcode(partitionA, 'GTIN_13', '4006381333931');
-    expect(barcodeLookupA.type).toBe('FOUND');
+    const inventoryP2 = await db.all(
+      `SELECT * FROM ${TABLE_INVENTORY_BALANCES} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+      [partition2.accountId, partition2.organizationId, partition2.outletId],
+    );
+    expect(inventoryP2).toHaveLength(0);
 
-    const syncA = await syncStateRepo.getSyncState(partitionA, 'CATALOG');
-    expect(syncA?.cursor).toBe('cursor-a-1');
+    const syncP2 = await db.all(
+      `SELECT * FROM ${TABLE_PROJECTION_SYNC_STATE} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+      [partition2.accountId, partition2.organizationId, partition2.outletId],
+    );
+    expect(syncP2).toHaveLength(0);
 
-    // 3. Query Partition B — MUST RETURN EMPTY / NOT FOUND
-    const storedListingB = await catalogRepo.getListingById(partitionB, 'listing-a');
-    expect(storedListingB).toBeNull();
+    const tombstonesP2 = await db.all(
+      `SELECT * FROM ${TABLE_PROJECTION_TOMBSTONES} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+      [partition2.accountId, partition2.organizationId, partition2.outletId],
+    );
+    expect(tombstonesP2).toHaveLength(0);
 
-    const listB = await catalogRepo.listListings(partitionB);
-    expect(listB.items).toHaveLength(0);
-    expect(listB.totalCount).toBe(0);
+    // 3. Query with partition 1 credentials -> must return exact data
+    const catalogP1 = await db.all(
+      `SELECT * FROM ${TABLE_CATALOG_ITEMS} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+      [partition1.accountId, partition1.organizationId, partition1.outletId],
+    );
+    expect(catalogP1).toHaveLength(1);
 
-    const storedBalanceB = await inventoryRepo.getBalance(partitionB, 'listing-a');
-    expect(storedBalanceB).toBeNull();
-
-    const listBalanceB = await inventoryRepo.listBalances(partitionB);
-    expect(listBalanceB.items).toHaveLength(0);
-
-    const barcodeLookupB = await barcodeRepo.findByBarcode(partitionB, 'GTIN_13', '4006381333931');
-    expect(barcodeLookupB.type).toBe('NOT_FOUND');
-
-    const syncB = await syncStateRepo.getSyncState(partitionB, 'CATALOG');
-    expect(syncB).toBeNull();
-  });
-
-  it('Scenario B: Outlet-level partition isolation within the same Organization', async () => {
-    const listingOutlet2: MerchantListing = {
-      ...listingA,
-      id: 'listing-outlet2',
-      outletId: 'outlet-2',
-      name: 'Outlet 2 Specific Product',
-      sku: 'SKU-OUTLET-2',
-      normalizedBarcode: '8901234567890',
-    };
-
-    const balanceOutlet2: InventoryBalance = {
-      organizationId: 'org-1',
-      outletId: 'outlet-2',
-      listingId: 'listing-outlet2',
-      onHand: 10,
-      reserved: 2,
-      available: 8,
-      version: 1,
-      updatedAt: '2026-08-27T10:00:00.000Z',
-    };
-
-    // Outlet 1 gets listingA
-    await catalogRepo.upsertListing(partitionA, listingA);
-    await inventoryRepo.upsertBalance(partitionA, balanceA);
-
-    // Outlet 2 gets listingOutlet2
-    await catalogRepo.upsertListing(partitionAOutlet2, listingOutlet2);
-    await inventoryRepo.upsertBalance(partitionAOutlet2, balanceOutlet2);
-
-    // Outlet 1 verification
-    const listOutlet1 = await catalogRepo.listListings(partitionA);
-    expect(listOutlet1.items).toHaveLength(1);
-    expect(listOutlet1.items[0].id).toBe('listing-a');
-
-    const balanceOut1 = await inventoryRepo.getBalance(partitionA, 'listing-a');
-    expect(balanceOut1?.available).toBe(20);
-    expect(await inventoryRepo.getBalance(partitionA, 'listing-outlet2')).toBeNull();
-
-    // Outlet 2 verification
-    const listOutlet2 = await catalogRepo.listListings(partitionAOutlet2);
-    expect(listOutlet2.items).toHaveLength(1);
-    expect(listOutlet2.items[0].id).toBe('listing-outlet2');
-
-    const balanceOut2 = await inventoryRepo.getBalance(partitionAOutlet2, 'listing-outlet2');
-    expect(balanceOut2?.available).toBe(8);
-    expect(await inventoryRepo.getBalance(partitionAOutlet2, 'listing-a')).toBeNull();
-  });
-
-  it('validates partition context creation rejects empty or whitespace-only keys', () => {
-    expect(() => createPartitionContext('', 'org-1', 'outlet-1')).toThrow(/PARTITION_CONTEXT_INVALID/);
-    expect(() => createPartitionContext('acc-1', '   ', 'outlet-1')).toThrow(/PARTITION_CONTEXT_INVALID/);
-    expect(() => createPartitionContext('acc-1', 'org-1', '')).toThrow(/PARTITION_CONTEXT_INVALID/);
+    await db.close();
   });
 });

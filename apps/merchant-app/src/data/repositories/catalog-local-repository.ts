@@ -14,6 +14,12 @@ import {
 import type { CatalogProjectionBatch, LocalCatalogItem } from '../models/catalog-types';
 import type { MerchantPartitionContext } from '../models/partition-context';
 import { SyncStateRepository } from './sync-state-repository';
+import {
+  clearTombstoneInTx,
+  getTombstoneInTx,
+  isServerUpdateStrictlyNewer,
+  recordTombstoneInTx,
+} from './tombstone-helper';
 
 type CatalogItemDbRow = {
   account_id: string;
@@ -105,13 +111,19 @@ export class CatalogLocalRepository {
     context: MerchantPartitionContext,
     listing: MerchantListing,
     localUpdatedAt: string = new Date().toISOString(),
-  ): Promise<LocalCatalogItem> {
+  ): Promise<LocalCatalogItem | null> {
     await this.db.transaction(async (tx) => {
       await this.upsertListingInTx(tx, context, listing, localUpdatedAt);
     });
 
-    const stored = await this.getListingById(context, listing.id);
-    if (!stored) throw new Error('FAILED_TO_PERSIST_CATALOG_LISTING');
+    const stored = await this.getListingById(context, listing.id, true);
+    if (!stored) return null;
+
+    const row = await this.db.get<CatalogItemDbRow>(
+      `SELECT is_tombstone, tombstoned_at FROM ${TABLE_CATALOG_ITEMS}
+       WHERE account_id = ? AND organization_id = ? AND outlet_id = ? AND id = ?;`,
+      [context.accountId, context.organizationId, context.outletId, listing.id],
+    );
 
     return {
       accountId: context.accountId,
@@ -122,8 +134,8 @@ export class CatalogLocalRepository {
       lifeStage: stored.lifeStage ?? null,
       packLabel: stored.packLabel ?? null,
       sku: stored.sku ?? null,
-      isTombstone: false,
-      tombstonedAt: null,
+      isTombstone: row ? Boolean(row.is_tombstone) : false,
+      tombstonedAt: row ? row.tombstoned_at : null,
       serverCreatedAt: listing.createdAt,
       serverUpdatedAt: listing.updatedAt,
       localUpdatedAt,
@@ -136,6 +148,53 @@ export class CatalogLocalRepository {
     listing: MerchantListing,
     localUpdatedAt: string,
   ): Promise<void> {
+    // 1. Check tombstone ledger
+    const tombstone = await getTombstoneInTx(tx, context, 'CATALOG', listing.id);
+    if (tombstone) {
+      const isNewer = isServerUpdateStrictlyNewer(
+        listing.version,
+        listing.updatedAt,
+        tombstone.serverVersion,
+        tombstone.serverUpdatedAt,
+      );
+      if (!isNewer) {
+        // Incoming listing is stale or equal authority compared to tombstone; do NOT revive
+        return;
+      }
+      // Genuinely newer authoritative server row; clear tombstone
+      await clearTombstoneInTx(tx, context, 'CATALOG', listing.id);
+    }
+
+    // 2. Check existing row authority
+    const existing = await tx.get<CatalogItemDbRow>(
+      `SELECT version, server_updated_at, is_tombstone, tombstoned_at FROM ${TABLE_CATALOG_ITEMS}
+       WHERE account_id = ? AND organization_id = ? AND outlet_id = ? AND id = ?;`,
+      [context.accountId, context.organizationId, context.outletId, listing.id],
+    );
+
+    if (existing) {
+      if (existing.is_tombstone) {
+        const isNewer = isServerUpdateStrictlyNewer(
+          listing.version,
+          listing.updatedAt,
+          existing.version,
+          existing.tombstoned_at ?? existing.server_updated_at,
+        );
+        if (!isNewer) return;
+      } else {
+        const isNewerOrEqual =
+          listing.version === existing.version && listing.updatedAt === existing.server_updated_at
+            ? true
+            : isServerUpdateStrictlyNewer(
+                listing.version,
+                listing.updatedAt,
+                existing.version,
+                existing.server_updated_at,
+              );
+        if (!isNewerOrEqual) return;
+      }
+    }
+
     const imageUrlsJson = JSON.stringify(listing.imageUrls ?? []);
 
     await tx.run(
@@ -166,6 +225,7 @@ export class CatalogLocalRepository {
         version = excluded.version,
         is_tombstone = 0,
         tombstoned_at = NULL,
+        server_created_at = excluded.server_created_at,
         server_updated_at = excluded.server_updated_at,
         local_updated_at = excluded.local_updated_at;`,
       [
@@ -236,7 +296,14 @@ export class CatalogLocalRepository {
 
       if (batch.tombstones) {
         for (const tombstone of batch.tombstones) {
-          await this.markTombstoneInTx(tx, context, tombstone.id, tombstone.updatedAt, nowIso);
+          await this.markTombstoneInTx(
+            tx,
+            context,
+            tombstone.id,
+            tombstone.updatedAt,
+            null,
+            nowIso,
+          );
           tombstoneCount += 1;
         }
       }
@@ -351,6 +418,7 @@ export class CatalogLocalRepository {
     context: MerchantPartitionContext,
     id: string,
     serverUpdatedAt: string = new Date().toISOString(),
+    serverVersion: number | null = null,
   ): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       return this.markTombstoneInTx(
@@ -358,6 +426,7 @@ export class CatalogLocalRepository {
         context,
         id,
         serverUpdatedAt,
+        serverVersion,
         new Date().toISOString(),
       );
     });
@@ -368,9 +437,21 @@ export class CatalogLocalRepository {
     context: MerchantPartitionContext,
     id: string,
     serverUpdatedAt: string,
+    serverVersion: number | null,
     localUpdatedAt: string,
   ): Promise<boolean> {
-    const itemResult = await tx.run(
+    // Record into durable tombstone ledger
+    await recordTombstoneInTx(
+      tx,
+      context,
+      'CATALOG',
+      id,
+      serverUpdatedAt,
+      serverVersion,
+      localUpdatedAt,
+    );
+
+    await tx.run(
       `UPDATE ${TABLE_CATALOG_ITEMS}
        SET is_tombstone = 1,
            tombstoned_at = ?,
@@ -402,6 +483,6 @@ export class CatalogLocalRepository {
       ],
     );
 
-    return itemResult.changes > 0;
+    return true;
   }
 }

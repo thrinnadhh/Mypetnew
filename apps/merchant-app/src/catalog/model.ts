@@ -2,6 +2,7 @@ import type {
   BarcodeType,
   CatalogMediaAsset,
   CatalogMediaAttachment,
+  CatalogMediaContentType,
   CreateListingInput,
   ListingKind,
   ListingStatus,
@@ -32,6 +33,14 @@ export type CatalogListingCard = {
   priceLine: string;
   metadataLine: string;
   actionLabel: string;
+};
+
+export type CatalogPickerAssetInput = {
+  uri: string;
+  fileName?: string | null;
+  mimeType?: string | null;
+  fileSize?: number | null;
+  file?: Blob | null;
 };
 
 export function emptyCatalogForm(): CatalogFormState {
@@ -88,7 +97,11 @@ export function catalogErrorMessage(error: unknown): string {
   if (error.name === 'CATALOG_MEDIA_INVALID' || error.name === 'CATALOG_MEDIA_LOCAL_FILE_REQUIRED') {
     return 'Choose a local JPEG, PNG, or WebP image up to 5 MiB.';
   }
-  if (error.name === 'CATALOG_MEDIA_STORE_UNAVAILABLE' || error.name === 'CATALOG_MEDIA_FINALIZATION_FAILED') {
+  if (
+    error.name === 'CATALOG_MEDIA_STORE_UNAVAILABLE' ||
+    error.name === 'CATALOG_MEDIA_FINALIZATION_FAILED' ||
+    error.name === 'CATALOG_MEDIA_CLEANUP_QUEUE_UNAVAILABLE'
+  ) {
     return 'The image was not finalized. Retry the same upload when storage is available.';
   }
   return error.message;
@@ -216,13 +229,38 @@ export function catalogMediaQuotaLabel(listing: MerchantListing): string {
   return `${listing.imageUrls.length}/${CATALOG_MEDIA_MAX_IMAGES} images`;
 }
 
+export function catalogMediaAssetFromPicker(input: CatalogPickerAssetInput): CatalogMediaAsset {
+  const normalizedType = input.mimeType?.trim().toLowerCase();
+  const supported = new Set<CatalogMediaContentType>(['image/jpeg', 'image/png', 'image/webp']);
+  if (!normalizedType || !supported.has(normalizedType as CatalogMediaContentType)) {
+    const error = new Error('Choose a local JPEG, PNG, or WebP image up to 5 MiB.');
+    error.name = 'CATALOG_MEDIA_INVALID';
+    throw error;
+  }
+  const type = normalizedType as CatalogMediaContentType;
+  const fallbackExtension = type === 'image/jpeg' ? 'jpg' : type === 'image/png' ? 'png' : 'webp';
+  const asset: CatalogMediaAsset = {
+    uri: input.uri,
+    name: input.fileName?.trim() || `catalog-image.${fallbackExtension}`,
+    type,
+    size: input.fileSize,
+    file: input.file,
+  };
+  validateCatalogMediaAsset(asset);
+  return asset;
+}
+
 export function validateCatalogMediaAsset(asset: CatalogMediaAsset): void {
   const extension = asset.name.trim().split('.').pop()?.toLowerCase() ?? '';
   const allowedExtension =
     (asset.type === 'image/jpeg' && (extension === 'jpg' || extension === 'jpeg')) ||
     (asset.type === 'image/png' && extension === 'png') ||
     (asset.type === 'image/webp' && extension === 'webp');
-  if (!asset.name.trim() || !allowedExtension || (asset.size != null && asset.size > CATALOG_MEDIA_MAX_BYTES)) {
+  if (
+    !asset.name.trim() ||
+    !allowedExtension ||
+    (asset.size != null && (asset.size <= 0 || asset.size > CATALOG_MEDIA_MAX_BYTES))
+  ) {
     const error = new Error('Choose a local JPEG, PNG, or WebP image up to 5 MiB.');
     error.name = 'CATALOG_MEDIA_INVALID';
     throw error;

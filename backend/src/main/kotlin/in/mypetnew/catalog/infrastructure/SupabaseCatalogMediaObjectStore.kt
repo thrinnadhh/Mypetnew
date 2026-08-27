@@ -53,7 +53,8 @@ class SupabaseCatalogMediaObjectStore(
             .header("Content-Type", "application/json")
             .method("DELETE", HttpRequest.BodyPublishers.ofByteArray(body))
             .build()
-        requireSuccess(send(request))
+        val response = send(request)
+        if (response.statusCode() !in 200..299 && response.statusCode() != 404) unavailable()
     }
 
     private fun request(relativePath: String): HttpRequest.Builder = HttpRequest.newBuilder()

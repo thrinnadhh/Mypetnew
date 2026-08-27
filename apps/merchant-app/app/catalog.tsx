@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import * as ImagePicker from 'expo-image-picker';
 import {
   Button,
   Pressable,
@@ -11,6 +12,8 @@ import {
 } from 'react-native';
 import {
   type BarcodeType,
+  type CatalogMediaAsset,
+  catalogMediaCommandKey,
   changeListingStatus,
   createListing,
   fetchCatalogPage,
@@ -18,8 +21,11 @@ import {
   type ListingKind,
   type MerchantListing,
   updateListing,
+  uploadCatalogMedia,
 } from '../src/catalog/api';
 import {
+  applyCatalogMediaAttachment,
+  canUploadCatalogMedia,
   canWriteCatalog,
   catalogAccessNotice,
   catalogEditorTitle,
@@ -28,6 +34,8 @@ import {
   catalogFormFromListing,
   catalogIdentitySummary,
   catalogListingCard,
+  catalogMediaAssetFromPicker,
+  catalogMediaQuotaLabel,
   catalogOutletLabel,
   catalogPageLabel,
   catalogSaveButtonTitle,
@@ -43,6 +51,12 @@ import {
   type CatalogStatusFilter,
 } from '../src/catalog/model';
 
+type PendingMediaUpload = {
+  listing: MerchantListing;
+  asset: CatalogMediaAsset;
+  idempotencyKey: string;
+};
+
 export default function MerchantCatalogScreen() {
   const [outletIds, setOutletIds] = useState<string[]>([]);
   const [permissions, setPermissions] = useState<Record<string, string[]>>({});
@@ -54,6 +68,8 @@ export default function MerchantCatalogScreen() {
   const [status, setStatus] = useState<CatalogStatusFilter>('ALL');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [pendingMedia, setPendingMedia] = useState<PendingMediaUpload | null>(null);
   const [message, setMessage] = useState('');
   const [editing, setEditing] = useState<MerchantListing | null>(null);
   const [form, setForm] = useState<CatalogFormState>(() => emptyCatalogForm());
@@ -116,7 +132,7 @@ export default function MerchantCatalogScreen() {
   }
 
   async function save() {
-    if (!outletId || saving || !canWrite) return;
+    if (!outletId || saving || uploadingMedia || !canWrite) return;
     setSaving(true);
     setMessage('');
     try {
@@ -139,7 +155,7 @@ export default function MerchantCatalogScreen() {
   }
 
   async function toggleStatus(listing: MerchantListing) {
-    if (!canWrite || saving || !outletId) return;
+    if (!canWrite || saving || uploadingMedia || !outletId) return;
     setSaving(true);
     setMessage('');
     try {
@@ -155,9 +171,88 @@ export default function MerchantCatalogScreen() {
     }
   }
 
+  async function performMediaUpload(pending: PendingMediaUpload) {
+    if (uploadingMedia || !canWrite) return;
+    setUploadingMedia(true);
+    setMessage('Uploading catalog image…');
+    try {
+      const attachment = await uploadCatalogMedia(pending.listing, pending.asset, pending.idempotencyKey);
+      const canonical = applyCatalogMediaAttachment(pending.listing, attachment);
+      setItems((current) => current.map((item) => (
+        item.id === canonical.id && item.version === pending.listing.version ? canonical : item
+      )));
+      setPendingMedia(null);
+      setMessage('Catalog image uploaded.');
+      await loadPage(pending.listing.outletId, page);
+    } catch (error) {
+      const name = error instanceof Error ? error.name : '';
+      const terminal = [
+        'CATALOG_VERSION_CONFLICT',
+        'CATALOG_MEDIA_QUOTA_EXCEEDED',
+        'CATALOG_MEDIA_INVALID',
+        'CATALOG_MEDIA_LOCAL_FILE_REQUIRED',
+        'MERCHANT_PERMISSION_REQUIRED',
+        'RESOURCE_NOT_FOUND',
+      ].includes(name);
+      if (terminal) setPendingMedia(null);
+      else setPendingMedia(pending); // Preserve the original listing snapshot + idempotency key for retry.
+      setMessage(catalogErrorMessage(error));
+      if (name === 'CATALOG_VERSION_CONFLICT') {
+        await loadPage(pending.listing.outletId, page);
+      }
+    } finally {
+      setUploadingMedia(false);
+    }
+  }
+
+  async function chooseCatalogImage(listing: MerchantListing) {
+    if (!canWrite || saving || uploadingMedia) return;
+    if (!canUploadCatalogMedia(listing)) {
+      setMessage(
+        listing.status !== 'ACTIVE'
+          ? 'Activate the listing before adding catalog images.'
+          : 'This listing already has the maximum of 5 images.',
+      );
+      return;
+    }
+
+    setMessage('');
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        setMessage('Photo library permission is required to choose a catalog image.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: false,
+        quality: 1,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      const selected = result.assets[0];
+      const asset = catalogMediaAssetFromPicker({
+        uri: selected.uri,
+        fileName: selected.fileName,
+        mimeType: selected.mimeType,
+        fileSize: selected.fileSize,
+        file: selected.file ?? null,
+      });
+      const pending = {
+        listing,
+        asset,
+        idempotencyKey: catalogMediaCommandKey(),
+      } satisfies PendingMediaUpload;
+      setPendingMedia(pending);
+      await performMediaUpload(pending);
+    } catch (error) {
+      setMessage(catalogErrorMessage(error));
+    }
+  }
+
   async function chooseOutlet(nextOutletId: string) {
     setOutletId(nextOutletId);
     setEditing(null);
+    setPendingMedia(null);
     setForm(emptyCatalogForm());
     setPage(0);
     await loadPage(nextOutletId, 0);
@@ -167,7 +262,7 @@ export default function MerchantCatalogScreen() {
     <SafeAreaView style={styles.page}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>Catalog</Text>
-        <Text style={styles.body}>Versioned product management. Barcode scanning and offline catalog sync arrive in later Merchant sprints.</Text>
+        <Text style={styles.body}>Versioned product management with managed catalog images and barcode-safe listing identity.</Text>
 
         {outletIds.length > 1 ? (
           <View style={styles.rowWrap}>
@@ -200,7 +295,7 @@ export default function MerchantCatalogScreen() {
                   </Pressable>
                 ))}
               </View>
-              <Button title="Search" onPress={() => void loadPage(outletId, 0)} disabled={loading} />
+              <Button title="Search" onPress={() => void loadPage(outletId, 0)} disabled={loading || uploadingMedia} />
             </View>
 
             <View style={styles.section}>
@@ -240,10 +335,10 @@ export default function MerchantCatalogScreen() {
               <TextInput value={form.description} onChangeText={(value) => updateForm('description', value)} placeholder="Description (optional)" multiline style={[styles.input, styles.multiline]} />
               <Button
                 title={catalogSaveButtonTitle(saving, editing)}
-                disabled={saving || !canWrite}
+                disabled={saving || uploadingMedia || !canWrite}
                 onPress={() => void save()}
               />
-              {editing ? <Button title="Cancel edit" disabled={saving} onPress={startCreate} /> : null}
+              {editing ? <Button title="Cancel edit" disabled={saving || uploadingMedia} onPress={startCreate} /> : null}
             </View>
 
             <View style={styles.section}>
@@ -252,27 +347,37 @@ export default function MerchantCatalogScreen() {
               {emptyStateMessage ? <Text>{emptyStateMessage}</Text> : null}
               {items.map((listing) => {
                 const card = catalogListingCard(listing);
+                const isPending = pendingMedia?.listing.id === listing.id;
                 return (
                   <View key={listing.id} style={styles.card}>
                     <Text style={styles.cardTitle}>{listing.name}</Text>
                     <Text>{card.stateLine}</Text>
                     <Text>{card.priceLine}</Text>
                     <Text>{card.metadataLine}</Text>
+                    <Text>{catalogMediaQuotaLabel(listing)}</Text>
                     <View style={styles.rowWrap}>
-                      <Button title="Edit" disabled={!canWrite || saving} onPress={() => startEdit(listing)} />
+                      <Button title="Edit" disabled={!canWrite || saving || uploadingMedia} onPress={() => startEdit(listing)} />
                       <Button
                         title={card.actionLabel}
-                        disabled={!canWrite || saving}
+                        disabled={!canWrite || saving || uploadingMedia}
                         onPress={() => void toggleStatus(listing)}
                       />
+                      <Button
+                        title={uploadingMedia && isPending ? 'Uploading…' : 'Add image'}
+                        disabled={!canWrite || saving || uploadingMedia || !canUploadCatalogMedia(listing)}
+                        onPress={() => void chooseCatalogImage(listing)}
+                      />
+                      {isPending && !uploadingMedia ? (
+                        <Button title="Retry image upload" onPress={() => void performMediaUpload(pendingMedia)} />
+                      ) : null}
                     </View>
                   </View>
                 );
               })}
               <View style={styles.rowWrap}>
-                <Button title="Previous" disabled={loading || page === 0} onPress={() => outletId && void loadPage(outletId, page - 1)} />
+                <Button title="Previous" disabled={loading || uploadingMedia || page === 0} onPress={() => outletId && void loadPage(outletId, page - 1)} />
                 <Text>{catalogPageLabel(page)}</Text>
-                <Button title="Next" disabled={loading || !hasNext} onPress={() => outletId && void loadPage(outletId, page + 1)} />
+                <Button title="Next" disabled={loading || uploadingMedia || !hasNext} onPress={() => outletId && void loadPage(outletId, page + 1)} />
               </View>
             </View>
           </>

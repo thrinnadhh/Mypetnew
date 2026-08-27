@@ -108,7 +108,7 @@ class M4CatalogMediaSourceGuardContractTest {
         )
         assertTrue(service.contains("String(bytes, StandardCharsets.ISO_8859_1)"))
         assertTrue(!service.contains("SCRIPT_PROBE_BYTES"))
-        assertTrue(service.contains("catalog/$organizationId/$outletId/$listingId/$mediaId"))
+        assertTrue(service.contains("catalog/\$organizationId/\$outletId/\$listingId/\$mediaId"))
         assertTrue(!controller.contains("objectKey:"))
         assertTrue(!controller.contains("publicUrl:"))
     }

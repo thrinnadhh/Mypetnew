@@ -48,20 +48,7 @@ class JdbcCatalogMediaPersistence(
         idempotencyKey: String,
         requestFingerprint: String,
     ): CatalogMediaAttachment? = transactions.execute {
-        val active = jdbc.query(
-            """
-            SELECT active
-            FROM mypet.catalog_listing
-            WHERE id = ? AND organization_id = ? AND outlet_id = ?
-            FOR SHARE
-            """.trimIndent(),
-            { rows, _ -> rows.getBoolean("active") },
-            listingId,
-            organizationId,
-            outletId,
-        ).firstOrNull() ?: resourceUnavailable()
-        if (!active) resourceUnavailable()
-        requireCurrentAuthority(actorId, organizationId, outletId)
+        requireActiveListingAndCurrentAuthority(actorId, organizationId, outletId, listingId)
         replay(outletId, listingId, idempotencyKey, requestFingerprint)
     }
 
@@ -94,7 +81,12 @@ class JdbcCatalogMediaPersistence(
                     upload.idempotencyKey,
                     upload.requestFingerprint,
                 )?.let { existing ->
-                    requireCurrentAuthority(upload.actorId, upload.organizationId, upload.outletId)
+                    requireActiveListingAndCurrentAuthority(
+                        upload.actorId,
+                        upload.organizationId,
+                        upload.outletId,
+                        upload.listingId,
+                    )
                     return@execute CatalogMediaAttachResult(existing, replayed = true)
                 }
 
@@ -201,6 +193,28 @@ class JdbcCatalogMediaPersistence(
             )?.let { return CatalogMediaAttachResult(it, replayed = true) }
             throw DomainException("CATALOG_MEDIA_CONFLICT", "The listing media changed concurrently; refresh and retry")
         }
+    }
+
+    private fun requireActiveListingAndCurrentAuthority(
+        actorId: UUID,
+        organizationId: UUID,
+        outletId: UUID,
+        listingId: UUID,
+    ) {
+        val active = jdbc.query(
+            """
+            SELECT active
+            FROM mypet.catalog_listing
+            WHERE id = ? AND organization_id = ? AND outlet_id = ?
+            FOR SHARE
+            """.trimIndent(),
+            { rows, _ -> rows.getBoolean("active") },
+            listingId,
+            organizationId,
+            outletId,
+        ).firstOrNull() ?: resourceUnavailable()
+        if (!active) resourceUnavailable()
+        requireCurrentAuthority(actorId, organizationId, outletId)
     }
 
     /**

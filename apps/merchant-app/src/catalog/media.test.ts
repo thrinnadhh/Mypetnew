@@ -3,6 +3,7 @@ import {
   applyCatalogMediaAttachment,
   canUploadCatalogMedia,
   catalogErrorMessage,
+  catalogMediaAssetFromPicker,
   catalogMediaQuotaLabel,
   validateCatalogMediaAsset,
 } from './model';
@@ -53,9 +54,42 @@ describe('M4 Merchant catalog media model', () => {
     expect(() => validateCatalogMediaAsset(candidate)).not.toThrow();
   });
 
-  it('rejects external URL sources extension mismatch and oversized selections before upload', () => {
+  it('maps picker metadata to a validated local asset and supplies a safe missing filename', () => {
+    expect(catalogMediaAssetFromPicker({
+      uri: 'content://media/pet.png',
+      fileName: 'pet.png',
+      mimeType: 'image/png',
+      fileSize: 2048,
+    })).toEqual({
+      uri: 'content://media/pet.png',
+      name: 'pet.png',
+      type: 'image/png',
+      size: 2048,
+      file: undefined,
+    });
+
+    const fallback = catalogMediaAssetFromPicker({
+      uri: 'file:///tmp/pet.webp',
+      fileName: null,
+      mimeType: 'image/webp',
+      fileSize: 1024,
+    });
+    expect(fallback.name).toBe('catalog-image.webp');
+  });
+
+  it('rejects unsupported picker MIME before upload', () => {
+    expect(() => catalogMediaAssetFromPicker({
+      uri: 'file:///tmp/pet.svg',
+      fileName: 'pet.svg',
+      mimeType: 'image/svg+xml',
+      fileSize: 100,
+    })).toThrow();
+  });
+
+  it('rejects external URL sources extension mismatch empty files and oversized selections before upload', () => {
     expect(() => validateCatalogMediaAsset(asset({ uri: 'https://evil.example/pet.jpg' }))).toThrow();
     expect(() => validateCatalogMediaAsset(asset({ name: 'pet.svg', type: 'image/jpeg' }))).toThrow();
+    expect(() => validateCatalogMediaAsset(asset({ size: 0 }))).toThrow();
     expect(() => validateCatalogMediaAsset(asset({ name: 'pet.png', type: 'image/png', size: 5 * 1024 * 1024 + 1 }))).toThrow();
   });
 
@@ -88,8 +122,14 @@ describe('M4 Merchant catalog media model', () => {
     quota.name = 'CATALOG_MEDIA_QUOTA_EXCEEDED';
     expect(catalogErrorMessage(quota)).toContain('maximum of 5');
 
-    const storage = new Error('storage');
-    storage.name = 'CATALOG_MEDIA_STORE_UNAVAILABLE';
-    expect(catalogErrorMessage(storage)).toContain('Retry the same upload');
+    for (const code of [
+      'CATALOG_MEDIA_STORE_UNAVAILABLE',
+      'CATALOG_MEDIA_FINALIZATION_FAILED',
+      'CATALOG_MEDIA_CLEANUP_QUEUE_UNAVAILABLE',
+    ]) {
+      const retryable = new Error(code);
+      retryable.name = code;
+      expect(catalogErrorMessage(retryable)).toContain('Retry the same upload');
+    }
   });
 });

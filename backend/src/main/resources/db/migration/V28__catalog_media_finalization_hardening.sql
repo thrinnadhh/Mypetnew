@@ -23,7 +23,7 @@ CREATE INDEX idx_catalog_media_actor
 -- object_key is always server-derived; clients never supply cleanup paths.
 CREATE TABLE mypet.catalog_media_cleanup (
     object_key TEXT PRIMARY KEY,
-    organization_id UUID NOT NULL REFERENCES mypet.organization(id),
+    organization_id UUID NOT NULL REFERENCES mypet.merchant_organization(id),
     outlet_id UUID NOT NULL REFERENCES mypet.provider_outlet(id),
     listing_id UUID NOT NULL REFERENCES mypet.catalog_listing(id),
     reason VARCHAR(80) NOT NULL,

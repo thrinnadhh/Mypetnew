@@ -1,8 +1,11 @@
 package `in`.mypetnew.catalog
 
+import `in`.mypetnew.catalog.domain.CatalogMediaAttachResult
+import `in`.mypetnew.catalog.domain.CatalogMediaCleanupTask
 import `in`.mypetnew.catalog.domain.CatalogMediaObjectStore
 import `in`.mypetnew.catalog.domain.CatalogMediaPersistence
 import `in`.mypetnew.catalog.domain.CatalogMediaService
+import `in`.mypetnew.catalog.domain.CatalogMediaUpload
 import `in`.mypetnew.catalog.domain.InMemoryCatalogMediaPersistence
 import `in`.mypetnew.common.error.DomainException
 import java.util.UUID
@@ -49,6 +52,19 @@ class M4CatalogMediaContractTest {
             assertEquals("CATALOG_MEDIA_INVALID", error.code)
             assertTrue(store.objects.isEmpty())
         }
+    }
+
+    @Test
+    fun `script marker beyond the old four kilobyte probe is rejected`() {
+        val store = RecordingStore()
+        val bytes = jpegBytes(8) + ByteArray(5_000) { 0x41 } + "<script>alert(1)</script>".toByteArray()
+
+        val error = assertThrows(DomainException::class.java) {
+            upload(service(store = store), 0, "late-polyglot.jpg", "image/jpeg", bytes, "late-script")
+        }
+
+        assertEquals("CATALOG_MEDIA_INVALID", error.code)
+        assertTrue(store.objects.isEmpty())
     }
 
     @Test
@@ -121,6 +137,31 @@ class M4CatalogMediaContractTest {
         assertEquals("CATALOG_MEDIA_FINALIZATION_FAILED", error.code)
         assertTrue(store.objects.isEmpty())
         assertEquals(1, store.deleted.size)
+    }
+
+    @Test
+    fun `failed compensating delete is durably queued before original failure escapes`() {
+        val store = RecordingStore(failDeletes = true)
+        val queued = mutableListOf<CatalogMediaCleanupTask>()
+        val persistence = object : CatalogMediaPersistence {
+            override fun attach(upload: CatalogMediaUpload, expectedVersion: Long): CatalogMediaAttachResult {
+                throw DomainException("CATALOG_MEDIA_FINALIZATION_FAILED", "failed")
+            }
+
+            override fun enqueueCleanup(task: CatalogMediaCleanupTask, reason: String) {
+                assertEquals("FINALIZATION_FAILED", reason)
+                queued += task
+            }
+        }
+        val service = CatalogMediaService(persistence, store)
+
+        val error = assertThrows(DomainException::class.java) {
+            upload(service, 0, "image.jpg", "image/jpeg", jpegBytes(6), "cleanup-queue")
+        }
+
+        assertEquals("CATALOG_MEDIA_FINALIZATION_FAILED", error.code)
+        assertEquals(1, queued.size)
+        assertEquals(store.objects.single(), queued.single().objectKey)
     }
 
     @Test
@@ -210,6 +251,7 @@ class M4CatalogMediaContractTest {
     private class RecordingStore(
         private val publicUrlPrefix: String = "https://catalog.example/",
         private val appendObjectKey: Boolean = true,
+        private val failDeletes: Boolean = false,
     ) : CatalogMediaObjectStore {
         val objects = linkedSetOf<String>()
         val deleted = mutableListOf<String>()
@@ -222,6 +264,7 @@ class M4CatalogMediaContractTest {
 
         @Synchronized
         override fun delete(objectKey: String) {
+            if (failDeletes) throw DomainException("CATALOG_MEDIA_STORE_UNAVAILABLE", "delete failed")
             deleted += objectKey
             objects -= objectKey
         }

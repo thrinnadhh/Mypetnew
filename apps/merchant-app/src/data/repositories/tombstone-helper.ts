@@ -14,28 +14,64 @@ type TombstoneDbRow = {
   deleted_at: string;
 };
 
-export function isServerUpdateStrictlyNewer(
+export type AuthorityComparisonResult = 'GREATER' | 'EQUAL' | 'LESS';
+
+export type TombstoneApplyResult = 'APPLIED' | 'IDEMPOTENT' | 'STALE';
+
+export type ProjectionRowAuthority = {
+  version: number | null | undefined;
+  serverUpdatedAt: string;
+  isTombstone: boolean | number;
+  tombstonedAt?: string | null;
+};
+
+export function compareServerAuthority(
   incomingVersion: number | null | undefined,
   incomingUpdatedAt: string,
   authoritativeVersion: number | null | undefined,
   authoritativeUpdatedAt: string,
-): boolean {
-  if (
-    typeof incomingVersion === 'number' &&
-    typeof authoritativeVersion === 'number' &&
-    incomingVersion !== authoritativeVersion
-  ) {
-    return incomingVersion > authoritativeVersion;
+): AuthorityComparisonResult {
+  const hasIncomingVersion = typeof incomingVersion === 'number' && !Number.isNaN(incomingVersion);
+  const hasAuthVersion = typeof authoritativeVersion === 'number' && !Number.isNaN(authoritativeVersion);
+
+  if (hasIncomingVersion && hasAuthVersion) {
+    if (incomingVersion > authoritativeVersion) {
+      return 'GREATER';
+    }
+    if (incomingVersion < authoritativeVersion) {
+      return 'LESS';
+    }
+    // Both versions exist and are equal; compare server timestamps
   }
 
   const incomingTs = Date.parse(incomingUpdatedAt);
   const authTs = Date.parse(authoritativeUpdatedAt);
 
   if (!Number.isNaN(incomingTs) && !Number.isNaN(authTs)) {
-    return incomingTs > authTs;
+    if (incomingTs > authTs) return 'GREATER';
+    if (incomingTs < authTs) return 'LESS';
+    return 'EQUAL';
   }
 
-  return incomingUpdatedAt > authoritativeUpdatedAt;
+  if (incomingUpdatedAt > authoritativeUpdatedAt) return 'GREATER';
+  if (incomingUpdatedAt < authoritativeUpdatedAt) return 'LESS';
+  return 'EQUAL';
+}
+
+export function isServerUpdateStrictlyNewer(
+  incomingVersion: number | null | undefined,
+  incomingUpdatedAt: string,
+  authoritativeVersion: number | null | undefined,
+  authoritativeUpdatedAt: string,
+): boolean {
+  return (
+    compareServerAuthority(
+      incomingVersion,
+      incomingUpdatedAt,
+      authoritativeVersion,
+      authoritativeUpdatedAt,
+    ) === 'GREATER'
+  );
 }
 
 export async function getTombstoneInTx(
@@ -71,6 +107,62 @@ export async function getTombstoneInTx(
   };
 }
 
+export async function evaluateTombstoneAuthority(
+  tx: SqliteTransaction,
+  context: MerchantPartitionContext,
+  projectionName: ProjectionName,
+  entityId: string,
+  incomingServerUpdatedAt: string,
+  incomingServerVersion: number | null | undefined,
+  existingProjectionRow?: ProjectionRowAuthority | null,
+): Promise<TombstoneApplyResult> {
+  // 1. Check existing tombstone ledger authority
+  const existingTombstone = await getTombstoneInTx(tx, context, projectionName, entityId);
+  if (existingTombstone) {
+    const cmp = compareServerAuthority(
+      incomingServerVersion,
+      incomingServerUpdatedAt,
+      existingTombstone.serverVersion,
+      existingTombstone.serverUpdatedAt,
+    );
+    if (cmp === 'LESS') {
+      return 'STALE';
+    }
+    if (cmp === 'EQUAL') {
+      return 'IDEMPOTENT';
+    }
+  }
+
+  // 2. Check existing projection row authority
+  if (existingProjectionRow) {
+    const authVersion = existingProjectionRow.version;
+    const authUpdatedAt =
+      existingProjectionRow.isTombstone && existingProjectionRow.tombstonedAt
+        ? existingProjectionRow.tombstonedAt
+        : existingProjectionRow.serverUpdatedAt;
+
+    const cmp = compareServerAuthority(
+      incomingServerVersion,
+      incomingServerUpdatedAt,
+      authVersion,
+      authUpdatedAt,
+    );
+
+    if (cmp === 'LESS') {
+      return 'STALE';
+    }
+
+    if (cmp === 'EQUAL') {
+      if (existingProjectionRow.isTombstone) {
+        return 'IDEMPOTENT';
+      }
+      return 'STALE';
+    }
+  }
+
+  return 'APPLIED';
+}
+
 export async function recordTombstoneInTx(
   tx: SqliteTransaction,
   context: MerchantPartitionContext,
@@ -80,21 +172,6 @@ export async function recordTombstoneInTx(
   serverVersion: number | null = null,
   deletedAt: string = new Date().toISOString(),
 ): Promise<void> {
-  const existing = await getTombstoneInTx(tx, context, projectionName, entityId);
-
-  if (existing) {
-    // Monotonic update: only update if incoming tombstone has newer/equal authority
-    const isNewer = isServerUpdateStrictlyNewer(
-      serverVersion,
-      serverUpdatedAt,
-      existing.serverVersion,
-      existing.serverUpdatedAt,
-    );
-    if (!isNewer && existing.serverUpdatedAt !== serverUpdatedAt) {
-      return;
-    }
-  }
-
   await tx.run(
     `INSERT INTO ${TABLE_PROJECTION_TOMBSTONES} (
       account_id, organization_id, outlet_id, projection_name, entity_id,

@@ -16,9 +16,11 @@ import type { MerchantPartitionContext } from '../models/partition-context';
 import { SyncStateRepository } from './sync-state-repository';
 import {
   clearTombstoneInTx,
+  compareServerAuthority,
+  evaluateTombstoneAuthority,
   getTombstoneInTx,
-  isServerUpdateStrictlyNewer,
   recordTombstoneInTx,
+  type TombstoneApplyResult,
 } from './tombstone-helper';
 
 type CatalogItemDbRow = {
@@ -112,9 +114,13 @@ export class CatalogLocalRepository {
     listing: MerchantListing,
     localUpdatedAt: string = new Date().toISOString(),
   ): Promise<LocalCatalogItem | null> {
-    await this.db.transaction(async (tx) => {
-      await this.upsertListingInTx(tx, context, listing, localUpdatedAt);
+    const applied = await this.db.transaction(async (tx) => {
+      return this.upsertListingInTx(tx, context, listing, localUpdatedAt);
     });
+
+    if (!applied) {
+      return null;
+    }
 
     const stored = await this.getListingById(context, listing.id, true);
     if (!stored) return null;
@@ -147,19 +153,19 @@ export class CatalogLocalRepository {
     context: MerchantPartitionContext,
     listing: MerchantListing,
     localUpdatedAt: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     // 1. Check tombstone ledger
     const tombstone = await getTombstoneInTx(tx, context, 'CATALOG', listing.id);
     if (tombstone) {
-      const isNewer = isServerUpdateStrictlyNewer(
+      const cmp = compareServerAuthority(
         listing.version,
         listing.updatedAt,
         tombstone.serverVersion,
         tombstone.serverUpdatedAt,
       );
-      if (!isNewer) {
+      if (cmp !== 'GREATER') {
         // Incoming listing is stale or equal authority compared to tombstone; do NOT revive
-        return;
+        return false;
       }
       // Genuinely newer authoritative server row; clear tombstone
       await clearTombstoneInTx(tx, context, 'CATALOG', listing.id);
@@ -174,24 +180,21 @@ export class CatalogLocalRepository {
 
     if (existing) {
       if (existing.is_tombstone) {
-        const isNewer = isServerUpdateStrictlyNewer(
+        const cmp = compareServerAuthority(
           listing.version,
           listing.updatedAt,
           existing.version,
           existing.tombstoned_at ?? existing.server_updated_at,
         );
-        if (!isNewer) return;
+        if (cmp !== 'GREATER') return false;
       } else {
-        const isNewerOrEqual =
-          listing.version === existing.version && listing.updatedAt === existing.server_updated_at
-            ? true
-            : isServerUpdateStrictlyNewer(
-                listing.version,
-                listing.updatedAt,
-                existing.version,
-                existing.server_updated_at,
-              );
-        if (!isNewerOrEqual) return;
+        const cmp = compareServerAuthority(
+          listing.version,
+          listing.updatedAt,
+          existing.version,
+          existing.server_updated_at,
+        );
+        if (cmp === 'LESS') return false;
       }
     }
 
@@ -276,6 +279,8 @@ export class CatalogLocalRepository {
         localUpdatedAt,
       ],
     );
+
+    return true;
   }
 
   async applyProjectionBatch(
@@ -290,13 +295,15 @@ export class CatalogLocalRepository {
       let tombstoneCount = 0;
 
       for (const item of batch.items) {
-        await this.upsertListingInTx(tx, context, item, nowIso);
-        insertedCount += 1;
+        const applied = await this.upsertListingInTx(tx, context, item, nowIso);
+        if (applied) {
+          insertedCount += 1;
+        }
       }
 
       if (batch.tombstones) {
         for (const tombstone of batch.tombstones) {
-          await this.markTombstoneInTx(
+          const result = await this.markTombstoneInTx(
             tx,
             context,
             tombstone.id,
@@ -304,7 +311,9 @@ export class CatalogLocalRepository {
             null,
             nowIso,
           );
-          tombstoneCount += 1;
+          if (result === 'APPLIED') {
+            tombstoneCount += 1;
+          }
         }
       }
 
@@ -419,7 +428,7 @@ export class CatalogLocalRepository {
     id: string,
     serverUpdatedAt: string = new Date().toISOString(),
     serverVersion: number | null = null,
-  ): Promise<boolean> {
+  ): Promise<TombstoneApplyResult> {
     return this.db.transaction(async (tx) => {
       return this.markTombstoneInTx(
         tx,
@@ -439,8 +448,37 @@ export class CatalogLocalRepository {
     serverUpdatedAt: string,
     serverVersion: number | null,
     localUpdatedAt: string,
-  ): Promise<boolean> {
-    // Record into durable tombstone ledger
+  ): Promise<TombstoneApplyResult> {
+    // 1. Fetch existing live/tombstoned catalog item row
+    const existing = await tx.get<CatalogItemDbRow>(
+      `SELECT version, server_updated_at, is_tombstone, tombstoned_at FROM ${TABLE_CATALOG_ITEMS}
+       WHERE account_id = ? AND organization_id = ? AND outlet_id = ? AND id = ?;`,
+      [context.accountId, context.organizationId, context.outletId, id],
+    );
+
+    // 2. Evaluate authority against both tombstone ledger and existing projection row
+    const authorityResult = await evaluateTombstoneAuthority(
+      tx,
+      context,
+      'CATALOG',
+      id,
+      serverUpdatedAt,
+      serverVersion,
+      existing
+        ? {
+            version: existing.version,
+            serverUpdatedAt: existing.server_updated_at,
+            isTombstone: Boolean(existing.is_tombstone),
+            tombstonedAt: existing.tombstoned_at,
+          }
+        : null,
+    );
+
+    if (authorityResult !== 'APPLIED') {
+      return authorityResult;
+    }
+
+    // 3. Record into durable tombstone ledger
     await recordTombstoneInTx(
       tx,
       context,
@@ -451,6 +489,7 @@ export class CatalogLocalRepository {
       localUpdatedAt,
     );
 
+    // 4. Update catalog items projection table
     await tx.run(
       `UPDATE ${TABLE_CATALOG_ITEMS}
        SET is_tombstone = 1,
@@ -469,6 +508,7 @@ export class CatalogLocalRepository {
       ],
     );
 
+    // 5. Update catalog barcodes projection table
     await tx.run(
       `UPDATE ${TABLE_CATALOG_BARCODES}
        SET is_tombstone = 1,
@@ -483,6 +523,6 @@ export class CatalogLocalRepository {
       ],
     );
 
-    return true;
+    return 'APPLIED';
   }
 }

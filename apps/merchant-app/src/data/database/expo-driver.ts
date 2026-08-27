@@ -8,8 +8,8 @@ export type NativeExpoTransaction = {
 };
 
 export type NativeExpoSqliteInstance = NativeExpoTransaction & {
-  withExclusiveTransactionAsync?<T>(task: (tx: NativeExpoTransaction) => Promise<T>): Promise<T>;
-  withTransactionAsync?<T>(task: (tx: NativeExpoTransaction) => Promise<T>): Promise<T>;
+  withExclusiveTransactionAsync?(task: (txn: NativeExpoTransaction) => Promise<void>): Promise<void>;
+  withTransactionAsync?(task: () => Promise<void>): Promise<void>;
   closeAsync?(): Promise<void>;
 };
 
@@ -39,7 +39,7 @@ function createScopedTransaction(nativeTx: NativeExpoTransaction): SqliteTransac
 export class ExpoSqliteDriver implements SqliteDatabase {
   private readonly db: NativeExpoSqliteInstance;
   private open = true;
-  private transactionMutex: Promise<unknown> = Promise.resolve();
+  private operationGate: Promise<unknown> = Promise.resolve();
 
   constructor(dbInstance: NativeExpoSqliteInstance) {
     this.db = dbInstance;
@@ -49,80 +49,102 @@ export class ExpoSqliteDriver implements SqliteDatabase {
     return this.open;
   }
 
-  async exec(sql: string): Promise<void> {
+  private async withGate<T>(op: () => Promise<T>): Promise<T> {
     if (!this.isOpen()) throw new Error('DATABASE_CLOSED');
-    await this.db.execAsync(sql);
+
+    const previousLock = this.operationGate;
+    let releaseLock!: () => void;
+    const currentLock = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    this.operationGate = previousLock.then(() => currentLock, () => currentLock);
+
+    await previousLock;
+    if (!this.isOpen()) {
+      releaseLock();
+      throw new Error('DATABASE_CLOSED');
+    }
+
+    try {
+      return await op();
+    } finally {
+      releaseLock();
+    }
+  }
+
+  async exec(sql: string): Promise<void> {
+    return this.withGate(async () => {
+      await this.db.execAsync(sql);
+    });
   }
 
   async run(sql: string, params: unknown[] = []): Promise<SqliteRunResult> {
-    if (!this.isOpen()) throw new Error('DATABASE_CLOSED');
-    const result = await this.db.runAsync(sql, ...params);
-    return {
-      changes: Number(result.changes),
-      lastInsertRowId: result.lastInsertRowId,
-    };
+    return this.withGate(async () => {
+      const result = await this.db.runAsync(sql, ...params);
+      return {
+        changes: Number(result.changes),
+        lastInsertRowId: result.lastInsertRowId,
+      };
+    });
   }
 
   async get<T = unknown>(sql: string, params: unknown[] = []): Promise<T | null> {
-    if (!this.isOpen()) throw new Error('DATABASE_CLOSED');
-    const row = await this.db.getFirstAsync<T>(sql, ...params);
-    return row ?? null;
+    return this.withGate(async () => {
+      const row = await this.db.getFirstAsync<T>(sql, ...params);
+      return row ?? null;
+    });
   }
 
   async all<T = unknown>(sql: string, params: unknown[] = []): Promise<T[]> {
-    if (!this.isOpen()) throw new Error('DATABASE_CLOSED');
-    const rows = await this.db.getAllAsync<T>(sql, ...params);
-    return rows ?? [];
+    return this.withGate(async () => {
+      const rows = await this.db.getAllAsync<T>(sql, ...params);
+      return rows ?? [];
+    });
   }
 
   async transaction<T>(action: (tx: SqliteTransaction) => Promise<T>): Promise<T> {
-    if (!this.isOpen()) throw new Error('DATABASE_CLOSED');
-
-    if (typeof this.db.withExclusiveTransactionAsync === 'function') {
-      return this.db.withExclusiveTransactionAsync(async (nativeTx) => {
-        const scopedTx = createScopedTransaction(nativeTx ?? this.db);
-        return action(scopedTx);
-      });
-    }
-
-    // Mutex serialization fallback for non-exclusive / web environments
-    const executeSerialized = async (): Promise<T> => {
-      if (!this.isOpen()) throw new Error('DATABASE_CLOSED');
-
-      if (typeof this.db.withTransactionAsync === 'function') {
-        return this.db.withTransactionAsync(async (nativeTx) => {
+    return this.withGate(async () => {
+      if (typeof this.db.withExclusiveTransactionAsync === 'function') {
+        let result!: T;
+        await this.db.withExclusiveTransactionAsync(async (nativeTx) => {
           const scopedTx = createScopedTransaction(nativeTx ?? this.db);
-          return action(scopedTx);
+          result = await action(scopedTx);
         });
+        return result;
       }
 
-      await this.exec('BEGIN IMMEDIATE');
+      if (typeof this.db.withTransactionAsync === 'function') {
+        let result!: T;
+        await this.db.withTransactionAsync(async () => {
+          const scopedTx = createScopedTransaction(this.db);
+          result = await action(scopedTx);
+        });
+        return result;
+      }
+
+      // Manual serialization fallback
+      await this.db.execAsync('BEGIN IMMEDIATE;');
       try {
-        const result = await action(this);
-        await this.exec('COMMIT');
+        const scopedTx = createScopedTransaction(this.db);
+        const result = await action(scopedTx);
+        await this.db.execAsync('COMMIT;');
         return result;
       } catch (error) {
         try {
-          await this.exec('ROLLBACK');
+          await this.db.execAsync('ROLLBACK;');
         } catch {
           // Ignore rollback error
         }
         throw error;
       }
-    };
-
-    const currentLock = this.transactionMutex;
-    const taskPromise = currentLock.then(executeSerialized, executeSerialized);
-    this.transactionMutex = taskPromise.then(() => {}, () => {});
-    return taskPromise;
+    });
   }
 
   async close(): Promise<void> {
-    if (this.open && this.db) {
-      this.open = false;
-      if (typeof this.db.closeAsync === 'function') {
-        await this.db.closeAsync();
-      }
+    if (!this.open) return;
+    this.open = false;
+    if (this.db && typeof this.db.closeAsync === 'function') {
+      await this.db.closeAsync();
     }
   }
 }

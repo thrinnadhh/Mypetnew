@@ -1,7 +1,7 @@
 import { ExpoSqliteDriver, type NativeExpoSqliteInstance, type NativeExpoTransaction } from '../expo-driver';
 
 describe('M5 Expo SQLite Driver Adapter and Transaction Isolation', () => {
-  it('prefers withExclusiveTransactionAsync on native platforms and delegates to scoped transaction handle', async () => {
+  it('prefers withExclusiveTransactionAsync on native platforms, returns callback value, and delegates to scoped handle', async () => {
     const mockNativeTx: NativeExpoTransaction = {
       execAsync: jest.fn().mockResolvedValue(undefined),
       runAsync: jest.fn().mockResolvedValue({ changes: 1, lastInsertRowId: 10 }),
@@ -14,8 +14,9 @@ describe('M5 Expo SQLite Driver Adapter and Transaction Isolation', () => {
       runAsync: jest.fn().mockResolvedValue({ changes: 0, lastInsertRowId: 0 }),
       getFirstAsync: jest.fn().mockResolvedValue(null),
       getAllAsync: jest.fn().mockResolvedValue([]),
-      withExclusiveTransactionAsync: async <T>(action: (tx: NativeExpoTransaction) => Promise<T>): Promise<T> => {
-        return action(mockNativeTx);
+      // Real Expo method returns Promise<void>
+      withExclusiveTransactionAsync: async (action: (tx: NativeExpoTransaction) => Promise<void>): Promise<void> => {
+        await action(mockNativeTx);
       },
       closeAsync: jest.fn().mockResolvedValue(undefined),
     };
@@ -27,14 +28,18 @@ describe('M5 Expo SQLite Driver Adapter and Transaction Isolation', () => {
       await tx.run('INSERT INTO test_tx VALUES (?);', ['abc']);
       const row = await tx.get<{ id: string }>('SELECT * FROM test_tx;');
       const rows = await tx.all<{ id: string }>('SELECT * FROM test_tx;');
-      return { row, rows };
+      return { value: 123, row, rows };
     });
 
     expect(mockNativeTx.execAsync).toHaveBeenCalledWith('CREATE TABLE test_tx (id TEXT);');
     expect(mockNativeTx.runAsync).toHaveBeenCalledWith('INSERT INTO test_tx VALUES (?);', 'abc');
     expect(mockNativeTx.getFirstAsync).toHaveBeenCalledWith('SELECT * FROM test_tx;');
     expect(mockNativeTx.getAllAsync).toHaveBeenCalledWith('SELECT * FROM test_tx;');
-    expect(result.row).toEqual({ id: 'row-1', value: 'test' });
+    expect(result).toEqual({
+      value: 123,
+      row: { id: 'row-1', value: 'test' },
+      rows: [{ id: 'row-1' }],
+    });
   });
 
   it('rolls back transaction on error under withExclusiveTransactionAsync', async () => {
@@ -50,8 +55,8 @@ describe('M5 Expo SQLite Driver Adapter and Transaction Isolation', () => {
       runAsync: jest.fn().mockResolvedValue({ changes: 0, lastInsertRowId: 0 }),
       getFirstAsync: jest.fn().mockResolvedValue(null),
       getAllAsync: jest.fn().mockResolvedValue([]),
-      withExclusiveTransactionAsync: async <T>(action: (tx: NativeExpoTransaction) => Promise<T>): Promise<T> => {
-        return action(mockNativeTx);
+      withExclusiveTransactionAsync: async (action: (tx: NativeExpoTransaction) => Promise<void>): Promise<void> => {
+        await action(mockNativeTx);
       },
       closeAsync: jest.fn().mockResolvedValue(undefined),
     };
@@ -66,7 +71,87 @@ describe('M5 Expo SQLite Driver Adapter and Transaction Isolation', () => {
     ).rejects.toThrow('TX_SIMULATED_FAIL');
   });
 
-  it('serializes concurrent transactions via mutex fallback in non-exclusive/web environments', async () => {
+  it('blocks out-of-transaction direct operations during withTransactionAsync fallback (operation gate)', async () => {
+    const executionOrder: string[] = [];
+
+    const mockExpoDb: NativeExpoSqliteInstance = {
+      execAsync: jest.fn().mockImplementation(async () => {
+        executionOrder.push('native_exec');
+      }),
+      runAsync: jest.fn().mockImplementation(async () => {
+        executionOrder.push('native_run');
+        return { changes: 1, lastInsertRowId: 1 };
+      }),
+      getFirstAsync: jest.fn().mockResolvedValue(null),
+      getAllAsync: jest.fn().mockResolvedValue([]),
+      // Real Expo withTransactionAsync signature takes zero arguments and returns Promise<void>
+      withTransactionAsync: async (action: () => Promise<void>): Promise<void> => {
+        await action();
+      },
+      closeAsync: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const driver = new ExpoSqliteDriver(mockExpoDb);
+
+    let releaseTransaction!: () => void;
+    const holdTxPromise = new Promise<void>((resolve) => {
+      releaseTransaction = resolve;
+    });
+
+    let txEntered = false;
+    let outerRunCompleted = false;
+
+    // 1. Start fallback transaction and hold it
+    const txPromise = driver.transaction(async (tx) => {
+      txEntered = true;
+      executionOrder.push('tx_started');
+      // Internal query via scoped tx
+      await tx.run('INSERT INTO tx_internal VALUES (1);');
+      await holdTxPromise;
+      executionOrder.push('tx_committing');
+      return { status: 'TX_SUCCESS' };
+    });
+
+    // Wait until transaction body is active
+    while (!txEntered) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+
+    // 2. Start direct driver.run outside transaction while transaction is held
+    const outerRunPromise = driver
+      .run('UPDATE outside SET value = 1;')
+      .then((res) => {
+        outerRunCompleted = true;
+        executionOrder.push('outer_run_done');
+        return res;
+      });
+
+    // 3. Prove outside operation has NOT executed while transaction is active
+    await new Promise((r) => setTimeout(r, 25));
+    expect(outerRunCompleted).toBe(false);
+    expect(executionOrder).toEqual(['tx_started', 'native_run']);
+
+    // 4. Release transaction
+    releaseTransaction();
+
+    // 5. Await both transaction and outside operation
+    const [txResult, outerResult] = await Promise.all([txPromise, outerRunPromise]);
+
+    expect(txResult).toEqual({ status: 'TX_SUCCESS' });
+    expect(outerResult).toEqual({ changes: 1, lastInsertRowId: 1 });
+    expect(outerRunCompleted).toBe(true);
+
+    // 6. Prove outside operation ran strictly after transaction completion
+    expect(executionOrder).toEqual([
+      'tx_started',
+      'native_run',
+      'tx_committing',
+      'native_run',
+      'outer_run_done',
+    ]);
+  });
+
+  it('serializes concurrent transactions via operation gate in non-exclusive/web environments', async () => {
     const executionOrder: string[] = [];
 
     const mockExpoDb: NativeExpoSqliteInstance = {
@@ -74,9 +159,8 @@ describe('M5 Expo SQLite Driver Adapter and Transaction Isolation', () => {
       runAsync: jest.fn().mockResolvedValue({ changes: 1, lastInsertRowId: 1 }),
       getFirstAsync: jest.fn().mockResolvedValue(null),
       getAllAsync: jest.fn().mockResolvedValue([]),
-      // No withExclusiveTransactionAsync available (e.g. web environment)
-      withTransactionAsync: async <T>(action: (tx: NativeExpoTransaction) => Promise<T>): Promise<T> => {
-        return action(mockExpoDb);
+      withTransactionAsync: async (action: () => Promise<void>): Promise<void> => {
+        await action();
       },
       closeAsync: jest.fn().mockResolvedValue(undefined),
     };

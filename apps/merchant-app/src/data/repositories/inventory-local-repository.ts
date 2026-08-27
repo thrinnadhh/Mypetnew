@@ -5,9 +5,11 @@ import type { InventoryProjectionBatch, LocalInventoryBalance } from '../models/
 import type { MerchantPartitionContext } from '../models/partition-context';
 import {
   clearTombstoneInTx,
+  compareServerAuthority,
+  evaluateTombstoneAuthority,
   getTombstoneInTx,
-  isServerUpdateStrictlyNewer,
   recordTombstoneInTx,
+  type TombstoneApplyResult,
 } from './tombstone-helper';
 
 type InventoryBalanceDbRow = {
@@ -61,9 +63,13 @@ export class InventoryLocalRepository {
     balance: InventoryBalance,
     localUpdatedAt: string = new Date().toISOString(),
   ): Promise<LocalInventoryBalance | null> {
-    await this.db.transaction(async (tx) => {
-      await this.upsertBalanceInTx(tx, context, balance, localUpdatedAt);
+    const applied = await this.db.transaction(async (tx) => {
+      return this.upsertBalanceInTx(tx, context, balance, localUpdatedAt);
     });
+
+    if (!applied) {
+      return null;
+    }
 
     const stored = await this.getBalance(context, balance.listingId, true);
     if (!stored) return null;
@@ -89,19 +95,19 @@ export class InventoryLocalRepository {
     context: MerchantPartitionContext,
     balance: InventoryBalance,
     localUpdatedAt: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     // 1. Check tombstone ledger
     const tombstone = await getTombstoneInTx(tx, context, 'INVENTORY', balance.listingId);
     if (tombstone) {
-      const isNewer = isServerUpdateStrictlyNewer(
+      const cmp = compareServerAuthority(
         balance.version,
         balance.updatedAt,
         tombstone.serverVersion,
         tombstone.serverUpdatedAt,
       );
-      if (!isNewer) {
+      if (cmp !== 'GREATER') {
         // Stale or equal authority balance; do not revive
-        return;
+        return false;
       }
       // Genuinely newer authoritative row; clear tombstone
       await clearTombstoneInTx(tx, context, 'INVENTORY', balance.listingId);
@@ -116,24 +122,21 @@ export class InventoryLocalRepository {
 
     if (existing) {
       if (existing.is_tombstone) {
-        const isNewer = isServerUpdateStrictlyNewer(
+        const cmp = compareServerAuthority(
           balance.version,
           balance.updatedAt,
           existing.version,
           existing.tombstoned_at ?? existing.server_updated_at,
         );
-        if (!isNewer) return;
+        if (cmp !== 'GREATER') return false;
       } else {
-        const isNewerOrEqual =
-          balance.version === existing.version && balance.updatedAt === existing.server_updated_at
-            ? true
-            : isServerUpdateStrictlyNewer(
-                balance.version,
-                balance.updatedAt,
-                existing.version,
-                existing.server_updated_at,
-              );
-        if (!isNewerOrEqual) return;
+        const cmp = compareServerAuthority(
+          balance.version,
+          balance.updatedAt,
+          existing.version,
+          existing.server_updated_at,
+        );
+        if (cmp === 'LESS') return false;
       }
     }
 
@@ -165,6 +168,8 @@ export class InventoryLocalRepository {
         localUpdatedAt,
       ],
     );
+
+    return true;
   }
 
   async applyProjectionBatch(
@@ -179,13 +184,15 @@ export class InventoryLocalRepository {
       let tombstoneCount = 0;
 
       for (const balance of batch.balances) {
-        await this.upsertBalanceInTx(tx, context, balance, nowIso);
-        insertedCount += 1;
+        const applied = await this.upsertBalanceInTx(tx, context, balance, nowIso);
+        if (applied) {
+          insertedCount += 1;
+        }
       }
 
       if (batch.tombstones) {
         for (const tombstone of batch.tombstones) {
-          await this.markTombstoneInTx(
+          const result = await this.markTombstoneInTx(
             tx,
             context,
             tombstone.listingId,
@@ -193,7 +200,9 @@ export class InventoryLocalRepository {
             null,
             nowIso,
           );
-          tombstoneCount += 1;
+          if (result === 'APPLIED') {
+            tombstoneCount += 1;
+          }
         }
       }
 
@@ -300,7 +309,7 @@ export class InventoryLocalRepository {
     listingId: string,
     serverUpdatedAt: string = new Date().toISOString(),
     serverVersion: number | null = null,
-  ): Promise<boolean> {
+  ): Promise<TombstoneApplyResult> {
     return this.db.transaction(async (tx) => {
       return this.markTombstoneInTx(
         tx,
@@ -320,8 +329,37 @@ export class InventoryLocalRepository {
     serverUpdatedAt: string,
     serverVersion: number | null,
     localUpdatedAt: string,
-  ): Promise<boolean> {
-    // Record into durable tombstone ledger
+  ): Promise<TombstoneApplyResult> {
+    // 1. Fetch existing live/tombstoned inventory balance row
+    const existing = await tx.get<InventoryBalanceDbRow>(
+      `SELECT version, server_updated_at, is_tombstone, tombstoned_at FROM ${TABLE_INVENTORY_BALANCES}
+       WHERE account_id = ? AND organization_id = ? AND outlet_id = ? AND listing_id = ?;`,
+      [context.accountId, context.organizationId, context.outletId, listingId],
+    );
+
+    // 2. Evaluate authority against both tombstone ledger and existing projection row
+    const authorityResult = await evaluateTombstoneAuthority(
+      tx,
+      context,
+      'INVENTORY',
+      listingId,
+      serverUpdatedAt,
+      serverVersion,
+      existing
+        ? {
+            version: existing.version,
+            serverUpdatedAt: existing.server_updated_at,
+            isTombstone: Boolean(existing.is_tombstone),
+            tombstonedAt: existing.tombstoned_at,
+          }
+        : null,
+    );
+
+    if (authorityResult !== 'APPLIED') {
+      return authorityResult;
+    }
+
+    // 3. Record into durable tombstone ledger
     await recordTombstoneInTx(
       tx,
       context,
@@ -332,6 +370,7 @@ export class InventoryLocalRepository {
       localUpdatedAt,
     );
 
+    // 4. Update inventory balances projection table
     await tx.run(
       `UPDATE ${TABLE_INVENTORY_BALANCES}
        SET is_tombstone = 1,
@@ -350,6 +389,6 @@ export class InventoryLocalRepository {
       ],
     );
 
-    return true;
+    return 'APPLIED';
   }
 }

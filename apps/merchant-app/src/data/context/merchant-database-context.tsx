@@ -45,6 +45,18 @@ export function MerchantDatabaseProvider({
 
   useEffect(() => {
     let isCancelled = false;
+    let activeOwnedDb: MerchantDatabase | null = null;
+    const ownsDatabase = databaseInstance == null;
+
+    async function cleanupDb(dbToClose: MerchantDatabase | null) {
+      if (ownsDatabase && dbToClose && dbToClose.isOpen()) {
+        try {
+          await dbToClose.close();
+        } catch {
+          // Ignore error during cleanup close
+        }
+      }
+    }
 
     async function initDatabase() {
       try {
@@ -55,11 +67,20 @@ export function MerchantDatabaseProvider({
           db = new MerchantDatabase(databaseInstance);
         } else {
           db = await createProductionMerchantDatabase(dbName);
+          activeOwnedDb = db;
+        }
+
+        if (isCancelled) {
+          await cleanupDb(activeOwnedDb);
+          return;
         }
 
         await db.initialize();
 
-        if (isCancelled) return;
+        if (isCancelled) {
+          await cleanupDb(activeOwnedDb);
+          return;
+        }
 
         const catalogRepo = new CatalogLocalRepository(db);
         const barcodeRepo = new BarcodeLocalRepository(db);
@@ -77,7 +98,9 @@ export function MerchantDatabaseProvider({
           syncStateRepo,
         });
       } catch (err) {
+        await cleanupDb(activeOwnedDb);
         if (isCancelled) return;
+
         const error = err instanceof Error ? err : new Error(String(err));
         setState({
           isReady: false,
@@ -96,6 +119,7 @@ export function MerchantDatabaseProvider({
 
     return () => {
       isCancelled = true;
+      void cleanupDb(activeOwnedDb);
     };
   }, [databaseInstance, dbName]);
 

@@ -40,6 +40,13 @@ data class CatalogMediaAttachResult(
     val replayed: Boolean,
 )
 
+data class CatalogMediaCleanupTask(
+    val organizationId: UUID,
+    val outletId: UUID,
+    val listingId: UUID,
+    val objectKey: String,
+)
+
 fun interface CatalogMediaPersistence {
     fun attach(upload: CatalogMediaUpload, expectedVersion: Long): CatalogMediaAttachResult
 
@@ -49,6 +56,22 @@ fun interface CatalogMediaPersistence {
         idempotencyKey: String,
         requestFingerprint: String,
     ): CatalogMediaAttachment? = null
+
+    fun findAuthorizedReplay(
+        actorId: UUID,
+        organizationId: UUID,
+        outletId: UUID,
+        listingId: UUID,
+        idempotencyKey: String,
+        requestFingerprint: String,
+    ): CatalogMediaAttachment? = findReplay(outletId, listingId, idempotencyKey, requestFingerprint)
+
+    fun enqueueCleanup(task: CatalogMediaCleanupTask, reason: String) {
+        throw DomainException(
+            "CATALOG_MEDIA_CLEANUP_QUEUE_UNAVAILABLE",
+            "Catalog media cleanup could not be scheduled",
+        )
+    }
 }
 
 interface CatalogMediaObjectStore {
@@ -92,10 +115,18 @@ class CatalogMediaService(
             ).joinToString("|").toByteArray(StandardCharsets.UTF_8),
         )
 
-        persistence.findReplay(outletId, listingId, normalizedKey, requestFingerprint)?.let { return it }
+        persistence.findAuthorizedReplay(
+            actorId,
+            organizationId,
+            outletId,
+            listingId,
+            normalizedKey,
+            requestFingerprint,
+        )?.let { return it }
 
         val mediaId = UUID.randomUUID()
         val objectKey = "catalog/$organizationId/$outletId/$listingId/$mediaId"
+        val cleanupTask = CatalogMediaCleanupTask(organizationId, outletId, listingId, objectKey)
         val publicUrl = try {
             objectStore.upload(objectKey, normalizedContentType, bytes)
         } catch (error: DomainException) {
@@ -107,7 +138,7 @@ class CatalogMediaService(
         try {
             validatePublicUrl(publicUrl, objectKey)
         } catch (error: Exception) {
-            runCatching { objectStore.delete(objectKey) }
+            cleanupOrEnqueue(cleanupTask, "INVALID_STORE_URL")
             throw error
         }
 
@@ -128,11 +159,24 @@ class CatalogMediaService(
 
         return try {
             val result = persistence.attach(upload, expectedVersion)
-            if (result.replayed) runCatching { objectStore.delete(objectKey) }
+            if (result.replayed) cleanupOrEnqueue(cleanupTask, "IDEMPOTENCY_RACE_REPLAY")
             result.attachment
         } catch (error: Exception) {
-            runCatching { objectStore.delete(objectKey) }
+            cleanupOrEnqueue(cleanupTask, "FINALIZATION_FAILED")
             throw error
+        }
+    }
+
+    private fun cleanupOrEnqueue(task: CatalogMediaCleanupTask, reason: String) {
+        try {
+            objectStore.delete(task.objectKey)
+            return
+        } catch (_: Exception) {
+            try {
+                persistence.enqueueCleanup(task, reason)
+            } catch (_: Exception) {
+                cleanupUnavailable()
+            }
         }
     }
 
@@ -169,9 +213,8 @@ class CatalogMediaService(
     }
 
     private fun containsScriptMarker(bytes: ByteArray): Boolean {
-        val probe = String(bytes.copyOfRange(0, minOf(bytes.size, SCRIPT_PROBE_BYTES)), StandardCharsets.ISO_8859_1)
-            .lowercase(Locale.ROOT)
-        return SCRIPT_MARKERS.any(probe::contains)
+        val text = String(bytes, StandardCharsets.ISO_8859_1).lowercase(Locale.ROOT)
+        return SCRIPT_MARKERS.any(text::contains)
     }
 
     private fun validatePublicUrl(value: String, objectKey: String) {
@@ -206,6 +249,11 @@ class CatalogMediaService(
         "Catalog media storage is temporarily unavailable",
     )
 
+    private fun cleanupUnavailable(): Nothing = throw DomainException(
+        "CATALOG_MEDIA_CLEANUP_QUEUE_UNAVAILABLE",
+        "Catalog media cleanup could not be scheduled",
+    )
+
     private fun versionConflict(): Nothing = throw DomainException(
         "CATALOG_VERSION_CONFLICT",
         "The listing changed concurrently; refresh and retry",
@@ -222,7 +270,6 @@ class CatalogMediaService(
         const val MAX_IDEMPOTENCY_KEY_LENGTH = 128
         private const val MAX_FILENAME_LENGTH = 180
         private const val MAX_PUBLIC_URL_LENGTH = 2048
-        private const val SCRIPT_PROBE_BYTES = 4096
         private val IDEMPOTENCY_KEY = Regex("[A-Za-z0-9._:-]{1,$MAX_IDEMPOTENCY_KEY_LENGTH}")
         private val ALLOWED_CONTENT_TYPES = setOf("image/jpeg", "image/png", "image/webp")
         private val EXTENSIONS = mapOf(
@@ -251,6 +298,7 @@ class InMemoryCatalogMediaPersistence : CatalogMediaPersistence {
     private val records = mutableMapOf<UUID, MutableList<CatalogMediaAttachment>>()
     private val versions = mutableMapOf<UUID, Long>()
     private val receipts = mutableMapOf<Pair<UUID, String>, ReplayRecord>()
+    private val cleanupTasks = mutableMapOf<String, CatalogMediaCleanupTask>()
 
     @Synchronized
     override fun findReplay(
@@ -295,6 +343,11 @@ class InMemoryCatalogMediaPersistence : CatalogMediaPersistence {
             attachment = attachment,
         )
         return CatalogMediaAttachResult(attachment, replayed = false)
+    }
+
+    @Synchronized
+    override fun enqueueCleanup(task: CatalogMediaCleanupTask, reason: String) {
+        cleanupTasks[task.objectKey] = task
     }
 
     private fun quotaExceeded(): Nothing = throw DomainException(

@@ -55,20 +55,32 @@ export class NodeSqliteDriver implements SqliteDatabase {
 
     await previousLock;
 
-    try {
-      await this.exec('BEGIN IMMEDIATE');
+    let retries = 50;
+    while (retries > 0) {
       try {
-        const result = await action(this);
-        await this.exec('COMMIT');
-        return result;
-      } catch (error) {
-        try {
-          await this.exec('ROLLBACK');
-        } catch {
-          // Ignore rollback errors if transaction already failed
+        await this.exec('BEGIN IMMEDIATE');
+        break;
+      } catch (err: unknown) {
+        retries -= 1;
+        if (retries === 0 || !(err instanceof Error && (err.message.includes('locked') || err.message.includes('busy')))) {
+          releaseLock();
+          throw err;
         }
-        throw error;
+        await new Promise((r) => setTimeout(r, 10));
       }
+    }
+
+    try {
+      const result = await action(this);
+      await this.exec('COMMIT');
+      return result;
+    } catch (error) {
+      try {
+        await this.exec('ROLLBACK');
+      } catch {
+        // Ignore rollback errors if transaction already failed
+      }
+      throw error;
     } finally {
       releaseLock();
     }
@@ -85,8 +97,9 @@ export class NodeSqliteDriver implements SqliteDatabase {
 export function createNodeSqliteDatabase(filename = ':memory:'): SqliteDatabase {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const Database = require('better-sqlite3');
-  const db: BetterSqliteDb = new Database(filename);
+  const db: BetterSqliteDb = new Database(filename, { timeout: 50 });
   db.pragma('journal_mode = WAL');
+  db.pragma('busy_timeout = 50');
   db.pragma('foreign_keys = ON');
   return new NodeSqliteDriver(db);
 }

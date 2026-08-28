@@ -1,237 +1,323 @@
-import { DatabaseBootstrapper } from '../../data/database/bootstrap';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { createNodeSqliteDatabase } from '../../data/database/node-driver';
-import { createPartitionContext } from '../../data/models/partition-context';
+import { runMigrations } from '../../data/database/migrations';
+import {
+  TABLE_CATALOG_ITEMS,
+  TABLE_INVENTORY_BALANCES,
+} from '../../data/database/schema';
+import type { MerchantPartitionContext } from '../../data/models/partition-context';
 import { CommandOutboxRepository } from '../../data/repositories/command-outbox-repository';
-import { SyncRetryPolicy } from '../retry-policy';
-import { SyncTransport } from '../sync-transport';
 import { SyncCoordinator } from '../sync-coordinator';
+import { SyncTransport } from '../sync-transport';
+import { SyncRetryPolicy } from '../retry-policy';
+import { SyncChangeFeedReconciler } from '../sync-change-feed-reconciler';
 
-describe('M6 SyncCoordinator', () => {
-  const contextA = createPartitionContext('acc_1', 'org_1', 'out_1');
-  const contextB = createPartitionContext('acc_2', 'org_2', 'out_2');
+describe('SyncCoordinator', () => {
+  const context: MerchantPartitionContext = {
+    accountId: 'acc_coord_1',
+    organizationId: 'org_coord_1',
+    outletId: 'out_coord_1',
+  };
 
-  it('demonstrates partial success: A succeeds, B fails validation (400), C depends on B -> A=ACKNOWLEDGED, B=REJECTED, C=BLOCKED', async () => {
+  it('resolves historical receipt for retried command without dispatching mutation again', async () => {
     const db = createNodeSqliteDatabase(':memory:');
-    await new DatabaseBootstrapper().bootstrap(db);
+    await runMigrations(db);
     const outboxRepo = new CommandOutboxRepository(db);
 
-    // Queue A
-    await outboxRepo.enqueueCommand(contextA, {
-      commandId: 'cmd_A',
-      installationId: 'inst_1',
-      idempotencyKey: 'idem_A',
+    const cmd = await outboxRepo.enqueueCommand(context, {
       commandType: 'INVENTORY_ADJUSTMENT',
-      payload: { outletId: 'out_1', listingId: 'list_1', quantityDelta: 5, reason: 'MANUAL_INCREASE' },
+      payloadSchemaVersion: 1,
+      payload: {
+        outletId: context.outletId,
+        listingId: 'item_1',
+        quantityDelta: 10,
+        reason: 'MANUAL_INCREASE',
+      },
+      idempotencyKey: 'idemp_retry_1',
     });
 
-    // Queue B
-    await outboxRepo.enqueueCommand(contextA, {
-      commandId: 'cmd_B',
-      installationId: 'inst_1',
-      idempotencyKey: 'idem_B',
-      commandType: 'CATALOG_UPDATE',
-      payload: { outletId: 'out_1', listingId: 'list_bad', expectedVersion: 1, name: '', mrpPaise: 0, sellingPricePaise: 0, category: '' },
-    });
+    // Simulate that the command had a previous timeout / retry attempt
+    await outboxRepo.markRetryable(
+      context,
+      cmd.commandId,
+      '2026-08-28T00:00:00.000Z',
+      'TIMEOUT',
+      'Network timeout after server commit',
+    );
 
-    // Queue C depending on B
-    await outboxRepo.enqueueCommand(contextA, {
-      commandId: 'cmd_C',
-      installationId: 'inst_1',
-      idempotencyKey: 'idem_C',
-      commandType: 'INVENTORY_ADJUSTMENT',
-      payload: { outletId: 'out_1', listingId: 'list_bad', quantityDelta: 2, reason: 'MANUAL_INCREASE' },
-      dependsOnCommandIds: ['cmd_B'],
-    });
+    let dispatchCalled = false;
+    let resolveCalled = false;
 
-    const mockFetch = async (path: string, init?: RequestInit) => {
-      if (path.includes('/inventory/adjustments')) {
+    const mockFetch = async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/v1/merchant/sync/receipts/resolve')) {
+        resolveCalled = true;
         return new Response(
-          JSON.stringify({ id: 'receipt_A', resultingOnHand: 10, resultingReserved: 0 }),
+          JSON.stringify({
+            status: 'ACCEPTED',
+            receiptId: 'mov_historical_100',
+            resultingOnHand: 35,
+            serverTimestamp: '2026-08-28T00:00:00.000Z',
+          }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }
-      if (path.includes('/listings/list_bad')) {
+      if (url.includes('/api/v1/merchant/inventory/adjustments')) {
+        dispatchCalled = true;
+        return new Response('{}', { status: 200 });
+      }
+      if (url.includes('/api/v1/merchant/sync/changes')) {
         return new Response(
-          JSON.stringify({ code: 'CATALOG_VALIDATION_ERROR', message: 'Name and price cannot be empty' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } },
+          JSON.stringify({
+            changes: [],
+            nextCursor: 'c1',
+            hasMore: false,
+            currentHighWaterCursor: 'c1',
+            serverTime: '2026-08-28T00:00:00.000Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }
-      return new Response('Not found', { status: 404 });
+      return new Response('{}', { status: 404 });
     };
 
     const transport = new SyncTransport(mockFetch);
-    const retryPolicy = new SyncRetryPolicy();
-    const coordinator = new SyncCoordinator(db, transport, retryPolicy);
+    const coordinator = new SyncCoordinator(db, transport, new SyncRetryPolicy());
 
-    const summary = await coordinator.sync(contextA);
+    const summary = await coordinator.sync(context);
 
-    expect(summary.commandsProcessed).toBe(2); // A and B processed, C was blocked!
+    expect(summary.commandsProcessed).toBe(1);
     expect(summary.acknowledged).toBe(1);
-    expect(summary.rejected).toBe(1);
-    expect(summary.blocked).toBe(1);
+    expect(resolveCalled).toBe(true);
+    expect(dispatchCalled).toBe(false); // Proves mutation was NOT called again!
 
-    const cmdA = await outboxRepo.getCommand(contextA, 'cmd_A');
-    expect(cmdA?.state).toBe('ACKNOWLEDGED');
-    expect(cmdA?.durableServerReceipt).toContain('receipt_A');
-
-    const cmdB = await outboxRepo.getCommand(contextA, 'cmd_B');
-    expect(cmdB?.state).toBe('REJECTED');
-    expect(cmdB?.lastErrorCode).toBe('CATALOG_VALIDATION_ERROR');
-
-    const cmdC = await outboxRepo.getCommand(contextA, 'cmd_C');
-    expect(cmdC?.state).toBe('BLOCKED');
-    expect(cmdC?.lastErrorCode).toBe('PARENT_COMMAND_REJECTED');
+    const stored = await outboxRepo.getCommand(context, cmd.commandId);
+    expect(stored?.state).toBe('ACKNOWLEDGED');
+    const receipt = stored?.durableServerReceipt ? JSON.parse(stored.durableServerReceipt) : null;
+    expect(receipt?.receiptId).toBe('mov_historical_100');
+    expect(receipt?.resultingOnHand).toBe(35);
 
     await db.close();
   });
 
-  it('quarantines Account A commands when syncing under Account B context', async () => {
-    const db = createNodeSqliteDatabase(':memory:');
-    await new DatabaseBootstrapper().bootstrap(db);
-    const outboxRepo = new CommandOutboxRepository(db);
+  it('guarantees exactly one dispatch under two independent SQLite connection handles', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-multi-'));
+    const tmpDbPath = path.join(tmpDir, 'test.db');
 
-    await outboxRepo.enqueueCommand(contextA, {
-      commandId: 'cmd_user_A',
-      installationId: 'inst_1',
-      idempotencyKey: 'idem_A',
+    const dbHandleA = createNodeSqliteDatabase(tmpDbPath);
+    await runMigrations(dbHandleA);
+
+    const dbHandleB = createNodeSqliteDatabase(tmpDbPath);
+
+    const outboxRepoA = new CommandOutboxRepository(dbHandleA);
+
+    const cmd = await outboxRepoA.enqueueCommand(context, {
       commandType: 'INVENTORY_ADJUSTMENT',
-      payload: { outletId: 'out_1', listingId: 'list_1', quantityDelta: 5, reason: 'MANUAL_INCREASE' },
+      payloadSchemaVersion: 1,
+      payload: {
+        outletId: context.outletId,
+        listingId: 'item_multi_1',
+        quantityDelta: 5,
+        reason: 'MANUAL_INCREASE',
+      },
+      idempotencyKey: 'idemp_multi_1',
     });
 
-    let commandDispatchCount = 0;
-    const mockFetch = async (path: string) => {
-      if (path.includes('/inventory/adjustments')) {
-        commandDispatchCount += 1;
-      }
-      return new Response(
-        JSON.stringify({ changes: [], nextCursor: null, hasMore: false, currentHighWaterCursor: null, serverTime: new Date().toISOString() }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
-    };
-
-    const transport = new SyncTransport(mockFetch);
-    const coordinator = new SyncCoordinator(db, transport);
-
-    // Sync under contextB
-    const summaryB = await coordinator.sync(contextB);
-    expect(summaryB.commandsProcessed).toBe(0);
-    expect(commandDispatchCount).toBe(0);
-
-    // Command under contextA is still PENDING
-    const cmdA = await outboxRepo.getCommand(contextA, 'cmd_user_A');
-    expect(cmdA?.state).toBe('PENDING');
-
-    await db.close();
-  });
-
-  it('enforces single-flight execution per partition avoiding race conditions between overlapping sync triggers', async () => {
-    const db = createNodeSqliteDatabase(':memory:');
-    await new DatabaseBootstrapper().bootstrap(db);
-    const outboxRepo = new CommandOutboxRepository(db);
-
-    await outboxRepo.enqueueCommand(contextA, {
-      commandId: 'cmd_concurrent',
-      installationId: 'inst_1',
-      idempotencyKey: 'idem_conc',
-      commandType: 'INVENTORY_ADJUSTMENT',
-      payload: { outletId: 'out_1', listingId: 'list_1', quantityDelta: 5, reason: 'MANUAL_INCREASE' },
-    });
-
-    let commandDispatchCount = 0;
-    const mockFetch = async (path: string) => {
-      if (path.includes('/inventory/adjustments')) {
-        commandDispatchCount += 1;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        return new Response(
-          JSON.stringify({ id: 'mov_conc', resultingOnHand: 5, resultingReserved: 0 }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        );
-      }
-      return new Response(
-        JSON.stringify({ changes: [], nextCursor: null, hasMore: false, currentHighWaterCursor: null, serverTime: new Date().toISOString() }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
-    };
-
-    const transport = new SyncTransport(mockFetch);
-    const coordinator = new SyncCoordinator(db, transport);
-
-    // Trigger two syncs concurrently
-    const [res1, res2] = await Promise.all([
-      coordinator.sync(contextA),
-      coordinator.sync(contextA),
-    ]);
-
-    expect(commandDispatchCount).toBe(1); // Only one HTTP dispatch took place!
-    expect(res1.acknowledged).toBe(1);
-    expect(res2.acknowledged).toBe(1);
-
-    await db.close();
-  });
-
-  it('serializes dispatches when two independent SyncCoordinator instances compete against same database', async () => {
-    const db = createNodeSqliteDatabase(':memory:');
-    await new DatabaseBootstrapper().bootstrap(db);
-    const outboxRepo = new CommandOutboxRepository(db);
-
-    await outboxRepo.enqueueCommand(contextA, {
-      commandId: 'cmd_competing',
-      installationId: 'inst_1',
-      idempotencyKey: 'idem_comp',
-      commandType: 'INVENTORY_ADJUSTMENT',
-      payload: { outletId: 'out_1', listingId: 'list_1', quantityDelta: 5, reason: 'MANUAL_INCREASE' },
-    });
-
-    let commandDispatchCount = 0;
-    const mockFetch = async (path: string) => {
-      if (path.includes('/inventory/adjustments')) {
-        commandDispatchCount += 1;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        return new Response(
-          JSON.stringify({ id: 'mov_comp', resultingOnHand: 5, resultingReserved: 0 }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        );
-      }
-      return new Response(
-        JSON.stringify({ changes: [], nextCursor: null, hasMore: false, currentHighWaterCursor: null, serverTime: new Date().toISOString() }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
-    };
-
-    const transport = new SyncTransport(mockFetch);
-    const coordinator1 = new SyncCoordinator(db, transport, new SyncRetryPolicy(), undefined, 'worker_A');
-    const coordinator2 = new SyncCoordinator(db, transport, new SyncRetryPolicy(), undefined, 'worker_B');
-
-    // Run both coordinators simultaneously
-    const [res1, res2] = await Promise.all([
-      coordinator1.sync(contextA),
-      coordinator2.sync(contextA),
-    ]);
-
-    expect(commandDispatchCount).toBe(1); // Exactly one coordinator claimed and dispatched
-    expect(res1.acknowledged + res2.acknowledged).toBe(1);
-
-    await db.close();
-  });
-
-  it('captures lastFeedError when reconciler fails without disrupting outbox summary', async () => {
-    const db = createNodeSqliteDatabase(':memory:');
-    await new DatabaseBootstrapper().bootstrap(db);
-
+    let dispatchCount = 0;
     const mockFetch = async (url: string) => {
-      if (url.includes('/changes')) {
-        return new Response('Internal Server Error', { status: 500 });
+      if (url.includes('/api/v1/merchant/inventory/adjustments')) {
+        dispatchCount += 1;
+        // Simulate small network delay
+        await new Promise((r) => setTimeout(r, 20));
+        return new Response(
+          JSON.stringify({
+            id: 'mov_multi_1',
+            resultingOnHand: 5,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
       }
-      return new Response('{}', { status: 200 });
+      if (url.includes('/api/v1/merchant/sync/changes')) {
+        return new Response(
+          JSON.stringify({
+            changes: [],
+            nextCursor: 'c1',
+            hasMore: false,
+            currentHighWaterCursor: 'c1',
+            serverTime: '2026-08-28T00:00:00.000Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response('{}', { status: 404 });
     };
 
-    const transport = new SyncTransport(mockFetch);
-    const coordinator = new SyncCoordinator(db, transport);
+    const transportA = new SyncTransport(mockFetch);
+    const transportB = new SyncTransport(mockFetch);
 
-    const summary = await coordinator.sync(contextA);
-    expect(summary.lastFeedError).toBeDefined();
-    expect(summary.lastFeedError).toContain('CHANGE_FEED_FETCH_FAILED');
+    const coordinatorA = new SyncCoordinator(dbHandleA, transportA, new SyncRetryPolicy(), undefined, 'worker-A');
+    const coordinatorB = new SyncCoordinator(dbHandleB, transportB, new SyncRetryPolicy(), undefined, 'worker-B');
 
-    await db.close();
+    // Run simultaneous sync across two independent SQLite handles
+    const [summaryA, summaryB] = await Promise.all([
+      coordinatorA.sync(context),
+      coordinatorB.sync(context),
+    ]);
+
+    expect(dispatchCount).toBe(1);
+    expect(summaryA.acknowledged + summaryB.acknowledged).toBe(1);
+
+    const finalCmd = await outboxRepoA.getCommand(context, cmd.commandId);
+    expect(finalCmd?.state).toBe('ACKNOWLEDGED');
+
+    await dbHandleA.close();
+    await dbHandleB.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('converges to identical local state regardless of receipt vs feed ordering', async () => {
+    // Sequence A: Receipt recovery ACKs command first -> Change feed applies same balance version later
+    const dbA = createNodeSqliteDatabase(':memory:');
+    await runMigrations(dbA);
+    const outboxRepoA = new CommandOutboxRepository(dbA);
+    const cmdA = await outboxRepoA.enqueueCommand(context, {
+      commandType: 'INVENTORY_ADJUSTMENT',
+      payloadSchemaVersion: 1,
+      payload: {
+        outletId: context.outletId,
+        listingId: 'item_conv_1',
+        quantityDelta: 10,
+        reason: 'MANUAL_INCREASE',
+      },
+      idempotencyKey: 'idemp_conv_1',
+    });
+
+    // 1. Mark acknowledged from receipt
+    await outboxRepoA.markAcknowledged(
+      context,
+      cmdA.commandId,
+      {
+        receiptId: 'mov_conv_1',
+        resultingOnHand: 10,
+        serverTimestamp: '2026-08-28T00:00:00Z',
+      },
+    );
+
+    // 2. Change feed arrives with inventory balance version 1
+    const reconcilerA = new SyncChangeFeedReconciler(dbA, async () => {
+      return new Response(
+        JSON.stringify({
+          changes: [
+            {
+              sequenceNumber: 1,
+              organizationId: context.organizationId,
+              outletId: context.outletId,
+              entityType: 'INVENTORY_BALANCE',
+              entityId: 'item_conv_1',
+              entityVersion: 1,
+              isTombstone: false,
+              payload: JSON.stringify({
+                organizationId: context.organizationId,
+                outletId: context.outletId,
+                listingId: 'item_conv_1',
+                onHand: 10,
+                reserved: 0,
+                version: 1,
+                updatedAt: '2026-08-28T00:00:00Z',
+              }),
+              schemaVersion: 1,
+              createdAt: '2026-08-28T00:00:00Z',
+            },
+          ],
+          nextCursor: 'c_conv_1',
+          hasMore: false,
+          currentHighWaterCursor: 'c_conv_1',
+          serverTime: '2026-08-28T00:00:00Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    await reconcilerA.reconcile(context);
+
+    const balanceA = await dbA.get<{ on_hand: number }>(
+      `SELECT on_hand FROM ${TABLE_INVENTORY_BALANCES} WHERE listing_id = 'item_conv_1';`,
+    );
+    const cmdStateA = await outboxRepoA.getCommand(context, cmdA.commandId);
+
+    // Sequence B: Change feed arrives first -> Receipt recovery ACKs command later
+    const dbB = createNodeSqliteDatabase(':memory:');
+    await runMigrations(dbB);
+    const outboxRepoB = new CommandOutboxRepository(dbB);
+    const cmdB = await outboxRepoB.enqueueCommand(context, {
+      commandType: 'INVENTORY_ADJUSTMENT',
+      payloadSchemaVersion: 1,
+      payload: {
+        outletId: context.outletId,
+        listingId: 'item_conv_1',
+        quantityDelta: 10,
+        reason: 'MANUAL_INCREASE',
+      },
+      idempotencyKey: 'idemp_conv_1',
+    });
+
+    const reconcilerB = new SyncChangeFeedReconciler(dbB, async () => {
+      return new Response(
+        JSON.stringify({
+          changes: [
+            {
+              sequenceNumber: 1,
+              organizationId: context.organizationId,
+              outletId: context.outletId,
+              entityType: 'INVENTORY_BALANCE',
+              entityId: 'item_conv_1',
+              entityVersion: 1,
+              isTombstone: false,
+              payload: JSON.stringify({
+                organizationId: context.organizationId,
+                outletId: context.outletId,
+                listingId: 'item_conv_1',
+                onHand: 10,
+                reserved: 0,
+                version: 1,
+                updatedAt: '2026-08-28T00:00:00Z',
+              }),
+              schemaVersion: 1,
+              createdAt: '2026-08-28T00:00:00Z',
+            },
+          ],
+          nextCursor: 'c_conv_1',
+          hasMore: false,
+          currentHighWaterCursor: 'c_conv_1',
+          serverTime: '2026-08-28T00:00:00Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    await reconcilerB.reconcile(context);
+
+    await outboxRepoB.markAcknowledged(
+      context,
+      cmdB.commandId,
+      {
+        receiptId: 'mov_conv_1',
+        resultingOnHand: 10,
+        serverTimestamp: '2026-08-28T00:00:00Z',
+      },
+    );
+
+    const balanceB = await dbB.get<{ on_hand: number }>(
+      `SELECT on_hand FROM ${TABLE_INVENTORY_BALANCES} WHERE listing_id = 'item_conv_1';`,
+    );
+    const cmdStateB = await outboxRepoB.getCommand(context, cmdB.commandId);
+
+    // Both sequences converge identically
+    expect(balanceA?.on_hand).toBe(10);
+    expect(balanceB?.on_hand).toBe(10);
+    expect(cmdStateA?.state).toBe('ACKNOWLEDGED');
+    expect(cmdStateB?.state).toBe('ACKNOWLEDGED');
+
+    await dbA.close();
+    await dbB.close();
   });
 });

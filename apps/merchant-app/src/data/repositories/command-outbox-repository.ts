@@ -76,6 +76,7 @@ export class CommandOutboxRepository {
   ): Promise<OfflineCommandRecord> {
     const commandId = input.commandId ?? Crypto.randomUUID();
     const schemaVersion = input.payloadSchemaVersion ?? 1;
+    const installationId = input.installationId ?? 'inst_default';
 
     // Validate payload schema version
     if (!isSupportedCommandPayloadVersion(input.commandType, schemaVersion)) {
@@ -149,7 +150,7 @@ export class CommandOutboxRepository {
             context.organizationId,
             context.outletId,
             commandId,
-            input.installationId,
+            installationId,
             input.idempotencyKey,
             input.commandType,
             schemaVersion,

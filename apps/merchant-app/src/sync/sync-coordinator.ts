@@ -100,6 +100,48 @@ export class SyncCoordinator {
           continue;
         }
 
+        // Attempt historical receipt resolution for commands with potential unknown outcome (replays / retries)
+        if (cmd.attemptCount > 0) {
+          const resolution = await this.transport.resolveReceipt(cmd);
+          if (resolution.ok) {
+            if (resolution.found) {
+              await this.outboxRepo.markAcknowledged(
+                context,
+                cmd.commandId,
+                resolution.receipt,
+                resolution.receipt.resultingVersion,
+              );
+              acknowledged += 1;
+              continue;
+            }
+          } else {
+            if (resolution.errorCode === 'IDEMPOTENCY_FINGERPRINT_MISMATCH') {
+              await this.outboxRepo.markRejected(
+                context,
+                cmd.commandId,
+                'IDEMPOTENCY_FINGERPRINT_MISMATCH',
+                resolution.error.message,
+              );
+              rejected += 1;
+              continue;
+            } else if (resolution.status === 401 || resolution.status === 403) {
+              const decision = this.retryPolicy.evaluateError(
+                resolution.error,
+                cmd.attemptCount,
+                resolution.status,
+              );
+              await this.outboxRepo.markRejected(
+                context,
+                cmd.commandId,
+                decision.errorCode,
+                decision.errorMessage,
+              );
+              rejected += 1;
+              continue;
+            }
+          }
+        }
+
         const result = await this.transport.dispatch(cmd);
 
         if (result.ok) {

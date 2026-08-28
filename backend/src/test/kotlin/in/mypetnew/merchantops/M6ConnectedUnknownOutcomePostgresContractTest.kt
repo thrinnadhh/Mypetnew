@@ -38,7 +38,7 @@ class M6ConnectedUnknownOutcomePostgresContractTest {
         val dataSource = PostgresTestDatabase.dataSource()
         val jdbc = JdbcTemplate(dataSource)
         val transactions = TransactionTemplate(DataSourceTransactionManager(dataSource))
-        val syncFeed = JdbcMerchantSyncFeed(jdbc)
+        val syncFeed = JdbcMerchantSyncFeed(jdbc, cursorSecret = "a".repeat(32))
         return Context(
             jdbc = jdbc,
             transactions = transactions,

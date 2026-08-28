@@ -8,6 +8,7 @@ import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.catalog.domain.StockMovement
 import `in`.mypetnew.catalog.domain.StockReason
 import `in`.mypetnew.common.auth.MerchantPermission
+import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.provider.domain.ProviderService
 import org.slf4j.MDC
 import org.springframework.security.core.Authentication
@@ -40,21 +41,18 @@ class MerchantInventoryController(
     fun adjust(
         authentication: Authentication,
         @RequestHeader("Idempotency-Key") idempotencyKey: String,
+        @RequestHeader(name = "X-MyPet-Command-Type", required = false) commandTypeHeader: String?,
+        @RequestHeader(name = "X-MyPet-Payload-Schema-Version", required = false) schemaVersionHeader: String?,
         @RequestBody request: InventoryAdjustmentRequest,
     ): StockMovement {
-        val principal = authentication.domainPrincipal()
-        val scope = try {
-            requireInventoryScope(principal.actorId, request.outletId, request.listingId, authentication)
-        } catch (authEx: Exception) {
-            val orgId = principal.organizationId
-            if (orgId != null) {
-                val existing = inventory.findExistingMovementByReceipt(orgId, principal.actorId, idempotencyKey)
-                if (existing != null) {
-                    return existing
-                }
-            }
-            throw authEx
+        if (commandTypeHeader != null && commandTypeHeader != "INVENTORY_ADJUSTMENT") {
+            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Endpoint accepts INVENTORY_ADJUSTMENT, received $commandTypeHeader")
         }
+        if (schemaVersionHeader != null && schemaVersionHeader != "1") {
+            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported payload schema version $schemaVersionHeader")
+        }
+        val principal = authentication.domainPrincipal()
+        val scope = requireInventoryScope(principal.actorId, request.outletId, request.listingId, authentication)
         return inventory.adjustMerchant(
             scope = scope,
             delta = request.quantityDelta,

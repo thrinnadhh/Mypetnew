@@ -286,6 +286,16 @@ class InventoryService(
         const val SYSTEM_TRACE_ID: String = "system"
         const val MAX_MANUAL_ADJUSTMENT_UNITS: Long = 1_000_000L
         private val REFERENCE_TYPE_PATTERN = Regex("[A-Z][A-Z0-9_]{0,39}")
+
+        fun computeFingerprint(vararg parts: Any?): String {
+            val canonical = parts.joinToString("|") { part ->
+                val value = part?.toString() ?: "<null>"
+                "${value.length}:$value"
+            }
+            return java.security.MessageDigest.getInstance("SHA-256")
+                .digest(canonical.toByteArray(java.nio.charset.StandardCharsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+        }
     }
 }
 

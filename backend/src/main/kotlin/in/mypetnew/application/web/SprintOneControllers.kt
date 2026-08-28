@@ -210,8 +210,16 @@ class CatalogInventoryApiController(
         authentication: Authentication,
         @PathVariable listingId: UUID,
         @RequestHeader("Idempotency-Key") idempotencyKey: String,
+        @RequestHeader(name = "X-MyPet-Command-Type", required = false) commandTypeHeader: String?,
+        @RequestHeader(name = "X-MyPet-Payload-Schema-Version", required = false) schemaVersionHeader: String?,
         @RequestBody request: UpdateListingRequest,
     ): Listing {
+        if (commandTypeHeader != null && commandTypeHeader != "CATALOG_UPDATE") {
+            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Endpoint accepts CATALOG_UPDATE, received $commandTypeHeader")
+        }
+        if (schemaVersionHeader != null && schemaVersionHeader != "1") {
+            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported payload schema version $schemaVersionHeader")
+        }
         val principal = authentication.domainPrincipal()
         val outlet = providers.requireActiveOutlet(principal, request.outletId, MerchantPermission.CATALOG_WRITE)
         return catalog.updateListing(
@@ -242,16 +250,36 @@ class CatalogInventoryApiController(
         authentication: Authentication,
         @PathVariable listingId: UUID,
         @RequestHeader("Idempotency-Key") idempotencyKey: String,
+        @RequestHeader(name = "X-MyPet-Command-Type", required = false) commandTypeHeader: String?,
+        @RequestHeader(name = "X-MyPet-Payload-Schema-Version", required = false) schemaVersionHeader: String?,
         @RequestBody request: CatalogLifecycleRequest,
-    ): Listing = changeLifecycle(authentication, listingId, idempotencyKey, request, ListingStatus.INACTIVE)
+    ): Listing {
+        if (commandTypeHeader != null && commandTypeHeader != "CATALOG_DEACTIVATE") {
+            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Endpoint accepts CATALOG_DEACTIVATE, received $commandTypeHeader")
+        }
+        if (schemaVersionHeader != null && schemaVersionHeader != "1") {
+            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported payload schema version $schemaVersionHeader")
+        }
+        return changeLifecycle(authentication, listingId, idempotencyKey, request, ListingStatus.INACTIVE)
+    }
 
     @PostMapping("/listings/{listingId}/activate")
     fun activateListing(
         authentication: Authentication,
         @PathVariable listingId: UUID,
         @RequestHeader("Idempotency-Key") idempotencyKey: String,
+        @RequestHeader(name = "X-MyPet-Command-Type", required = false) commandTypeHeader: String?,
+        @RequestHeader(name = "X-MyPet-Payload-Schema-Version", required = false) schemaVersionHeader: String?,
         @RequestBody request: CatalogLifecycleRequest,
-    ): Listing = changeLifecycle(authentication, listingId, idempotencyKey, request, ListingStatus.ACTIVE)
+    ): Listing {
+        if (commandTypeHeader != null && commandTypeHeader != "CATALOG_ACTIVATE") {
+            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Endpoint accepts CATALOG_ACTIVATE, received $commandTypeHeader")
+        }
+        if (schemaVersionHeader != null && schemaVersionHeader != "1") {
+            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported payload schema version $schemaVersionHeader")
+        }
+        return changeLifecycle(authentication, listingId, idempotencyKey, request, ListingStatus.ACTIVE)
+    }
 
     @GetMapping("/listings/{listingId}/history")
     fun listingHistory(

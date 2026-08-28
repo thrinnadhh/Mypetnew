@@ -27,6 +27,8 @@ spring:
 mypet:
   cors:
     allowed-origins: ${MYPET_CORS_ALLOWED_ORIGINS:http://localhost:8081,http://127.0.0.1:8081}
+  sync:
+    cursor-secret: ${MYPET_SYNC_CURSOR_SECRET:mypet-sync-cursor-secret-v2-secure-key-32-chars-long}
   security:
     token-secret: ${MYPET_TOKEN_SECRET:}
     token-issuer: ${MYPET_TOKEN_ISSUER:}

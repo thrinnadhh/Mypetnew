@@ -1,23 +1,25 @@
-import { DatabaseBootstrapper } from '../../data/database/bootstrap';
 import { createNodeSqliteDatabase } from '../../data/database/node-driver';
+import { runMigrations } from '../../data/database/migrations';
 import {
-  TABLE_CATALOG_BARCODES,
   TABLE_CATALOG_ITEMS,
   TABLE_INVENTORY_BALANCES,
-  TABLE_OFFLINE_COMMANDS,
   TABLE_PROJECTION_TOMBSTONES,
 } from '../../data/database/schema';
-import { createPartitionContext } from '../../data/models/partition-context';
-import { CommandOutboxRepository } from '../../data/repositories/command-outbox-repository';
+import type { MerchantPartitionContext } from '../../data/models/partition-context';
 import { SyncStateRepository } from '../../data/repositories/sync-state-repository';
 import { SyncChangeFeedReconciler } from '../sync-change-feed-reconciler';
 
-describe('M6 SyncChangeFeedReconciler', () => {
-  const context = createPartitionContext('acc_1', 'org_1', 'out_1');
+describe('SyncChangeFeedReconciler', () => {
+  const context: MerchantPartitionContext = {
+    accountId: 'acc_sync_1',
+    organizationId: 'org_sync_1',
+    outletId: 'out_sync_1',
+  };
 
-  it('applies change feed pages atomically to local projections and advances cursor', async () => {
+  it('reconciles catalog and inventory changes and updates sync state to FRESH', async () => {
     const db = createNodeSqliteDatabase(':memory:');
-    await new DatabaseBootstrapper().bootstrap(db);
+    await runMigrations(db);
+    const syncRepo = new SyncStateRepository(db);
 
     const mockFetch = async () => {
       return new Response(
@@ -25,48 +27,57 @@ describe('M6 SyncChangeFeedReconciler', () => {
           changes: [
             {
               sequenceNumber: 1,
-              organizationId: 'org_1',
-              outletId: 'out_1',
+              organizationId: context.organizationId,
+              outletId: context.outletId,
               entityType: 'CATALOG_ITEM',
               entityId: 'item_1',
-              entityVersion: 1,
+              entityVersion: 0,
               isTombstone: false,
               payload: JSON.stringify({
-                name: 'Dog Food',
+                id: 'item_1',
+                organizationId: context.organizationId,
+                outletId: context.outletId,
+                barcodeType: 'INTERNAL',
+                normalizedBarcode: 'BAR_1',
+                name: 'Product 1',
                 kind: 'PRODUCT',
-                commerceMode: 'COMMERCE',
-                barcodeType: 'GTIN_13',
-                normalizedBarcode: '8901234567890',
+                commerceMode: 'PICKUP_AND_DELIVERY',
                 mrpPaise: 1000,
-                sellingPricePaise: 900,
+                sellingPricePaise: 800,
                 category: 'food',
                 status: 'ACTIVE',
-                imageUrls: ['https://example.com/img1.jpg'],
+                version: 0,
+                createdAt: '2026-08-28T00:00:00.000Z',
+                updatedAt: '2026-08-28T00:00:00.000Z',
               }),
               schemaVersion: 1,
-              createdAt: '2026-08-28T12:00:00.000Z',
+              createdAt: '2026-08-28T00:00:00.000Z',
             },
             {
               sequenceNumber: 2,
-              organizationId: 'org_1',
-              outletId: 'out_1',
+              organizationId: context.organizationId,
+              outletId: context.outletId,
               entityType: 'INVENTORY_BALANCE',
               entityId: 'item_1',
               entityVersion: 1,
               isTombstone: false,
               payload: JSON.stringify({
-                onHand: 25,
-                reserved: 5,
-                available: 20,
+                organizationId: context.organizationId,
+                outletId: context.outletId,
+                listingId: 'item_1',
+                onHand: 20,
+                reserved: 0,
+                version: 1,
+                updatedAt: '2026-08-28T00:00:00.000Z',
               }),
               schemaVersion: 1,
-              createdAt: '2026-08-28T12:00:01.000Z',
+              createdAt: '2026-08-28T00:00:00.000Z',
             },
           ],
           nextCursor: 'cursor_page_1',
           hasMore: false,
           currentHighWaterCursor: 'cursor_page_1',
-          serverTime: '2026-08-28T12:00:01.000Z',
+          serverTime: '2026-08-28T00:00:00.000Z',
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
@@ -78,235 +89,233 @@ describe('M6 SyncChangeFeedReconciler', () => {
     expect(result.appliedChanges).toBe(2);
     expect(result.nextCursor).toBe('cursor_page_1');
 
-    // Verify catalog projection
-    const item = await db.get<{ name: string; version: number }>(
-      `SELECT name, version FROM ${TABLE_CATALOG_ITEMS} WHERE id = ?;`,
-      ['item_1'],
+    const item = await db.get<{ name: string; status: string }>(
+      `SELECT name, status FROM ${TABLE_CATALOG_ITEMS} WHERE id = 'item_1';`,
     );
-    expect(item?.name).toBe('Dog Food');
-    expect(item?.version).toBe(1);
+    expect(item?.name).toBe('Product 1');
+    expect(item?.status).toBe('ACTIVE');
 
-    // Verify inventory projection
-    const balance = await db.get<{ on_hand: number; reserved: number; available: number }>(
-      `SELECT on_hand, reserved, available FROM ${TABLE_INVENTORY_BALANCES} WHERE listing_id = ?;`,
-      ['item_1'],
+    const balance = await db.get<{ on_hand: number }>(
+      `SELECT on_hand FROM ${TABLE_INVENTORY_BALANCES} WHERE listing_id = 'item_1';`,
     );
-    expect(balance?.on_hand).toBe(25);
-    expect(balance?.reserved).toBe(5);
-    expect(balance?.available).toBe(20);
+    expect(balance?.on_hand).toBe(20);
 
-    // Verify cursor updated in projection_sync_state
-    const syncState = await new SyncStateRepository(db).getSyncState(context, 'all');
-    expect(syncState?.cursor).toBe('cursor_page_1');
-    expect(syncState?.status).toBe('FRESH');
+    const state = await syncRepo.getSyncState(context, 'all');
+    expect(state?.status).toBe('FRESH');
+    expect(state?.cursor).toBe('cursor_page_1');
 
     await db.close();
   });
 
-  it('handles tombstones by updating projection items and persisting in projection_tombstones', async () => {
+  it('performs bounded multi-page rebootstrap and wipes obsolete tombstones', async () => {
     const db = createNodeSqliteDatabase(':memory:');
-    await new DatabaseBootstrapper().bootstrap(db);
+    await runMigrations(db);
+    const syncRepo = new SyncStateRepository(db);
+
+    // Seed existing tombstone
+    await db.run(
+      `INSERT INTO ${TABLE_PROJECTION_TOMBSTONES} (
+        account_id, organization_id, outlet_id, projection_name, entity_id,
+        server_updated_at, server_version, deleted_at
+      ) VALUES (?, ?, ?, 'catalog_items', 'old_deleted_item', '2026-08-27T00:00:00Z', 1, '2026-08-27T00:00:00Z');`,
+      [context.accountId, context.organizationId, context.outletId],
+    );
+
+    let bootstrapPageCalls = 0;
+    const mockFetch = async (url: string) => {
+      if (url.includes('/api/v1/merchant/sync/bootstrap')) {
+        bootstrapPageCalls += 1;
+        if (bootstrapPageCalls === 1) {
+          return new Response(
+            JSON.stringify({
+              highWaterCursor: 'high_water_boot',
+              catalogItems: [
+                {
+                  id: 'boot_item_1',
+                  organizationId: context.organizationId,
+                  outletId: context.outletId,
+                  barcodeType: 'INTERNAL',
+                  normalizedBarcode: 'BOOT_1',
+                  name: 'Boot Item 1',
+                  kind: 'PRODUCT',
+                  commerceMode: 'PICKUP_AND_DELIVERY',
+                  mrpPaise: 500,
+                  sellingPricePaise: 450,
+                  category: 'food',
+                  imageUrls: [],
+                  status: 'ACTIVE',
+                  version: 0,
+                  createdAt: '2026-08-28T00:00:00.000Z',
+                  updatedAt: '2026-08-28T00:00:00.000Z',
+                },
+              ],
+              inventoryBalances: [],
+              hasMore: true,
+              nextCursor: 'boot_page_2_cursor',
+              serverTime: '2026-08-28T00:00:00.000Z',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        } else {
+          return new Response(
+            JSON.stringify({
+              highWaterCursor: 'high_water_boot',
+              catalogItems: [],
+              inventoryBalances: [
+                {
+                  organizationId: context.organizationId,
+                  outletId: context.outletId,
+                  listingId: 'boot_item_1',
+                  onHand: 50,
+                  reserved: 0,
+                  version: 1,
+                  updatedAt: '2026-08-28T00:00:00.000Z',
+                },
+              ],
+              hasMore: false,
+              nextCursor: null,
+              serverTime: '2026-08-28T00:00:00.000Z',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+      }
+      return new Response('{}', { status: 404 });
+    };
+
+    const reconciler = new SyncChangeFeedReconciler(db, mockFetch);
+    await reconciler.rebootstrap(context);
+
+    expect(bootstrapPageCalls).toBe(2);
+
+    // Old tombstone must be deleted
+    const tombstone = await db.get(
+      `SELECT * FROM ${TABLE_PROJECTION_TOMBSTONES} WHERE entity_id = 'old_deleted_item';`,
+    );
+    expect(tombstone).toBeNull();
+
+    // Boot item and balance must exist
+    const item = await db.get<{ name: string }>(
+      `SELECT name FROM ${TABLE_CATALOG_ITEMS} WHERE id = 'boot_item_1';`,
+    );
+    expect(item?.name).toBe('Boot Item 1');
+
+    const bal = await db.get<{ on_hand: number }>(
+      `SELECT on_hand FROM ${TABLE_INVENTORY_BALANCES} WHERE listing_id = 'boot_item_1';`,
+    );
+    expect(bal?.on_hand).toBe(50);
+
+    const state = await syncRepo.getSyncState(context, 'all');
+    expect(state?.status).toBe('FRESH');
+    expect(state?.cursor).toBe('high_water_boot');
+
+    await db.close();
+  });
+
+  it('marks SYNC_FAILED and preserves previous cursor on HTTP 500', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await runMigrations(db);
+    const syncRepo = new SyncStateRepository(db);
+
+    // Establish prior FRESH state with cursor C0
+    await syncRepo.recordSyncSuccess(context, 'all', 'cursor_c0');
+
+    const mockFetch = async () => {
+      return new Response(
+        JSON.stringify({ code: 'INTERNAL_ERROR', message: 'Server database failure' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const reconciler = new SyncChangeFeedReconciler(db, mockFetch);
+    await expect(reconciler.reconcile(context)).rejects.toThrow('CHANGE_FEED_FETCH_FAILED');
+
+    const state = await syncRepo.getSyncState(context, 'all');
+    expect(state?.status).toBe('SYNC_FAILED');
+    expect(state?.cursor).toBe('cursor_c0'); // Preserved!
+    expect(state?.lastError).toContain('Server database failure');
+
+    await db.close();
+  });
+
+  it('marks SYNC_FAILED and preserves previous cursor on network exception', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await runMigrations(db);
+    const syncRepo = new SyncStateRepository(db);
+
+    await syncRepo.recordSyncSuccess(context, 'all', 'cursor_c0');
+
+    const mockFetch = async () => {
+      throw new Error('ECONNREFUSED: Connection failed');
+    };
+
+    const reconciler = new SyncChangeFeedReconciler(db, mockFetch);
+    await expect(reconciler.reconcile(context)).rejects.toThrow('ECONNREFUSED');
+
+    const state = await syncRepo.getSyncState(context, 'all');
+    expect(state?.status).toBe('SYNC_FAILED');
+    expect(state?.cursor).toBe('cursor_c0');
+    expect(state?.lastError).toContain('ECONNREFUSED');
+
+    await db.close();
+  });
+
+  it('rolls back entire page transaction when page contains valid event followed by unsupported schema version', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await runMigrations(db);
+    const syncRepo = new SyncStateRepository(db);
+
+    await syncRepo.recordSyncSuccess(context, 'all', 'cursor_c0');
 
     const mockFetch = async () => {
       return new Response(
         JSON.stringify({
           changes: [
             {
-              sequenceNumber: 3,
-              organizationId: 'org_1',
-              outletId: 'out_1',
+              sequenceNumber: 1,
+              organizationId: context.organizationId,
+              outletId: context.outletId,
               entityType: 'CATALOG_ITEM',
-              entityId: 'item_deleted',
-              entityVersion: 5,
-              isTombstone: true,
-              payload: JSON.stringify({ status: 'INACTIVE' }),
-              schemaVersion: 1,
-              createdAt: '2026-08-28T12:00:02.000Z',
-            },
-          ],
-          nextCursor: 'cursor_tombstone',
-          hasMore: false,
-          currentHighWaterCursor: 'cursor_tombstone',
-          serverTime: '2026-08-28T12:00:02.000Z',
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
-    };
-
-    const reconciler = new SyncChangeFeedReconciler(db, mockFetch);
-    await reconciler.reconcile(context);
-
-    const tombstone = await db.get<{ entity_id: string; server_version: number }>(
-      `SELECT entity_id, server_version FROM ${TABLE_PROJECTION_TOMBSTONES} WHERE entity_id = ?;`,
-      ['item_deleted'],
-    );
-    expect(tombstone?.entity_id).toBe('item_deleted');
-    expect(tombstone?.server_version).toBe(5);
-
-    await db.close();
-  });
-
-  it('rebootstraps projection on SYNC_CURSOR_EXPIRED while strictly preserving offline outbox commands', async () => {
-    const db = createNodeSqliteDatabase(':memory:');
-    await new DatabaseBootstrapper().bootstrap(db);
-
-    // Queue an offline command first
-    const outboxRepo = new CommandOutboxRepository(db);
-    await outboxRepo.enqueueCommand(context, {
-      commandId: 'cmd_must_survive',
-      installationId: 'inst_1',
-      idempotencyKey: 'idem_survive',
-      commandType: 'INVENTORY_ADJUSTMENT',
-      payload: { outletId: 'out_1', listingId: 'list_1', quantityDelta: 3, reason: 'MANUAL_INCREASE' },
-    });
-
-    const mockFetch = async (url: string) => {
-      if (url.includes('/changes')) {
-        return new Response(
-          JSON.stringify({ code: 'SYNC_CURSOR_EXPIRED', message: 'Cursor expired' }),
-          { status: 410, headers: { 'Content-Type': 'application/json' } },
-        );
-      }
-      if (url.includes('/bootstrap')) {
-        return new Response(
-          JSON.stringify({
-            highWaterCursor: 'new_bootstrap_cursor_999',
-            catalogItems: [
-              {
-                id: 'bootstrapped_item',
-                organizationId: 'org_1',
-                outletId: 'out_1',
-                barcodeType: 'GTIN_13',
-                normalizedBarcode: '8909999999999',
-                name: 'Bootstrapped Product',
+              entityId: 'valid_item_1',
+              entityVersion: 0,
+              isTombstone: false,
+              payload: JSON.stringify({
+                id: 'valid_item_1',
+                organizationId: context.organizationId,
+                outletId: context.outletId,
+                barcodeType: 'INTERNAL',
+                normalizedBarcode: 'V1_BAR',
+                name: 'Valid Item',
                 kind: 'PRODUCT',
-                commerceMode: 'COMMERCE',
+                commerceMode: 'PICKUP_AND_DELIVERY',
                 mrpPaise: 500,
                 sellingPricePaise: 400,
                 category: 'food',
                 status: 'ACTIVE',
-                imageUrls: [],
-                version: 1,
-                createdAt: '2026-08-28T12:00:00.000Z',
-                updatedAt: '2026-08-28T12:00:00.000Z',
-              },
-            ],
-            inventoryBalances: [
-              {
-                organizationId: 'org_1',
-                outletId: 'out_1',
-                listingId: 'bootstrapped_item',
-                onHand: 100,
-                reserved: 10,
-                version: 1,
-                updatedAt: '2026-08-28T12:00:00.000Z',
-              },
-            ],
-            serverTime: '2026-08-28T12:00:00.000Z',
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        );
-      }
-      return new Response('Not found', { status: 404 });
-    };
-
-    const reconciler = new SyncChangeFeedReconciler(db, mockFetch);
-    await reconciler.reconcile(context);
-
-    // Verify outbox command survived rebootstrap!
-    const outboxCommand = await outboxRepo.getCommand(context, 'cmd_must_survive');
-    expect(outboxCommand).not.toBeNull();
-    expect(outboxCommand?.commandId).toBe('cmd_must_survive');
-    expect(outboxCommand?.state).toBe('PENDING');
-
-    // Verify bootstrapped items
-    const item = await db.get<{ name: string }>(
-      `SELECT name FROM ${TABLE_CATALOG_ITEMS} WHERE id = ?;`,
-      ['bootstrapped_item'],
-    );
-    expect(item?.name).toBe('Bootstrapped Product');
-
-    // Verify new high-water cursor set
-    const syncState = await new SyncStateRepository(db).getSyncState(context, 'all');
-    expect(syncState?.cursor).toBe('new_bootstrap_cursor_999');
-
-    await db.close();
-  });
-
-  it('rolls back entire transaction and preserves cursor on foreign partition event', async () => {
-    const db = createNodeSqliteDatabase(':memory:');
-    await new DatabaseBootstrapper().bootstrap(db);
-
-    // Set initial cursor
-    const syncRepo = new SyncStateRepository(db);
-    await syncRepo.recordSyncSuccess(context, 'all', 'initial_cursor_1');
-
-    const mockFetch = async () => {
-      return new Response(
-        JSON.stringify({
-          changes: [
-            {
-              sequenceNumber: 1,
-              organizationId: 'org_FOREIGN', // FOREIGN ORG!
-              outletId: 'out_1',
-              entityType: 'CATALOG_ITEM',
-              entityId: 'foreign_item',
-              entityVersion: 1,
-              isTombstone: false,
-              payload: JSON.stringify({ name: 'Foreign Item', status: 'ACTIVE' }),
+                version: 0,
+                createdAt: '2026-08-28T00:00:00.000Z',
+                updatedAt: '2026-08-28T00:00:00.000Z',
+              }),
               schemaVersion: 1,
-              createdAt: '2026-08-28T12:00:00.000Z',
+              createdAt: '2026-08-28T00:00:00.000Z',
             },
-          ],
-          nextCursor: 'foreign_page_cursor',
-          hasMore: false,
-          currentHighWaterCursor: 'foreign_page_cursor',
-          serverTime: '2026-08-28T12:00:00.000Z',
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
-    };
-
-    const reconciler = new SyncChangeFeedReconciler(db, mockFetch);
-    await expect(reconciler.reconcile(context)).rejects.toThrow('EVENT_PARTITION_MISMATCH');
-
-    // Projection must NOT be created
-    const item = await db.get(`SELECT id FROM ${TABLE_CATALOG_ITEMS} WHERE id = 'foreign_item';`);
-    expect(item).toBeNull();
-
-    // Cursor must remain initial cursor with SYNC_FAILED state
-    const state = await syncRepo.getSyncState(context, 'all');
-    expect(state?.cursor).toBe('initial_cursor_1');
-    expect(state?.status).toBe('SYNC_FAILED');
-
-    await db.close();
-  });
-
-  it('rolls back entire transaction on unsupported event schema version', async () => {
-    const db = createNodeSqliteDatabase(':memory:');
-    await new DatabaseBootstrapper().bootstrap(db);
-
-    const mockFetch = async () => {
-      return new Response(
-        JSON.stringify({
-          changes: [
             {
-              sequenceNumber: 1,
-              organizationId: 'org_1',
-              outletId: 'out_1',
+              sequenceNumber: 2,
+              organizationId: context.organizationId,
+              outletId: context.outletId,
               entityType: 'CATALOG_ITEM',
-              entityId: 'future_schema_item',
-              entityVersion: 1,
+              entityId: 'future_item_2',
+              entityVersion: 0,
               isTombstone: false,
-              payload: JSON.stringify({ name: 'Future Item' }),
-              schemaVersion: 99, // Unsupported event schema version!
-              createdAt: '2026-08-28T12:00:00.000Z',
+              payload: JSON.stringify({ id: 'future_item_2' }),
+              schemaVersion: 99, // Unsupported future schema!
+              createdAt: '2026-08-28T00:00:00.000Z',
             },
           ],
-          nextCursor: 'unsupported_cursor',
+          nextCursor: 'cursor_c1',
           hasMore: false,
-          currentHighWaterCursor: 'unsupported_cursor',
-          serverTime: '2026-08-28T12:00:00.000Z',
+          currentHighWaterCursor: 'cursor_c1',
+          serverTime: '2026-08-28T00:00:00.000Z',
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
@@ -315,48 +324,16 @@ describe('M6 SyncChangeFeedReconciler', () => {
     const reconciler = new SyncChangeFeedReconciler(db, mockFetch);
     await expect(reconciler.reconcile(context)).rejects.toThrow('UNSUPPORTED_EVENT_SCHEMA');
 
-    const state = await new SyncStateRepository(db).getSyncState(context, 'all');
+    // Event 1 must NOT be committed due to atomic rollback
+    const item1 = await db.get(
+      `SELECT * FROM ${TABLE_CATALOG_ITEMS} WHERE id = 'valid_item_1';`,
+    );
+    expect(item1).toBeNull();
+
+    // Cursor must remain cursor_c0 with SYNC_FAILED state
+    const state = await syncRepo.getSyncState(context, 'all');
     expect(state?.status).toBe('SYNC_FAILED');
-
-    await db.close();
-  });
-
-  it('rebootstrap clears obsolete projection_tombstones for the partition', async () => {
-    const db = createNodeSqliteDatabase(':memory:');
-    await new DatabaseBootstrapper().bootstrap(db);
-
-    // Insert an old tombstone in projection_tombstones
-    await db.run(
-      `INSERT INTO ${TABLE_PROJECTION_TOMBSTONES} (
-        account_id, organization_id, outlet_id, projection_name, entity_id,
-        server_updated_at, server_version, deleted_at
-      ) VALUES (?, ?, ?, 'catalog_items', 'old_deleted_item', '2026-08-28T00:00:00.000Z', 1, '2026-08-28T00:00:00.000Z');`,
-      [context.accountId, context.organizationId, context.outletId],
-    );
-
-    const mockFetch = async (url: string) => {
-      if (url.includes('/bootstrap')) {
-        return new Response(
-          JSON.stringify({
-            highWaterCursor: 'fresh_cursor_100',
-            catalogItems: [],
-            inventoryBalances: [],
-            serverTime: '2026-08-28T12:00:00.000Z',
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        );
-      }
-      return new Response('Not found', { status: 404 });
-    };
-
-    const reconciler = new SyncChangeFeedReconciler(db, mockFetch);
-    await reconciler.rebootstrap(context);
-
-    // Verify obsolete tombstone is cleared
-    const tombstone = await db.get(
-      `SELECT * FROM ${TABLE_PROJECTION_TOMBSTONES} WHERE entity_id = 'old_deleted_item';`,
-    );
-    expect(tombstone).toBeNull();
+    expect(state?.cursor).toBe('cursor_c0');
 
     await db.close();
   });

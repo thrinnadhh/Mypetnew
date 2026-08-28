@@ -22,6 +22,23 @@ export type TransportResult =
       error: Error;
     };
 
+export type ResolveReceiptResult =
+  | {
+      ok: true;
+      found: true;
+      receipt: ServerReceiptData;
+    }
+  | {
+      ok: true;
+      found: false;
+    }
+  | {
+      ok: false;
+      status?: number;
+      errorCode: string;
+      error: Error;
+    };
+
 export type FetchFunction = (
   path: string,
   options?: RequestInit,
@@ -32,6 +49,67 @@ export class SyncTransport {
 
   getFetchFn(): FetchFunction {
     return this.fetchFn;
+  }
+
+  async resolveReceipt(command: OfflineCommandRecord): Promise<ResolveReceiptResult> {
+    try {
+      const payload = JSON.parse(command.payloadJson) as Record<string, unknown>;
+      const response = await this.fetchFn('/api/v1/merchant/sync/receipts/resolve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-MyPet-Command-Type': command.commandType,
+          'X-MyPet-Payload-Schema-Version': String(command.payloadSchemaVersion),
+        },
+        body: JSON.stringify({
+          idempotencyKey: command.idempotencyKey,
+          commandType: command.commandType,
+          payloadSchemaVersion: command.payloadSchemaVersion,
+          payload,
+        }),
+      });
+
+      if (response.status === 404) {
+        return { ok: true, found: false };
+      }
+
+      if (!response.ok) {
+        const errorBody = (await response.json().catch(() => null)) as { code?: string; message?: string } | null;
+        const code = errorBody?.code ?? `HTTP_${response.status}`;
+        const message = errorBody?.message ?? `HTTP ${response.status}`;
+        const error = new Error(message);
+        error.name = code;
+        return {
+          ok: false,
+          status: response.status,
+          errorCode: code,
+          error,
+        };
+      }
+
+      const data = (await response.json()) as Record<string, unknown>;
+      const receipt: ServerReceiptData = {
+        receiptId: (data.receiptId as string) ?? command.idempotencyKey,
+        resultingVersion: typeof data.resultingVersion === 'number' ? data.resultingVersion : undefined,
+        resultingOnHand: typeof data.resultingOnHand === 'number' ? data.resultingOnHand : undefined,
+        resultingReserved: typeof data.resultingReserved === 'number' ? data.resultingReserved : undefined,
+        serverTimestamp: (data.serverTimestamp as string) ?? new Date().toISOString(),
+        rawResponse: data,
+      };
+
+      return {
+        ok: true,
+        found: true,
+        receipt,
+      };
+    } catch (networkError) {
+      const error = networkError instanceof Error ? networkError : new Error(String(networkError));
+      return {
+        ok: false,
+        errorCode: 'NETWORK_ERROR',
+        error,
+      };
+    }
   }
 
   async fetchReceipt(outletId: string, idempotencyKey: string): Promise<ServerReceiptData | null> {
@@ -148,6 +226,8 @@ export class SyncTransport {
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': command.idempotencyKey,
+          'X-MyPet-Command-Type': command.commandType,
+          'X-MyPet-Payload-Schema-Version': String(command.payloadSchemaVersion),
         },
         body: JSON.stringify(body),
       });

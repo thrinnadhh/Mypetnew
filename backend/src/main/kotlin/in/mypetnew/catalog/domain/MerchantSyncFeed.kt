@@ -34,7 +34,9 @@ data class MerchantSyncBootstrapResponse(
     val highWaterCursor: String,
     val catalogItems: List<Listing>,
     val inventoryBalances: List<InventoryBalance>,
-    val serverTime: Instant,
+    val nextCursor: String? = null,
+    val hasMore: Boolean = false,
+    val serverTime: Instant = Instant.now(),
 )
 
 interface MerchantSyncPublisher {
@@ -71,6 +73,8 @@ interface MerchantSyncFeedService {
     fun fetchBootstrap(
         organizationId: UUID,
         outletId: UUID,
+        cursor: String? = null,
+        limit: Int = 100,
     ): MerchantSyncBootstrapResponse
 
     fun currentHighWaterCursor(

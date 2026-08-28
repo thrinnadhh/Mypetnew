@@ -53,8 +53,8 @@ export class MerchantDatabase implements SqliteDatabase {
   }
 
   async close(): Promise<void> {
+    await this.db.close();
     this.bootstrapper.reset();
-    return this.db.close();
   }
 }
 

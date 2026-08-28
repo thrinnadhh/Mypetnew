@@ -74,7 +74,8 @@ class M6MerchantReauthorizationFilterPostgresContractTest {
             MockHttpServletResponse(),
             FilterChain { _, _ ->
                 downstreamRan = true
-                val refreshed = SecurityContextHolder.getContext().authentication.principal as Principal
+                val currentAuthentication = requireNotNull(SecurityContextHolder.getContext().authentication)
+                val refreshed = currentAuthentication.principal as Principal
                 assertEquals(setOf(MerchantPermission.CATALOG_WRITE), refreshed.merchantPermissionsByOutlet[s.outletId])
                 assertTrue(MerchantPermission.OWNER !in refreshed.merchantPermissionsByOutlet[s.outletId].orEmpty())
             },

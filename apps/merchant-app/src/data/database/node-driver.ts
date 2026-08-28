@@ -1,6 +1,17 @@
 import type { Database as BetterSqliteDb } from 'better-sqlite3';
 import type { SqliteDatabase, SqliteRunResult, SqliteTransaction } from './driver';
 
+function isSqliteBusyError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  const code = (err as { code?: string })?.code;
+  return (
+    code === 'SQLITE_BUSY' ||
+    code === 'SQLITE_LOCKED' ||
+    /locked|busy/i.test(msg)
+  );
+}
+
 export class NodeSqliteDriver implements SqliteDatabase {
   private db: BetterSqliteDb;
   private open = true;
@@ -16,24 +27,24 @@ export class NodeSqliteDriver implements SqliteDatabase {
 
   async exec(sql: string): Promise<void> {
     if (!this.isOpen()) throw new Error('DATABASE_CLOSED');
-    let retries = 200;
+    let retries = 500;
     while (retries > 0) {
       try {
         this.db.exec(sql);
         return;
       } catch (err: unknown) {
         retries -= 1;
-        if (retries === 0 || !(err instanceof Error && (err.message.includes('locked') || err.message.includes('busy')))) {
+        if (retries === 0 || !isSqliteBusyError(err)) {
           throw err;
         }
-        await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 10 + Math.floor(Math.random() * 15)));
       }
     }
   }
 
   async run(sql: string, params: unknown[] = []): Promise<SqliteRunResult> {
     if (!this.isOpen()) throw new Error('DATABASE_CLOSED');
-    let retries = 200;
+    let retries = 500;
     while (retries > 0) {
       try {
         const stmt = this.db.prepare(sql);
@@ -44,10 +55,10 @@ export class NodeSqliteDriver implements SqliteDatabase {
         };
       } catch (err: unknown) {
         retries -= 1;
-        if (retries === 0 || !(err instanceof Error && (err.message.includes('locked') || err.message.includes('busy')))) {
+        if (retries === 0 || !isSqliteBusyError(err)) {
           throw err;
         }
-        await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 10 + Math.floor(Math.random() * 15)));
       }
     }
     throw new Error('SQLITE_BUSY_TIMEOUT');
@@ -55,7 +66,7 @@ export class NodeSqliteDriver implements SqliteDatabase {
 
   async get<T = unknown>(sql: string, params: unknown[] = []): Promise<T | null> {
     if (!this.isOpen()) throw new Error('DATABASE_CLOSED');
-    let retries = 200;
+    let retries = 500;
     while (retries > 0) {
       try {
         const stmt = this.db.prepare(sql);
@@ -63,10 +74,10 @@ export class NodeSqliteDriver implements SqliteDatabase {
         return (row as T) ?? null;
       } catch (err: unknown) {
         retries -= 1;
-        if (retries === 0 || !(err instanceof Error && (err.message.includes('locked') || err.message.includes('busy')))) {
+        if (retries === 0 || !isSqliteBusyError(err)) {
           throw err;
         }
-        await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 10 + Math.floor(Math.random() * 15)));
       }
     }
     throw new Error('SQLITE_BUSY_TIMEOUT');
@@ -74,7 +85,7 @@ export class NodeSqliteDriver implements SqliteDatabase {
 
   async all<T = unknown>(sql: string, params: unknown[] = []): Promise<T[]> {
     if (!this.isOpen()) throw new Error('DATABASE_CLOSED');
-    let retries = 200;
+    let retries = 500;
     while (retries > 0) {
       try {
         const stmt = this.db.prepare(sql);
@@ -82,10 +93,10 @@ export class NodeSqliteDriver implements SqliteDatabase {
         return (rows as T[]) ?? [];
       } catch (err: unknown) {
         retries -= 1;
-        if (retries === 0 || !(err instanceof Error && (err.message.includes('locked') || err.message.includes('busy')))) {
+        if (retries === 0 || !isSqliteBusyError(err)) {
           throw err;
         }
-        await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 10 + Math.floor(Math.random() * 15)));
       }
     }
     throw new Error('SQLITE_BUSY_TIMEOUT');
@@ -103,18 +114,18 @@ export class NodeSqliteDriver implements SqliteDatabase {
 
     await previousLock;
 
-    let retries = 200;
+    let retries = 500;
     while (retries > 0) {
       try {
         this.db.exec('BEGIN IMMEDIATE');
         break;
       } catch (err: unknown) {
         retries -= 1;
-        if (retries === 0 || !(err instanceof Error && (err.message.includes('locked') || err.message.includes('busy')))) {
+        if (retries === 0 || !isSqliteBusyError(err)) {
           releaseLock();
           throw err;
         }
-        await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 10 + Math.floor(Math.random() * 15)));
       }
     }
 
@@ -148,6 +159,7 @@ export function createNodeSqliteDatabase(filename = ':memory:'): SqliteDatabase 
   const db: BetterSqliteDb = new Database(filename, { timeout: 0 });
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 0');
+  db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
   return new NodeSqliteDriver(db);
 }

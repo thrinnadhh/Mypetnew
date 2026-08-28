@@ -14,6 +14,7 @@ import `in`.mypetnew.catalog.domain.ListingKind
 import `in`.mypetnew.catalog.domain.ListingStatus
 import `in`.mypetnew.catalog.domain.UpdateListingCommand
 import `in`.mypetnew.catalog.domain.historyEntry
+import `in`.mypetnew.catalog.domain.MerchantSyncPublisher
 import `in`.mypetnew.common.error.DomainException
 import org.springframework.dao.DuplicateKeyException
 import org.springframework.jdbc.core.JdbcTemplate
@@ -25,6 +26,7 @@ import java.util.UUID
 class JdbcCatalogPersistence(
     private val jdbc: JdbcTemplate,
     private val transactions: TransactionTemplate,
+    private val syncPublisher: MerchantSyncPublisher? = null,
 ) : CatalogPersistence {
     override fun create(
         command: CreateListingCommand,
@@ -87,6 +89,14 @@ class JdbcCatalogPersistence(
                 val created = getManaged(command.organizationId, command.outletId, listingId)
                     ?: persistenceError()
                 insertHistory(null, created, CatalogMutationType.CREATE, actorId)
+                syncPublisher?.publishCatalogItemChange(created)
+                syncPublisher?.publishBarcodeChange(
+                    created.organizationId,
+                    created.outletId,
+                    created.id,
+                    created.barcodeType,
+                    created.normalizedBarcode,
+                )
                 created
             }
         } catch (duplicateKey: DuplicateKeyException) {
@@ -154,6 +164,7 @@ class JdbcCatalogPersistence(
                     ?: persistenceError()
                 insertHistory(current, updated, CatalogMutationType.UPDATE, actorId)
                 insertReceipt(updated, CatalogMutationType.UPDATE, actionKey, requestFingerprint)
+                syncPublisher?.publishCatalogItemChange(updated)
                 updated
             }
         } catch (duplicateKey: DuplicateKeyException) {
@@ -202,6 +213,10 @@ class JdbcCatalogPersistence(
                 }
                 insertHistory(current, updated, mutation, actorId)
                 insertReceipt(updated, mutation, actionKey, requestFingerprint)
+                syncPublisher?.publishCatalogItemChange(
+                    updated,
+                    isTombstone = (command.targetStatus == ListingStatus.INACTIVE),
+                )
                 updated
             }
         } catch (duplicateKey: DuplicateKeyException) {

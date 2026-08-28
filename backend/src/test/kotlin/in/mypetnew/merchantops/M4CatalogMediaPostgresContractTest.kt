@@ -52,7 +52,7 @@ class M4CatalogMediaPostgresContractTest {
             ),
         )
 
-        val upgraded = flyway(dataSource).migrate()
+        val upgraded = flyway(dataSource, MigrationVersion.fromVersion("28")).migrate()
         assertEquals("28", upgraded.targetSchemaVersion)
         assertEquals(
             1,

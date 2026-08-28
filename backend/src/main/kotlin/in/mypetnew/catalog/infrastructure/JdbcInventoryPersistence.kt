@@ -18,9 +18,12 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.UUID
 
+import `in`.mypetnew.catalog.domain.MerchantSyncPublisher
+
 class JdbcInventoryPersistence(
     private val jdbc: JdbcTemplate,
     private val transactions: TransactionTemplate,
+    private val syncPublisher: MerchantSyncPublisher? = null,
 ) : InventoryPersistence {
     override fun adjust(
         listingId: UUID,
@@ -372,6 +375,17 @@ class JdbcInventoryPersistence(
                     insertMovement(movement, operationScope, fingerprint, traceId)
                     insertReceipt(movement, operationScope, fingerprint)
                     insertPublication(movement, traceId)
+                    syncPublisher?.publishInventoryBalanceChange(
+                        InventoryBalance(
+                            organizationId = scope.organizationId,
+                            outletId = scope.outletId,
+                            listingId = scope.listingId,
+                            onHand = after.onHand,
+                            reserved = after.reserved,
+                            version = before.version + 1,
+                            updatedAt = Instant.now(),
+                        ),
+                    )
                     movement
                 })
             } catch (duplicate: DuplicateKeyException) {

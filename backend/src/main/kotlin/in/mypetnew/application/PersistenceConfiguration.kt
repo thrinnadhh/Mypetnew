@@ -69,15 +69,23 @@ class PersistenceConfiguration {
     fun productionProviderService(persistence: ProviderPersistence): ProviderService = ProviderService(persistence)
 
     @Bean
-    fun catalogPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): CatalogPersistence =
-        JdbcCatalogPersistence(jdbc, transactions)
+    fun catalogPersistence(
+        jdbc: JdbcTemplate,
+        transactions: TransactionTemplate,
+        syncFeed: `in`.mypetnew.catalog.infrastructure.JdbcMerchantSyncFeed,
+    ): CatalogPersistence =
+        JdbcCatalogPersistence(jdbc, transactions, syncFeed)
 
     @Bean
     fun productionCatalogService(persistence: CatalogPersistence): CatalogService = CatalogService(persistence)
 
     @Bean
-    fun inventoryPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): InventoryPersistence =
-        JdbcInventoryPersistence(jdbc, transactions)
+    fun inventoryPersistence(
+        jdbc: JdbcTemplate,
+        transactions: TransactionTemplate,
+        syncFeed: `in`.mypetnew.catalog.infrastructure.JdbcMerchantSyncFeed,
+    ): InventoryPersistence =
+        JdbcInventoryPersistence(jdbc, transactions, syncFeed)
 
     @Bean
     fun productionInventoryService(persistence: InventoryPersistence): InventoryService = InventoryService(persistence)

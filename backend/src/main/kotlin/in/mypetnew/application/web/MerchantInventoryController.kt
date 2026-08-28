@@ -45,11 +45,18 @@ class MerchantInventoryController(
         @RequestHeader(name = "X-MyPet-Payload-Schema-Version", required = false) schemaVersionHeader: String?,
         @RequestBody request: InventoryAdjustmentRequest,
     ): StockMovement {
-        if (commandTypeHeader != null && commandTypeHeader != "INVENTORY_ADJUSTMENT") {
-            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Endpoint accepts INVENTORY_ADJUSTMENT, received $commandTypeHeader")
+        val hasType = commandTypeHeader != null
+        val hasVersion = schemaVersionHeader != null
+        if (hasType xor hasVersion) {
+            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Both sync headers must be present together")
         }
-        if (schemaVersionHeader != null && schemaVersionHeader != "1") {
-            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported payload schema version $schemaVersionHeader")
+        if (hasType) {
+            if (commandTypeHeader != "INVENTORY_ADJUSTMENT") {
+                throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Endpoint accepts INVENTORY_ADJUSTMENT, received $commandTypeHeader")
+            }
+            if (schemaVersionHeader != "1") {
+                throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported payload schema version $schemaVersionHeader")
+            }
         }
         val principal = authentication.domainPrincipal()
         val scope = requireInventoryScope(principal.actorId, request.outletId, request.listingId, authentication)

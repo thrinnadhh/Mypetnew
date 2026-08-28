@@ -272,6 +272,7 @@ export class CommandOutboxRepository {
 
       for (const row of rows) {
         const leaseToken = Crypto.randomUUID();
+        const needsReceiptResolution = row.last_attempt_at !== null || row.state === 'RETRYABLE';
         const updateResult = await tx.run(
           `UPDATE ${TABLE_OFFLINE_COMMANDS}
            SET state = 'SENDING',
@@ -306,6 +307,7 @@ export class CommandOutboxRepository {
               updated_at: nowIso,
             }),
             leaseToken,
+            needsReceiptResolution,
           });
         }
       }

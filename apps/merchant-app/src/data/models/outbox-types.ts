@@ -106,6 +106,7 @@ export type EnqueueCommandInput = {
 export type ClaimedCommand = {
   command: OfflineCommandRecord;
   leaseToken: string;
+  needsReceiptResolution: boolean;
 };
 
 export type ServerReceiptData = {

@@ -1,5 +1,10 @@
+import * as Crypto from 'expo-crypto';
 import type { SqliteDatabase } from '../data/database/driver';
 import {
+  TABLE_BOOTSTRAP_STAGING_BALANCES,
+  TABLE_BOOTSTRAP_STAGING_BARCODES,
+  TABLE_BOOTSTRAP_STAGING_ITEMS,
+  TABLE_BOOTSTRAP_STAGING_STATE,
   TABLE_CATALOG_BARCODES,
   TABLE_CATALOG_ITEMS,
   TABLE_INVENTORY_BALANCES,
@@ -352,14 +357,31 @@ export class SyncChangeFeedReconciler {
     const syncState = await this.syncStateRepo.getSyncState(context, 'all');
     const currentCursor = syncState?.cursor ?? null;
     const nowIso = new Date().toISOString();
+    const generationId = Crypto.randomUUID();
 
     try {
+      // Clear any prior staging for this partition
+      await this.db.run(
+        `DELETE FROM ${TABLE_BOOTSTRAP_STAGING_ITEMS} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+        [context.accountId, context.organizationId, context.outletId],
+      );
+      await this.db.run(
+        `DELETE FROM ${TABLE_BOOTSTRAP_STAGING_BALANCES} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+        [context.accountId, context.organizationId, context.outletId],
+      );
+      await this.db.run(
+        `DELETE FROM ${TABLE_BOOTSTRAP_STAGING_BARCODES} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+        [context.accountId, context.organizationId, context.outletId],
+      );
+      await this.db.run(
+        `DELETE FROM ${TABLE_BOOTSTRAP_STAGING_STATE} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+        [context.accountId, context.organizationId, context.outletId],
+      );
+
       let pageCursor: string | null = null;
       let highWaterCursor = '';
-      const allCatalogItems: BootstrapItem[] = [];
-      const allInventoryBalances: BootstrapBalance[] = [];
 
-      // Fetch all bounded bootstrap pages
+      // Bounded paging loop: fetch page -> persist to staging -> persist state -> release objects
       do {
         const params = new URLSearchParams({ outletId: context.outletId, limit: '100' });
         if (pageCursor) {
@@ -371,118 +393,200 @@ export class SyncChangeFeedReconciler {
         }
 
         const data = (await response.json()) as BootstrapResponse;
-        highWaterCursor = data.highWaterCursor;
-        if (data.catalogItems) {
-          allCatalogItems.push(...data.catalogItems);
+        if (!highWaterCursor) {
+          highWaterCursor = data.highWaterCursor;
         }
-        if (data.inventoryBalances) {
-          allInventoryBalances.push(...data.inventoryBalances);
-        }
+
+        // Persist current page to staging in a transaction, releasing JS memory
+        await this.db.transaction(async (tx) => {
+          if (data.catalogItems) {
+            for (const item of data.catalogItems) {
+              await tx.run(
+                `INSERT INTO ${TABLE_BOOTSTRAP_STAGING_ITEMS} (
+                  generation_id, account_id, organization_id, outlet_id, id, name, kind,
+                  commerce_mode, barcode_type, normalized_barcode, mrp_paise,
+                  selling_price_paise, category, brand, description, pet_type,
+                  life_stage, pack_label, sku, image_urls_json, status, version,
+                  server_created_at, server_updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+                [
+                  generationId,
+                  context.accountId,
+                  context.organizationId,
+                  context.outletId,
+                  item.id,
+                  item.name,
+                  item.kind,
+                  item.commerceMode,
+                  item.barcodeType,
+                  item.normalizedBarcode,
+                  item.mrpPaise,
+                  item.sellingPricePaise,
+                  item.category,
+                  item.brand ?? null,
+                  item.description ?? null,
+                  item.petType ?? null,
+                  item.lifeStage ?? null,
+                  item.packLabel ?? null,
+                  item.sku ?? null,
+                  JSON.stringify(item.imageUrls ?? []),
+                  item.status,
+                  item.version,
+                  item.createdAt,
+                  item.updatedAt,
+                ],
+              );
+
+              await tx.run(
+                `INSERT INTO ${TABLE_BOOTSTRAP_STAGING_BARCODES} (
+                  generation_id, account_id, organization_id, outlet_id, listing_id,
+                  barcode_type, normalized_barcode, is_primary, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?);`,
+                [
+                  generationId,
+                  context.accountId,
+                  context.organizationId,
+                  context.outletId,
+                  item.id,
+                  item.barcodeType,
+                  item.normalizedBarcode,
+                  item.updatedAt,
+                ],
+              );
+            }
+          }
+
+          if (data.inventoryBalances) {
+            for (const bal of data.inventoryBalances) {
+              await tx.run(
+                `INSERT INTO ${TABLE_BOOTSTRAP_STAGING_BALANCES} (
+                  generation_id, account_id, organization_id, outlet_id, listing_id,
+                  on_hand, reserved, version, server_updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+                [
+                  generationId,
+                  context.accountId,
+                  context.organizationId,
+                  context.outletId,
+                  bal.listingId,
+                  bal.onHand,
+                  bal.reserved,
+                  bal.version,
+                  bal.updatedAt,
+                ],
+              );
+            }
+          }
+
+          await tx.run(
+            `INSERT INTO ${TABLE_BOOTSTRAP_STAGING_STATE} (
+              generation_id, account_id, organization_id, outlet_id,
+              high_water_cursor, next_page_cursor, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(account_id, organization_id, outlet_id) DO UPDATE SET
+              generation_id = excluded.generation_id,
+              high_water_cursor = excluded.high_water_cursor,
+              next_page_cursor = excluded.next_page_cursor,
+              updated_at = excluded.updated_at;`,
+            [
+              generationId,
+              context.accountId,
+              context.organizationId,
+              context.outletId,
+              highWaterCursor,
+              data.hasMore ? data.nextCursor : null,
+              nowIso,
+            ],
+          );
+        });
+
         pageCursor = data.hasMore && data.nextCursor ? data.nextCursor : null;
       } while (pageCursor);
 
+      // Final promotion: single atomic transaction promotes staged generation into live tables
       await this.db.transaction(async (tx) => {
-        // Clear ONLY projection caches for this partition (PRESERVE outbox tables!)
+        // 1. Delete live projection tables for this partition
         await tx.run(
-          `DELETE FROM ${TABLE_CATALOG_BARCODES}
-           WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+          `DELETE FROM ${TABLE_CATALOG_BARCODES} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
           [context.accountId, context.organizationId, context.outletId],
         );
         await tx.run(
-          `DELETE FROM ${TABLE_CATALOG_ITEMS}
-           WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+          `DELETE FROM ${TABLE_CATALOG_ITEMS} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
           [context.accountId, context.organizationId, context.outletId],
         );
         await tx.run(
-          `DELETE FROM ${TABLE_INVENTORY_BALANCES}
-           WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+          `DELETE FROM ${TABLE_INVENTORY_BALANCES} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
           [context.accountId, context.organizationId, context.outletId],
         );
         await tx.run(
-          `DELETE FROM ${TABLE_PROJECTION_TOMBSTONES}
-           WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+          `DELETE FROM ${TABLE_PROJECTION_TOMBSTONES} WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
           [context.accountId, context.organizationId, context.outletId],
         );
 
-        // Populate catalog items
-        for (const item of allCatalogItems) {
-          await tx.run(
-            `INSERT INTO ${TABLE_CATALOG_ITEMS} (
-              account_id, organization_id, outlet_id, id, name, kind, commerce_mode,
-              barcode_type, normalized_barcode, mrp_paise, selling_price_paise,
-              category, brand, description, pet_type, life_stage, pack_label, sku,
-              image_urls_json, status, version, is_tombstone, server_created_at,
-              server_updated_at, local_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?);`,
-            [
-              context.accountId,
-              context.organizationId,
-              context.outletId,
-              item.id,
-              item.name,
-              item.kind,
-              item.commerceMode,
-              item.barcodeType,
-              item.normalizedBarcode,
-              item.mrpPaise,
-              item.sellingPricePaise,
-              item.category,
-              item.brand ?? null,
-              item.description ?? null,
-              item.petType ?? null,
-              item.lifeStage ?? null,
-              item.packLabel ?? null,
-              item.sku ?? null,
-              JSON.stringify(item.imageUrls ?? []),
-              item.status,
-              item.version,
-              item.createdAt,
-              item.updatedAt,
-              nowIso,
-            ],
-          );
+        // 2. Promote staged catalog items
+        await tx.run(
+          `INSERT INTO ${TABLE_CATALOG_ITEMS} (
+            account_id, organization_id, outlet_id, id, name, kind, commerce_mode,
+            barcode_type, normalized_barcode, mrp_paise, selling_price_paise,
+            category, brand, description, pet_type, life_stage, pack_label, sku,
+            image_urls_json, status, version, is_tombstone, server_created_at,
+            server_updated_at, local_updated_at
+          )
+          SELECT account_id, organization_id, outlet_id, id, name, kind, commerce_mode,
+                 barcode_type, normalized_barcode, mrp_paise, selling_price_paise,
+                 category, brand, description, pet_type, life_stage, pack_label, sku,
+                 image_urls_json, status, version, 0, server_created_at,
+                 server_updated_at, ?
+          FROM ${TABLE_BOOTSTRAP_STAGING_ITEMS}
+          WHERE generation_id = ? AND account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+          [nowIso, generationId, context.accountId, context.organizationId, context.outletId],
+        );
 
-          // Populate primary barcode index
-          await tx.run(
-            `INSERT INTO ${TABLE_CATALOG_BARCODES} (
-              account_id, organization_id, outlet_id, listing_id, barcode_type,
-              normalized_barcode, is_primary, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 1, ?);`,
-            [
-              context.accountId,
-              context.organizationId,
-              context.outletId,
-              item.id,
-              item.barcodeType,
-              item.normalizedBarcode,
-              item.updatedAt,
-            ],
-          );
-        }
+        // 3. Promote staged barcodes
+        await tx.run(
+          `INSERT INTO ${TABLE_CATALOG_BARCODES} (
+            account_id, organization_id, outlet_id, listing_id, barcode_type,
+            normalized_barcode, is_primary, updated_at
+          )
+          SELECT account_id, organization_id, outlet_id, listing_id, barcode_type,
+                 normalized_barcode, is_primary, updated_at
+          FROM ${TABLE_BOOTSTRAP_STAGING_BARCODES}
+          WHERE generation_id = ? AND account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+          [generationId, context.accountId, context.organizationId, context.outletId],
+        );
 
-        // Populate inventory balances
-        for (const bal of allInventoryBalances) {
-          await tx.run(
-            `INSERT INTO ${TABLE_INVENTORY_BALANCES} (
-              account_id, organization_id, outlet_id, listing_id, on_hand,
-              reserved, available, version, server_updated_at, local_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-            [
-              context.accountId,
-              context.organizationId,
-              context.outletId,
-              bal.listingId,
-              bal.onHand,
-              bal.reserved,
-              Number(bal.onHand) - Number(bal.reserved),
-              bal.version,
-              bal.updatedAt,
-              nowIso,
-            ],
-          );
-        }
+        // 4. Promote staged inventory balances
+        await tx.run(
+          `INSERT INTO ${TABLE_INVENTORY_BALANCES} (
+            account_id, organization_id, outlet_id, listing_id, on_hand,
+            reserved, available, version, server_updated_at, local_updated_at
+          )
+          SELECT account_id, organization_id, outlet_id, listing_id, on_hand,
+                 reserved, (on_hand - reserved), version, server_updated_at, ?
+          FROM ${TABLE_BOOTSTRAP_STAGING_BALANCES}
+          WHERE generation_id = ? AND account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+          [nowIso, generationId, context.accountId, context.organizationId, context.outletId],
+        );
 
-        // Update sync state to FRESH with high-water cursor
+        // 5. Clean up staging tables for this generation
+        await tx.run(
+          `DELETE FROM ${TABLE_BOOTSTRAP_STAGING_ITEMS} WHERE generation_id = ?;`,
+          [generationId],
+        );
+        await tx.run(
+          `DELETE FROM ${TABLE_BOOTSTRAP_STAGING_BALANCES} WHERE generation_id = ?;`,
+          [generationId],
+        );
+        await tx.run(
+          `DELETE FROM ${TABLE_BOOTSTRAP_STAGING_BARCODES} WHERE generation_id = ?;`,
+          [generationId],
+        );
+        await tx.run(
+          `DELETE FROM ${TABLE_BOOTSTRAP_STAGING_STATE} WHERE generation_id = ?;`,
+          [generationId],
+        );
+
+        // 6. Update projection sync state to FRESH with original high-water cursor H
         await tx.run(
           `INSERT INTO projection_sync_state (
             account_id, organization_id, outlet_id, projection_name,

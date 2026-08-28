@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { DatabaseBootstrapper } from '../../data/database/bootstrap';
 import { createNodeSqliteDatabase } from '../../data/database/node-driver';
+import { CURRENT_SCHEMA_VERSION } from '../../data/database/schema';
 import { DatabaseRecoveryManager } from '../../data/database/recovery';
 import { createPartitionContext } from '../../data/models/partition-context';
 import { CommandOutboxRepository } from '../../data/repositories/command-outbox-repository';
@@ -127,9 +128,9 @@ describe('M6 Process Death & Persistence Hardening Matrix', () => {
     const recoveryManager = new DatabaseRecoveryManager();
     await recoveryManager.recoverProjectionDatabase(db, new Error('SQLITE_CORRUPT projection index'));
 
-    // Verify projection schema re-migrated to version 3
+    // Verify projection schema re-migrated to CURRENT_SCHEMA_VERSION
     const version = await db.get<{ user_version: number }>('PRAGMA user_version;');
-    expect(version?.user_version).toBe(3);
+    expect(version?.user_version).toBe(CURRENT_SCHEMA_VERSION);
 
     // CRITICAL INVARIANT: The unresolved offline command survived without being destroyed!
     const preservedCmd = await repo.getCommand(context, 'cmd_unresolved');

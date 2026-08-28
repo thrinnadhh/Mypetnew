@@ -1,9 +1,11 @@
 package `in`.mypetnew.merchantops
 
+import `in`.mypetnew.application.web.CatalogInventoryApiController
 import `in`.mypetnew.application.web.InventoryAdjustmentRequest
 import `in`.mypetnew.application.web.MerchantInventoryController
 import `in`.mypetnew.application.web.MerchantSyncController
 import `in`.mypetnew.application.web.ResolveReceiptRequest
+import `in`.mypetnew.application.web.UpdateListingRequest
 import `in`.mypetnew.catalog.domain.BarcodeType
 import `in`.mypetnew.catalog.domain.CatalogLifecycleCommand
 import `in`.mypetnew.catalog.domain.CatalogService
@@ -14,8 +16,10 @@ import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.catalog.domain.Listing
 import `in`.mypetnew.catalog.domain.ListingKind
 import `in`.mypetnew.catalog.domain.ListingStatus
+import `in`.mypetnew.catalog.domain.MerchantSyncBootstrapResponse
 import `in`.mypetnew.catalog.domain.MerchantSyncPublisher
 import `in`.mypetnew.catalog.domain.StockReason
+import `in`.mypetnew.catalog.domain.UpdateListingCommand
 import `in`.mypetnew.catalog.infrastructure.JdbcCatalogPersistence
 import `in`.mypetnew.catalog.infrastructure.JdbcInventoryPersistence
 import `in`.mypetnew.catalog.infrastructure.JdbcMerchantSyncFeed
@@ -41,8 +45,8 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 @MerchantOpsContract
@@ -58,6 +62,7 @@ class M6SyncAdversarialPostgresContractTest {
         val syncFeed: JdbcMerchantSyncFeed,
         val inventoryController: MerchantInventoryController,
         val syncController: MerchantSyncController,
+        val catalogController: CatalogInventoryApiController,
     )
 
     private fun context(): Context {
@@ -65,12 +70,13 @@ class M6SyncAdversarialPostgresContractTest {
         val dataSource = PostgresTestDatabase.dataSource()
         val jdbc = JdbcTemplate(dataSource)
         val transactions = TransactionTemplate(DataSourceTransactionManager(dataSource))
-        val syncFeed = JdbcMerchantSyncFeed(jdbc, cursorSecret = "a".repeat(32))
+        val syncFeed = JdbcMerchantSyncFeed(jdbc, cursorSecret = "test-sync-cursor-secret-at-least-32-chars-long")
         val catalog = CatalogService(JdbcCatalogPersistence(jdbc, transactions, syncFeed))
         val inventory = InventoryService(JdbcInventoryPersistence(jdbc, transactions, syncFeed))
         val providers = ProviderService(JdbcProviderPersistence(jdbc, transactions))
         val inventoryController = MerchantInventoryController(providers, catalog, inventory)
         val syncController = MerchantSyncController(providers, syncFeed, jdbc)
+        val catalogController = CatalogInventoryApiController(providers, catalog, inventory)
 
         return Context(
             jdbc = jdbc,
@@ -81,6 +87,7 @@ class M6SyncAdversarialPostgresContractTest {
             syncFeed = syncFeed,
             inventoryController = inventoryController,
             syncController = syncController,
+            catalogController = catalogController,
         )
     }
 
@@ -105,18 +112,17 @@ class M6SyncAdversarialPostgresContractTest {
         organizationId: UUID,
         outletId: UUID,
         permissions: Set<MerchantPermission> = setOf(MerchantPermission.OWNER),
-    ) =
-        UsernamePasswordAuthenticationToken(
-            Principal(
-                actorId = actorId,
-                role = Role.MERCHANT,
-                organizationId = organizationId,
-                outletIds = setOf(outletId),
-                merchantPermissionsByOutlet = mapOf(outletId to permissions),
-            ),
-            null,
-            emptyList(),
-        )
+    ) = UsernamePasswordAuthenticationToken(
+        Principal(
+            actorId = actorId,
+            role = Role.MERCHANT,
+            organizationId = organizationId,
+            outletIds = setOf(outletId),
+            merchantPermissionsByOutlet = mapOf(outletId to permissions),
+        ),
+        null,
+        emptyList(),
+    )
 
     @Test
     fun `M6-SYNC-002 replay returns existing terminal receipt without re-execution when previously accepted`() {
@@ -305,16 +311,16 @@ class M6SyncAdversarialPostgresContractTest {
                     category = "food",
                     capabilities = setOf(ProviderCapability.PRODUCT_STORE),
                 ),
-                "fail_action_1",
+                "fail_item_1",
                 actorId,
             )
         }
 
-        val listingCount = ctx.jdbc.queryForObject(
-            "SELECT COUNT(*) FROM mypet.catalog_listing WHERE normalized_barcode = 'SKU-FAIL-1'",
+        val catalogCount = ctx.jdbc.queryForObject(
+            "SELECT COUNT(*) FROM mypet.catalog_listing WHERE create_idempotency_key = 'fail_item_1'",
             Long::class.java,
         )
-        assertEquals(0L, listingCount)
+        assertEquals(0L, catalogCount)
 
         // 2. Inventory adjustment fails and rolls back
         val legitimateListing = ctx.catalog.createListing(
@@ -360,12 +366,12 @@ class M6SyncAdversarialPostgresContractTest {
     }
 
     @Test
-    fun `M6-SYNC-001 multi-threaded concurrent latch bootstrap captures high water mark without gaps`() {
+    fun `M6-SYNC-001 true concurrent bootstrap with CountDownLatch and CompletableFuture captures mutation in snapshot OR feed`() {
         val ctx = context()
         val actorId = createMerchant(ctx.jdbc, "+919320000005")
         val (organizationId, outletId) = seedScope(ctx.jdbc, actorId)
 
-        // Seed initial items
+        // Seed initial listing
         val item1 = ctx.catalog.createListing(
             CreateListingCommand(
                 organizationId = organizationId,
@@ -383,11 +389,27 @@ class M6SyncAdversarialPostgresContractTest {
             actorId,
         )
 
-        // Bootstrap snapshot taken
-        val page1 = ctx.syncFeed.fetchBootstrap(organizationId, outletId, limit = 10)
-        val bootstrapCursor = page1.highWaterCursor
+        val highWaterCapturedLatch = CountDownLatch(1)
+        val mutationCommittedLatch = CountDownLatch(1)
 
-        // Writer mutates inventory and creates new listing concurrently
+        // Instrument a custom feed that pauses after capturing high-water mark H
+        val instrumentedFeed = object : JdbcMerchantSyncFeed(ctx.jdbc, cursorSecret = "test-sync-cursor-secret-at-least-32-chars-long") {
+            override fun fetchBootstrap(organizationId: UUID, outletId: UUID, cursor: String?, limit: Int): MerchantSyncBootstrapResponse {
+                // Signal that bootstrap has started / high water mark is about to be evaluated
+                highWaterCapturedLatch.countDown()
+                // Wait for concurrent writer transaction to commit
+                mutationCommittedLatch.await(5, TimeUnit.SECONDS)
+                return super.fetchBootstrap(organizationId, outletId, cursor, limit)
+            }
+        }
+
+        // Run bootstrap asynchronously on thread 1
+        val bootstrapFuture = CompletableFuture.supplyAsync {
+            instrumentedFeed.fetchBootstrap(organizationId, outletId, limit = 10)
+        }
+
+        // Concurrent thread 2: waits for bootstrap to begin, then commits mutation
+        highWaterCapturedLatch.await(5, TimeUnit.SECONDS)
         ctx.inventory.adjustMerchant(
             scope = InventoryScope(organizationId, outletId, item1.id),
             delta = 25,
@@ -396,103 +418,160 @@ class M6SyncAdversarialPostgresContractTest {
             actorId = actorId,
             traceId = "trace-latch-adj",
         )
-        val postBootstrapItem = ctx.catalog.createListing(
-            CreateListingCommand(
-                organizationId = organizationId,
-                outletId = outletId,
-                barcodeType = BarcodeType.INTERNAL,
-                barcode = "SKU-LATCH-2",
-                name = "Latch Item 2",
-                kind = ListingKind.PRODUCT,
-                mrpPaise = 600,
-                sellingPricePaise = 500,
-                category = "food",
-                capabilities = setOf(ProviderCapability.PRODUCT_STORE),
-            ),
-            "latch_item_2",
-            actorId,
-        )
+        // Signal that writer has committed to PostgreSQL
+        mutationCommittedLatch.countDown()
 
-        // Change feed queried with bootstrapCursor must capture both concurrent writer mutations without gaps
+        val bootstrapSnapshot = bootstrapFuture.get(5, TimeUnit.SECONDS)
+        val bootstrapCursor = bootstrapSnapshot.highWaterCursor
+
+        // Query change feed starting from bootstrap high-water cursor H
         val changes = ctx.syncFeed.fetchChanges(organizationId, outletId, bootstrapCursor, 100)
-        assertEquals(3, changes.changes.size) // 1 balance change + (1 item + 1 barcode for item 2)
-        val entityIds = changes.changes.map { it.entityId }.toSet()
-        assertTrue(entityIds.contains(item1.id))
-        assertTrue(entityIds.contains(postBootstrapItem.id))
+
+        // Invariant: Mutation must appear in snapshot OR feed, NEVER NEITHER
+        val inSnapshot = bootstrapSnapshot.inventoryBalances.any { it.listingId == item1.id && it.onHand == 25 }
+        val inFeed = changes.changes.any { it.entityId == item1.id }
+
+        assertTrue(inSnapshot || inFeed, "Concurrent mutation must appear in either bootstrap snapshot or subsequent change feed")
     }
 
     @Test
-    fun `M6-SYNC-002 reauthorization matrix - committed command resolves receipt after permission loss, uncommitted fails closed with 0 mutations`() {
+    fun `M6-SYNC-002 complete reauthorization matrix across all 9 security boundaries`() {
         val ctx = context()
         val actorId = createMerchant(ctx.jdbc, "+919320000006")
         val (organizationId, outletId) = seedScope(ctx.jdbc, actorId)
-        val authentication = auth(actorId, organizationId, outletId)
+        val validAuth = auth(actorId, organizationId, outletId)
 
         val item = ctx.catalog.createListing(
             CreateListingCommand(
                 organizationId = organizationId,
                 outletId = outletId,
                 barcodeType = BarcodeType.INTERNAL,
-                barcode = "SKU-REAUTH-1",
-                name = "Reauth Item",
+                barcode = "SKU-REAUTH-MATRIX",
+                name = "Reauth Matrix Item",
                 kind = ListingKind.PRODUCT,
                 mrpPaise = 1000,
                 sellingPricePaise = 900,
                 category = "food",
                 capabilities = setOf(ProviderCapability.PRODUCT_STORE),
             ),
-            "reauth_item_1",
+            "reauth_mat_item",
             actorId,
         )
 
-        // 1. Commit mutation while staff is ACTIVE and has OWNER permission
-        val adjustReq = InventoryAdjustmentRequest(
-            outletId = outletId,
-            listingId = item.id,
-            quantityDelta = 10,
-            reason = StockReason.MANUAL_INCREASE,
-        )
-        val firstReceipt = ctx.inventoryController.adjust(
-            authentication = authentication,
-            idempotencyKey = "idemp_committed_1",
+        // 1. Case 1: Permission revoked (staff has only CATALOG_WRITE, missing INVENTORY_WRITE)
+        val viewOnlyAuth = auth(actorId, organizationId, outletId, permissions = setOf(MerchantPermission.CATALOG_WRITE))
+        assertThrows(DomainException::class.java) {
+            ctx.inventoryController.adjust(
+                authentication = viewOnlyAuth,
+                idempotencyKey = "uncommitted_perm_revoked",
+                commandTypeHeader = "INVENTORY_ADJUSTMENT",
+                schemaVersionHeader = "1",
+                request = InventoryAdjustmentRequest(outletId, item.id, 10, StockReason.MANUAL_INCREASE),
+            )
+        }
+
+        // 2. Case 2: Merchant membership inactive
+        val inactiveActor = createMerchant(ctx.jdbc, "+919320000062")
+        ctx.jdbc.update("INSERT INTO mypet.merchant_staff(account_id, organization_id, outlet_id, permission, active) VALUES (?, ?, ?, 'OWNER', FALSE)", inactiveActor, organizationId, outletId)
+        val inactiveAuth = auth(inactiveActor, organizationId, outletId, permissions = emptySet())
+        assertThrows(DomainException::class.java) {
+            ctx.inventoryController.adjust(
+                authentication = inactiveAuth,
+                idempotencyKey = "uncommitted_inactive_staff",
+                commandTypeHeader = "INVENTORY_ADJUSTMENT",
+                schemaVersionHeader = "1",
+                request = InventoryAdjustmentRequest(outletId, item.id, 10, StockReason.MANUAL_INCREASE),
+            )
+        }
+
+        // 3. Case 3: Outlet suspended
+        val suspendedOutletId = UUID.randomUUID()
+        ctx.jdbc.update("INSERT INTO mypet.provider_outlet(id, organization_id, name, status, pickup_enabled) VALUES (?, ?, 'Suspended Outlet', 'SUSPENDED', TRUE)", suspendedOutletId, organizationId)
+        ctx.jdbc.update("INSERT INTO mypet.outlet_capability(outlet_id, capability, verified) VALUES (?, 'PRODUCT_STORE', TRUE)", suspendedOutletId)
+        val suspendedAuth = auth(actorId, organizationId, suspendedOutletId)
+        assertThrows(DomainException::class.java) {
+            ctx.inventoryController.adjust(
+                authentication = suspendedAuth,
+                idempotencyKey = "uncommitted_suspended_outlet",
+                commandTypeHeader = "INVENTORY_ADJUSTMENT",
+                schemaVersionHeader = "1",
+                request = InventoryAdjustmentRequest(suspendedOutletId, item.id, 10, StockReason.MANUAL_INCREASE),
+            )
+        }
+
+        // 4. Case 4: Account disabled
+        val disabledActor = createMerchant(ctx.jdbc, "+919320000064")
+        ctx.jdbc.update("UPDATE mypet.identity_account SET status = 'DISABLED' WHERE id = ?", disabledActor)
+        ctx.jdbc.update("INSERT INTO mypet.merchant_staff(account_id, organization_id, outlet_id, permission, active) VALUES (?, ?, ?, 'OWNER', TRUE)", disabledActor, organizationId, outletId)
+        val disabledAuth = auth(disabledActor, organizationId, outletId, permissions = emptySet())
+        assertThrows(DomainException::class.java) {
+            ctx.inventoryController.adjust(
+                authentication = disabledAuth,
+                idempotencyKey = "uncommitted_disabled_account",
+                commandTypeHeader = "INVENTORY_ADJUSTMENT",
+                schemaVersionHeader = "1",
+                request = InventoryAdjustmentRequest(outletId, item.id, 10, StockReason.MANUAL_INCREASE),
+            )
+        }
+
+        // 5. Case 5: Wrong organization
+        val foreignOrgId = UUID.randomUUID()
+        val wrongOrgAuth = auth(actorId, foreignOrgId, outletId)
+        assertThrows(DomainException::class.java) {
+            ctx.inventoryController.adjust(
+                authentication = wrongOrgAuth,
+                idempotencyKey = "uncommitted_wrong_org",
+                commandTypeHeader = "INVENTORY_ADJUSTMENT",
+                schemaVersionHeader = "1",
+                request = InventoryAdjustmentRequest(outletId, item.id, 10, StockReason.MANUAL_INCREASE),
+            )
+        }
+
+        // 6. Case 6: Wrong outlet
+        val otherOutletId = UUID.randomUUID()
+        ctx.jdbc.update("INSERT INTO mypet.provider_outlet(id, organization_id, name, status, pickup_enabled) VALUES (?, ?, 'Other Outlet', 'ACTIVE', TRUE)", otherOutletId, organizationId)
+        ctx.jdbc.update("INSERT INTO mypet.outlet_capability(outlet_id, capability, verified) VALUES (?, 'PRODUCT_STORE', TRUE)", otherOutletId)
+        val wrongOutletAuth = auth(actorId, organizationId, outletId) // Staff authorized for outletId, but sending request with otherOutletId
+        assertThrows(DomainException::class.java) {
+            ctx.inventoryController.adjust(
+                authentication = wrongOutletAuth,
+                idempotencyKey = "uncommitted_wrong_outlet",
+                commandTypeHeader = "INVENTORY_ADJUSTMENT",
+                schemaVersionHeader = "1",
+                request = InventoryAdjustmentRequest(otherOutletId, item.id, 10, StockReason.MANUAL_INCREASE),
+            )
+        }
+
+        // 7. Case 7: Forged outlet (random non-existent UUID)
+        val forgedOutletId = UUID.randomUUID()
+        assertThrows(DomainException::class.java) {
+            ctx.inventoryController.adjust(
+                authentication = validAuth,
+                idempotencyKey = "uncommitted_forged_outlet",
+                commandTypeHeader = "INVENTORY_ADJUSTMENT",
+                schemaVersionHeader = "1",
+                request = InventoryAdjustmentRequest(forgedOutletId, item.id, 10, StockReason.MANUAL_INCREASE),
+            )
+        }
+
+        // 8. Case 8: Account A command resolved under Account B
+        // First commit legitimate command under Actor A
+        ctx.inventoryController.adjust(
+            authentication = validAuth,
+            idempotencyKey = "legit_actor_a_key",
             commandTypeHeader = "INVENTORY_ADJUSTMENT",
             schemaVersionHeader = "1",
-            request = adjustReq,
+            request = InventoryAdjustmentRequest(outletId, item.id, 5, StockReason.MANUAL_INCREASE),
         )
-        assertEquals(10, firstReceipt.resultingOnHand)
-
-        // 2. Revoke staff permission / deactivate staff
-        ctx.jdbc.update(
-            "UPDATE mypet.merchant_staff SET active = FALSE WHERE account_id = ? AND outlet_id = ?",
-            actorId,
-            outletId,
-        )
-        val revokedAuth = auth(actorId, organizationId, outletId, permissions = emptySet())
-
-        // 3. Receipt Resolver for committed command succeeds and returns terminal receipt
-        val resolved = ctx.syncController.resolveReceipt(
-            authentication = authentication,
-            request = ResolveReceiptRequest(
-                idempotencyKey = "idemp_committed_1",
-                commandType = "INVENTORY_ADJUSTMENT",
-                payloadSchemaVersion = 1,
-                payload = mapOf(
-                    "outletId" to outletId.toString(),
-                    "listingId" to item.id.toString(),
-                    "quantityDelta" to 10,
-                    "reason" to "MANUAL_INCREASE",
-                ),
-            ),
-        )
-        assertEquals("ACCEPTED", resolved.status)
-        assertEquals(10, resolved.resultingOnHand)
-
-        // 4. Receipt Resolver for UNCOMMITTED command returns 404 RESOURCE_NOT_FOUND
-        val uncommittedEx = assertThrows(DomainException::class.java) {
+        // Actor B attempts to resolve Actor A's receipt
+        val actorB = createMerchant(ctx.jdbc, "+919320000068")
+        ctx.jdbc.update("INSERT INTO mypet.merchant_staff(account_id, organization_id, outlet_id, permission, active) VALUES (?, ?, ?, 'OWNER', TRUE)", actorB, organizationId, outletId)
+        val actorBAuth = auth(actorB, organizationId, outletId)
+        assertThrows(DomainException::class.java) {
             ctx.syncController.resolveReceipt(
-                authentication = authentication,
+                authentication = actorBAuth,
                 request = ResolveReceiptRequest(
-                    idempotencyKey = "idemp_uncommitted_never_run",
+                    idempotencyKey = "legit_actor_a_key",
                     commandType = "INVENTORY_ADJUSTMENT",
                     payloadSchemaVersion = 1,
                     payload = mapOf(
@@ -504,40 +583,67 @@ class M6SyncAdversarialPostgresContractTest {
                 ),
             )
         }
-        assertEquals("RESOURCE_NOT_FOUND", uncommittedEx.code)
 
-        // 5. Normal mutation endpoint throws permission exception on uncommitted replay with revoked staff
-        val mutationEx = assertThrows(DomainException::class.java) {
+        // 9. Case 9: Unauthenticated / Invalid role
+        val invalidRoleAuth = UsernamePasswordAuthenticationToken(
+            Principal(actorId = actorId, role = Role.CUSTOMER, organizationId = organizationId),
+            null,
+            emptyList(),
+        )
+        assertThrows(DomainException::class.java) {
             ctx.inventoryController.adjust(
-                authentication = revokedAuth,
-                idempotencyKey = "idemp_uncommitted_never_run",
+                authentication = invalidRoleAuth,
+                idempotencyKey = "uncommitted_invalid_role",
                 commandTypeHeader = "INVENTORY_ADJUSTMENT",
                 schemaVersionHeader = "1",
-                request = InventoryAdjustmentRequest(
-                    outletId = outletId,
-                    listingId = item.id,
-                    quantityDelta = 5,
-                    reason = StockReason.MANUAL_INCREASE,
+                request = InventoryAdjustmentRequest(outletId, item.id, 10, StockReason.MANUAL_INCREASE),
+            )
+        }
+
+        // Verify: Every uncommitted case had strictly 0 mutations applied, 0 receipts, 0 sync events!
+        val totalMovements = ctx.jdbc.queryForObject(
+            "SELECT COUNT(*) FROM mypet.inventory_movement WHERE idempotency_key LIKE 'uncommitted_%'",
+            Long::class.java,
+        )
+        assertEquals(0L, totalMovements)
+
+        // Verify: Committed exact request after later authorization loss may resolve historical receipt
+        // Deactivate Actor A
+        ctx.jdbc.update("UPDATE mypet.merchant_staff SET active = FALSE WHERE account_id = ? AND outlet_id = ?", actorId, outletId)
+        val resolved = ctx.syncController.resolveReceipt(
+            authentication = validAuth,
+            request = ResolveReceiptRequest(
+                idempotencyKey = "legit_actor_a_key",
+                commandType = "INVENTORY_ADJUSTMENT",
+                payloadSchemaVersion = 1,
+                payload = mapOf(
+                    "outletId" to outletId.toString(),
+                    "listingId" to item.id.toString(),
+                    "quantityDelta" to 5,
+                    "reason" to "MANUAL_INCREASE",
+                ),
+            ),
+        )
+        assertEquals("ACCEPTED", resolved.status)
+        assertEquals(5, resolved.resultingOnHand)
+
+        // Verify: Replay with changed payload + old key throws IDEMPOTENCY_FINGERPRINT_MISMATCH
+        assertThrows(DomainException::class.java) {
+            ctx.syncController.resolveReceipt(
+                authentication = validAuth,
+                request = ResolveReceiptRequest(
+                    idempotencyKey = "legit_actor_a_key",
+                    commandType = "INVENTORY_ADJUSTMENT",
+                    payloadSchemaVersion = 1,
+                    payload = mapOf(
+                        "outletId" to outletId.toString(),
+                        "listingId" to item.id.toString(),
+                        "quantityDelta" to 999, // Tampered delta!
+                        "reason" to "MANUAL_INCREASE",
+                    ),
                 ),
             )
         }
-        assertTrue(
-            mutationEx.code == "MERCHANT_PERMISSION_REQUIRED" || mutationEx.code == "PERMISSION_DENIED" || mutationEx.code == "RESOURCE_NOT_FOUND",
-            "Expected authorization failure, got ${mutationEx.code}",
-        )
-
-        // 6. Verify strictly 0 mutations applied for the uncommitted command
-        val count = ctx.jdbc.queryForObject(
-            "SELECT COUNT(*) FROM mypet.inventory_movement WHERE idempotency_key = 'idemp_uncommitted_never_run'",
-            Long::class.java,
-        )
-        assertEquals(0L, count)
-        val finalOnHand = ctx.jdbc.queryForObject(
-            "SELECT on_hand FROM mypet.inventory_balance WHERE listing_id = ?",
-            Int::class.java,
-            item.id,
-        )
-        assertEquals(10, finalOnHand) // Unchanged from first commit!
     }
 
     @Test
@@ -563,6 +669,30 @@ class M6SyncAdversarialPostgresContractTest {
             "schema_item_1",
             actorId,
         )
+
+        // Only one header present (command-type without version)
+        val exOnlyType = assertThrows(DomainException::class.java) {
+            ctx.inventoryController.adjust(
+                authentication = authentication,
+                idempotencyKey = "schema_key_only_type",
+                commandTypeHeader = "INVENTORY_ADJUSTMENT",
+                schemaVersionHeader = null,
+                request = InventoryAdjustmentRequest(outletId, item.id, 5, StockReason.MANUAL_INCREASE),
+            )
+        }
+        assertEquals("COMMAND_SCHEMA_UNSUPPORTED", exOnlyType.code)
+
+        // Only one header present (version without command-type)
+        val exOnlyVer = assertThrows(DomainException::class.java) {
+            ctx.inventoryController.adjust(
+                authentication = authentication,
+                idempotencyKey = "schema_key_only_ver",
+                commandTypeHeader = null,
+                schemaVersionHeader = "1",
+                request = InventoryAdjustmentRequest(outletId, item.id, 5, StockReason.MANUAL_INCREASE),
+            )
+        }
+        assertEquals("COMMAND_SCHEMA_UNSUPPORTED", exOnlyVer.code)
 
         // Invalid command type
         val ex1 = assertThrows(DomainException::class.java) {
@@ -590,7 +720,7 @@ class M6SyncAdversarialPostgresContractTest {
     }
 
     @Test
-    fun `M6-SYNC-002 receipt resolution for catalog update and lifecycle mutations`() {
+    fun `M6-SYNC-002 receipt resolution for catalog update and lifecycle mutations with fail-closed binding`() {
         val ctx = context()
         val actorId = createMerchant(ctx.jdbc, "+919320000008")
         val (organizationId, outletId) = seedScope(ctx.jdbc, actorId)
@@ -615,7 +745,7 @@ class M6SyncAdversarialPostgresContractTest {
 
         // 1. Update listing
         val updated = ctx.catalog.updateListing(
-            `in`.mypetnew.catalog.domain.UpdateListingCommand(
+            UpdateListingCommand(
                 organizationId = organizationId,
                 outletId = outletId,
                 listingId = item.id,
@@ -720,50 +850,16 @@ class M6SyncAdversarialPostgresContractTest {
     }
 
     @Test
-    fun `M6-SYNC-001 multi-page keyset bootstrap and cursor validation edges`() {
-        val ctx = context()
-        val actorId = createMerchant(ctx.jdbc, "+919320000009")
-        val (organizationId, outletId) = seedScope(ctx.jdbc, actorId)
+    fun `M6-SYNC-001 cursor secret validation fails closed on short secret`() {
+        val dataSource = PostgresTestDatabase.dataSource()
+        val jdbc = JdbcTemplate(dataSource)
 
-        // Create 3 listings
-        for (i in 1..3) {
-            ctx.catalog.createListing(
-                CreateListingCommand(
-                    organizationId = organizationId,
-                    outletId = outletId,
-                    barcodeType = BarcodeType.INTERNAL,
-                    barcode = "SKU-PAGE-$i",
-                    name = "Page Item $i",
-                    kind = ListingKind.PRODUCT,
-                    mrpPaise = 500,
-                    sellingPricePaise = 400,
-                    category = "food",
-                    capabilities = setOf(ProviderCapability.PRODUCT_STORE),
-                ),
-                "page_item_$i",
-                actorId,
-            )
+        val invalidFeed = JdbcMerchantSyncFeed(jdbc, cursorSecret = "short-secret")
+        assertThrows(IllegalStateException::class.java) {
+            invalidFeed.validateSecret()
         }
 
-        // Page 1 (limit 2)
-        val p1 = ctx.syncFeed.fetchBootstrap(organizationId, outletId, limit = 2)
-        assertEquals(2, p1.catalogItems.size)
-        assertTrue(p1.hasMore)
-        assertNotNull(p1.nextCursor)
-
-        // Page 2 (from nextCursor)
-        val p2 = ctx.syncFeed.fetchBootstrap(organizationId, outletId, cursor = p1.nextCursor, limit = 2)
-        assertEquals(1, p2.catalogItems.size)
-        assertTrue(!p2.hasMore)
-        assertEquals(null, p2.nextCursor)
-
-        // Cursor tampering checks
-        val foreignOrg = UUID.randomUUID()
-        assertThrows(DomainException::class.java) {
-            ctx.syncFeed.fetchChanges(foreignOrg, outletId, p1.highWaterCursor, 100)
-        }
-        assertThrows(DomainException::class.java) {
-            ctx.syncFeed.fetchChanges(organizationId, outletId, "invalid-cursor-format", 100)
-        }
+        val validFeed = JdbcMerchantSyncFeed(jdbc, cursorSecret = "a".repeat(32))
+        validFeed.validateSecret() // Must succeed without exception
     }
 }

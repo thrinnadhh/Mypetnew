@@ -16,7 +16,6 @@ import `in`.mypetnew.provider.domain.ProviderStatus
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -41,18 +40,6 @@ data class ResolveReceiptResponse(
     val resultingReserved: Int? = null,
     val resultingVersion: Long? = null,
     val serverTimestamp: String,
-)
-
-data class SyncReceiptResponse(
-    val idempotencyKey: String,
-    val commandType: String,
-    val entityType: String,
-    val entityId: UUID,
-    val resultingOnHand: Int? = null,
-    val resultingVersion: Long? = null,
-    val movementId: UUID? = null,
-    val status: String = "ACCEPTED",
-    val createdAt: String,
 )
 
 @RestController
@@ -128,7 +115,7 @@ class MerchantSyncController(
                    operation_scope, request_fingerprint, movement_id, resulting_on_hand,
                    resulting_reserved, created_at
             FROM mypet.inventory_command_receipt
-            WHERE actor_id = ? AND idempotency_key = ?
+            WHERE actor_id = ? AND idempotency_key = ? AND outlet_id = ? AND listing_id = ?
             """.trimIndent(),
             { rs, _ ->
                 object {
@@ -136,6 +123,7 @@ class MerchantSyncController(
                     val outId = rs.getObject("outlet_id", UUID::class.java)
                     val listId = rs.getObject("listing_id", UUID::class.java)
                     val actId = rs.getObject("actor_id", UUID::class.java)
+                    val opScope = rs.getString("operation_scope")
                     val storedFp = rs.getString("request_fingerprint")
                     val movementId = rs.getObject("movement_id", UUID::class.java)
                     val onHand = rs.getInt("resulting_on_hand")
@@ -145,7 +133,13 @@ class MerchantSyncController(
             },
             actorId,
             request.idempotencyKey,
+            outletId,
+            listingId,
         ).firstOrNull() ?: throw DomainException("RESOURCE_NOT_FOUND", "No receipt found for idempotency key")
+
+        if (row.orgId == null || row.outId != outletId || row.listId != listingId || row.actId != actorId || row.opScope != "merchant-adjust") {
+            throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "Stored receipt metadata mismatch")
+        }
 
         val referenceType = payload["referenceType"] as? String
         val referenceId = payload["referenceId"] as? String
@@ -203,7 +197,7 @@ class MerchantSyncController(
             FROM mypet.catalog_mutation_receipt r
             LEFT JOIN mypet.catalog_listing_history h
               ON h.listing_id = r.listing_id AND h.listing_version = r.resulting_version AND h.mutation_type = r.mutation_type
-            WHERE r.outlet_id = ? AND r.idempotency_key = ?
+            WHERE r.outlet_id = ? AND r.idempotency_key = ? AND r.listing_id = ?
             """.trimIndent(),
             { rs, _ ->
                 object {
@@ -220,16 +214,23 @@ class MerchantSyncController(
             },
             outletId,
             request.idempotencyKey,
+            listingId,
         ).firstOrNull() ?: throw DomainException("RESOURCE_NOT_FOUND", "No receipt found for idempotency key")
 
-        if (row.histActorId != null && row.histActorId != actorId) {
+        if (row.histActorId == null) {
+            throw DomainException("PERMISSION_DENIED", "Historical actor record missing")
+        }
+        if (row.histActorId != actorId) {
             throw DomainException("PERMISSION_DENIED", "Historical actor mismatch")
         }
         if (row.listId != listingId || row.mutType != "UPDATE") {
             throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "Target listing or mutation type mismatch")
         }
+        if (row.orgId == null) {
+            throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "Historical organization record missing")
+        }
 
-        val orgIdStr = row.orgId?.toString() ?: principal.organizationId?.toString() ?: ""
+        val orgIdStr = row.orgId.toString()
         val expectedFp = CatalogService.computeUpdateFingerprint(
             orgIdStr, outletId.toString(), listingId.toString(),
             expectedVersion.toString(), name, mrpPaise.toString(),
@@ -271,7 +272,7 @@ class MerchantSyncController(
             FROM mypet.catalog_mutation_receipt r
             LEFT JOIN mypet.catalog_listing_history h
               ON h.listing_id = r.listing_id AND h.listing_version = r.resulting_version AND h.mutation_type = r.mutation_type
-            WHERE r.outlet_id = ? AND r.idempotency_key = ?
+            WHERE r.outlet_id = ? AND r.idempotency_key = ? AND r.listing_id = ?
             """.trimIndent(),
             { rs, _ ->
                 object {
@@ -288,16 +289,23 @@ class MerchantSyncController(
             },
             outletId,
             request.idempotencyKey,
+            listingId,
         ).firstOrNull() ?: throw DomainException("RESOURCE_NOT_FOUND", "No receipt found for idempotency key")
 
-        if (row.histActorId != null && row.histActorId != actorId) {
+        if (row.histActorId == null) {
+            throw DomainException("PERMISSION_DENIED", "Historical actor record missing")
+        }
+        if (row.histActorId != actorId) {
             throw DomainException("PERMISSION_DENIED", "Historical actor mismatch")
         }
         if (row.listId != listingId || row.mutType != expectedMutation) {
             throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "Target listing or mutation type mismatch")
         }
+        if (row.orgId == null) {
+            throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "Historical organization record missing")
+        }
 
-        val orgIdStr = row.orgId?.toString() ?: principal.organizationId?.toString() ?: ""
+        val orgIdStr = row.orgId.toString()
         val expectedFp = CatalogService.computeLifecycleFingerprint(
             orgIdStr, outletId.toString(), listingId.toString(),
             expectedVersion.toString(), targetStatus,
@@ -315,83 +323,6 @@ class MerchantSyncController(
             resultingVersion = row.version,
             serverTimestamp = row.createdAt.toInstant().toString(),
         )
-    }
-
-    @GetMapping("/receipts/{idempotencyKey}")
-    fun receipt(
-        authentication: Authentication,
-        @PathVariable idempotencyKey: String,
-        @RequestParam outletId: UUID,
-    ): SyncReceiptResponse {
-        val principal = authentication.domainPrincipal()
-        Authorizer.requireRole(principal, Role.MERCHANT)
-        val orgId = principal.organizationId ?: throw DomainException("PERMISSION_DENIED", "No organization scope")
-
-        // 1. Check inventory receipts
-        val invReceipt = jdbc.query(
-            """
-            SELECT id, organization_id, outlet_id, listing_id, actor_id, idempotency_key,
-                   movement_id, resulting_on_hand, created_at
-            FROM mypet.inventory_command_receipt
-            WHERE organization_id = ? AND actor_id = ? AND idempotency_key = ?
-            """.trimIndent(),
-            { rs, _ ->
-                SyncReceiptResponse(
-                    idempotencyKey = idempotencyKey,
-                    commandType = "INVENTORY_ADJUSTMENT",
-                    entityType = "INVENTORY_BALANCE",
-                    entityId = rs.getObject("listing_id", UUID::class.java),
-                    resultingOnHand = rs.getInt("resulting_on_hand"),
-                    movementId = rs.getObject("movement_id", UUID::class.java),
-                    status = "ACCEPTED",
-                    createdAt = rs.getTimestamp("created_at").toInstant().toString(),
-                )
-            },
-            orgId,
-            principal.actorId,
-            idempotencyKey,
-        ).firstOrNull()
-
-        if (invReceipt != null) {
-            return invReceipt
-        }
-
-        // 2. Check catalog receipts
-        val catReceipt = jdbc.query(
-            """
-            SELECT r.id, r.outlet_id, r.listing_id, r.idempotency_key, r.mutation_type,
-                   r.resulting_version, r.created_at
-            FROM mypet.catalog_mutation_receipt r
-            JOIN mypet.provider_outlet o ON o.id = r.outlet_id
-            WHERE o.organization_id = ? AND r.outlet_id = ? AND r.idempotency_key = ?
-            """.trimIndent(),
-            { rs, _ ->
-                val mutType = rs.getString("mutation_type")
-                val cmdType = when (mutType) {
-                    "ACTIVATE" -> "CATALOG_ACTIVATE"
-                    "DEACTIVATE" -> "CATALOG_DEACTIVATE"
-                    else -> "CATALOG_UPDATE"
-                }
-                SyncReceiptResponse(
-                    idempotencyKey = idempotencyKey,
-                    commandType = cmdType,
-                    entityType = "CATALOG_ITEM",
-                    entityId = rs.getObject("listing_id", UUID::class.java),
-                    resultingVersion = rs.getLong("resulting_version"),
-                    status = "ACCEPTED",
-                    createdAt = rs.getTimestamp("created_at").toInstant().toString(),
-                )
-            },
-            orgId,
-            outletId,
-            idempotencyKey,
-        ).firstOrNull()
-
-        if (catReceipt != null) {
-            return catReceipt
-        }
-
-        throw DomainException("RESOURCE_NOT_FOUND", "No receipt found for idempotency key")
     }
 
     private fun requireOutletAccess(principal: Principal, outletId: UUID): ProviderOutlet {

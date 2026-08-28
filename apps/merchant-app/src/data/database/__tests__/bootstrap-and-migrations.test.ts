@@ -13,17 +13,17 @@ import {
 } from '../schema';
 
 describe('M6 SQLite Bootstrap and Migrations', () => {
-  it('performs clean bootstrap to schema version 3 and creates all 7 tables', async () => {
+  it('performs clean bootstrap to schema version 4 and creates all 11 tables', async () => {
     const db = createNodeSqliteDatabase(':memory:');
     const bootstrapper = new DatabaseBootstrapper();
 
     const result = await bootstrapper.bootstrap(db);
     expect(result.isInitialized).toBe(true);
     expect(result.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(result.schemaVersion).toBe(3);
+    expect(result.schemaVersion).toBe(4);
 
     const version = await getSchemaVersion(db);
-    expect(version).toBe(3);
+    expect(version).toBe(4);
 
     const tables = await db.all<{ name: string }>(
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';",
@@ -41,7 +41,7 @@ describe('M6 SQLite Bootstrap and Migrations', () => {
     await db.close();
   });
 
-  it('runs migration chain forward from 0 -> 3, 1 -> 3, 2 -> 3, and 3 -> 3 idempotently', async () => {
+  it('runs migration chain forward from 0 -> 4, 1 -> 4, 2 -> 4, 3 -> 4, and 4 -> 4 idempotently', async () => {
     const db = createNodeSqliteDatabase(':memory:');
 
     // 0 -> 1
@@ -59,10 +59,15 @@ describe('M6 SQLite Bootstrap and Migrations', () => {
     expect(res3.currentVersion).toBe(3);
     expect(res3.appliedVersions).toEqual([3]);
 
-    // 3 -> 3 idempotent
-    const res4 = await runMigrations(db, 3);
-    expect(res4.currentVersion).toBe(3);
-    expect(res4.appliedVersions).toEqual([]);
+    // 3 -> 4
+    const res4 = await runMigrations(db, 4);
+    expect(res4.currentVersion).toBe(4);
+    expect(res4.appliedVersions).toEqual([4]);
+
+    // 4 -> 4 idempotent
+    const res5 = await runMigrations(db, 4);
+    expect(res5.currentVersion).toBe(4);
+    expect(res5.appliedVersions).toEqual([]);
 
     await db.close();
   });

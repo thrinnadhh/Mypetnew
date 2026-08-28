@@ -214,11 +214,18 @@ class CatalogInventoryApiController(
         @RequestHeader(name = "X-MyPet-Payload-Schema-Version", required = false) schemaVersionHeader: String?,
         @RequestBody request: UpdateListingRequest,
     ): Listing {
-        if (commandTypeHeader != null && commandTypeHeader != "CATALOG_UPDATE") {
-            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Endpoint accepts CATALOG_UPDATE, received $commandTypeHeader")
+        val hasType = commandTypeHeader != null
+        val hasVersion = schemaVersionHeader != null
+        if (hasType xor hasVersion) {
+            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Both sync headers must be present together")
         }
-        if (schemaVersionHeader != null && schemaVersionHeader != "1") {
-            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported payload schema version $schemaVersionHeader")
+        if (hasType) {
+            if (commandTypeHeader != "CATALOG_UPDATE") {
+                throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Endpoint accepts CATALOG_UPDATE, received $commandTypeHeader")
+            }
+            if (schemaVersionHeader != "1") {
+                throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported payload schema version $schemaVersionHeader")
+            }
         }
         val principal = authentication.domainPrincipal()
         val outlet = providers.requireActiveOutlet(principal, request.outletId, MerchantPermission.CATALOG_WRITE)
@@ -254,11 +261,18 @@ class CatalogInventoryApiController(
         @RequestHeader(name = "X-MyPet-Payload-Schema-Version", required = false) schemaVersionHeader: String?,
         @RequestBody request: CatalogLifecycleRequest,
     ): Listing {
-        if (commandTypeHeader != null && commandTypeHeader != "CATALOG_DEACTIVATE") {
-            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Endpoint accepts CATALOG_DEACTIVATE, received $commandTypeHeader")
+        val hasType = commandTypeHeader != null
+        val hasVersion = schemaVersionHeader != null
+        if (hasType xor hasVersion) {
+            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Both sync headers must be present together")
         }
-        if (schemaVersionHeader != null && schemaVersionHeader != "1") {
-            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported payload schema version $schemaVersionHeader")
+        if (hasType) {
+            if (commandTypeHeader != "CATALOG_DEACTIVATE") {
+                throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Endpoint accepts CATALOG_DEACTIVATE, received $commandTypeHeader")
+            }
+            if (schemaVersionHeader != "1") {
+                throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported payload schema version $schemaVersionHeader")
+            }
         }
         return changeLifecycle(authentication, listingId, idempotencyKey, request, ListingStatus.INACTIVE)
     }
@@ -272,11 +286,18 @@ class CatalogInventoryApiController(
         @RequestHeader(name = "X-MyPet-Payload-Schema-Version", required = false) schemaVersionHeader: String?,
         @RequestBody request: CatalogLifecycleRequest,
     ): Listing {
-        if (commandTypeHeader != null && commandTypeHeader != "CATALOG_ACTIVATE") {
-            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Endpoint accepts CATALOG_ACTIVATE, received $commandTypeHeader")
+        val hasType = commandTypeHeader != null
+        val hasVersion = schemaVersionHeader != null
+        if (hasType xor hasVersion) {
+            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Both sync headers must be present together")
         }
-        if (schemaVersionHeader != null && schemaVersionHeader != "1") {
-            throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported payload schema version $schemaVersionHeader")
+        if (hasType) {
+            if (commandTypeHeader != "CATALOG_ACTIVATE") {
+                throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Endpoint accepts CATALOG_ACTIVATE, received $commandTypeHeader")
+            }
+            if (schemaVersionHeader != "1") {
+                throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported payload schema version $schemaVersionHeader")
+            }
         }
         return changeLifecycle(authentication, listingId, idempotencyKey, request, ListingStatus.ACTIVE)
     }

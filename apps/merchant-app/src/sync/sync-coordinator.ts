@@ -100,8 +100,8 @@ export class SyncCoordinator {
           continue;
         }
 
-        // Attempt historical receipt resolution for commands with potential unknown outcome (replays / retries)
-        if (cmd.attemptCount > 0) {
+        // Attempt historical receipt resolution for commands with prior transport uncertainty (replays / retries / crashes)
+        if (item.needsReceiptResolution) {
           const resolution = await this.transport.resolveReceipt(cmd);
           if (resolution.ok) {
             if (resolution.found) {

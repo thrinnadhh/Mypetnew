@@ -101,6 +101,73 @@ describe('SyncCoordinator', () => {
     await db.close();
   });
 
+  it('dispatches pristine PENDING first send directly without calling receipt resolution', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await runMigrations(db);
+    const outboxRepo = new CommandOutboxRepository(db);
+
+    const cmd = await outboxRepo.enqueueCommand(context, {
+      commandType: 'INVENTORY_ADJUSTMENT',
+      payloadSchemaVersion: 1,
+      payload: {
+        outletId: context.outletId,
+        listingId: 'item_pristine_1',
+        quantityDelta: 5,
+        reason: 'MANUAL_INCREASE',
+      },
+      idempotencyKey: 'idemp_pristine_1',
+    });
+
+    let dispatchCalled = false;
+    let resolveCalled = false;
+
+    const mockFetch = async (url: string) => {
+      if (url.includes('/api/v1/merchant/sync/receipts/resolve')) {
+        resolveCalled = true;
+        return new Response('{}', { status: 404 });
+      }
+      if (url.includes('/api/v1/merchant/inventory/adjustments')) {
+        dispatchCalled = true;
+        return new Response(
+          JSON.stringify({
+            id: 'mov_pristine_1',
+            resultingOnHand: 5,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (url.includes('/api/v1/merchant/sync/changes')) {
+        return new Response(
+          JSON.stringify({
+            changes: [],
+            nextCursor: 'c1',
+            hasMore: false,
+            currentHighWaterCursor: 'c1',
+            serverTime: '2026-08-28T00:00:00.000Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response('{}', { status: 404 });
+    };
+
+    const transport = new SyncTransport(mockFetch);
+    const coordinator = new SyncCoordinator(db, transport, new SyncRetryPolicy());
+
+    const summary = await coordinator.sync(context);
+
+    expect(summary.commandsProcessed).toBe(1);
+    expect(summary.acknowledged).toBe(1);
+    expect(resolveCalled).toBe(false); // Zero receipt-resolution calls on pristine first attempt!
+    expect(dispatchCalled).toBe(true);  // Exactly one mutation dispatch!
+
+    const updated = await outboxRepo.getCommand(context, cmd.commandId);
+    expect(updated?.state).toBe('ACKNOWLEDGED');
+    expect(updated?.durableServerReceipt).toContain('mov_pristine_1');
+
+    await db.close();
+  });
+
   it('guarantees exactly one dispatch under two independent SQLite connection handles', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-multi-'));
     const tmpDbPath = path.join(tmpDir, 'test.db');

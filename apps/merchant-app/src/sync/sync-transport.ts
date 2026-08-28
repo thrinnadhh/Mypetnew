@@ -112,28 +112,6 @@ export class SyncTransport {
     }
   }
 
-  async fetchReceipt(outletId: string, idempotencyKey: string): Promise<ServerReceiptData | null> {
-    try {
-      const params = new URLSearchParams({ outletId });
-      const response = await this.fetchFn(
-        `/api/v1/merchant/sync/receipts/${encodeURIComponent(idempotencyKey)}?${params.toString()}`,
-      );
-      if (!response.ok) {
-        return null;
-      }
-      const data = (await response.json()) as Record<string, unknown>;
-      return {
-        receiptId: (data.receiptId as string) ?? (data.movementId as string) ?? idempotencyKey,
-        resultingVersion: typeof data.resultingVersion === 'number' ? data.resultingVersion : undefined,
-        resultingOnHand: typeof data.resultingOnHand === 'number' ? data.resultingOnHand : undefined,
-        serverTimestamp: (data.createdAt as string) ?? new Date().toISOString(),
-        rawResponse: data,
-      };
-    } catch {
-      return null;
-    }
-  }
-
   async dispatch(command: OfflineCommandRecord): Promise<TransportResult> {
     // Validate payload schema version before attempting any network transport
     if (!isSupportedCommandPayloadVersion(command.commandType, command.payloadSchemaVersion)) {

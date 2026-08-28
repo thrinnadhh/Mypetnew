@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 export const TABLE_PROJECTION_SYNC_STATE = 'projection_sync_state';
 export const TABLE_CATALOG_ITEMS = 'catalog_items';
@@ -7,6 +7,10 @@ export const TABLE_INVENTORY_BALANCES = 'inventory_balances';
 export const TABLE_PROJECTION_TOMBSTONES = 'projection_tombstones';
 export const TABLE_OFFLINE_COMMANDS = 'offline_commands';
 export const TABLE_OFFLINE_COMMAND_DEPENDENCIES = 'offline_command_dependencies';
+export const TABLE_BOOTSTRAP_STAGING_ITEMS = 'bootstrap_staging_items';
+export const TABLE_BOOTSTRAP_STAGING_BALANCES = 'bootstrap_staging_balances';
+export const TABLE_BOOTSTRAP_STAGING_BARCODES = 'bootstrap_staging_barcodes';
+export const TABLE_BOOTSTRAP_STAGING_STATE = 'bootstrap_staging_state';
 
 export const V1_SCHEMA_STATEMENTS = [
   // 1. Sync metadata
@@ -170,8 +174,80 @@ export const V3_SCHEMA_STATEMENTS = [
     ON ${TABLE_OFFLINE_COMMAND_DEPENDENCIES} (account_id, organization_id, outlet_id, depends_on_command_id);`,
 ];
 
+export const V4_SCHEMA_STATEMENTS = [
+  // 8. Bootstrap staging items
+  `CREATE TABLE IF NOT EXISTS ${TABLE_BOOTSTRAP_STAGING_ITEMS} (
+    generation_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    outlet_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    commerce_mode TEXT NOT NULL,
+    barcode_type TEXT NOT NULL,
+    normalized_barcode TEXT NOT NULL,
+    mrp_paise INTEGER NOT NULL,
+    selling_price_paise INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    brand TEXT NULL,
+    description TEXT NULL,
+    pet_type TEXT NULL,
+    life_stage TEXT NULL,
+    pack_label TEXT NULL,
+    sku TEXT NULL,
+    image_urls_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    server_created_at TEXT NOT NULL,
+    server_updated_at TEXT NOT NULL,
+    PRIMARY KEY (generation_id, account_id, organization_id, outlet_id, id)
+  );`,
+
+  // 9. Bootstrap staging balances
+  `CREATE TABLE IF NOT EXISTS ${TABLE_BOOTSTRAP_STAGING_BALANCES} (
+    generation_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    outlet_id TEXT NOT NULL,
+    listing_id TEXT NOT NULL,
+    on_hand INTEGER NOT NULL,
+    reserved INTEGER NOT NULL,
+    version INTEGER NOT NULL,
+    server_updated_at TEXT NOT NULL,
+    PRIMARY KEY (generation_id, account_id, organization_id, outlet_id, listing_id)
+  );`,
+
+  // 10. Bootstrap staging barcodes
+  `CREATE TABLE IF NOT EXISTS ${TABLE_BOOTSTRAP_STAGING_BARCODES} (
+    generation_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    outlet_id TEXT NOT NULL,
+    listing_id TEXT NOT NULL,
+    barcode_type TEXT NOT NULL,
+    normalized_barcode TEXT NOT NULL,
+    is_primary INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (generation_id, account_id, organization_id, outlet_id, normalized_barcode)
+  );`,
+
+  // 11. Bootstrap staging state
+  `CREATE TABLE IF NOT EXISTS ${TABLE_BOOTSTRAP_STAGING_STATE} (
+    generation_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    outlet_id TEXT NOT NULL,
+    high_water_cursor TEXT NOT NULL,
+    next_page_cursor TEXT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (account_id, organization_id, outlet_id)
+  );`,
+];
+
 export const ALL_SCHEMA_STATEMENTS = [
   ...V1_SCHEMA_STATEMENTS,
   ...V2_SCHEMA_STATEMENTS,
   ...V3_SCHEMA_STATEMENTS,
+  ...V4_SCHEMA_STATEMENTS,
 ];

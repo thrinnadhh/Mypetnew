@@ -215,7 +215,7 @@ class JdbcCatalogPersistence(
                 insertReceipt(updated, mutation, actionKey, requestFingerprint)
                 syncPublisher?.publishCatalogItemChange(
                     updated,
-                    isTombstone = (command.targetStatus == ListingStatus.INACTIVE),
+                    isTombstone = false,
                 )
                 updated
             }

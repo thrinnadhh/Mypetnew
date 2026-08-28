@@ -27,6 +27,8 @@ import org.junit.jupiter.api.Test
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.DataSourceTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
+import java.time.Instant
+import java.util.Base64
 import java.util.UUID
 
 @MerchantOpsContract
@@ -120,7 +122,7 @@ class M6SyncPostgresContractTest {
         assertEquals(listing.id, page2.changes[0].entityId)
         assertEquals(1, page2.changes[0].entityVersion)
 
-        // 3. Deactivate listing -> published tombstone to change log
+        // 3. Deactivate listing -> published with isTombstone = false per lifecycle status update semantics
         ctx.catalog.changeLifecycle(
             CatalogLifecycleCommand(
                 organizationId = organizationId,
@@ -137,35 +139,57 @@ class M6SyncPostgresContractTest {
         val page3 = ctx.syncFeed.fetchChanges(organizationId, outletId, page2.nextCursor, 100)
         assertEquals(1, page3.changes.size)
         assertEquals(SyncEntityType.CATALOG_ITEM, page3.changes[0].entityType)
-        assertTrue(page3.changes[0].isTombstone)
+        assertFalse(page3.changes[0].isTombstone)
         assertEquals(1, page3.changes[0].entityVersion)
     }
 
     @Test
-    fun `M6-SYNC-001 cursor validation fails closed with SYNC_CURSOR_EXPIRED on invalid or foreign cursor`() {
+    fun `M6-SYNC-001 signed HMAC cursor validation detects tampering, foreign scope, and expiry`() {
         val ctx = context()
         val actorId = createMerchant(ctx.jdbc, "+919310000002")
         val (organizationId, outletId) = seedScope(ctx.jdbc, actorId)
 
-        // Invalid cursor
+        // Invalid non-base64 cursor
         val ex1 = assertThrows(DomainException::class.java) {
             ctx.syncFeed.fetchChanges(organizationId, outletId, "invalid_base64_cursor!@#", 100)
         }
         assertEquals("SYNC_CURSOR_EXPIRED", ex1.code)
 
-        // Foreign outlet cursor
-        val foreignOrg = UUID.randomUUID()
-        val foreignCursor = java.util.Base64.getUrlEncoder().withoutPadding()
-            .encodeToString("msc_v1:$foreignOrg:$outletId:10:123456789".toByteArray())
+        // Obtain legitimate signed cursor
+        val legitimateCursor = ctx.syncFeed.currentHighWaterCursor(organizationId, outletId)
+        val decoded = String(Base64.getUrlDecoder().decode(legitimateCursor), Charsets.UTF_8)
+        assertTrue(decoded.startsWith("msc_v2:"))
+        val parts = decoded.removePrefix("msc_v2:").split(":")
+        assertEquals(5, parts.size)
 
-        val ex2 = assertThrows(DomainException::class.java) {
+        // 1. Tamper sequence number -> fails closed
+        val tamperedSeq = "msc_v2:${parts[0]}:${parts[1]}:99999:${parts[3]}:${parts[4]}"
+        val tamperedSeqCursor = Base64.getUrlEncoder().withoutPadding().encodeToString(tamperedSeq.toByteArray())
+        val exTamperSeq = assertThrows(DomainException::class.java) {
+            ctx.syncFeed.fetchChanges(organizationId, outletId, tamperedSeqCursor, 100)
+        }
+        assertEquals("SYNC_CURSOR_EXPIRED", exTamperSeq.code)
+
+        // 2. Tamper timestamp -> fails closed
+        val tamperedTime = "msc_v2:${parts[0]}:${parts[1]}:${parts[2]}:0:${parts[4]}"
+        val tamperedTimeCursor = Base64.getUrlEncoder().withoutPadding().encodeToString(tamperedTime.toByteArray())
+        val exTamperTime = assertThrows(DomainException::class.java) {
+            ctx.syncFeed.fetchChanges(organizationId, outletId, tamperedTimeCursor, 100)
+        }
+        assertEquals("SYNC_CURSOR_EXPIRED", exTamperTime.code)
+
+        // 3. Foreign organization / outlet scope
+        val foreignOrg = UUID.randomUUID()
+        val foreignCursor = Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("msc_v2:$foreignOrg:$outletId:10:${Instant.now().epochSecond}:fakehmac".toByteArray())
+        val exForeign = assertThrows(DomainException::class.java) {
             ctx.syncFeed.fetchChanges(organizationId, outletId, foreignCursor, 100)
         }
-        assertEquals("SYNC_CURSOR_EXPIRED", ex2.code)
+        assertEquals("SYNC_CURSOR_EXPIRED", exForeign.code)
     }
 
     @Test
-    fun `M6-SYNC-001 bootstrap returns current full state and high water cursor`() {
+    fun `M6-SYNC-001 bootstrap returns current full state and high water cursor with batched queries`() {
         val ctx = context()
         val actorId = createMerchant(ctx.jdbc, "+919310000003")
         val (organizationId, outletId) = seedScope(ctx.jdbc, actorId)

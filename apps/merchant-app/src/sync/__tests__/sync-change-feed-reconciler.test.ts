@@ -232,4 +232,132 @@ describe('M6 SyncChangeFeedReconciler', () => {
 
     await db.close();
   });
+
+  it('rolls back entire transaction and preserves cursor on foreign partition event', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await new DatabaseBootstrapper().bootstrap(db);
+
+    // Set initial cursor
+    const syncRepo = new SyncStateRepository(db);
+    await syncRepo.recordSyncSuccess(context, 'all', 'initial_cursor_1');
+
+    const mockFetch = async () => {
+      return new Response(
+        JSON.stringify({
+          changes: [
+            {
+              sequenceNumber: 1,
+              organizationId: 'org_FOREIGN', // FOREIGN ORG!
+              outletId: 'out_1',
+              entityType: 'CATALOG_ITEM',
+              entityId: 'foreign_item',
+              entityVersion: 1,
+              isTombstone: false,
+              payload: JSON.stringify({ name: 'Foreign Item', status: 'ACTIVE' }),
+              schemaVersion: 1,
+              createdAt: '2026-08-28T12:00:00.000Z',
+            },
+          ],
+          nextCursor: 'foreign_page_cursor',
+          hasMore: false,
+          currentHighWaterCursor: 'foreign_page_cursor',
+          serverTime: '2026-08-28T12:00:00.000Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const reconciler = new SyncChangeFeedReconciler(db, mockFetch);
+    await expect(reconciler.reconcile(context)).rejects.toThrow('EVENT_PARTITION_MISMATCH');
+
+    // Projection must NOT be created
+    const item = await db.get(`SELECT id FROM ${TABLE_CATALOG_ITEMS} WHERE id = 'foreign_item';`);
+    expect(item).toBeNull();
+
+    // Cursor must remain initial cursor with SYNC_FAILED state
+    const state = await syncRepo.getSyncState(context, 'all');
+    expect(state?.cursor).toBe('initial_cursor_1');
+    expect(state?.status).toBe('SYNC_FAILED');
+
+    await db.close();
+  });
+
+  it('rolls back entire transaction on unsupported event schema version', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await new DatabaseBootstrapper().bootstrap(db);
+
+    const mockFetch = async () => {
+      return new Response(
+        JSON.stringify({
+          changes: [
+            {
+              sequenceNumber: 1,
+              organizationId: 'org_1',
+              outletId: 'out_1',
+              entityType: 'CATALOG_ITEM',
+              entityId: 'future_schema_item',
+              entityVersion: 1,
+              isTombstone: false,
+              payload: JSON.stringify({ name: 'Future Item' }),
+              schemaVersion: 99, // Unsupported event schema version!
+              createdAt: '2026-08-28T12:00:00.000Z',
+            },
+          ],
+          nextCursor: 'unsupported_cursor',
+          hasMore: false,
+          currentHighWaterCursor: 'unsupported_cursor',
+          serverTime: '2026-08-28T12:00:00.000Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const reconciler = new SyncChangeFeedReconciler(db, mockFetch);
+    await expect(reconciler.reconcile(context)).rejects.toThrow('UNSUPPORTED_EVENT_SCHEMA');
+
+    const state = await new SyncStateRepository(db).getSyncState(context, 'all');
+    expect(state?.status).toBe('SYNC_FAILED');
+
+    await db.close();
+  });
+
+  it('rebootstrap clears obsolete projection_tombstones for the partition', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await new DatabaseBootstrapper().bootstrap(db);
+
+    // Insert an old tombstone in projection_tombstones
+    await db.run(
+      `INSERT INTO ${TABLE_PROJECTION_TOMBSTONES} (
+        account_id, organization_id, outlet_id, projection_name, entity_id,
+        server_updated_at, server_version, deleted_at
+      ) VALUES (?, ?, ?, 'catalog_items', 'old_deleted_item', '2026-08-28T00:00:00.000Z', 1, '2026-08-28T00:00:00.000Z');`,
+      [context.accountId, context.organizationId, context.outletId],
+    );
+
+    const mockFetch = async (url: string) => {
+      if (url.includes('/bootstrap')) {
+        return new Response(
+          JSON.stringify({
+            highWaterCursor: 'fresh_cursor_100',
+            catalogItems: [],
+            inventoryBalances: [],
+            serverTime: '2026-08-28T12:00:00.000Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response('Not found', { status: 404 });
+    };
+
+    const reconciler = new SyncChangeFeedReconciler(db, mockFetch);
+    await reconciler.rebootstrap(context);
+
+    // Verify obsolete tombstone is cleared
+    const tombstone = await db.get(
+      `SELECT * FROM ${TABLE_PROJECTION_TOMBSTONES} WHERE entity_id = 'old_deleted_item';`,
+    );
+    expect(tombstone).toBeNull();
+
+    await db.close();
+  });
 });

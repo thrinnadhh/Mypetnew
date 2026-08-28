@@ -1,10 +1,11 @@
 import { merchantApiFetch } from '../auth/session';
-import type {
-  CatalogLifecyclePayload,
-  CatalogUpdatePayload,
-  InventoryAdjustmentPayload,
-  OfflineCommandRecord,
-  ServerReceiptData,
+import {
+  type CatalogLifecyclePayload,
+  type CatalogUpdatePayload,
+  type InventoryAdjustmentPayload,
+  type OfflineCommandRecord,
+  type ServerReceiptData,
+  isSupportedCommandPayloadVersion,
 } from '../data/models/outbox-types';
 
 export type TransportResult =
@@ -29,7 +30,46 @@ export type FetchFunction = (
 export class SyncTransport {
   constructor(private readonly fetchFn: FetchFunction = merchantApiFetch) {}
 
+  getFetchFn(): FetchFunction {
+    return this.fetchFn;
+  }
+
+  async fetchReceipt(outletId: string, idempotencyKey: string): Promise<ServerReceiptData | null> {
+    try {
+      const params = new URLSearchParams({ outletId });
+      const response = await this.fetchFn(
+        `/api/v1/merchant/sync/receipts/${encodeURIComponent(idempotencyKey)}?${params.toString()}`,
+      );
+      if (!response.ok) {
+        return null;
+      }
+      const data = (await response.json()) as Record<string, unknown>;
+      return {
+        receiptId: (data.receiptId as string) ?? (data.movementId as string) ?? idempotencyKey,
+        resultingVersion: typeof data.resultingVersion === 'number' ? data.resultingVersion : undefined,
+        resultingOnHand: typeof data.resultingOnHand === 'number' ? data.resultingOnHand : undefined,
+        serverTimestamp: (data.createdAt as string) ?? new Date().toISOString(),
+        rawResponse: data,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async dispatch(command: OfflineCommandRecord): Promise<TransportResult> {
+    // Validate payload schema version before attempting any network transport
+    if (!isSupportedCommandPayloadVersion(command.commandType, command.payloadSchemaVersion)) {
+      const error = new Error(
+        `COMMAND_SCHEMA_UNSUPPORTED: Payload schema version ${command.payloadSchemaVersion} is not supported for ${command.commandType}`,
+      );
+      error.name = 'COMMAND_SCHEMA_UNSUPPORTED';
+      return {
+        ok: false,
+        status: 400,
+        error,
+      };
+    }
+
     const payload = JSON.parse(command.payloadJson) as Record<string, unknown>;
 
     let path = '';

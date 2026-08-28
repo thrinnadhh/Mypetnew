@@ -33,7 +33,7 @@ export class SyncRetryPolicy {
     const bounded = Math.min(this.maxDelayMs, exponential);
     // Jitter between 0% and 25% of bounded delay
     const jitter = bounded * 0.25 * this.random();
-    return Math.floor(bounded + jitter);
+    return Math.min(this.maxDelayMs, Math.floor(bounded + jitter));
   }
 
   parseRetryAfterHeader(headerValue: string | null | undefined): number | null {
@@ -86,11 +86,23 @@ export class SyncRetryPolicy {
         };
       }
 
-      // 401 Unauthorized / 403 Forbidden
-      if (httpStatus === 401 || httpStatus === 403) {
+      // 401 Unauthorized (final after merchantApiFetch refresh attempt)
+      if (httpStatus === 401) {
+        const msg = error instanceof Error ? error.message : String(error);
         return {
-          action: 'AUTH_REFRESH',
-          reason: `HTTP ${httpStatus} received, attempting token reauthorization`,
+          action: 'REJECT',
+          errorCode: 'AUTH_UNAUTHORIZED',
+          errorMessage: `Authentication session expired or invalid: ${msg}`,
+        };
+      }
+
+      // 403 Forbidden (terminal authorization denial - do not retry)
+      if (httpStatus === 403) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return {
+          action: 'REJECT',
+          errorCode: 'PERMISSION_DENIED',
+          errorMessage: `Permission denied for command execution: ${msg}`,
         };
       }
 

@@ -6,6 +6,21 @@ export type OfflineCommandType =
   | 'CATALOG_ACTIVATE'
   | 'CATALOG_DEACTIVATE';
 
+export const SUPPORTED_COMMAND_PAYLOAD_VERSIONS: Record<OfflineCommandType, readonly number[]> = {
+  INVENTORY_ADJUSTMENT: [1],
+  CATALOG_UPDATE: [1],
+  CATALOG_ACTIVATE: [1],
+  CATALOG_DEACTIVATE: [1],
+};
+
+export function isSupportedCommandPayloadVersion(
+  commandType: OfflineCommandType,
+  version: number,
+): boolean {
+  const supported = SUPPORTED_COMMAND_PAYLOAD_VERSIONS[commandType];
+  return !!supported && supported.includes(version);
+}
+
 export type OfflineCommandState =
   | 'PENDING'
   | 'SENDING'

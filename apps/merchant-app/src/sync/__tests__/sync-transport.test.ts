@@ -152,4 +152,53 @@ describe('M6 SyncTransport', () => {
       expect(result.error.message).toBe('Connection refused');
     }
   });
+
+  it('rejects dispatch without making network calls when payloadSchemaVersion is unsupported', async () => {
+    let networkCalled = false;
+    const mockFetch = async () => {
+      networkCalled = true;
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    };
+
+    const invalidCommand: OfflineCommandRecord = {
+      ...baseCommand,
+      payloadSchemaVersion: 99, // Unsupported
+    };
+
+    const transport = new SyncTransport(mockFetch);
+    const result = await transport.dispatch(invalidCommand);
+
+    expect(networkCalled).toBe(false);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(400);
+      expect(result.error.name).toBe('COMMAND_SCHEMA_UNSUPPORTED');
+    }
+  });
+
+  it('fetches server receipt by idempotency key', async () => {
+    const mockFetch = async (url: string) => {
+      expect(url).toContain('/api/v1/merchant/sync/receipts/idem_1?outletId=out_1');
+      return new Response(
+        JSON.stringify({
+          idempotencyKey: 'idem_1',
+          commandType: 'INVENTORY_ADJUSTMENT',
+          entityType: 'INVENTORY_BALANCE',
+          entityId: 'list_1',
+          resultingOnHand: 20,
+          movementId: 'mov_123',
+          status: 'ACCEPTED',
+          createdAt: '2026-08-28T12:00:00.000Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const transport = new SyncTransport(mockFetch);
+    const receipt = await transport.fetchReceipt('out_1', 'idem_1');
+
+    expect(receipt).not.toBeNull();
+    expect(receipt?.receiptId).toBe('mov_123');
+    expect(receipt?.resultingOnHand).toBe(20);
+  });
 });

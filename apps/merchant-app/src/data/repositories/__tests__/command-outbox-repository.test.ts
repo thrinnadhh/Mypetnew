@@ -244,4 +244,110 @@ describe('M6 CommandOutboxRepository', () => {
 
     await db.close();
   });
+
+  it('rejects unsupported command payload schema versions on enqueue', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await new DatabaseBootstrapper().bootstrap(db);
+    const repo = new CommandOutboxRepository(db);
+
+    await expect(
+      repo.enqueueCommand(contextA, {
+        commandId: 'cmd_v99',
+        installationId: 'inst_1',
+        idempotencyKey: 'idem_v99',
+        commandType: 'INVENTORY_ADJUSTMENT',
+        payloadSchemaVersion: 99, // Unsupported!
+        payload: { outletId: 'out_1', listingId: 'list_1', quantityDelta: 1, reason: 'MANUAL_INCREASE' },
+      }),
+    ).rejects.toThrow('COMMAND_SCHEMA_UNSUPPORTED');
+
+    await db.close();
+  });
+
+  it('rejects dependency when parent command does not exist in partition', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await new DatabaseBootstrapper().bootstrap(db);
+    const repo = new CommandOutboxRepository(db);
+
+    // Parent in different partition
+    await repo.enqueueCommand(contextB, {
+      commandId: 'cmd_parent_B',
+      installationId: 'inst_2',
+      idempotencyKey: 'idem_parent_B',
+      commandType: 'INVENTORY_ADJUSTMENT',
+      payload: { outletId: 'out_2', listingId: 'list_2', quantityDelta: 1, reason: 'MANUAL_INCREASE' },
+    });
+
+    // Enqueueing child in contextA depending on cmd_parent_B (foreign partition) fails closed
+    await expect(
+      repo.enqueueCommand(contextA, {
+        commandId: 'cmd_child_A',
+        installationId: 'inst_1',
+        idempotencyKey: 'idem_child_A',
+        commandType: 'INVENTORY_ADJUSTMENT',
+        payload: { outletId: 'out_1', listingId: 'list_1', quantityDelta: 1, reason: 'MANUAL_INCREASE' },
+        dependsOnCommandIds: ['cmd_parent_B'],
+      }),
+    ).rejects.toThrow('COMMAND_DEPENDENCY_NOT_FOUND');
+
+    await db.close();
+  });
+
+  it('cascades BLOCKED status transitively through deep dependency chains (A -> B -> C -> D)', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await new DatabaseBootstrapper().bootstrap(db);
+    const repo = new CommandOutboxRepository(db);
+
+    await repo.enqueueCommand(contextA, {
+      commandId: 'cmd_A',
+      installationId: 'inst_1',
+      idempotencyKey: 'idem_A',
+      commandType: 'CATALOG_UPDATE',
+      payload: { outletId: 'out_1', listingId: 'list_1', expectedVersion: 1, name: 'A', mrpPaise: 100, sellingPricePaise: 100, category: 'food' },
+    });
+
+    await repo.enqueueCommand(contextA, {
+      commandId: 'cmd_B',
+      installationId: 'inst_1',
+      idempotencyKey: 'idem_B',
+      commandType: 'CATALOG_UPDATE',
+      payload: { outletId: 'out_1', listingId: 'list_1', expectedVersion: 2, name: 'B', mrpPaise: 100, sellingPricePaise: 100, category: 'food' },
+      dependsOnCommandIds: ['cmd_A'],
+    });
+
+    await repo.enqueueCommand(contextA, {
+      commandId: 'cmd_C',
+      installationId: 'inst_1',
+      idempotencyKey: 'idem_C',
+      commandType: 'CATALOG_UPDATE',
+      payload: { outletId: 'out_1', listingId: 'list_1', expectedVersion: 3, name: 'C', mrpPaise: 100, sellingPricePaise: 100, category: 'food' },
+      dependsOnCommandIds: ['cmd_B'],
+    });
+
+    await repo.enqueueCommand(contextA, {
+      commandId: 'cmd_D',
+      installationId: 'inst_1',
+      idempotencyKey: 'idem_D',
+      commandType: 'CATALOG_UPDATE',
+      payload: { outletId: 'out_1', listingId: 'list_1', expectedVersion: 4, name: 'D', mrpPaise: 100, sellingPricePaise: 100, category: 'food' },
+      dependsOnCommandIds: ['cmd_C'],
+    });
+
+    // When root A is rejected, markRejected recursively cascades BLOCKED to B, C, and D
+    await repo.markRejected(contextA, 'cmd_A', 'PERMISSION_DENIED', 'Root permission revoked');
+
+    const cmdB = await repo.getCommand(contextA, 'cmd_B');
+    const cmdC = await repo.getCommand(contextA, 'cmd_C');
+    const cmdD = await repo.getCommand(contextA, 'cmd_D');
+
+    expect(cmdB?.state).toBe('BLOCKED');
+    expect(cmdC?.state).toBe('BLOCKED');
+    expect(cmdD?.state).toBe('BLOCKED');
+
+    // No pending or retryable commands left to claim
+    const claimed = await repo.claimNextEligibleCommands(contextA, 'worker_1', 30000, 10);
+    expect(claimed.length).toBe(0);
+
+    await db.close();
+  });
 });

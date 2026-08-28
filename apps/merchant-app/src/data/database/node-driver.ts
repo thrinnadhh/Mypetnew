@@ -4,6 +4,7 @@ import type { SqliteDatabase, SqliteRunResult, SqliteTransaction } from './drive
 export class NodeSqliteDriver implements SqliteDatabase {
   private db: BetterSqliteDb;
   private open = true;
+  private txLock: Promise<void> = Promise.resolve();
 
   constructor(dbInstance: BetterSqliteDb) {
     this.db = dbInstance;
@@ -44,18 +45,32 @@ export class NodeSqliteDriver implements SqliteDatabase {
 
   async transaction<T>(action: (tx: SqliteTransaction) => Promise<T>): Promise<T> {
     if (!this.isOpen()) throw new Error('DATABASE_CLOSED');
-    await this.exec('BEGIN IMMEDIATE');
+
+    let releaseLock: () => void = () => {};
+    const lockPromise = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const previousLock = this.txLock;
+    this.txLock = this.txLock.then(() => lockPromise);
+
+    await previousLock;
+
     try {
-      const result = await action(this);
-      await this.exec('COMMIT');
-      return result;
-    } catch (error) {
+      await this.exec('BEGIN IMMEDIATE');
       try {
-        await this.exec('ROLLBACK');
-      } catch {
-        // Ignore rollback errors if transaction already failed
+        const result = await action(this);
+        await this.exec('COMMIT');
+        return result;
+      } catch (error) {
+        try {
+          await this.exec('ROLLBACK');
+        } catch {
+          // Ignore rollback errors if transaction already failed
+        }
+        throw error;
       }
-      throw error;
+    } finally {
+      releaseLock();
     }
   }
 

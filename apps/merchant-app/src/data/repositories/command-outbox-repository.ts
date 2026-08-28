@@ -12,6 +12,7 @@ import {
   type ServerReceiptData,
   computeCanonicalPayloadJson,
   computeRequestFingerprint,
+  isSupportedCommandPayloadVersion,
 } from '../models/outbox-types';
 
 type CommandDbRow = {
@@ -75,6 +76,14 @@ export class CommandOutboxRepository {
   ): Promise<OfflineCommandRecord> {
     const commandId = input.commandId ?? Crypto.randomUUID();
     const schemaVersion = input.payloadSchemaVersion ?? 1;
+
+    // Validate payload schema version
+    if (!isSupportedCommandPayloadVersion(input.commandType, schemaVersion)) {
+      throw new Error(
+        `COMMAND_SCHEMA_UNSUPPORTED: Payload schema version ${schemaVersion} is not supported for ${input.commandType}`,
+      );
+    }
+
     const payloadJson = computeCanonicalPayloadJson(input.payload);
     const fingerprint = await computeRequestFingerprint(input.commandType, input.payload, schemaVersion);
     const nowIso = new Date().toISOString();
@@ -107,49 +116,72 @@ export class CommandOutboxRepository {
       return existingByKey;
     }
 
-    // 3. Dependency cycle and validation
+    // 3. Dependency existence, referential safety and cycle validation
     const dependencies = input.dependsOnCommandIds ?? [];
     if (dependencies.includes(commandId)) {
       throw new Error(`COMMAND_DEPENDENCY_CYCLE: Command ${commandId} cannot depend on itself`);
+    }
+
+    for (const parentId of dependencies) {
+      const parent = await this.getCommand(context, parentId);
+      if (!parent) {
+        throw new Error(
+          `COMMAND_DEPENDENCY_NOT_FOUND: Parent command ${parentId} does not exist in partition`,
+        );
+      }
     }
 
     if (dependencies.length > 0) {
       await this.detectDependencyCycles(context, commandId, dependencies);
     }
 
-    // 4. Persistence in transaction
-    await this.db.transaction(async (tx) => {
-      await tx.run(
-        `INSERT INTO ${TABLE_OFFLINE_COMMANDS} (
-          account_id, organization_id, outlet_id, command_id, installation_id,
-          idempotency_key, command_type, payload_schema_version, payload_json,
-          request_fingerprint, state, attempt_count, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?);`,
-        [
-          context.accountId,
-          context.organizationId,
-          context.outletId,
-          commandId,
-          input.installationId,
-          input.idempotencyKey,
-          input.commandType,
-          schemaVersion,
-          payloadJson,
-          fingerprint,
-          nowIso,
-          nowIso,
-        ],
-      );
-
-      for (const parentId of dependencies) {
+    // 4. Persistence in transaction with concurrent race handling
+    try {
+      await this.db.transaction(async (tx) => {
         await tx.run(
-          `INSERT INTO ${TABLE_OFFLINE_COMMAND_DEPENDENCIES} (
-            account_id, organization_id, outlet_id, command_id, depends_on_command_id
-          ) VALUES (?, ?, ?, ?, ?);`,
-          [context.accountId, context.organizationId, context.outletId, commandId, parentId],
+          `INSERT INTO ${TABLE_OFFLINE_COMMANDS} (
+            account_id, organization_id, outlet_id, command_id, installation_id,
+            idempotency_key, command_type, payload_schema_version, payload_json,
+            request_fingerprint, state, attempt_count, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?);`,
+          [
+            context.accountId,
+            context.organizationId,
+            context.outletId,
+            commandId,
+            input.installationId,
+            input.idempotencyKey,
+            input.commandType,
+            schemaVersion,
+            payloadJson,
+            fingerprint,
+            nowIso,
+            nowIso,
+          ],
+        );
+
+        for (const parentId of dependencies) {
+          await tx.run(
+            `INSERT INTO ${TABLE_OFFLINE_COMMAND_DEPENDENCIES} (
+              account_id, organization_id, outlet_id, command_id, depends_on_command_id
+            ) VALUES (?, ?, ?, ?, ?);`,
+            [context.accountId, context.organizationId, context.outletId, commandId, parentId],
+          );
+        }
+      });
+    } catch (err: unknown) {
+      // Concurrent race check: re-query by idempotency key
+      const raceExisting = await this.getCommandByIdempotencyKey(context, input.idempotencyKey);
+      if (raceExisting) {
+        if (raceExisting.requestFingerprint === fingerprint) {
+          return raceExisting;
+        }
+        throw new Error(
+          `IDEMPOTENCY_FINGERPRINT_MISMATCH: Idempotency key ${input.idempotencyKey} was already used with a different fingerprint`,
         );
       }
-    });
+      throw err;
+    }
 
     const created = await this.getCommand(context, commandId);
     if (!created) {
@@ -177,33 +209,37 @@ export class CommandOutboxRepository {
         [nowIso, context.accountId, context.organizationId, context.outletId, nowIso],
       );
 
-      // 2. Cascade BLOCKED status if parent dependency is REJECTED
-      await tx.run(
-        `UPDATE ${TABLE_OFFLINE_COMMANDS}
-         SET state = 'BLOCKED', last_error_code = 'PARENT_COMMAND_REJECTED', updated_at = ?
-         WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
-           AND state IN ('PENDING', 'RETRYABLE')
-           AND command_id IN (
-             SELECT d.command_id
-             FROM ${TABLE_OFFLINE_COMMAND_DEPENDENCIES} d
-             JOIN ${TABLE_OFFLINE_COMMANDS} p
-               ON p.account_id = d.account_id
-              AND p.organization_id = d.organization_id
-              AND p.outlet_id = d.outlet_id
-              AND p.command_id = d.depends_on_command_id
-             WHERE d.account_id = ? AND d.organization_id = ? AND d.outlet_id = ?
-               AND p.state = 'REJECTED'
-           );`,
-        [
-          nowIso,
-          context.accountId,
-          context.organizationId,
-          context.outletId,
-          context.accountId,
-          context.organizationId,
-          context.outletId,
-        ],
-      );
+      // 2. Transitive cascade BLOCKED status if parent dependency is REJECTED or BLOCKED
+      let newlyBlocked = 1;
+      while (newlyBlocked > 0) {
+        const res = await tx.run(
+          `UPDATE ${TABLE_OFFLINE_COMMANDS}
+           SET state = 'BLOCKED', last_error_code = 'PARENT_COMMAND_REJECTED', updated_at = ?
+           WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
+             AND state IN ('PENDING', 'RETRYABLE')
+             AND command_id IN (
+               SELECT d.command_id
+               FROM ${TABLE_OFFLINE_COMMAND_DEPENDENCIES} d
+               JOIN ${TABLE_OFFLINE_COMMANDS} p
+                 ON p.account_id = d.account_id
+                AND p.organization_id = d.organization_id
+                AND p.outlet_id = d.outlet_id
+                AND p.command_id = d.depends_on_command_id
+               WHERE d.account_id = ? AND d.organization_id = ? AND d.outlet_id = ?
+                 AND p.state IN ('REJECTED', 'BLOCKED')
+             );`,
+          [
+            nowIso,
+            context.accountId,
+            context.organizationId,
+            context.outletId,
+            context.accountId,
+            context.organizationId,
+            context.outletId,
+          ],
+        );
+        newlyBlocked = res.changes;
+      }
 
       // 3. Find candidate commands whose parent dependencies are all ACKNOWLEDGED
       const rows = await tx.all<CommandDbRow>(
@@ -235,7 +271,7 @@ export class CommandOutboxRepository {
 
       for (const row of rows) {
         const leaseToken = Crypto.randomUUID();
-        await tx.run(
+        const updateResult = await tx.run(
           `UPDATE ${TABLE_OFFLINE_COMMANDS}
            SET state = 'SENDING',
                attempt_count = attempt_count + 1,
@@ -257,18 +293,20 @@ export class CommandOutboxRepository {
           ],
         );
 
-        claimed.push({
-          command: mapRowToRecord({
-            ...row,
-            state: 'SENDING',
-            attempt_count: row.attempt_count + 1,
-            lease_owner: `${leaseOwner}:${leaseToken}`,
-            lease_expires_at: leaseExpiresIso,
-            last_attempt_at: nowIso,
-            updated_at: nowIso,
-          }),
-          leaseToken,
-        });
+        if (updateResult.changes > 0) {
+          claimed.push({
+            command: mapRowToRecord({
+              ...row,
+              state: 'SENDING',
+              attempt_count: row.attempt_count + 1,
+              lease_owner: `${leaseOwner}:${leaseToken}`,
+              lease_expires_at: leaseExpiresIso,
+              last_attempt_at: nowIso,
+              updated_at: nowIso,
+            }),
+            leaseToken,
+          });
+        }
       }
 
       return claimed;
@@ -323,31 +361,41 @@ export class CommandOutboxRepository {
         [errorCode, errorDetails ?? null, nowIso, context.accountId, context.organizationId, context.outletId, commandId],
       );
 
-      // Cascade block to dependents
-      await tx.run(
-        `UPDATE ${TABLE_OFFLINE_COMMANDS}
-         SET state = 'BLOCKED',
-             last_error_code = 'PARENT_COMMAND_REJECTED',
-             lease_owner = NULL,
-             lease_expires_at = NULL,
-             updated_at = ?
-         WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
-           AND command_id IN (
-             SELECT command_id FROM ${TABLE_OFFLINE_COMMAND_DEPENDENCIES}
-             WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
-               AND depends_on_command_id = ?
-           );`,
-        [
-          nowIso,
-          context.accountId,
-          context.organizationId,
-          context.outletId,
-          context.accountId,
-          context.organizationId,
-          context.outletId,
-          commandId,
-        ],
-      );
+      // Transitive cascade block to all direct and indirect descendants
+      let newlyBlocked = 1;
+      while (newlyBlocked > 0) {
+        const res = await tx.run(
+          `UPDATE ${TABLE_OFFLINE_COMMANDS}
+           SET state = 'BLOCKED',
+               last_error_code = 'PARENT_COMMAND_REJECTED',
+               lease_owner = NULL,
+               lease_expires_at = NULL,
+               updated_at = ?
+           WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
+             AND state IN ('PENDING', 'RETRYABLE', 'SENDING')
+             AND command_id IN (
+               SELECT d.command_id
+               FROM ${TABLE_OFFLINE_COMMAND_DEPENDENCIES} d
+               JOIN ${TABLE_OFFLINE_COMMANDS} p
+                 ON p.account_id = d.account_id
+                AND p.organization_id = d.organization_id
+                AND p.outlet_id = d.outlet_id
+                AND p.command_id = d.depends_on_command_id
+               WHERE d.account_id = ? AND d.organization_id = ? AND d.outlet_id = ?
+                 AND p.state IN ('REJECTED', 'BLOCKED')
+             );`,
+          [
+            nowIso,
+            context.accountId,
+            context.organizationId,
+            context.outletId,
+            context.accountId,
+            context.organizationId,
+            context.outletId,
+          ],
+        );
+        newlyBlocked = res.changes;
+      }
     });
   }
 

@@ -65,9 +65,19 @@ describe('M6 SyncRetryPolicy', () => {
     const res409 = policy.evaluateError(new Error('Version conflict'), 1, 409);
     expect(res409.action).toBe('CONFLICT');
 
-    // 401 / 403 -> AUTH_REFRESH
+    // 401 Unauthorized -> REJECT (terminal auth failure)
     const res401 = policy.evaluateError(new Error('Unauthorized'), 1, 401);
-    expect(res401.action).toBe('AUTH_REFRESH');
+    expect(res401.action).toBe('REJECT');
+    if (res401.action === 'REJECT') {
+      expect(res401.errorCode).toBe('AUTH_UNAUTHORIZED');
+    }
+
+    // 403 Forbidden -> REJECT (terminal permission denied, no retry loop)
+    const res403 = policy.evaluateError(new Error('Forbidden'), 1, 403);
+    expect(res403.action).toBe('REJECT');
+    if (res403.action === 'REJECT') {
+      expect(res403.errorCode).toBe('PERMISSION_DENIED');
+    }
 
     // 429 Rate Limited with Retry-After header
     const res429 = policy.evaluateError(new Error('Too Many Requests'), 1, 429, '15');
@@ -82,6 +92,15 @@ describe('M6 SyncRetryPolicy', () => {
     if (res500.action === 'RETRY') {
       expect(res500.delayMs).toBe(2000);
     }
+
+    // Strict max delay bounding even with maximum jitter (random = 1)
+    const maxJitterPolicy = new SyncRetryPolicy({
+      baseDelayMs: 1000,
+      maxDelayMs: 30000,
+      random: () => 1.0,
+    });
+    const delayHighAttempt = maxJitterPolicy.calculateBackoffMs(20);
+    expect(delayHighAttempt).toBeLessThanOrEqual(30000);
 
     // Network disconnection (no HTTP status) -> RETRY
     const resNet = policy.evaluateError(new Error('Network request failed'), 1);

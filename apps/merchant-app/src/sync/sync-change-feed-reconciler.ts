@@ -69,6 +69,8 @@ export type BootstrapResponse = {
   serverTime: string;
 };
 
+export const SUPPORTED_EVENT_SCHEMA_VERSIONS = [1];
+
 export class SyncChangeFeedReconciler {
   private readonly syncStateRepo: SyncStateRepository;
 
@@ -109,197 +111,232 @@ export class SyncChangeFeedReconciler {
     const page = (await response.json()) as ChangePageResponse;
     const nowIso = new Date().toISOString();
 
-    await this.db.transaction(async (tx) => {
-      for (const change of page.changes) {
-        const payload = JSON.parse(change.payload) as Record<string, unknown>;
+    try {
+      await this.db.transaction(async (tx) => {
+        for (const change of page.changes) {
+          // 1. Partition validation: must belong to active tenant partition
+          if (
+            change.organizationId !== context.organizationId ||
+            change.outletId !== context.outletId
+          ) {
+            throw new Error(
+              `EVENT_PARTITION_MISMATCH: Change event belongs to foreign tenant org=${change.organizationId} outlet=${change.outletId}`,
+            );
+          }
 
-        if (change.entityType === 'CATALOG_ITEM') {
-          if (change.isTombstone) {
-            await tx.run(
-              `UPDATE ${TABLE_CATALOG_ITEMS}
-               SET is_tombstone = 1, tombstoned_at = ?, local_updated_at = ?
-               WHERE account_id = ? AND organization_id = ? AND outlet_id = ? AND id = ?;`,
-              [nowIso, nowIso, context.accountId, context.organizationId, context.outletId, change.entityId],
+          // 2. Event schema compatibility validation
+          if (!SUPPORTED_EVENT_SCHEMA_VERSIONS.includes(change.schemaVersion)) {
+            throw new Error(
+              `UNSUPPORTED_EVENT_SCHEMA: Change event has unsupported schema_version ${change.schemaVersion}`,
             );
-            await tx.run(
-              `INSERT INTO ${TABLE_PROJECTION_TOMBSTONES} (
-                account_id, organization_id, outlet_id, projection_name, entity_id,
-                server_updated_at, server_version, deleted_at
-              ) VALUES (?, ?, ?, 'catalog_items', ?, ?, ?, ?)
-              ON CONFLICT(account_id, organization_id, outlet_id, projection_name, entity_id) DO UPDATE SET
-                server_updated_at = excluded.server_updated_at,
-                server_version = excluded.server_version,
-                deleted_at = excluded.deleted_at;`,
-              [
-                context.accountId,
-                context.organizationId,
-                context.outletId,
-                change.entityId,
-                nowIso,
-                change.entityVersion,
-                nowIso,
-              ],
-            );
-          } else {
-            // Version check: only update if incoming version >= local version
-            const existing = await tx.get<{ version: number }>(
-              `SELECT version FROM ${TABLE_CATALOG_ITEMS}
-               WHERE account_id = ? AND organization_id = ? AND outlet_id = ? AND id = ?;`,
-              [context.accountId, context.organizationId, context.outletId, change.entityId],
-            );
+          }
 
-            if (!existing || change.entityVersion >= existing.version) {
+          const payload = JSON.parse(change.payload) as Record<string, unknown>;
+
+          if (change.entityType === 'CATALOG_ITEM') {
+            if (change.isTombstone) {
               await tx.run(
-                `INSERT INTO ${TABLE_CATALOG_ITEMS} (
-                  account_id, organization_id, outlet_id, id, name, kind, commerce_mode,
-                  barcode_type, normalized_barcode, mrp_paise, selling_price_paise,
-                  category, brand, description, pet_type, life_stage, pack_label, sku,
-                  image_urls_json, status, version, is_tombstone, server_created_at,
-                  server_updated_at, local_updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-                ON CONFLICT(account_id, organization_id, outlet_id, id) DO UPDATE SET
-                  name = excluded.name,
-                  kind = excluded.kind,
-                  commerce_mode = excluded.commerce_mode,
-                  barcode_type = excluded.barcode_type,
-                  normalized_barcode = excluded.normalized_barcode,
-                  mrp_paise = excluded.mrp_paise,
-                  selling_price_paise = excluded.selling_price_paise,
-                  category = excluded.category,
-                  brand = excluded.brand,
-                  description = excluded.description,
-                  pet_type = excluded.pet_type,
-                  life_stage = excluded.life_stage,
-                  pack_label = excluded.pack_label,
-                  sku = excluded.sku,
-                  image_urls_json = excluded.image_urls_json,
-                  status = excluded.status,
-                  version = excluded.version,
-                  is_tombstone = 0,
+                `UPDATE ${TABLE_CATALOG_ITEMS}
+                 SET is_tombstone = 1, tombstoned_at = ?, local_updated_at = ?
+                 WHERE account_id = ? AND organization_id = ? AND outlet_id = ? AND id = ?;`,
+                [nowIso, nowIso, context.accountId, context.organizationId, context.outletId, change.entityId],
+              );
+              await tx.run(
+                `INSERT INTO ${TABLE_PROJECTION_TOMBSTONES} (
+                  account_id, organization_id, outlet_id, projection_name, entity_id,
+                  server_updated_at, server_version, deleted_at
+                ) VALUES (?, ?, ?, 'catalog_items', ?, ?, ?, ?)
+                ON CONFLICT(account_id, organization_id, outlet_id, projection_name, entity_id) DO UPDATE SET
                   server_updated_at = excluded.server_updated_at,
-                  local_updated_at = excluded.local_updated_at;`,
+                  server_version = excluded.server_version,
+                  deleted_at = excluded.deleted_at;`,
                 [
                   context.accountId,
                   context.organizationId,
                   context.outletId,
                   change.entityId,
-                  payload.name as string,
-                  payload.kind as string,
-                  payload.commerceMode as string,
+                  nowIso,
+                  change.entityVersion,
+                  nowIso,
+                ],
+              );
+            } else {
+              // Version check: only update if incoming version >= local version
+              const existing = await tx.get<{ version: number }>(
+                `SELECT version FROM ${TABLE_CATALOG_ITEMS}
+                 WHERE account_id = ? AND organization_id = ? AND outlet_id = ? AND id = ?;`,
+                [context.accountId, context.organizationId, context.outletId, change.entityId],
+              );
+
+              if (!existing || change.entityVersion >= existing.version) {
+                await tx.run(
+                  `INSERT INTO ${TABLE_CATALOG_ITEMS} (
+                    account_id, organization_id, outlet_id, id, name, kind, commerce_mode,
+                    barcode_type, normalized_barcode, mrp_paise, selling_price_paise,
+                    category, brand, description, pet_type, life_stage, pack_label, sku,
+                    image_urls_json, status, version, is_tombstone, server_created_at,
+                    server_updated_at, local_updated_at
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                  ON CONFLICT(account_id, organization_id, outlet_id, id) DO UPDATE SET
+                    name = excluded.name,
+                    kind = excluded.kind,
+                    commerce_mode = excluded.commerce_mode,
+                    barcode_type = excluded.barcode_type,
+                    normalized_barcode = excluded.normalized_barcode,
+                    mrp_paise = excluded.mrp_paise,
+                    selling_price_paise = excluded.selling_price_paise,
+                    category = excluded.category,
+                    brand = excluded.brand,
+                    description = excluded.description,
+                    pet_type = excluded.pet_type,
+                    life_stage = excluded.life_stage,
+                    pack_label = excluded.pack_label,
+                    sku = excluded.sku,
+                    image_urls_json = excluded.image_urls_json,
+                    status = excluded.status,
+                    version = excluded.version,
+                    is_tombstone = 0,
+                    server_updated_at = excluded.server_updated_at,
+                    local_updated_at = excluded.local_updated_at;`,
+                  [
+                    context.accountId,
+                    context.organizationId,
+                    context.outletId,
+                    change.entityId,
+                    payload.name as string,
+                    payload.kind as string,
+                    payload.commerceMode as string,
+                    payload.barcodeType as string,
+                    payload.normalizedBarcode as string,
+                    payload.mrpPaise as number,
+                    payload.sellingPricePaise as number,
+                    payload.category as string,
+                    (payload.brand as string) ?? null,
+                    (payload.description as string) ?? null,
+                    (payload.petType as string) ?? null,
+                    (payload.lifeStage as string) ?? null,
+                    (payload.packLabel as string) ?? null,
+                    (payload.sku as string) ?? null,
+                    JSON.stringify(payload.imageUrls ?? []),
+                    payload.status as string,
+                    change.entityVersion,
+                    (payload.createdAt as string) ?? nowIso,
+                    (payload.updatedAt as string) ?? nowIso,
+                    nowIso,
+                  ],
+                );
+              }
+            }
+          } else if (change.entityType === 'CATALOG_BARCODE') {
+            if (change.isTombstone) {
+              await tx.run(
+                `UPDATE ${TABLE_CATALOG_BARCODES}
+                 SET is_tombstone = 1, updated_at = ?
+                 WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
+                   AND listing_id = ? AND barcode_type = ? AND normalized_barcode = ?;`,
+                [
+                  nowIso,
+                  context.accountId,
+                  context.organizationId,
+                  context.outletId,
+                  change.entityId,
                   payload.barcodeType as string,
                   payload.normalizedBarcode as string,
-                  payload.mrpPaise as number,
-                  payload.sellingPricePaise as number,
-                  payload.category as string,
-                  (payload.brand as string) ?? null,
-                  (payload.description as string) ?? null,
-                  (payload.petType as string) ?? null,
-                  (payload.lifeStage as string) ?? null,
-                  (payload.packLabel as string) ?? null,
-                  (payload.sku as string) ?? null,
-                  JSON.stringify(payload.imageUrls ?? []),
-                  payload.status as string,
+                ],
+              );
+            } else {
+              await tx.run(
+                `INSERT INTO ${TABLE_CATALOG_BARCODES} (
+                  account_id, organization_id, outlet_id, listing_id, barcode_type,
+                  normalized_barcode, is_primary, is_tombstone, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+                ON CONFLICT(account_id, organization_id, outlet_id, listing_id, barcode_type, normalized_barcode) DO UPDATE SET
+                  is_primary = excluded.is_primary,
+                  is_tombstone = 0,
+                  updated_at = excluded.updated_at;`,
+                [
+                  context.accountId,
+                  context.organizationId,
+                  context.outletId,
+                  change.entityId,
+                  payload.barcodeType as string,
+                  payload.normalizedBarcode as string,
+                  payload.isPrimary ? 1 : 0,
+                  nowIso,
+                ],
+              );
+            }
+          } else if (change.entityType === 'INVENTORY_BALANCE') {
+            const existing = await tx.get<{ version: number }>(
+              `SELECT version FROM ${TABLE_INVENTORY_BALANCES}
+               WHERE account_id = ? AND organization_id = ? AND outlet_id = ? AND listing_id = ?;`,
+              [context.accountId, context.organizationId, context.outletId, change.entityId],
+            );
+
+            if (!existing || change.entityVersion >= existing.version) {
+              await tx.run(
+                `INSERT INTO ${TABLE_INVENTORY_BALANCES} (
+                  account_id, organization_id, outlet_id, listing_id, on_hand, reserved,
+                  available, version, server_updated_at, local_updated_at, is_tombstone
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                ON CONFLICT(account_id, organization_id, outlet_id, listing_id) DO UPDATE SET
+                  on_hand = excluded.on_hand,
+                  reserved = excluded.reserved,
+                  available = excluded.available,
+                  version = excluded.version,
+                  server_updated_at = excluded.server_updated_at,
+                  local_updated_at = excluded.local_updated_at,
+                  is_tombstone = 0;`,
+                [
+                  context.accountId,
+                  context.organizationId,
+                  context.outletId,
+                  change.entityId,
+                  payload.onHand as number,
+                  payload.reserved as number,
+                  (payload.available as number) ?? ((payload.onHand as number) - (payload.reserved as number)),
                   change.entityVersion,
-                  (payload.createdAt as string) ?? nowIso,
                   (payload.updatedAt as string) ?? nowIso,
                   nowIso,
                 ],
               );
             }
-          }
-        } else if (change.entityType === 'CATALOG_BARCODE') {
-          if (change.isTombstone) {
-            await tx.run(
-              `UPDATE ${TABLE_CATALOG_BARCODES}
-               SET is_tombstone = 1, updated_at = ?
-               WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
-                 AND listing_id = ? AND barcode_type = ? AND normalized_barcode = ?;`,
-              [
-                nowIso,
-                context.accountId,
-                context.organizationId,
-                context.outletId,
-                change.entityId,
-                payload.barcodeType as string,
-                payload.normalizedBarcode as string,
-              ],
-            );
           } else {
-            await tx.run(
-              `INSERT INTO ${TABLE_CATALOG_BARCODES} (
-                account_id, organization_id, outlet_id, listing_id, barcode_type,
-                normalized_barcode, is_primary, is_tombstone, updated_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
-              ON CONFLICT(account_id, organization_id, outlet_id, listing_id, barcode_type, normalized_barcode) DO UPDATE SET
-                is_primary = excluded.is_primary,
-                is_tombstone = 0,
-                updated_at = excluded.updated_at;`,
-              [
-                context.accountId,
-                context.organizationId,
-                context.outletId,
-                change.entityId,
-                payload.barcodeType as string,
-                payload.normalizedBarcode as string,
-                payload.isPrimary ? 1 : 0,
-                nowIso,
-              ],
-            );
-          }
-        } else if (change.entityType === 'INVENTORY_BALANCE') {
-          const existing = await tx.get<{ version: number }>(
-            `SELECT version FROM ${TABLE_INVENTORY_BALANCES}
-             WHERE account_id = ? AND organization_id = ? AND outlet_id = ? AND listing_id = ?;`,
-            [context.accountId, context.organizationId, context.outletId, change.entityId],
-          );
-
-          if (!existing || change.entityVersion >= existing.version) {
-            await tx.run(
-              `INSERT INTO ${TABLE_INVENTORY_BALANCES} (
-                account_id, organization_id, outlet_id, listing_id, on_hand, reserved,
-                available, version, server_updated_at, local_updated_at, is_tombstone
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-              ON CONFLICT(account_id, organization_id, outlet_id, listing_id) DO UPDATE SET
-                on_hand = excluded.on_hand,
-                reserved = excluded.reserved,
-                available = excluded.available,
-                version = excluded.version,
-                server_updated_at = excluded.server_updated_at,
-                local_updated_at = excluded.local_updated_at,
-                is_tombstone = 0;`,
-              [
-                context.accountId,
-                context.organizationId,
-                context.outletId,
-                change.entityId,
-                payload.onHand as number,
-                payload.reserved as number,
-                (payload.available as number) ?? ((payload.onHand as number) - (payload.reserved as number)),
-                change.entityVersion,
-                (payload.updatedAt as string) ?? nowIso,
-                nowIso,
-              ],
-            );
+            throw new Error(`UNRECOGNIZED_ENTITY_TYPE: Unknown entity type ${change.entityType}`);
           }
         }
-      }
 
-      // Update projection sync state cursor
-      const nextCursor = page.nextCursor ?? currentCursor;
-      await tx.run(
+        // Update projection sync state cursor
+        const nextCursor = page.nextCursor ?? currentCursor;
+        await tx.run(
+          `INSERT INTO projection_sync_state (
+            account_id, organization_id, outlet_id, projection_name,
+            last_sync_at, last_attempt_at, status, cursor, last_error
+          ) VALUES (?, ?, ?, 'all', ?, ?, 'FRESH', ?, NULL)
+          ON CONFLICT(account_id, organization_id, outlet_id, projection_name) DO UPDATE SET
+            last_sync_at = excluded.last_sync_at,
+            last_attempt_at = excluded.last_attempt_at,
+            status = excluded.status,
+            cursor = excluded.cursor,
+            last_error = NULL;`,
+          [context.accountId, context.organizationId, context.outletId, nowIso, nowIso, nextCursor],
+        );
+      });
+    } catch (reconcileError: unknown) {
+      const errorMsg = reconcileError instanceof Error ? reconcileError.message : String(reconcileError);
+      await this.db.run(
         `INSERT INTO projection_sync_state (
           account_id, organization_id, outlet_id, projection_name,
           last_sync_at, last_attempt_at, status, cursor, last_error
-        ) VALUES (?, ?, ?, 'all', ?, ?, 'FRESH', ?, NULL)
+        ) VALUES (?, ?, ?, 'all', NULL, ?, 'SYNC_FAILED', ?, ?)
         ON CONFLICT(account_id, organization_id, outlet_id, projection_name) DO UPDATE SET
-          last_sync_at = excluded.last_sync_at,
           last_attempt_at = excluded.last_attempt_at,
-          status = excluded.status,
-          cursor = excluded.cursor,
-          last_error = NULL;`,
-        [context.accountId, context.organizationId, context.outletId, nowIso, nowIso, nextCursor],
+          status = 'SYNC_FAILED',
+          last_error = excluded.last_error;`,
+        [context.accountId, context.organizationId, context.outletId, nowIso, currentCursor, errorMsg],
       );
-    });
+      throw reconcileError;
+    }
 
     return {
       appliedChanges: page.changes.length,
@@ -331,6 +368,11 @@ export class SyncChangeFeedReconciler {
       );
       await tx.run(
         `DELETE FROM ${TABLE_INVENTORY_BALANCES}
+         WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
+        [context.accountId, context.organizationId, context.outletId],
+      );
+      await tx.run(
+        `DELETE FROM ${TABLE_PROJECTION_TOMBSTONES}
          WHERE account_id = ? AND organization_id = ? AND outlet_id = ?;`,
         [context.accountId, context.organizationId, context.outletId],
       );

@@ -151,6 +151,8 @@ interface InventoryPersistence {
         )
     }
 
+    fun findExistingMovementByReceipt(organizationId: UUID, actorId: UUID, idempotencyKey: String): StockMovement? = null
+
     fun requireReconciled(scope: InventoryScope): InventoryBalance {
         val balance = balance(scope)
         val ledgerOnHand = history(scope.listingId).sumOf { it.quantityDelta.toLong() }
@@ -164,6 +166,8 @@ interface InventoryPersistence {
 class InventoryService(
     private val persistence: InventoryPersistence = InMemoryInventoryPersistence(),
 ) {
+    fun findExistingMovementByReceipt(organizationId: UUID, actorId: UUID, idempotencyKey: String): StockMovement? =
+        persistence.findExistingMovementByReceipt(organizationId, actorId, idempotencyKey)
     fun adjust(
         listingId: UUID,
         delta: Int,

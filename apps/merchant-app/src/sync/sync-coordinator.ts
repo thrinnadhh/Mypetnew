@@ -13,12 +13,14 @@ export type SyncSummary = {
   retryable: number;
   blocked: number;
   changesApplied: number;
+  lastFeedError?: string;
 };
 
 export class SyncCoordinator {
   private readonly outboxRepo: CommandOutboxRepository;
   private readonly reconciler: SyncChangeFeedReconciler;
   private readonly workerId: string;
+  private readonly clock: () => number;
   private readonly activeRuns = new Map<string, Promise<SyncSummary>>();
 
   constructor(
@@ -27,10 +29,12 @@ export class SyncCoordinator {
     private readonly retryPolicy: SyncRetryPolicy = new SyncRetryPolicy(),
     reconciler?: SyncChangeFeedReconciler,
     workerId?: string,
+    clock?: () => number,
   ) {
     this.outboxRepo = new CommandOutboxRepository(db);
-    this.reconciler = reconciler ?? new SyncChangeFeedReconciler(db);
+    this.reconciler = reconciler ?? new SyncChangeFeedReconciler(db, transport.getFetchFn());
     this.workerId = workerId ?? `worker-${Crypto.randomUUID()}`;
+    this.clock = clock ?? (() => Date.now());
   }
 
   getOutboxRepository(): CommandOutboxRepository {
@@ -131,24 +135,13 @@ export class SyncCoordinator {
             );
             rejected += 1;
           } else if (decision.action === 'RETRY') {
-            const nextAttemptAtIso = new Date(Date.now() + decision.delayMs).toISOString();
+            const nextAttemptAtIso = new Date(this.clock() + decision.delayMs).toISOString();
             await this.outboxRepo.markRetryable(
               context,
               cmd.commandId,
               nextAttemptAtIso,
               result.error.name,
               result.error.message,
-            );
-            retryable += 1;
-          } else if (decision.action === 'AUTH_REFRESH') {
-            // Mark retryable with short backoff or reject if unrecoverable
-            const nextAttemptAtIso = new Date(Date.now() + 2000).toISOString();
-            await this.outboxRepo.markRetryable(
-              context,
-              cmd.commandId,
-              nextAttemptAtIso,
-              'AUTH_REAUTHORIZATION_REQUIRED',
-              decision.reason,
             );
             retryable += 1;
           }
@@ -166,11 +159,12 @@ export class SyncCoordinator {
 
     // 2. Reconcile change feed
     let changesApplied = 0;
+    let lastFeedError: string | undefined;
     try {
       const feedResult = await this.reconciler.reconcile(context);
       changesApplied = feedResult.appliedChanges;
-    } catch {
-      // Change feed error does not fail the outbox sync
+    } catch (err: unknown) {
+      lastFeedError = err instanceof Error ? err.message : String(err);
     }
 
     return {
@@ -180,6 +174,7 @@ export class SyncCoordinator {
       retryable,
       blocked,
       changesApplied,
+      lastFeedError,
     };
   }
 }

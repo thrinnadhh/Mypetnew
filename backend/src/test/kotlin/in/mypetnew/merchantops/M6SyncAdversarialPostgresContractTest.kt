@@ -1,11 +1,16 @@
 package `in`.mypetnew.merchantops
 
 import `in`.mypetnew.catalog.domain.BarcodeType
+import `in`.mypetnew.catalog.domain.CatalogLifecycleCommand
 import `in`.mypetnew.catalog.domain.CatalogService
 import `in`.mypetnew.catalog.domain.CreateListingCommand
+import `in`.mypetnew.catalog.domain.InventoryBalance
 import `in`.mypetnew.catalog.domain.InventoryScope
 import `in`.mypetnew.catalog.domain.InventoryService
+import `in`.mypetnew.catalog.domain.Listing
 import `in`.mypetnew.catalog.domain.ListingKind
+import `in`.mypetnew.catalog.domain.ListingStatus
+import `in`.mypetnew.catalog.domain.MerchantSyncPublisher
 import `in`.mypetnew.catalog.domain.StockReason
 import `in`.mypetnew.catalog.infrastructure.JdbcCatalogPersistence
 import `in`.mypetnew.catalog.infrastructure.JdbcInventoryPersistence
@@ -17,11 +22,14 @@ import `in`.mypetnew.merchantops.testsupport.MerchantOpsPostgres
 import `in`.mypetnew.merchantops.testsupport.PostgresTestDatabase
 import `in`.mypetnew.provider.domain.ProviderCapability
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.DataSourceTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
+import java.time.Instant
 import java.util.UUID
 
 @MerchantOpsContract
@@ -216,5 +224,138 @@ class M6SyncAdversarialPostgresContractTest {
             "concurrent_key_1",
         )
         assertEquals(1L, count)
+    }
+
+    @Test
+    fun `M6-SYNC-002 transaction rolls back completely when change publisher fails`() {
+        val ctx = context()
+        val actorId = createMerchant(ctx.jdbc, "+919320000004")
+        val (organizationId, outletId) = seedScope(ctx.jdbc, actorId)
+
+        val failingPublisher = object : MerchantSyncPublisher {
+            override fun publishCatalogItemChange(listing: Listing, isTombstone: Boolean) {
+                throw RuntimeException("SIMULATED_CHANGE_PUBLISHER_FAILURE")
+            }
+            override fun publishBarcodeChange(organizationId: UUID, outletId: UUID, listingId: UUID, barcodeType: BarcodeType, normalizedBarcode: String, isPrimary: Boolean, isTombstone: Boolean, updatedAt: Instant) {
+                throw RuntimeException("SIMULATED_CHANGE_PUBLISHER_FAILURE")
+            }
+            override fun publishInventoryBalanceChange(balance: InventoryBalance, isTombstone: Boolean) {
+                throw RuntimeException("SIMULATED_CHANGE_PUBLISHER_FAILURE")
+            }
+        }
+
+        val failingCatalog = CatalogService(JdbcCatalogPersistence(ctx.jdbc, ctx.transactions, failingPublisher))
+        val failingInventory = InventoryService(JdbcInventoryPersistence(ctx.jdbc, ctx.transactions, failingPublisher))
+
+        // 1. Catalog creation fails and rolls back
+        assertThrows(RuntimeException::class.java) {
+            failingCatalog.createListing(
+                CreateListingCommand(
+                    organizationId = organizationId,
+                    outletId = outletId,
+                    barcodeType = BarcodeType.INTERNAL,
+                    barcode = "SKU-FAIL-1",
+                    name = "Failing Item",
+                    kind = ListingKind.PRODUCT,
+                    mrpPaise = 500,
+                    sellingPricePaise = 450,
+                    category = "food",
+                    capabilities = setOf(ProviderCapability.PRODUCT_STORE),
+                ),
+                "fail_action_1",
+                actorId,
+            )
+        }
+
+        val listingCount = ctx.jdbc.queryForObject(
+            "SELECT COUNT(*) FROM mypet.catalog_listing WHERE normalized_barcode = 'SKU-FAIL-1'",
+            Long::class.java,
+        )
+        assertEquals(0L, listingCount)
+
+        // 2. Inventory adjustment fails and rolls back
+        val legitimateListing = ctx.catalog.createListing(
+            CreateListingCommand(
+                organizationId = organizationId,
+                outletId = outletId,
+                barcodeType = BarcodeType.INTERNAL,
+                barcode = "SKU-LEGIT-1",
+                name = "Legit Item",
+                kind = ListingKind.PRODUCT,
+                mrpPaise = 500,
+                sellingPricePaise = 450,
+                category = "food",
+                capabilities = setOf(ProviderCapability.PRODUCT_STORE),
+            ),
+            "legit_action_1",
+            actorId,
+        )
+
+        assertThrows(RuntimeException::class.java) {
+            failingInventory.adjustMerchant(
+                scope = InventoryScope(organizationId, outletId, legitimateListing.id),
+                delta = 10,
+                reason = StockReason.MANUAL_INCREASE,
+                idempotencyKey = "fail_inv_key",
+                actorId = actorId,
+                traceId = "trace-fail",
+            )
+        }
+
+        // Ledger has 0 movements and onHand is 0
+        val movCount = ctx.jdbc.queryForObject(
+            "SELECT COUNT(*) FROM mypet.inventory_movement WHERE idempotency_key = 'fail_inv_key'",
+            Long::class.java,
+        )
+        assertEquals(0L, movCount)
+        val onHand = ctx.jdbc.queryForObject(
+            "SELECT on_hand FROM mypet.inventory_balance WHERE listing_id = ?",
+            Int::class.java,
+            legitimateListing.id,
+        )
+        assertEquals(0, onHand)
+    }
+
+    @Test
+    fun `M6-SYNC-001 no-gap bootstrap concurrency captures high water mark correctly`() {
+        val ctx = context()
+        val actorId = createMerchant(ctx.jdbc, "+919320000005")
+        val (organizationId, outletId) = seedScope(ctx.jdbc, actorId)
+
+        val item = ctx.catalog.createListing(
+            CreateListingCommand(
+                organizationId = organizationId,
+                outletId = outletId,
+                barcodeType = BarcodeType.INTERNAL,
+                barcode = "SKU-NOGAP-1",
+                name = "No Gap Item",
+                kind = ListingKind.PRODUCT,
+                mrpPaise = 500,
+                sellingPricePaise = 450,
+                category = "food",
+                capabilities = setOf(ProviderCapability.PRODUCT_STORE),
+            ),
+            "nogap_item_1",
+            actorId,
+        )
+
+        // Bootstrap snapshot
+        val bootstrap = ctx.syncFeed.fetchBootstrap(organizationId, outletId)
+        assertNotNull(bootstrap.highWaterCursor)
+
+        // Subsequent mutation after bootstrap snapshot
+        ctx.inventory.adjustMerchant(
+            scope = InventoryScope(organizationId, outletId, item.id),
+            delta = 15,
+            reason = StockReason.MANUAL_INCREASE,
+            idempotencyKey = "post_bootstrap_key",
+            actorId = actorId,
+            traceId = "trace-post-boot",
+        )
+
+        // Fetching changes with bootstrap's highWaterCursor returns the new mutation without gaps
+        val changes = ctx.syncFeed.fetchChanges(organizationId, outletId, bootstrap.highWaterCursor, 100)
+        assertEquals(1, changes.changes.size)
+        assertEquals(item.id, changes.changes[0].entityId)
     }
 }

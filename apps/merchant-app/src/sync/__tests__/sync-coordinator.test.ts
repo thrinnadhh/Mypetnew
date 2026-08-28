@@ -98,10 +98,15 @@ describe('M6 SyncCoordinator', () => {
       payload: { outletId: 'out_1', listingId: 'list_1', quantityDelta: 5, reason: 'MANUAL_INCREASE' },
     });
 
-    let networkCalled = false;
-    const mockFetch = async () => {
-      networkCalled = true;
-      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    let commandDispatchCount = 0;
+    const mockFetch = async (path: string) => {
+      if (path.includes('/inventory/adjustments')) {
+        commandDispatchCount += 1;
+      }
+      return new Response(
+        JSON.stringify({ changes: [], nextCursor: null, hasMore: false, currentHighWaterCursor: null, serverTime: new Date().toISOString() }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
     };
 
     const transport = new SyncTransport(mockFetch);
@@ -110,7 +115,7 @@ describe('M6 SyncCoordinator', () => {
     // Sync under contextB
     const summaryB = await coordinator.sync(contextB);
     expect(summaryB.commandsProcessed).toBe(0);
-    expect(networkCalled).toBe(false);
+    expect(commandDispatchCount).toBe(0);
 
     // Command under contextA is still PENDING
     const cmdA = await outboxRepo.getCommand(contextA, 'cmd_user_A');
@@ -132,12 +137,18 @@ describe('M6 SyncCoordinator', () => {
       payload: { outletId: 'out_1', listingId: 'list_1', quantityDelta: 5, reason: 'MANUAL_INCREASE' },
     });
 
-    let dispatchCount = 0;
-    const mockFetch = async () => {
-      dispatchCount += 1;
-      await new Promise((resolve) => setTimeout(resolve, 50));
+    let commandDispatchCount = 0;
+    const mockFetch = async (path: string) => {
+      if (path.includes('/inventory/adjustments')) {
+        commandDispatchCount += 1;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return new Response(
+          JSON.stringify({ id: 'mov_conc', resultingOnHand: 5, resultingReserved: 0 }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
       return new Response(
-        JSON.stringify({ id: 'mov_conc', resultingOnHand: 5, resultingReserved: 0 }),
+        JSON.stringify({ changes: [], nextCursor: null, hasMore: false, currentHighWaterCursor: null, serverTime: new Date().toISOString() }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
     };
@@ -151,9 +162,75 @@ describe('M6 SyncCoordinator', () => {
       coordinator.sync(contextA),
     ]);
 
-    expect(dispatchCount).toBe(1); // Only one HTTP dispatch took place!
+    expect(commandDispatchCount).toBe(1); // Only one HTTP dispatch took place!
     expect(res1.acknowledged).toBe(1);
     expect(res2.acknowledged).toBe(1);
+
+    await db.close();
+  });
+
+  it('serializes dispatches when two independent SyncCoordinator instances compete against same database', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await new DatabaseBootstrapper().bootstrap(db);
+    const outboxRepo = new CommandOutboxRepository(db);
+
+    await outboxRepo.enqueueCommand(contextA, {
+      commandId: 'cmd_competing',
+      installationId: 'inst_1',
+      idempotencyKey: 'idem_comp',
+      commandType: 'INVENTORY_ADJUSTMENT',
+      payload: { outletId: 'out_1', listingId: 'list_1', quantityDelta: 5, reason: 'MANUAL_INCREASE' },
+    });
+
+    let commandDispatchCount = 0;
+    const mockFetch = async (path: string) => {
+      if (path.includes('/inventory/adjustments')) {
+        commandDispatchCount += 1;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return new Response(
+          JSON.stringify({ id: 'mov_comp', resultingOnHand: 5, resultingReserved: 0 }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify({ changes: [], nextCursor: null, hasMore: false, currentHighWaterCursor: null, serverTime: new Date().toISOString() }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const transport = new SyncTransport(mockFetch);
+    const coordinator1 = new SyncCoordinator(db, transport, new SyncRetryPolicy(), undefined, 'worker_A');
+    const coordinator2 = new SyncCoordinator(db, transport, new SyncRetryPolicy(), undefined, 'worker_B');
+
+    // Run both coordinators simultaneously
+    const [res1, res2] = await Promise.all([
+      coordinator1.sync(contextA),
+      coordinator2.sync(contextA),
+    ]);
+
+    expect(commandDispatchCount).toBe(1); // Exactly one coordinator claimed and dispatched
+    expect(res1.acknowledged + res2.acknowledged).toBe(1);
+
+    await db.close();
+  });
+
+  it('captures lastFeedError when reconciler fails without disrupting outbox summary', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await new DatabaseBootstrapper().bootstrap(db);
+
+    const mockFetch = async (url: string) => {
+      if (url.includes('/changes')) {
+        return new Response('Internal Server Error', { status: 500 });
+      }
+      return new Response('{}', { status: 200 });
+    };
+
+    const transport = new SyncTransport(mockFetch);
+    const coordinator = new SyncCoordinator(db, transport);
+
+    const summary = await coordinator.sync(contextA);
+    expect(summary.lastFeedError).toBeDefined();
+    expect(summary.lastFeedError).toContain('CHANGE_FEED_FETCH_FAILED');
 
     await db.close();
   });

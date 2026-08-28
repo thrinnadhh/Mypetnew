@@ -145,7 +145,8 @@ export const V3_SCHEMA_STATEMENTS = [
     last_error_details TEXT NULL,
     durable_server_receipt TEXT NULL,
     resulting_version INTEGER NULL,
-    PRIMARY KEY (account_id, organization_id, outlet_id, command_id)
+    PRIMARY KEY (account_id, organization_id, outlet_id, command_id),
+    UNIQUE (account_id, organization_id, outlet_id, idempotency_key)
   );`,
 
   // 7. Partitioned offline command dependency ledger
@@ -162,7 +163,7 @@ export const V3_SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_offline_commands_partition_state
     ON ${TABLE_OFFLINE_COMMANDS} (account_id, organization_id, outlet_id, state, next_attempt_at);`,
 
-  `CREATE INDEX IF NOT EXISTS idx_offline_commands_idempotency
+  `CREATE UNIQUE INDEX IF NOT EXISTS uq_offline_commands_idempotency
     ON ${TABLE_OFFLINE_COMMANDS} (account_id, organization_id, outlet_id, idempotency_key);`,
 
   `CREATE INDEX IF NOT EXISTS idx_offline_command_dependencies_parent

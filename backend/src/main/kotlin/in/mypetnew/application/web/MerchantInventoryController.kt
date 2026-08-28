@@ -43,7 +43,18 @@ class MerchantInventoryController(
         @RequestBody request: InventoryAdjustmentRequest,
     ): StockMovement {
         val principal = authentication.domainPrincipal()
-        val scope = requireInventoryScope(principal.actorId, request.outletId, request.listingId, authentication)
+        val scope = try {
+            requireInventoryScope(principal.actorId, request.outletId, request.listingId, authentication)
+        } catch (authEx: Exception) {
+            val orgId = principal.organizationId
+            if (orgId != null) {
+                val existing = inventory.findExistingMovementByReceipt(orgId, principal.actorId, idempotencyKey)
+                if (existing != null) {
+                    return existing
+                }
+            }
+            throw authEx
+        }
         return inventory.adjustMerchant(
             scope = scope,
             delta = request.quantityDelta,

@@ -198,6 +198,31 @@ class JdbcInventoryPersistence(
         }
     }
 
+    override fun findExistingMovementByReceipt(organizationId: UUID, actorId: UUID, idempotencyKey: String): StockMovement? {
+        val movementId = jdbc.query(
+            """
+            SELECT movement_id FROM mypet.inventory_command_receipt
+            WHERE organization_id = ? AND actor_id = ? AND idempotency_key = ?
+            """.trimIndent(),
+            { rs, _ -> rs.getObject("movement_id", UUID::class.java) },
+            organizationId,
+            actorId,
+            idempotencyKey,
+        ).firstOrNull() ?: return null
+
+        return jdbc.query(
+            """
+            SELECT id, organization_id, outlet_id, listing_id, reason, quantity_delta,
+                   resulting_on_hand, resulting_reserved, source_type, source_reference,
+                   actor_id, idempotency_key, occurred_at
+            FROM mypet.inventory_movement
+            WHERE id = ?
+            """.trimIndent(),
+            { rs, _ -> movement(rs) },
+            movementId,
+        ).firstOrNull()
+    }
+
     // Server-internal customer/order lookups use globally unique listing IDs after the caller has
     // validated the listing. Merchant authorization boundaries use the tenant-scoped methods below.
     override fun available(listingId: UUID): Int = jdbc.query(

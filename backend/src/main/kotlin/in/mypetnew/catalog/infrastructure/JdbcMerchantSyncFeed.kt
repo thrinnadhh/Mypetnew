@@ -13,25 +13,31 @@ import `in`.mypetnew.catalog.domain.MerchantSyncFeedService
 import `in`.mypetnew.catalog.domain.MerchantSyncPublisher
 import `in`.mypetnew.catalog.domain.SyncEntityType
 import `in`.mypetnew.common.error.DomainException
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import tools.jackson.databind.ObjectMapper
+import java.security.MessageDigest
 import java.sql.ResultSet
 import java.sql.Timestamp
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 @Service
 class JdbcMerchantSyncFeed(
     private val jdbc: JdbcTemplate,
     private val json: ObjectMapper = ObjectMapper(),
+    @param:Value("\${mypet.sync.cursor-secret:mypet-sync-cursor-secret-v2-secure-key}")
+    private val cursorSecret: String = "mypet-sync-cursor-secret-v2-secure-key",
 ) : MerchantSyncPublisher, MerchantSyncFeedService {
 
     companion object {
         const val MAX_PAGE_SIZE = 250
-        const val CURSOR_PREFIX = "msc_v1:"
+        const val CURSOR_PREFIX = "msc_v2:"
         // Cursor older than 90 days or negative sequence is considered expired/invalid
         const val MAX_CURSOR_AGE_SECONDS = 90L * 24 * 60 * 60
     }
@@ -202,6 +208,25 @@ class JdbcMerchantSyncFeed(
     ): MerchantSyncBootstrapResponse {
         val highWater = currentHighWaterCursor(organizationId, outletId)
 
+        // Batch query listing images to avoid N+1 queries
+        val imageMap = mutableMapOf<UUID, MutableList<String>>()
+        jdbc.query(
+            """
+            SELECT i.listing_id, i.image_url
+            FROM mypet.catalog_listing_image i
+            JOIN mypet.catalog_listing l ON l.id = i.listing_id
+            WHERE l.organization_id = ? AND l.outlet_id = ?
+            ORDER BY i.listing_id, i.position ASC
+            """.trimIndent(),
+            { imgRs ->
+                val lid = imgRs.getObject("listing_id", UUID::class.java)
+                val url = imgRs.getString("image_url")
+                imageMap.getOrPut(lid) { mutableListOf() }.add(url)
+            },
+            organizationId,
+            outletId,
+        )
+
         val catalogItems = jdbc.query(
             """
             SELECT id, organization_id, outlet_id, barcode_type, normalized_barcode,
@@ -212,7 +237,11 @@ class JdbcMerchantSyncFeed(
             WHERE organization_id = ? AND outlet_id = ?
             ORDER BY created_at ASC
             """.trimIndent(),
-            { rs, _ -> mapListing(rs) },
+            { rs, _ ->
+                val listingId = rs.getObject("id", UUID::class.java)
+                val images = imageMap[listingId] ?: emptyList()
+                mapListingRow(rs, images)
+            },
             organizationId,
             outletId,
         )
@@ -261,9 +290,18 @@ class JdbcMerchantSyncFeed(
         return encodeCursor(organizationId, outletId, maxSeq)
     }
 
+    private fun computeHmac(payload: String): String {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(cursorSecret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+        val rawHmac = mac.doFinal(payload.toByteArray(Charsets.UTF_8))
+        return rawHmac.joinToString("") { "%02x".format(it) }
+    }
+
     private fun encodeCursor(organizationId: UUID, outletId: UUID, sequenceNumber: Long): String {
         val epochSeconds = Instant.now().epochSecond
-        val raw = "$CURSOR_PREFIX$organizationId:$outletId:$sequenceNumber:$epochSeconds"
+        val payload = "$organizationId:$outletId:$sequenceNumber:$epochSeconds"
+        val hmac = computeHmac(payload)
+        val raw = "$CURSOR_PREFIX$payload:$hmac"
         return Base64.getUrlEncoder().withoutPadding().encodeToString(raw.toByteArray(Charsets.UTF_8))
     }
 
@@ -271,24 +309,36 @@ class JdbcMerchantSyncFeed(
         try {
             val decoded = String(Base64.getUrlDecoder().decode(cursor), Charsets.UTF_8)
             if (!decoded.startsWith(CURSOR_PREFIX)) {
-                throw DomainException("SYNC_CURSOR_EXPIRED", "Invalid cursor format")
+                throw DomainException("SYNC_CURSOR_EXPIRED", "Invalid cursor format or signature")
             }
             val parts = decoded.removePrefix(CURSOR_PREFIX).split(":")
-            if (parts.size != 4) {
+            if (parts.size != 5) {
                 throw DomainException("SYNC_CURSOR_EXPIRED", "Malformed cursor parts")
             }
             val cursorOrgId = UUID.fromString(parts[0])
             val cursorOutletId = UUID.fromString(parts[1])
             val sequence = parts[2].toLongOrNull() ?: throw DomainException("SYNC_CURSOR_EXPIRED", "Invalid cursor sequence")
             val epochSeconds = parts[3].toLongOrNull() ?: throw DomainException("SYNC_CURSOR_EXPIRED", "Invalid cursor timestamp")
+            val hmac = parts[4]
 
+            // 1. Validate HMAC signature (tamper-evident)
+            val expectedPayload = "$cursorOrgId:$cursorOutletId:$sequence:$epochSeconds"
+            val expectedHmac = computeHmac(expectedPayload)
+            if (!MessageDigest.isEqual(expectedHmac.toByteArray(Charsets.UTF_8), hmac.toByteArray(Charsets.UTF_8))) {
+                throw DomainException("SYNC_CURSOR_EXPIRED", "Cursor signature mismatch: tamper detected")
+            }
+
+            // 2. Scope binding
             if (cursorOrgId != expectedOrgId || cursorOutletId != expectedOutletId) {
                 throw DomainException("SYNC_CURSOR_EXPIRED", "Cursor scope mismatch: foreign organization or outlet")
             }
+
+            // 3. Sequence non-negative
             if (sequence < 0) {
                 throw DomainException("SYNC_CURSOR_EXPIRED", "Negative cursor sequence")
             }
 
+            // 4. Age-based protocol expiry
             val nowSeconds = Instant.now().epochSecond
             if (nowSeconds - epochSeconds > MAX_CURSOR_AGE_SECONDS) {
                 throw DomainException("SYNC_CURSOR_EXPIRED", "Sync cursor has expired, rebootstrap required")
@@ -317,13 +367,8 @@ class JdbcMerchantSyncFeed(
         )
     }
 
-    private fun mapListing(rs: ResultSet): Listing {
+    private fun mapListingRow(rs: ResultSet, images: List<String>): Listing {
         val listingId = rs.getObject("id", UUID::class.java)
-        val images = jdbc.query(
-            "SELECT image_url FROM mypet.catalog_listing_image WHERE listing_id = ? ORDER BY position ASC",
-            { imgRs, _ -> imgRs.getString("image_url") },
-            listingId,
-        )
         return Listing(
             id = listingId,
             organizationId = rs.getObject("organization_id", UUID::class.java),

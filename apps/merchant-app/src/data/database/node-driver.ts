@@ -16,7 +16,19 @@ export class NodeSqliteDriver implements SqliteDatabase {
 
   async exec(sql: string): Promise<void> {
     if (!this.isOpen()) throw new Error('DATABASE_CLOSED');
-    this.db.exec(sql);
+    let retries = 100;
+    while (retries > 0) {
+      try {
+        this.db.exec(sql);
+        return;
+      } catch (err: unknown) {
+        retries -= 1;
+        if (retries === 0 || !(err instanceof Error && (err.message.includes('locked') || err.message.includes('busy')))) {
+          throw err;
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    }
   }
 
   async run(sql: string, params: unknown[] = []): Promise<SqliteRunResult> {
@@ -97,9 +109,9 @@ export class NodeSqliteDriver implements SqliteDatabase {
 export function createNodeSqliteDatabase(filename = ':memory:'): SqliteDatabase {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const Database = require('better-sqlite3');
-  const db: BetterSqliteDb = new Database(filename, { timeout: 50 });
+  const db: BetterSqliteDb = new Database(filename, { timeout: 2000 });
   db.pragma('journal_mode = WAL');
-  db.pragma('busy_timeout = 50');
+  db.pragma('busy_timeout = 2000');
   db.pragma('foreign_keys = ON');
   return new NodeSqliteDriver(db);
 }

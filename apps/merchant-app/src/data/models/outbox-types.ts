@@ -95,7 +95,7 @@ export type OfflineCommandRecord = Readonly<{
 
 export type EnqueueCommandInput = {
   commandId?: string;
-  installationId: string;
+  installationId?: string;
   idempotencyKey: string;
   commandType: OfflineCommandType;
   payloadSchemaVersion?: number;

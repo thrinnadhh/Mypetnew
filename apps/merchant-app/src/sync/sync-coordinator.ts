@@ -130,11 +130,13 @@ export class SyncCoordinator {
                 cmd.attemptCount,
                 resolution.status,
               );
+              const errCode = (decision.action === 'REJECT' || decision.action === 'CONFLICT') ? decision.errorCode : ((resolution.error as { code?: string })?.code ?? 'AUTH_FAILURE');
+              const errMsg = (decision.action === 'REJECT' || decision.action === 'CONFLICT') ? decision.errorMessage : (resolution.error?.message ?? 'Authorization failure');
               await this.outboxRepo.markRejected(
                 context,
                 cmd.commandId,
-                decision.errorCode,
-                decision.errorMessage,
+                errCode,
+                errMsg,
               );
               rejected += 1;
               continue;

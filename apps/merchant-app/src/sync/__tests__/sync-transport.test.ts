@@ -7,6 +7,8 @@ describe('SyncTransport', () => {
     accountId: 'acc_1',
     organizationId: 'org_1',
     outletId: 'out_1',
+    installationId: 'inst_1',
+    idempotencyKey: 'idemp_key_1',
     commandType: 'INVENTORY_ADJUSTMENT',
     payloadSchemaVersion: 1,
     payloadJson: JSON.stringify({
@@ -15,13 +17,19 @@ describe('SyncTransport', () => {
       quantityDelta: 10,
       reason: 'MANUAL_INCREASE',
     }),
-    idempotencyKey: 'idemp_key_1',
     requestFingerprint: 'fp_1',
-    status: 'PENDING',
+    state: 'PENDING',
     attemptCount: 0,
-    maxAttempts: 5,
     createdAt: '2026-08-28T00:00:00.000Z',
     updatedAt: '2026-08-28T00:00:00.000Z',
+    lastAttemptAt: null,
+    nextAttemptAt: null,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    lastErrorCode: null,
+    lastErrorDetails: null,
+    durableServerReceipt: null,
+    resultingVersion: null,
   };
 
   it('dispatches inventory adjustment successfully with server headers', async () => {

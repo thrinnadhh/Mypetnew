@@ -1,5 +1,11 @@
 import type { SqliteDatabase, SqliteTransaction } from './driver';
-import { CURRENT_SCHEMA_VERSION, V1_SCHEMA_STATEMENTS, V2_SCHEMA_STATEMENTS } from './schema';
+import {
+  CURRENT_SCHEMA_VERSION,
+  V1_SCHEMA_STATEMENTS,
+  V2_SCHEMA_STATEMENTS,
+  V3_SCHEMA_STATEMENTS,
+  V4_SCHEMA_STATEMENTS,
+} from './schema';
 
 export type Migration = {
   version: number;
@@ -22,6 +28,24 @@ export const MIGRATIONS: Migration[] = [
     description: 'Add partitioned durable tombstone ledger: projection_tombstones',
     up: async (db: SqliteDatabase | SqliteTransaction) => {
       for (const statement of V2_SCHEMA_STATEMENTS) {
+        await db.exec(statement);
+      }
+    },
+  },
+  {
+    version: 3,
+    description: 'Add durable offline command outbox and dependency ledger: offline_commands, offline_command_dependencies',
+    up: async (db: SqliteDatabase | SqliteTransaction) => {
+      for (const statement of V3_SCHEMA_STATEMENTS) {
+        await db.exec(statement);
+      }
+    },
+  },
+  {
+    version: 4,
+    description: 'Add durable bounded bootstrap staging tables: bootstrap_staging_items, bootstrap_staging_balances, bootstrap_staging_barcodes, bootstrap_staging_state',
+    up: async (db: SqliteDatabase | SqliteTransaction) => {
+      for (const statement of V4_SCHEMA_STATEMENTS) {
         await db.exec(statement);
       }
     },

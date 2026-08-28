@@ -41,6 +41,11 @@ dependencies {
     testImplementation(platform("org.testcontainers:testcontainers-bom:2.0.5"))
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")
     testImplementation("org.testcontainers:testcontainers-postgresql")
+    testImplementation("org.xerial:sqlite-jdbc:3.48.0.0")
+}
+
+tasks.withType<Test> {
+    environment("MYPET_SYNC_CURSOR_SECRET", "test-sync-cursor-secret-at-least-32-chars-long")
 }
 
 tasks.test {

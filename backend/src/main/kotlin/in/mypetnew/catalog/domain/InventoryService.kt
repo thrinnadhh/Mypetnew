@@ -151,6 +151,8 @@ interface InventoryPersistence {
         )
     }
 
+    fun findExistingMovementByReceipt(organizationId: UUID, actorId: UUID, idempotencyKey: String): StockMovement? = null
+
     fun requireReconciled(scope: InventoryScope): InventoryBalance {
         val balance = balance(scope)
         val ledgerOnHand = history(scope.listingId).sumOf { it.quantityDelta.toLong() }
@@ -164,6 +166,8 @@ interface InventoryPersistence {
 class InventoryService(
     private val persistence: InventoryPersistence = InMemoryInventoryPersistence(),
 ) {
+    fun findExistingMovementByReceipt(organizationId: UUID, actorId: UUID, idempotencyKey: String): StockMovement? =
+        persistence.findExistingMovementByReceipt(organizationId, actorId, idempotencyKey)
     fun adjust(
         listingId: UUID,
         delta: Int,
@@ -282,6 +286,16 @@ class InventoryService(
         const val SYSTEM_TRACE_ID: String = "system"
         const val MAX_MANUAL_ADJUSTMENT_UNITS: Long = 1_000_000L
         private val REFERENCE_TYPE_PATTERN = Regex("[A-Z][A-Z0-9_]{0,39}")
+
+        fun computeFingerprint(vararg parts: Any?): String {
+            val canonical = parts.joinToString("|") { part ->
+                val value = part?.toString() ?: "<null>"
+                "${value.length}:$value"
+            }
+            return java.security.MessageDigest.getInstance("SHA-256")
+                .digest(canonical.toByteArray(java.nio.charset.StandardCharsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+        }
     }
 }
 

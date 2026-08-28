@@ -8,11 +8,13 @@ export * from './database/schema';
 
 export * from './models/catalog-types';
 export * from './models/inventory-types';
+export * from './models/outbox-types';
 export * from './models/partition-context';
 export * from './models/sync-types';
 
 export * from './repositories/barcode-local-repository';
 export * from './repositories/catalog-local-repository';
+export * from './repositories/command-outbox-repository';
 export * from './repositories/inventory-local-repository';
 export * from './repositories/sync-state-repository';
 export * from './repositories/tombstone-helper';

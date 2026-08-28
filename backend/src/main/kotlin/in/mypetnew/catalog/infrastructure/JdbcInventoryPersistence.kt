@@ -18,9 +18,12 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.UUID
 
+import `in`.mypetnew.catalog.domain.MerchantSyncPublisher
+
 class JdbcInventoryPersistence(
     private val jdbc: JdbcTemplate,
     private val transactions: TransactionTemplate,
+    private val syncPublisher: MerchantSyncPublisher? = null,
 ) : InventoryPersistence {
     override fun adjust(
         listingId: UUID,
@@ -193,6 +196,31 @@ class JdbcInventoryPersistence(
             if (balance.onHand - balance.reserved < quantity) insufficient()
             balance.copy(onHand = balance.onHand - quantity)
         }
+    }
+
+    override fun findExistingMovementByReceipt(organizationId: UUID, actorId: UUID, idempotencyKey: String): StockMovement? {
+        val movementId = jdbc.query(
+            """
+            SELECT movement_id FROM mypet.inventory_command_receipt
+            WHERE organization_id = ? AND actor_id = ? AND idempotency_key = ?
+            """.trimIndent(),
+            { rs, _ -> rs.getObject("movement_id", UUID::class.java) },
+            organizationId,
+            actorId,
+            idempotencyKey,
+        ).firstOrNull() ?: return null
+
+        return jdbc.query(
+            """
+            SELECT id, organization_id, outlet_id, listing_id, reason, quantity_delta,
+                   resulting_on_hand, resulting_reserved, source_type, source_reference,
+                   actor_id, idempotency_key, occurred_at
+            FROM mypet.inventory_movement
+            WHERE id = ?
+            """.trimIndent(),
+            { rs, _ -> movement(rs) },
+            movementId,
+        ).firstOrNull()
     }
 
     // Server-internal customer/order lookups use globally unique listing IDs after the caller has
@@ -372,6 +400,17 @@ class JdbcInventoryPersistence(
                     insertMovement(movement, operationScope, fingerprint, traceId)
                     insertReceipt(movement, operationScope, fingerprint)
                     insertPublication(movement, traceId)
+                    syncPublisher?.publishInventoryBalanceChange(
+                        InventoryBalance(
+                            organizationId = scope.organizationId,
+                            outletId = scope.outletId,
+                            listingId = scope.listingId,
+                            onHand = after.onHand,
+                            reserved = after.reserved,
+                            version = before.version + 1,
+                            updatedAt = Instant.now(),
+                        ),
+                    )
                     movement
                 })
             } catch (duplicate: DuplicateKeyException) {

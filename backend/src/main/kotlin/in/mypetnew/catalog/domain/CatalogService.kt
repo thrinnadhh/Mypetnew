@@ -384,37 +384,74 @@ class CatalogService(
         return sha256(out.toByteArray())
     }
 
-    private fun updateFingerprint(command: UpdateListingCommand): String = fingerprintParts(
+    companion object {
+        val SYSTEM_ACTOR_ID: UUID = UUID(0, 0)
+
+        fun computeUpdateFingerprint(
+            organizationId: String,
+            outletId: String,
+            listingId: String,
+            expectedVersion: String,
+            name: String,
+            mrpPaise: String,
+            sellingPricePaise: String,
+            category: String,
+            brand: String?,
+            description: String?,
+            petType: String?,
+            lifeStage: String?,
+            packLabel: String?,
+            sku: String?,
+        ): String = fingerprintParts(
+            organizationId, outletId, listingId,
+            expectedVersion, name, mrpPaise,
+            sellingPricePaise, category, brand, description,
+            petType, lifeStage, packLabel, sku,
+        )
+
+        fun computeLifecycleFingerprint(
+            organizationId: String,
+            outletId: String,
+            listingId: String,
+            expectedVersion: String,
+            targetStatus: String,
+        ): String = fingerprintParts(
+            organizationId, outletId, listingId,
+            expectedVersion, targetStatus,
+        )
+
+        fun fingerprintParts(vararg values: String?): String {
+            val out = ByteArrayOutputStream()
+            val dos = DataOutputStream(out)
+            values.forEach { value ->
+                if (value == null) {
+                    dos.writeInt(-1)
+                } else {
+                    val bytes = value.toByteArray(StandardCharsets.UTF_8)
+                    dos.writeInt(bytes.size)
+                    dos.write(bytes)
+                }
+            }
+            dos.flush()
+            return sha256(out.toByteArray())
+        }
+
+        private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    private fun updateFingerprint(command: UpdateListingCommand): String = computeUpdateFingerprint(
         command.organizationId.toString(), command.outletId.toString(), command.listingId.toString(),
         command.expectedVersion.toString(), command.name, command.mrpPaise.toString(),
         command.sellingPricePaise.toString(), command.category, command.brand, command.description,
         command.petType, command.lifeStage, command.packLabel, command.sku,
     )
 
-    private fun lifecycleFingerprint(command: CatalogLifecycleCommand): String = fingerprintParts(
+    private fun lifecycleFingerprint(command: CatalogLifecycleCommand): String = computeLifecycleFingerprint(
         command.organizationId.toString(), command.outletId.toString(), command.listingId.toString(),
         command.expectedVersion.toString(), command.targetStatus.name,
     )
-
-    private fun fingerprintParts(vararg values: String?): String {
-        val out = ByteArrayOutputStream()
-        val dos = DataOutputStream(out)
-        values.forEach { value ->
-            if (value == null) {
-                dos.writeInt(-1)
-            } else {
-                val bytes = value.toByteArray(StandardCharsets.UTF_8)
-                dos.writeInt(bytes.size)
-                dos.write(bytes)
-            }
-        }
-        dos.flush()
-        return sha256(out.toByteArray())
-    }
-
-    private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
-        .digest(bytes)
-        .joinToString("") { "%02x".format(it) }
 
     private fun cleanOptional(value: String?, maxLength: Int): String? {
         if (value == null) return null
@@ -435,10 +472,6 @@ class CatalogService(
         "RESOURCE_NOT_FOUND",
         "The requested resource is unavailable",
     )
-
-    companion object {
-        val SYSTEM_ACTOR_ID: UUID = UUID(0, 0)
-    }
 }
 
 const val DEFAULT_CATALOG_PAGE_SIZE = 25

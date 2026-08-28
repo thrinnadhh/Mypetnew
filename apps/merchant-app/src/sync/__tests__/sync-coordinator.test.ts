@@ -387,4 +387,201 @@ describe('SyncCoordinator', () => {
     await dbA.close();
     await dbB.close();
   });
+
+  describe('Receipt Resolution & Ambiguous Failure Safety Matrix', () => {
+    it('1. retried unknown-outcome command when resolver returns 500 -> zero mutation dispatch, state remains RETRYABLE', async () => {
+      const db = createNodeSqliteDatabase(':memory:');
+      await runMigrations(db);
+      const outboxRepo = new CommandOutboxRepository(db);
+
+      const cmd = await outboxRepo.enqueueCommand(context, {
+        commandType: 'INVENTORY_ADJUSTMENT',
+        payloadSchemaVersion: 1,
+        payload: { outletId: context.outletId, listingId: 'item_res_500', quantityDelta: 5, reason: 'MANUAL_INCREASE' },
+        idempotencyKey: 'idem_res_500',
+      });
+
+      // Simulate prior attempt (e.g. state RETRYABLE)
+      await outboxRepo.markRetryable(context, cmd.commandId, new Date(0).toISOString(), 'PREV_ATTEMPT', 'Simulated previous crash');
+
+      let mutationDispatchCount = 0;
+      let resolveCallCount = 0;
+
+      const mockFetch = async (url: string) => {
+        if (url.includes('/api/v1/merchant/sync/receipts/resolve')) {
+          resolveCallCount += 1;
+          return new Response(JSON.stringify({ code: 'INTERNAL_SERVER_ERROR', message: 'Database busy' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.includes('/api/v1/merchant/inventory/adjustments')) {
+          mutationDispatchCount += 1;
+          return new Response(JSON.stringify({ id: 'mov_fail', resultingOnHand: 5 }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+      };
+
+      const coordinator = new SyncCoordinator(db, new SyncTransport(mockFetch));
+      const summary = await coordinator.sync(context);
+
+      expect(resolveCallCount).toBe(1);
+      expect(mutationDispatchCount).toBe(0); // ZERO mutation dispatch!
+      expect(summary.retryable).toBe(1);
+      expect(summary.acknowledged).toBe(0);
+
+      const state = await outboxRepo.getCommand(context, cmd.commandId);
+      expect(state?.state).toBe('RETRYABLE');
+
+      await db.close();
+    });
+
+    it('2. retried unknown-outcome command when resolver throws network error -> zero mutation dispatch, state remains RETRYABLE', async () => {
+      const db = createNodeSqliteDatabase(':memory:');
+      await runMigrations(db);
+      const outboxRepo = new CommandOutboxRepository(db);
+
+      const cmd = await outboxRepo.enqueueCommand(context, {
+        commandType: 'INVENTORY_ADJUSTMENT',
+        payloadSchemaVersion: 1,
+        payload: { outletId: context.outletId, listingId: 'item_res_net', quantityDelta: 5, reason: 'MANUAL_INCREASE' },
+        idempotencyKey: 'idem_res_net',
+      });
+
+      await outboxRepo.markRetryable(context, cmd.commandId, new Date(0).toISOString(), 'PREV_ATTEMPT', 'Simulated previous crash');
+
+      let mutationDispatchCount = 0;
+      let resolveCallCount = 0;
+
+      const mockFetch = async (url: string) => {
+        if (url.includes('/api/v1/merchant/sync/receipts/resolve')) {
+          resolveCallCount += 1;
+          throw new Error('Connection reset by peer');
+        }
+        if (url.includes('/api/v1/merchant/inventory/adjustments')) {
+          mutationDispatchCount += 1;
+          return new Response(JSON.stringify({ id: 'mov_fail', resultingOnHand: 5 }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+      };
+
+      const coordinator = new SyncCoordinator(db, new SyncTransport(mockFetch));
+      const summary = await coordinator.sync(context);
+
+      expect(resolveCallCount).toBe(1);
+      expect(mutationDispatchCount).toBe(0); // ZERO mutation dispatch!
+      expect(summary.retryable).toBe(1);
+      expect(summary.acknowledged).toBe(0);
+
+      const state = await outboxRepo.getCommand(context, cmd.commandId);
+      expect(state?.state).toBe('RETRYABLE');
+
+      await db.close();
+    });
+
+    it('3. same command next sync when resolver returns matching ACCEPTED receipt -> ACKNOWLEDGED and zero mutation dispatch', async () => {
+      const db = createNodeSqliteDatabase(':memory:');
+      await runMigrations(db);
+      const outboxRepo = new CommandOutboxRepository(db);
+
+      const cmd = await outboxRepo.enqueueCommand(context, {
+        commandType: 'INVENTORY_ADJUSTMENT',
+        payloadSchemaVersion: 1,
+        payload: { outletId: context.outletId, listingId: 'item_res_ack', quantityDelta: 5, reason: 'MANUAL_INCREASE' },
+        idempotencyKey: 'idem_res_ack',
+      });
+
+      await outboxRepo.markRetryable(context, cmd.commandId, new Date(0).toISOString(), 'PREV_ATTEMPT', 'Simulated previous crash');
+
+      let mutationDispatchCount = 0;
+      let resolveCallCount = 0;
+
+      const mockFetch = async (url: string) => {
+        if (url.includes('/api/v1/merchant/sync/receipts/resolve')) {
+          resolveCallCount += 1;
+          return new Response(
+            JSON.stringify({
+              status: 'ACCEPTED',
+              receiptId: 'mov_recovered_1',
+              commandType: 'INVENTORY_ADJUSTMENT',
+              entityId: 'item_res_ack',
+              resultingOnHand: 15,
+              resultingReserved: 0,
+              serverTimestamp: '2026-08-28T00:00:00Z',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        if (url.includes('/api/v1/merchant/inventory/adjustments')) {
+          mutationDispatchCount += 1;
+          return new Response(JSON.stringify({ id: 'mov_fail', resultingOnHand: 5 }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+      };
+
+      const coordinator = new SyncCoordinator(db, new SyncTransport(mockFetch));
+      const summary = await coordinator.sync(context);
+
+      expect(resolveCallCount).toBe(1);
+      expect(mutationDispatchCount).toBe(0); // ZERO mutation dispatch!
+      expect(summary.acknowledged).toBe(1);
+
+      const state = await outboxRepo.getCommand(context, cmd.commandId);
+      expect(state?.state).toBe('ACKNOWLEDGED');
+      expect(state?.durableServerReceipt).toContain('mov_recovered_1');
+
+      await db.close();
+    });
+
+    it('4. resolver returns 404 (RECEIPT_NOT_FOUND) -> only then mutation endpoint is called exactly once', async () => {
+      const db = createNodeSqliteDatabase(':memory:');
+      await runMigrations(db);
+      const outboxRepo = new CommandOutboxRepository(db);
+
+      const cmd = await outboxRepo.enqueueCommand(context, {
+        commandType: 'INVENTORY_ADJUSTMENT',
+        payloadSchemaVersion: 1,
+        payload: { outletId: context.outletId, listingId: 'item_res_404', quantityDelta: 5, reason: 'MANUAL_INCREASE' },
+        idempotencyKey: 'idem_res_404',
+      });
+
+      await outboxRepo.markRetryable(context, cmd.commandId, new Date(0).toISOString(), 'PREV_ATTEMPT', 'Simulated previous crash');
+
+      let mutationDispatchCount = 0;
+      let resolveCallCount = 0;
+
+      const mockFetch = async (url: string) => {
+        if (url.includes('/api/v1/merchant/sync/receipts/resolve')) {
+          resolveCallCount += 1;
+          return new Response(JSON.stringify({ code: 'RESOURCE_NOT_FOUND', message: 'No receipt found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.includes('/api/v1/merchant/inventory/adjustments')) {
+          mutationDispatchCount += 1;
+          return new Response(
+            JSON.stringify({
+              id: 'mov_fresh_1',
+              resultingOnHand: 25,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        return new Response('{}', { status: 404 });
+      };
+
+      const coordinator = new SyncCoordinator(db, new SyncTransport(mockFetch));
+      const summary = await coordinator.sync(context);
+
+      expect(resolveCallCount).toBe(1);
+      expect(mutationDispatchCount).toBe(1); // POSITIVELY AUTHORIZED fresh dispatch
+      expect(summary.acknowledged).toBe(1);
+
+      const state = await outboxRepo.getCommand(context, cmd.commandId);
+      expect(state?.state).toBe('ACKNOWLEDGED');
+
+      await db.close();
+    });
+  });
 });

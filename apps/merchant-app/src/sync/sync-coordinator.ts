@@ -31,10 +31,10 @@ export class SyncCoordinator {
     workerId?: string,
     clock?: () => number,
   ) {
-    this.outboxRepo = new CommandOutboxRepository(db);
+    this.clock = clock ?? (() => Date.now());
+    this.outboxRepo = new CommandOutboxRepository(db, this.clock);
     this.reconciler = reconciler ?? new SyncChangeFeedReconciler(db, transport.getFetchFn());
     this.workerId = workerId ?? `worker-${Crypto.randomUUID()}`;
-    this.clock = clock ?? (() => Date.now());
   }
 
   getOutboxRepository(): CommandOutboxRepository {
@@ -105,6 +105,7 @@ export class SyncCoordinator {
           const resolution = await this.transport.resolveReceipt(cmd);
           if (resolution.ok) {
             if (resolution.found) {
+              // A. Resolver FOUND matching accepted receipt -> mark ACKNOWLEDGED, ZERO mutation dispatch
               await this.outboxRepo.markAcknowledged(
                 context,
                 cmd.commandId,
@@ -113,9 +114,14 @@ export class SyncCoordinator {
               );
               acknowledged += 1;
               continue;
+            } else {
+              // B. Resolver definitive RECEIPT_NOT_FOUND / 404 -> only now allow ordinary mutation dispatch
+              // Fall through to transport.dispatch(cmd) below
             }
           } else {
+            // Unsuccessful receipt resolution: NEVER dispatch mutation on ambiguous/temporary errors
             if (resolution.errorCode === 'IDEMPOTENCY_FINGERPRINT_MISMATCH') {
+              // C. IDEMPOTENCY_FINGERPRINT_MISMATCH -> REJECTED, ZERO dispatch
               await this.outboxRepo.markRejected(
                 context,
                 cmd.commandId,
@@ -124,14 +130,18 @@ export class SyncCoordinator {
               );
               rejected += 1;
               continue;
-            } else if (resolution.status === 401 || resolution.status === 403) {
-              const decision = this.retryPolicy.evaluateError(
-                resolution.error,
-                cmd.attemptCount,
-                resolution.status,
-              );
-              const errCode = (decision.action === 'REJECT' || decision.action === 'CONFLICT') ? decision.errorCode : ((resolution.error as { code?: string })?.code ?? 'AUTH_FAILURE');
-              const errMsg = (decision.action === 'REJECT' || decision.action === 'CONFLICT') ? decision.errorMessage : (resolution.error?.message ?? 'Authorization failure');
+            }
+
+            const decision = this.retryPolicy.evaluateError(
+              resolution.error,
+              cmd.attemptCount,
+              resolution.status,
+            );
+
+            if (resolution.status === 401 || resolution.status === 403 || decision.action === 'REJECT') {
+              // D. 401 / 403 -> terminal auth/permission handling, ZERO dispatch
+              const errCode = decision.action === 'REJECT' ? decision.errorCode : (resolution.errorCode ?? 'AUTH_FAILURE');
+              const errMsg = decision.action === 'REJECT' ? decision.errorMessage : (resolution.error?.message ?? 'Authorization failure');
               await this.outboxRepo.markRejected(
                 context,
                 cmd.commandId,
@@ -139,6 +149,29 @@ export class SyncCoordinator {
                 errMsg,
               );
               rejected += 1;
+              continue;
+            } else if (decision.action === 'CONFLICT') {
+              // G. Conflict / malformed -> mark NEEDS_RECONCILIATION, ZERO dispatch
+              await this.outboxRepo.markNeedsReconciliation(
+                context,
+                cmd.commandId,
+                decision.errorCode,
+                decision.errorMessage,
+              );
+              rejected += 1;
+              continue;
+            } else {
+              // E & F. Resolver network failure / 5xx / temporary -> RETRYABLE / unresolved, ZERO mutation dispatch
+              const delay = decision.action === 'RETRY' ? decision.delayMs : 1000;
+              const nextAttemptAtIso = new Date(this.clock() + delay).toISOString();
+              await this.outboxRepo.markRetryable(
+                context,
+                cmd.commandId,
+                nextAttemptAtIso,
+                resolution.errorCode ?? resolution.error?.name,
+                resolution.error?.message,
+              );
+              retryable += 1;
               continue;
             }
           }

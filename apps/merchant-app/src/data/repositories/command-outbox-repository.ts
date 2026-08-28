@@ -68,7 +68,14 @@ function mapRowToRecord(row: CommandDbRow): OfflineCommandRecord {
 }
 
 export class CommandOutboxRepository {
-  constructor(private readonly db: SqliteDatabase) {}
+  constructor(
+    private readonly db: SqliteDatabase,
+    private readonly clock: () => number = () => Date.now(),
+  ) {}
+
+  private nowIso(): string {
+    return new Date(this.clock()).toISOString();
+  }
 
   async enqueueCommand(
     context: MerchantPartitionContext,
@@ -197,8 +204,8 @@ export class CommandOutboxRepository {
     leaseDurationMs: number,
     limit = 10,
   ): Promise<ClaimedCommand[]> {
-    const nowIso = new Date().toISOString();
-    const leaseExpiresIso = new Date(Date.now() + leaseDurationMs).toISOString();
+    const nowIso = this.nowIso();
+    const leaseExpiresIso = new Date(this.clock() + leaseDurationMs).toISOString();
 
     return this.db.transaction(async (tx) => {
       // 1. Reclaim expired SENDING leases

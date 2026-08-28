@@ -67,7 +67,14 @@ class SecurityConfiguration {
         val configuration = CorsConfiguration().apply {
             allowedOrigins = properties.normalizedAllowedOrigins
             allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-            allowedHeaders = listOf("Accept", "Authorization", "Content-Type", "Idempotency-Key")
+            allowedHeaders = listOf(
+                "Accept",
+                "Authorization",
+                "Content-Type",
+                "Idempotency-Key",
+                "X-MyPet-Command-Type",
+                "X-MyPet-Payload-Schema-Version",
+            )
             exposedHeaders = listOf("X-Trace-Id")
             allowCredentials = false
             maxAge = 3600

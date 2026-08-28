@@ -211,6 +211,19 @@ class JdbcMerchantSyncFeed(
     }
 
     @Transactional(readOnly = true)
+    open fun captureBootstrapHighWater(organizationId: UUID, outletId: UUID): Long {
+        return jdbc.queryForObject(
+            """
+            SELECT COALESCE(MAX(sequence_number), 0)
+            FROM mypet.merchant_sync_change_log
+            WHERE organization_id = ? AND outlet_id = ?
+            """.trimIndent(),
+            Long::class.java,
+            organizationId,
+            outletId,
+        ) ?: 0L
+    }
+
     override fun fetchBootstrap(
         organizationId: UUID,
         outletId: UUID,
@@ -220,16 +233,7 @@ class JdbcMerchantSyncFeed(
         val boundedLimit = limit.coerceIn(1, MAX_PAGE_SIZE)
 
         val (highWaterSeq, lastListingId) = if (cursor.isNullOrBlank()) {
-            val h = jdbc.queryForObject(
-                """
-                SELECT COALESCE(MAX(sequence_number), 0)
-                FROM mypet.merchant_sync_change_log
-                WHERE organization_id = ? AND outlet_id = ?
-                """.trimIndent(),
-                Long::class.java,
-                organizationId,
-                outletId,
-            ) ?: 0L
+            val h = captureBootstrapHighWater(organizationId, outletId)
             h to null
         } else {
             decodeBootstrapCursor(cursor, organizationId, outletId)

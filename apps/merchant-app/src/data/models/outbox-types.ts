@@ -132,16 +132,5 @@ export async function computeRequestFingerprint(
 ): Promise<string> {
   const canonicalPayload = computeCanonicalPayloadJson(payload);
   const raw = `${commandType}:v${schemaVersion}:${canonicalPayload}`;
-  if (typeof Crypto.digestStringAsync === 'function') {
-    return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, raw);
-  }
-  if (typeof globalThis !== 'undefined' && globalThis.crypto?.subtle) {
-    const msgUint8 = new TextEncoder().encode(raw);
-    const hashBuffer = await globalThis.crypto.subtle.digest('SHA-256', msgUint8);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-  }
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const nodeCrypto = require('crypto');
-  return nodeCrypto.createHash('sha256').update(raw).digest('hex');
+  return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, raw);
 }

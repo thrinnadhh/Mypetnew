@@ -1,4 +1,4 @@
-import { uploadCatalogMedia } from './api';
+import { uploadCatalogMedia, type CatalogMediaAsset, type CatalogMediaContentType } from './api';
 import { validateCatalogMediaAsset } from './model';
 import type { SqliteDatabase } from '../data/database/driver';
 import type { MerchantPartitionContext } from '../data/models/partition-context';
@@ -38,11 +38,10 @@ export class MediaReconciliationCoordinator {
         const listing = await this.catalogRepo.getListingById(context, media.canonicalListingId);
         if (!listing) throw new Error('CANONICAL_LISTING_NOT_CACHED');
         const filename = media.localUri.split('/').pop()?.split('?')[0] || 'catalog-image';
-        const asset = {
+        const asset: CatalogMediaAsset = {
           uri: media.localUri,
           name: filename,
-          type: media.mimeType,
-          size: 1,
+          type: media.mimeType as CatalogMediaContentType,
         };
         validateCatalogMediaAsset(asset);
         await uploadCatalogMedia(listing, asset, `m7-media-${media.mediaId}`);

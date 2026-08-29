@@ -119,6 +119,27 @@ class M7OfflineCatalogDraftPostgresContractTest {
         sku = "M7-SKU",
     )
 
+    private fun key(request: OfflineCatalogDraftRequest): String =
+        "catalog-create:${request.tempListingId.removePrefix("local_")}"
+
+    private fun payload(request: OfflineCatalogDraftRequest): Map<String, Any?> = mapOf(
+        "tempListingId" to request.tempListingId,
+        "outletId" to request.outletId.toString(),
+        "barcodeType" to request.barcodeType.name,
+        "barcode" to request.barcode,
+        "name" to request.name,
+        "kind" to request.kind.name,
+        "mrpPaise" to request.mrpPaise,
+        "sellingPricePaise" to request.sellingPricePaise,
+        "category" to request.category,
+        "brand" to request.brand,
+        "description" to request.description,
+        "petType" to request.petType,
+        "lifeStage" to request.lifeStage,
+        "packLabel" to request.packLabel,
+        "sku" to request.sku,
+    )
+
     @Test
     fun `M7-DRAFT-001 two concurrent devices with same exact barcode converge to one canonical listing`() {
         val ctx = context()
@@ -136,12 +157,13 @@ class M7OfflineCatalogDraftPostgresContractTest {
         val principalB = ctx.resolver.reauthorize(stalePrincipal(actorB, organizationId, outletId))
         val results = ConcurrentScenarioRunner.run(2) { index ->
             val actor = if (index == 0) principalA else principalB
+            val request = request(outletId, 710 + index)
             ctx.controller.reconcile(
                 authentication = auth(actor),
-                idempotencyKey = "m7-device-$index",
+                idempotencyKey = key(request),
                 commandType = "CATALOG_CREATE",
                 schemaVersion = "1",
-                request = request(outletId, 710 + index),
+                request = request,
             ).body!!
         }
 
@@ -169,22 +191,12 @@ class M7OfflineCatalogDraftPostgresContractTest {
         val (organizationId, outletId) = seedScope(ctx.jdbc, actorId)
         val current = ctx.resolver.reauthorize(stalePrincipal(actorId, organizationId, outletId))
 
-        val first = ctx.controller.reconcile(
-            auth(current),
-            "m7-conflict-create",
-            "CATALOG_CREATE",
-            "1",
-            request(outletId, 720),
-        )
+        val original = request(outletId, 720)
+        val first = ctx.controller.reconcile(auth(current), key(original), "CATALOG_CREATE", "1", original)
         assertEquals("CREATED", first.body!!.outcome)
 
-        val conflict = ctx.controller.reconcile(
-            auth(current),
-            "m7-conflict-second",
-            "CATALOG_CREATE",
-            "1",
-            request(outletId, 721, name = "Tampered Different Product"),
-        )
+        val changed = request(outletId, 721, name = "Tampered Different Product")
+        val conflict = ctx.controller.reconcile(auth(current), key(changed), "CATALOG_CREATE", "1", changed)
         assertEquals(409, conflict.statusCode.value())
         assertEquals("CONFLICT", conflict.body!!.outcome)
         assertEquals(first.body!!.canonicalListingId, conflict.body!!.canonicalListingId)
@@ -201,43 +213,27 @@ class M7OfflineCatalogDraftPostgresContractTest {
     }
 
     @Test
-    fun `M7-DRAFT-001 lost response resolves historical create receipt and rejects changed payload`() {
+    fun `M7-DRAFT-001 lost response resolves historical create receipt and rejects changed payload or temp identity`() {
         val ctx = context()
         val actorId = createMerchant(ctx.jdbc, "+919330000074")
         val (organizationId, outletId) = seedScope(ctx.jdbc, actorId)
         val current = ctx.resolver.reauthorize(stalePrincipal(actorId, organizationId, outletId))
         val original = request(outletId, 730)
-        val key = "m7-lost-create"
+        val key = key(original)
         val created = ctx.controller.reconcile(auth(current), key, "CATALOG_CREATE", "1", original).body!!
+        val originalPayload = payload(original)
 
-        val payload = mapOf<String, Any?>(
-            "tempListingId" to original.tempListingId,
-            "outletId" to outletId.toString(),
-            "barcodeType" to original.barcodeType.name,
-            "barcode" to original.barcode,
-            "name" to original.name,
-            "kind" to original.kind.name,
-            "mrpPaise" to original.mrpPaise,
-            "sellingPricePaise" to original.sellingPricePaise,
-            "category" to original.category,
-            "brand" to original.brand,
-            "description" to original.description,
-            "petType" to original.petType,
-            "lifeStage" to original.lifeStage,
-            "packLabel" to original.packLabel,
-            "sku" to original.sku,
-        )
         val resolved = ctx.controller.resolve(
             authentication = auth(current),
             commandType = "CATALOG_CREATE",
             schemaVersion = "1",
-            request = ResolveReceiptRequest(key, "CATALOG_CREATE", 1, payload),
+            request = ResolveReceiptRequest(key, "CATALOG_CREATE", 1, originalPayload),
         )
         assertEquals(created.canonicalListingId, resolved.canonicalListingId)
         assertEquals("CREATED", resolved.outcome)
 
-        val tampered = payload.toMutableMap().apply { put("sellingPricePaise", 1L) }
-        val error = assertThrows(DomainException::class.java) {
+        val tampered = originalPayload.toMutableMap().apply { put("sellingPricePaise", 1L) }
+        val payloadError = assertThrows(DomainException::class.java) {
             ctx.controller.resolve(
                 authentication = auth(current),
                 commandType = "CATALOG_CREATE",
@@ -245,7 +241,40 @@ class M7OfflineCatalogDraftPostgresContractTest {
                 request = ResolveReceiptRequest(key, "CATALOG_CREATE", 1, tampered),
             )
         }
-        assertEquals("IDEMPOTENCY_FINGERPRINT_MISMATCH", error.code)
+        assertEquals("IDEMPOTENCY_FINGERPRINT_MISMATCH", payloadError.code)
+
+        val otherTemp = originalPayload.toMutableMap().apply {
+            put("tempListingId", "local_00000000-0000-4000-8000-000000000731")
+        }
+        val identityError = assertThrows(DomainException::class.java) {
+            ctx.controller.resolve(
+                authentication = auth(current),
+                commandType = "CATALOG_CREATE",
+                schemaVersion = "1",
+                request = ResolveReceiptRequest(key, "CATALOG_CREATE", 1, otherTemp),
+            )
+        }
+        assertEquals("IDEMPOTENCY_FINGERPRINT_MISMATCH", identityError.code)
+    }
+
+    @Test
+    fun `M7-DRAFT-001 malformed receipt payload fails closed as validation error`() {
+        val ctx = context()
+        val actorId = createMerchant(ctx.jdbc, "+919330000076")
+        val (organizationId, outletId) = seedScope(ctx.jdbc, actorId)
+        val current = ctx.resolver.reauthorize(stalePrincipal(actorId, organizationId, outletId))
+        val original = request(outletId, 750)
+        val malformed = payload(original).toMutableMap().apply { put("outletId", "not-a-uuid") }
+
+        val error = assertThrows(DomainException::class.java) {
+            ctx.controller.resolve(
+                authentication = auth(current),
+                commandType = "CATALOG_CREATE",
+                schemaVersion = "1",
+                request = ResolveReceiptRequest(key(original), "CATALOG_CREATE", 1, malformed),
+            )
+        }
+        assertEquals("VALIDATION_ERROR", error.code)
     }
 
     @Test
@@ -261,15 +290,10 @@ class M7OfflineCatalogDraftPostgresContractTest {
         )
         val current = ctx.resolver.reauthorize(stale)
         assertTrue(MerchantPermission.CATALOG_WRITE !in current.merchantPermissionsByOutlet[outletId].orEmpty())
+        val replay = request(outletId, 740)
 
         assertThrows(DomainException::class.java) {
-            ctx.controller.reconcile(
-                auth(current),
-                "m7-revoked-create",
-                "CATALOG_CREATE",
-                "1",
-                request(outletId, 740),
-            )
+            ctx.controller.reconcile(auth(current), key(replay), "CATALOG_CREATE", "1", replay)
         }
         assertEquals(
             0L,

@@ -66,7 +66,7 @@ export class SyncCoordinator {
     originalCommand: OfflineCommandRecord,
     receipt: ServerReceiptData,
   ): Promise<void> {
-    // Mapping first: ACK makes dependent commands eligible immediately.
+    // Persist the temp->canonical mapping before ACK makes dependent commands eligible.
     if (originalCommand.commandType === 'CATALOG_CREATE') {
       await this.draftRepo.applyCreateReceipt(context, originalCommand, receipt);
     }
@@ -95,8 +95,9 @@ export class SyncCoordinator {
     let retryable = 0;
     let blocked = 0;
 
-    let hasMore = true;
-    while (hasMore) {
+    // Drain until there is no currently eligible work. ACKing one command can unblock another,
+    // so batch-size alone is not a valid termination signal.
+    while (true) {
       const claimedBatch = await this.outboxRepo.claimNextEligibleCommands(
         context,
         this.workerId,
@@ -104,10 +105,7 @@ export class SyncCoordinator {
         batchSize,
       );
 
-      if (claimedBatch.length === 0) {
-        hasMore = false;
-        break;
-      }
+      if (claimedBatch.length === 0) break;
 
       for (const item of claimedBatch) {
         const cmd = item.command;
@@ -251,8 +249,6 @@ export class SyncCoordinator {
           }
         }
       }
-
-      if (claimedBatch.length < batchSize) hasMore = false;
     }
 
     const blockedCommands = await this.outboxRepo.listCommands(context, ['BLOCKED']);

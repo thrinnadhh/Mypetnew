@@ -37,6 +37,9 @@ jobs:
       - name: Verify Flyway migration sequence
         run: bash ./scripts/supabase/verify-repository-migrations.sh
 
+      - name: Verify Supabase guard syntax
+        run: bash -n ./scripts/supabase/verify-feature-boundaries.sh
+
       - name: Verify Supabase architecture boundaries
         run: bash ./scripts/supabase/verify-feature-boundaries.sh
 

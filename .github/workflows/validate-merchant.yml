@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, "trial/*", "m1a-*", "m1b-*", "m1c-*", "m1d-*", "m1e-*"]
+    branches: [main, "trial/*", "m1a-*", "m1b-*", "m1c-*", "m1d-*", "m1e-*", "infra/supabase-hardening-*"]
 
 permissions:
   contents: read

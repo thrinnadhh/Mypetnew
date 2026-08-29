@@ -9,29 +9,40 @@ fail() {
   exit 1
 }
 
-# Client applications must remain API clients of Spring Boot. Introducing the
-# Supabase JS client would create a second auth/data-access surface and requires
-# an explicit architecture change to this guard.
-if grep -RIl --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.expo \
-  -F '@supabase/supabase-js' apps 2>/dev/null | grep -q .; then
+app_source_files() {
+  find apps \
+    \( -type d \( -name node_modules -o -name dist -o -name .expo -o -name coverage \) -prune \) -o \
+    \( -type f \( \
+      -name 'package.json' -o \
+      -name '*.js' -o -name '*.jsx' -o \
+      -name '*.mjs' -o -name '*.cjs' -o \
+      -name '*.ts' -o -name '*.tsx' \
+    \) -print \)
+}
+
+# Client applications must remain API clients of Spring Boot. Scan executable
+# app source plus direct package manifests, but intentionally ignore lockfiles:
+# a transitive dependency may contain Supabase without the app importing it.
+if app_source_files | xargs -r grep -Il -F '@supabase/supabase-js' | grep -q .; then
+  echo "Files referencing @supabase/supabase-js:" >&2
+  app_source_files | xargs -r grep -Il -F '@supabase/supabase-js' >&2 || true
   fail "client application references @supabase/supabase-js"
 fi
 
-# Never place privileged Supabase/database credentials in app source or app env
-# templates. The backend/deployment environment is the only permitted holder.
-if grep -RIn --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.expo \
-  -E 'SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY|DATABASE_PASSWORD|SPRING_DATASOURCE_PASSWORD' \
-  apps 2>/dev/null; then
-  fail "privileged database/Supabase credential name appears under apps/"
+# Never place privileged Supabase/database credentials in executable app source
+# or direct package manifests. The backend/deployment environment is the only
+# permitted holder.
+if app_source_files | xargs -r grep -InE \
+  'SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY|DATABASE_PASSWORD|SPRING_DATASOURCE_PASSWORD'; then
+  fail "privileged database/Supabase credential name appears in application source"
 fi
 
 # Direct PostgREST/Realtime access from mobile/web clients is intentionally
 # deferred. Clients use Spring Boot APIs; live UX may later use an explicitly
 # reviewed event projection.
-if grep -RIn --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.expo \
-  -E 'supabase\.co/(rest|realtime)/v1|/rest/v1/|/realtime/v1/' \
-  apps 2>/dev/null; then
-  fail "direct Supabase Data API/Realtime endpoint appears under apps/"
+if app_source_files | xargs -r grep -InE \
+  'supabase\.co/(rest|realtime)/v1|/rest/v1/|/realtime/v1/'; then
+  fail "direct Supabase Data API/Realtime endpoint appears in application source"
 fi
 
 # Edge Functions are not an application-domain runtime in MyPetNew. If this

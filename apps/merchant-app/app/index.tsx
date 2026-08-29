@@ -84,6 +84,11 @@ export default function MerchantEntryScreen() {
             <Link href="/catalog" accessibilityRole="button" style={styles.primaryLink}>Open catalog</Link>
           </View>
           <View style={styles.primaryLinkBox}>
+            <Text style={styles.primaryLinkTitle}>Offline product onboarding</Text>
+            <Text style={styles.primaryLinkBody}>Capture an unknown barcode, product metadata, and images into a durable local draft. Server reconciliation remains authoritative after reconnect.</Text>
+            <Link href="/offline-onboarding" accessibilityRole="button" style={styles.primaryLink}>Open offline onboarding</Link>
+          </View>
+          <View style={styles.primaryLinkBox}>
             <Text style={styles.primaryLinkTitle}>Barcode lookup</Text>
             <Text style={styles.primaryLinkBody}>Validate GTIN or internal barcodes and resolve existing listings inside the selected Merchant outlet.</Text>
             <Link href="/barcode" accessibilityRole="button" style={styles.primaryLink}>Open barcode lookup</Link>

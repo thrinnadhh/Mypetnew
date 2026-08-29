@@ -46,6 +46,22 @@ describe('M7 OfflineCatalogDraftService', () => {
     await db.close();
   });
 
+  it('rejects reuse of the same temp identity with changed material metadata', async () => {
+    const db = createNodeSqliteDatabase(':memory:');
+    await new DatabaseBootstrapper().bootstrap(db);
+    const service = new OfflineCatalogDraftService(db, 'installation-m7');
+    await service.queueDraft(context, input);
+
+    await expect(service.queueDraft(context, {
+      ...input,
+      sellingPricePaise: 1,
+    })).rejects.toThrow('LOCAL_DRAFT_IMMUTABILITY_VIOLATION');
+
+    const stored = await service.getDraftRepository().getDraft(context, input.tempListingId);
+    expect(stored?.sellingPricePaise).toBe(900);
+    await db.close();
+  });
+
   it('recovers a process-death gap where draft persisted before outbox enqueue', async () => {
     const db = createNodeSqliteDatabase(':memory:');
     await new DatabaseBootstrapper().bootstrap(db);

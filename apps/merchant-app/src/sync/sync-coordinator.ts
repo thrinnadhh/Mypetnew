@@ -2,6 +2,9 @@ import * as Crypto from 'expo-crypto';
 import type { SqliteDatabase } from '../data/database/driver';
 import type { MerchantPartitionContext } from '../data/models/partition-context';
 import { CommandOutboxRepository } from '../data/repositories/command-outbox-repository';
+import { DraftLocalRepository } from '../data/repositories/draft-local-repository';
+import { MediaReconciliationCoordinator } from '../catalog/media-sync';
+import { DraftSyncReconciler } from './draft-sync-reconciler';
 import { SyncRetryPolicy } from './retry-policy';
 import { SyncTransport } from './sync-transport';
 import { SyncChangeFeedReconciler } from './sync-change-feed-reconciler';
@@ -18,6 +21,9 @@ export type SyncSummary = {
 
 export class SyncCoordinator {
   private readonly outboxRepo: CommandOutboxRepository;
+  private readonly draftRepo: DraftLocalRepository;
+  private readonly draftReconciler: DraftSyncReconciler;
+  private readonly mediaCoordinator: MediaReconciliationCoordinator;
   private readonly reconciler: SyncChangeFeedReconciler;
   private readonly workerId: string;
   private readonly clock: () => number;
@@ -33,6 +39,9 @@ export class SyncCoordinator {
   ) {
     this.clock = clock ?? (() => Date.now());
     this.outboxRepo = new CommandOutboxRepository(db, this.clock);
+    this.draftRepo = new DraftLocalRepository(db, this.clock);
+    this.draftReconciler = new DraftSyncReconciler(db, this.clock);
+    this.mediaCoordinator = new MediaReconciliationCoordinator(db, this.clock);
     this.reconciler = reconciler ?? new SyncChangeFeedReconciler(db, transport.getFetchFn());
     this.workerId = workerId ?? `worker-${Crypto.randomUUID()}`;
   }
@@ -43,19 +52,51 @@ export class SyncCoordinator {
 
   async sync(context: MerchantPartitionContext, batchSize = 10): Promise<SyncSummary> {
     const partitionKey = `${context.accountId}:${context.organizationId}:${context.outletId}`;
-
-    // Single-flight lock per partition
     const existingRun = this.activeRuns.get(partitionKey);
-    if (existingRun) {
-      return existingRun;
-    }
+    if (existingRun) return existingRun;
 
     const runPromise = this.executeSync(context, batchSize).finally(() => {
       this.activeRuns.delete(partitionKey);
     });
-
     this.activeRuns.set(partitionKey, runPromise);
     return runPromise;
+  }
+
+  private async acknowledge(
+    context: MerchantPartitionContext,
+    cmd: Parameters<DraftSyncReconciler['acknowledgeCreate']>[1],
+    receipt: Parameters<DraftSyncReconciler['acknowledgeCreate']>[2],
+  ): Promise<void> {
+    if (cmd.commandType === 'CATALOG_CREATE') {
+      await this.draftReconciler.acknowledgeCreate(context, cmd, receipt);
+    } else {
+      await this.outboxRepo.markAcknowledged(context, cmd.commandId, receipt, receipt.resultingVersion);
+    }
+  }
+
+  private async reject(
+    context: MerchantPartitionContext,
+    cmd: Parameters<DraftSyncReconciler['acknowledgeCreate']>[1],
+    code: string,
+    details: string,
+  ): Promise<void> {
+    await this.outboxRepo.markRejected(context, cmd.commandId, code, details);
+    if (cmd.commandType === 'CATALOG_CREATE') {
+      await this.draftRepo.markRejected(context, cmd.commandId, code, details);
+    }
+  }
+
+  private async conflict(
+    context: MerchantPartitionContext,
+    cmd: Parameters<DraftSyncReconciler['acknowledgeCreate']>[1],
+    code: string,
+    details: string,
+  ): Promise<void> {
+    if (cmd.commandType === 'CATALOG_CREATE') {
+      await this.draftReconciler.markConflict(context, cmd.commandId, code, details);
+    } else {
+      await this.outboxRepo.markNeedsReconciliation(context, cmd.commandId, code, details);
+    }
   }
 
   private async executeSync(context: MerchantPartitionContext, batchSize: number): Promise<SyncSummary> {
@@ -65,69 +106,42 @@ export class SyncCoordinator {
     let retryable = 0;
     let blocked = 0;
 
-    // 1. Drain outbox
     let hasMore = true;
     while (hasMore) {
       const claimedBatch = await this.outboxRepo.claimNextEligibleCommands(
         context,
         this.workerId,
-        30000, // 30s lease
+        30000,
         batchSize,
       );
 
-      if (claimedBatch.length === 0) {
-        hasMore = false;
-        break;
-      }
+      if (claimedBatch.length === 0) break;
 
       for (const item of claimedBatch) {
         const cmd = item.command;
         commandsProcessed += 1;
 
-        // Partition isolation check
         if (
           cmd.accountId !== context.accountId ||
           cmd.organizationId !== context.organizationId ||
           cmd.outletId !== context.outletId
         ) {
-          await this.outboxRepo.markRejected(
-            context,
-            cmd.commandId,
-            'PARTITION_CONTEXT_MISMATCH',
-            'Command does not belong to active partition context',
-          );
+          await this.reject(context, cmd, 'PARTITION_CONTEXT_MISMATCH', 'Command does not belong to active partition context');
           rejected += 1;
           continue;
         }
 
-        // Attempt historical receipt resolution for commands with prior transport uncertainty (replays / retries / crashes)
         if (item.needsReceiptResolution) {
           const resolution = await this.transport.resolveReceipt(cmd);
           if (resolution.ok) {
             if (resolution.found) {
-              // A. Resolver FOUND matching accepted receipt -> mark ACKNOWLEDGED, ZERO mutation dispatch
-              await this.outboxRepo.markAcknowledged(
-                context,
-                cmd.commandId,
-                resolution.receipt,
-                resolution.receipt.resultingVersion,
-              );
+              await this.acknowledge(context, cmd, resolution.receipt);
               acknowledged += 1;
               continue;
-            } else {
-              // B. Resolver definitive RECEIPT_NOT_FOUND / 404 -> only now allow ordinary mutation dispatch
-              // Fall through to transport.dispatch(cmd) below
             }
           } else {
-            // Unsuccessful receipt resolution: NEVER dispatch mutation on ambiguous/temporary errors
             if (resolution.errorCode === 'IDEMPOTENCY_FINGERPRINT_MISMATCH') {
-              // C. IDEMPOTENCY_FINGERPRINT_MISMATCH -> REJECTED, ZERO dispatch
-              await this.outboxRepo.markRejected(
-                context,
-                cmd.commandId,
-                'IDEMPOTENCY_FINGERPRINT_MISMATCH',
-                resolution.error.message,
-              );
+              await this.reject(context, cmd, 'IDEMPOTENCY_FINGERPRINT_MISMATCH', resolution.error.message);
               rejected += 1;
               continue;
             }
@@ -139,53 +153,34 @@ export class SyncCoordinator {
             );
 
             if (resolution.status === 401 || resolution.status === 403 || decision.action === 'REJECT') {
-              // D. 401 / 403 -> terminal auth/permission handling, ZERO dispatch
-              const errCode = decision.action === 'REJECT' ? decision.errorCode : (resolution.errorCode ?? 'AUTH_FAILURE');
-              const errMsg = decision.action === 'REJECT' ? decision.errorMessage : (resolution.error?.message ?? 'Authorization failure');
-              await this.outboxRepo.markRejected(
-                context,
-                cmd.commandId,
-                errCode,
-                errMsg,
-              );
+              const errCode = decision.action === 'REJECT' ? decision.errorCode : resolution.errorCode;
+              const errMsg = decision.action === 'REJECT' ? decision.errorMessage : resolution.error.message;
+              await this.reject(context, cmd, errCode || 'AUTH_FAILURE', errMsg || 'Authorization failure');
               rejected += 1;
-              continue;
-            } else if (decision.action === 'CONFLICT') {
-              // G. Conflict / malformed -> mark NEEDS_RECONCILIATION, ZERO dispatch
-              await this.outboxRepo.markNeedsReconciliation(
-                context,
-                cmd.commandId,
-                decision.errorCode,
-                decision.errorMessage,
-              );
-              rejected += 1;
-              continue;
-            } else {
-              // E & F. Resolver network failure / 5xx / temporary -> RETRYABLE / unresolved, ZERO mutation dispatch
-              const delay = decision.action === 'RETRY' ? decision.delayMs : 1000;
-              const nextAttemptAtIso = new Date(this.clock() + delay).toISOString();
-              await this.outboxRepo.markRetryable(
-                context,
-                cmd.commandId,
-                nextAttemptAtIso,
-                resolution.errorCode ?? resolution.error?.name,
-                resolution.error?.message,
-              );
-              retryable += 1;
               continue;
             }
+            if (decision.action === 'CONFLICT') {
+              await this.conflict(context, cmd, decision.errorCode, decision.errorMessage);
+              rejected += 1;
+              continue;
+            }
+
+            const delay = decision.action === 'RETRY' ? decision.delayMs : 1000;
+            await this.outboxRepo.markRetryable(
+              context,
+              cmd.commandId,
+              new Date(this.clock() + delay).toISOString(),
+              resolution.errorCode ?? resolution.error.name,
+              resolution.error.message,
+            );
+            retryable += 1;
+            continue;
           }
         }
 
         const result = await this.transport.dispatch(cmd);
-
         if (result.ok) {
-          await this.outboxRepo.markAcknowledged(
-            context,
-            cmd.commandId,
-            result.receipt,
-            result.receipt.resultingVersion,
-          );
+          await this.acknowledge(context, cmd, result.receipt);
           acknowledged += 1;
         } else {
           const decision = this.retryPolicy.evaluateError(
@@ -194,29 +189,17 @@ export class SyncCoordinator {
             result.status,
             result.retryAfter,
           );
-
           if (decision.action === 'REJECT') {
-            await this.outboxRepo.markRejected(
-              context,
-              cmd.commandId,
-              decision.errorCode,
-              decision.errorMessage,
-            );
+            await this.reject(context, cmd, decision.errorCode, decision.errorMessage);
             rejected += 1;
           } else if (decision.action === 'CONFLICT') {
-            await this.outboxRepo.markNeedsReconciliation(
-              context,
-              cmd.commandId,
-              decision.errorCode,
-              decision.errorMessage,
-            );
+            await this.conflict(context, cmd, decision.errorCode, decision.errorMessage);
             rejected += 1;
-          } else if (decision.action === 'RETRY') {
-            const nextAttemptAtIso = new Date(this.clock() + decision.delayMs).toISOString();
+          } else {
             await this.outboxRepo.markRetryable(
               context,
               cmd.commandId,
-              nextAttemptAtIso,
+              new Date(this.clock() + decision.delayMs).toISOString(),
               result.error.name,
               result.error.message,
             );
@@ -225,16 +208,12 @@ export class SyncCoordinator {
         }
       }
 
-      if (claimedBatch.length < batchSize) {
-        hasMore = false;
-      }
+      if (claimedBatch.length < batchSize) hasMore = false;
     }
 
-    // Count blocked commands
     const blockedCommands = await this.outboxRepo.listCommands(context, ['BLOCKED']);
     blocked = blockedCommands.length;
 
-    // 2. Reconcile change feed
     let changesApplied = 0;
     let lastFeedError: string | undefined;
     try {
@@ -244,14 +223,13 @@ export class SyncCoordinator {
       lastFeedError = err instanceof Error ? err.message : String(err);
     }
 
-    return {
-      commandsProcessed,
-      acknowledged,
-      rejected,
-      retryable,
-      blocked,
-      changesApplied,
-      lastFeedError,
-    };
+    try {
+      await this.mediaCoordinator.sync(context);
+    } catch (err: unknown) {
+      const mediaError = err instanceof Error ? err.message : String(err);
+      lastFeedError = lastFeedError ? `${lastFeedError}; media: ${mediaError}` : `media: ${mediaError}`;
+    }
+
+    return { commandsProcessed, acknowledged, rejected, retryable, blocked, changesApplied, lastFeedError };
   }
 }

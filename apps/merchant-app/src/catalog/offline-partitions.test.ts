@@ -12,20 +12,8 @@ describe('M7 offline catalog partition discovery', () => {
     const mine = createPartitionContext('acc_current', 'org_a', 'out_a');
     const foreign = createPartitionContext('acc_foreign', 'org_b', 'out_b');
     const syncStates = new SyncStateRepository(db);
-    await syncStates.upsertSyncState(mine, 'all', {
-      status: 'FRESH',
-      cursor: 'cursor-a',
-      lastSyncAt: '2026-08-29T00:00:00Z',
-      lastAttemptAt: '2026-08-29T00:00:00Z',
-      lastError: null,
-    });
-    await syncStates.upsertSyncState(foreign, 'all', {
-      status: 'FRESH',
-      cursor: 'cursor-b',
-      lastSyncAt: '2026-08-29T00:00:00Z',
-      lastAttemptAt: '2026-08-29T00:00:00Z',
-      lastError: null,
-    });
+    await syncStates.recordSyncSuccess(mine, 'all', 'cursor-a', '2026-08-29T00:00:00Z');
+    await syncStates.recordSyncSuccess(foreign, 'all', 'cursor-b', '2026-08-29T00:00:00Z');
     const drafts = new OfflineCatalogDraftRepository(db);
     await drafts.createDraft(createPartitionContext('acc_current', 'org_c', 'out_c'), {
       tempListingId: 'local_00000000-0000-4000-8000-000000000765',

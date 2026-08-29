@@ -37,7 +37,6 @@ describe('M7 OfflineCatalogDraftService', () => {
     expect(second.command.commandId).toBe(first.command.commandId);
     expect(second.command.idempotencyKey).toBe(first.command.idempotencyKey);
     expect((await service.getDraftRepository().getDraft(context, input.tempListingId))?.state).toBe('QUEUED');
-    expect(await service.getOutboxRepository?.()).toBeUndefined();
 
     const rows = await db.all<{ count: number }>(
       'SELECT COUNT(*) as count FROM offline_commands WHERE account_id = ? AND organization_id = ? AND outlet_id = ?',

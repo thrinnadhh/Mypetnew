@@ -31,7 +31,7 @@ export default function MerchantEntryScreen() {
     } catch (error) {
       if (isLikelyNetworkError(error)) {
         setState("offline");
-        setMessage("You appear to be offline. Reconnect and retry to restore your Merchant session.");
+        setMessage("You appear to be offline. Canonical actions are unavailable until your Merchant session is revalidated.");
       } else if (error instanceof Error && error.message === "AUTHENTICATION_REQUIRED") {
         setState("signed-out");
       } else {
@@ -121,6 +121,13 @@ export default function MerchantEntryScreen() {
       {state === "offline" || state === "error" ? (
         <>
           <Text accessibilityRole="alert" style={styles.body}>{message}</Text>
+          {state === "offline" ? (
+            <View style={styles.offlineBox}>
+              <Text style={styles.primaryLinkTitle}>Local work is still available</Text>
+              <Text style={styles.primaryLinkBody}>Reopen previously cached outlet drafts or capture new local work. Nothing will sync until server authorization succeeds.</Text>
+              <Link href="/offline-onboarding" accessibilityRole="button" style={styles.primaryLink}>Open offline onboarding</Link>
+            </View>
+          ) : null}
           <Button title="Retry" onPress={() => void restore()} accessibilityLabel="Retry Merchant session restore" />
           <Link href="/login" accessibilityRole="button">Sign in again</Link>
         </>
@@ -134,6 +141,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 26, fontWeight: "700" },
   body: { fontSize: 16, color: "#4b5563", textAlign: "center" },
   primaryLinkBox: { width: "100%", maxWidth: 520, gap: 8, padding: 18, borderRadius: 16, backgroundColor: "#f0fdf4", borderWidth: 1, borderColor: "#bbf7d0" },
+  offlineBox: { width: "100%", maxWidth: 520, gap: 8, padding: 18, borderRadius: 16, backgroundColor: "#fff7ed", borderWidth: 1, borderColor: "#fed7aa" },
   primaryLinkTitle: { fontSize: 18, fontWeight: "800", color: "#14532d" },
   primaryLinkBody: { fontSize: 14, lineHeight: 20, color: "#166534" },
   primaryLink: { color: "#166534", fontWeight: "800", paddingVertical: 6 },

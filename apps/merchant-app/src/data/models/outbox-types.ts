@@ -2,6 +2,13 @@ import * as Crypto from 'expo-crypto';
 
 export type OfflineCommandType =
   | 'INVENTORY_ADJUSTMENT'
+  | 'INVENTORY_RECEIVING'
+  | 'INVENTORY_DAMAGE'
+  | 'INVENTORY_EXPIRY'
+  | 'INVENTORY_SHRINKAGE'
+  | 'INVENTORY_RETURN'
+  | 'INVENTORY_TRANSFER'
+  | 'INVENTORY_COUNT_SUBMIT'
   | 'CATALOG_CREATE'
   | 'CATALOG_UPDATE'
   | 'CATALOG_ACTIVATE'
@@ -9,6 +16,13 @@ export type OfflineCommandType =
 
 export const SUPPORTED_COMMAND_PAYLOAD_VERSIONS: Record<OfflineCommandType, readonly number[]> = {
   INVENTORY_ADJUSTMENT: [1],
+  INVENTORY_RECEIVING: [1],
+  INVENTORY_DAMAGE: [1],
+  INVENTORY_EXPIRY: [1],
+  INVENTORY_SHRINKAGE: [1],
+  INVENTORY_RETURN: [1],
+  INVENTORY_TRANSFER: [1],
+  INVENTORY_COUNT_SUBMIT: [1],
   CATALOG_CREATE: [1],
   CATALOG_UPDATE: [1],
   CATALOG_ACTIVATE: [1],
@@ -39,6 +53,62 @@ export type InventoryAdjustmentPayload = {
   reason: string;
   referenceType?: string | null;
   referenceId?: string | null;
+};
+
+export type InventoryReceivingPayload = {
+  outletId: string;
+  listingId: string;
+  quantity: number;
+  referenceType?: string | null;
+  referenceId?: string | null;
+  batchNumber?: string | null;
+  expiryDate?: string | null;
+};
+
+export type InventoryDamagePayload = {
+  outletId: string;
+  listingId: string;
+  quantity: number;
+  reasonDetails?: string | null;
+  referenceId?: string | null;
+};
+
+export type InventoryExpiryPayload = {
+  outletId: string;
+  listingId: string;
+  quantity: number;
+  batchReference?: string | null;
+  expiryDate?: string | null;
+};
+
+export type InventoryShrinkagePayload = {
+  outletId: string;
+  listingId: string;
+  quantity: number;
+  notes?: string | null;
+  referenceId?: string | null;
+};
+
+export type InventoryReturnPayload = {
+  outletId: string;
+  listingId: string;
+  quantity: number;
+  returnType: 'CUSTOMER_RETURN' | 'VENDOR_RETURN';
+  referenceType?: string | null;
+  referenceId?: string | null;
+};
+
+export type InventoryTransferPayload = {
+  sourceOutletId: string;
+  destinationOutletId: string;
+  sourceListingId: string;
+  destinationListingId?: string | null;
+  quantity: number;
+};
+
+export type InventoryCountSubmitPayload = {
+  outletId: string;
+  sessionId: string;
 };
 
 export type CatalogCreatePayload = {
@@ -83,6 +153,13 @@ export type CatalogLifecyclePayload = {
 
 export type OfflineCommandPayload =
   | InventoryAdjustmentPayload
+  | InventoryReceivingPayload
+  | InventoryDamagePayload
+  | InventoryExpiryPayload
+  | InventoryShrinkagePayload
+  | InventoryReturnPayload
+  | InventoryTransferPayload
+  | InventoryCountSubmitPayload
   | CatalogCreatePayload
   | CatalogUpdatePayload
   | CatalogLifecyclePayload

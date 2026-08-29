@@ -144,7 +144,7 @@ export class DraftSyncReconciler {
         `SELECT command_id, command_type, payload_schema_version, payload_json
          FROM ${TABLE_OFFLINE_COMMANDS}
          WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
-           AND command_id != ? AND state IN ('PENDING', 'RETRYABLE', 'BLOCKED');`,
+           AND command_id != ? AND state IN ('PENDING', 'RETRYABLE');`,
         [context.accountId, context.organizationId, context.outletId, command.commandId],
       );
 
@@ -160,10 +160,7 @@ export class DraftSyncReconciler {
         );
         await tx.run(
           `UPDATE ${TABLE_OFFLINE_COMMANDS}
-           SET payload_json = ?, request_fingerprint = ?,
-               state = CASE WHEN state = 'BLOCKED' THEN 'PENDING' ELSE state END,
-               last_error_code = CASE WHEN last_error_code = 'PARENT_COMMAND_REJECTED' THEN NULL ELSE last_error_code END,
-               updated_at = ?
+           SET payload_json = ?, request_fingerprint = ?, updated_at = ?
            WHERE account_id = ? AND organization_id = ? AND outlet_id = ? AND command_id = ?;`,
           [payloadJson, fingerprint, now, context.accountId, context.organizationId, context.outletId, child.command_id],
         );

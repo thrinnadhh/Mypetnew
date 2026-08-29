@@ -2,6 +2,7 @@ import * as Crypto from 'expo-crypto';
 import type { SqliteDatabase } from '../data/database/driver';
 import type { MerchantPartitionContext } from '../data/models/partition-context';
 import { CommandOutboxRepository } from '../data/repositories/command-outbox-repository';
+import { OfflineCatalogDraftRepository } from '../data/repositories/offline-catalog-draft-repository';
 import { SyncRetryPolicy } from './retry-policy';
 import { SyncTransport } from './sync-transport';
 import { SyncChangeFeedReconciler } from './sync-change-feed-reconciler';
@@ -18,6 +19,7 @@ export type SyncSummary = {
 
 export class SyncCoordinator {
   private readonly outboxRepo: CommandOutboxRepository;
+  private readonly draftRepo: OfflineCatalogDraftRepository;
   private readonly reconciler: SyncChangeFeedReconciler;
   private readonly workerId: string;
   private readonly clock: () => number;
@@ -33,6 +35,7 @@ export class SyncCoordinator {
   ) {
     this.clock = clock ?? (() => Date.now());
     this.outboxRepo = new CommandOutboxRepository(db, this.clock);
+    this.draftRepo = new OfflineCatalogDraftRepository(db, this.clock);
     this.reconciler = reconciler ?? new SyncChangeFeedReconciler(db, transport.getFetchFn());
     this.workerId = workerId ?? `worker-${Crypto.randomUUID()}`;
   }
@@ -41,21 +44,47 @@ export class SyncCoordinator {
     return this.outboxRepo;
   }
 
+  getOfflineCatalogDraftRepository(): OfflineCatalogDraftRepository {
+    return this.draftRepo;
+  }
+
   async sync(context: MerchantPartitionContext, batchSize = 10): Promise<SyncSummary> {
     const partitionKey = `${context.accountId}:${context.organizationId}:${context.outletId}`;
-
-    // Single-flight lock per partition
     const existingRun = this.activeRuns.get(partitionKey);
-    if (existingRun) {
-      return existingRun;
-    }
+    if (existingRun) return existingRun;
 
     const runPromise = this.executeSync(context, batchSize).finally(() => {
       this.activeRuns.delete(partitionKey);
     });
-
     this.activeRuns.set(partitionKey, runPromise);
     return runPromise;
+  }
+
+  private async acknowledge(
+    context: MerchantPartitionContext,
+    originalCommand: Awaited<ReturnType<CommandOutboxRepository['getCommand']>> extends infer T ? NonNullable<T> : never,
+    receipt: Parameters<CommandOutboxRepository['markAcknowledged']>[2],
+  ): Promise<void> {
+    // Persist temp->canonical mapping before making dependent commands eligible.
+    if (originalCommand.commandType === 'CATALOG_CREATE') {
+      await this.draftRepo.applyCreateReceipt(context, originalCommand, receipt);
+    }
+    await this.outboxRepo.markAcknowledged(
+      context,
+      originalCommand.commandId,
+      receipt,
+      receipt.resultingVersion,
+    );
+  }
+
+  private async rejectDraftIfNeeded(
+    context: MerchantPartitionContext,
+    command: Awaited<ReturnType<CommandOutboxRepository['getCommand']>> extends infer T ? NonNullable<T> : never,
+    errorCode: string,
+  ): Promise<void> {
+    if (command.commandType === 'CATALOG_CREATE') {
+      await this.draftRepo.markCreateRejected(context, command, errorCode);
+    }
   }
 
   private async executeSync(context: MerchantPartitionContext, batchSize: number): Promise<SyncSummary> {
@@ -65,13 +94,12 @@ export class SyncCoordinator {
     let retryable = 0;
     let blocked = 0;
 
-    // 1. Drain outbox
     let hasMore = true;
     while (hasMore) {
       const claimedBatch = await this.outboxRepo.claimNextEligibleCommands(
         context,
         this.workerId,
-        30000, // 30s lease
+        30000,
         batchSize,
       );
 
@@ -84,12 +112,12 @@ export class SyncCoordinator {
         const cmd = item.command;
         commandsProcessed += 1;
 
-        // Partition isolation check
         if (
           cmd.accountId !== context.accountId ||
           cmd.organizationId !== context.organizationId ||
           cmd.outletId !== context.outletId
         ) {
+          await this.rejectDraftIfNeeded(context, cmd, 'PARTITION_CONTEXT_MISMATCH');
           await this.outboxRepo.markRejected(
             context,
             cmd.commandId,
@@ -100,28 +128,19 @@ export class SyncCoordinator {
           continue;
         }
 
-        // Attempt historical receipt resolution for commands with prior transport uncertainty (replays / retries / crashes)
+        const effectiveCmd = await this.draftRepo.resolveCommandIdentity(context, cmd);
+
         if (item.needsReceiptResolution) {
-          const resolution = await this.transport.resolveReceipt(cmd);
+          const resolution = await this.transport.resolveReceipt(effectiveCmd);
           if (resolution.ok) {
             if (resolution.found) {
-              // A. Resolver FOUND matching accepted receipt -> mark ACKNOWLEDGED, ZERO mutation dispatch
-              await this.outboxRepo.markAcknowledged(
-                context,
-                cmd.commandId,
-                resolution.receipt,
-                resolution.receipt.resultingVersion,
-              );
+              await this.acknowledge(context, cmd, resolution.receipt);
               acknowledged += 1;
               continue;
-            } else {
-              // B. Resolver definitive RECEIPT_NOT_FOUND / 404 -> only now allow ordinary mutation dispatch
-              // Fall through to transport.dispatch(cmd) below
             }
           } else {
-            // Unsuccessful receipt resolution: NEVER dispatch mutation on ambiguous/temporary errors
             if (resolution.errorCode === 'IDEMPOTENCY_FINGERPRINT_MISMATCH') {
-              // C. IDEMPOTENCY_FINGERPRINT_MISMATCH -> REJECTED, ZERO dispatch
+              await this.rejectDraftIfNeeded(context, cmd, 'IDEMPOTENCY_FINGERPRINT_MISMATCH');
               await this.outboxRepo.markRejected(
                 context,
                 cmd.commandId,
@@ -139,19 +158,25 @@ export class SyncCoordinator {
             );
 
             if (resolution.status === 401 || resolution.status === 403 || decision.action === 'REJECT') {
-              // D. 401 / 403 -> terminal auth/permission handling, ZERO dispatch
-              const errCode = decision.action === 'REJECT' ? decision.errorCode : (resolution.errorCode ?? 'AUTH_FAILURE');
-              const errMsg = decision.action === 'REJECT' ? decision.errorMessage : (resolution.error?.message ?? 'Authorization failure');
-              await this.outboxRepo.markRejected(
-                context,
-                cmd.commandId,
-                errCode,
-                errMsg,
-              );
+              const errCode = decision.action === 'REJECT'
+                ? decision.errorCode
+                : (resolution.errorCode ?? 'AUTH_FAILURE');
+              const errMsg = decision.action === 'REJECT'
+                ? decision.errorMessage
+                : (resolution.error?.message ?? 'Authorization failure');
+              await this.rejectDraftIfNeeded(context, cmd, errCode);
+              await this.outboxRepo.markRejected(context, cmd.commandId, errCode, errMsg);
               rejected += 1;
               continue;
-            } else if (decision.action === 'CONFLICT') {
-              // G. Conflict / malformed -> mark NEEDS_RECONCILIATION, ZERO dispatch
+            }
+
+            if (decision.action === 'CONFLICT') {
+              if (cmd.commandType === 'CATALOG_CREATE') {
+                await this.draftRepo.markCreateConflict(context, cmd, {
+                  code: decision.errorCode,
+                  message: decision.errorMessage,
+                });
+              }
               await this.outboxRepo.markNeedsReconciliation(
                 context,
                 cmd.commandId,
@@ -160,32 +185,26 @@ export class SyncCoordinator {
               );
               rejected += 1;
               continue;
-            } else {
-              // E & F. Resolver network failure / 5xx / temporary -> RETRYABLE / unresolved, ZERO mutation dispatch
-              const delay = decision.action === 'RETRY' ? decision.delayMs : 1000;
-              const nextAttemptAtIso = new Date(this.clock() + delay).toISOString();
-              await this.outboxRepo.markRetryable(
-                context,
-                cmd.commandId,
-                nextAttemptAtIso,
-                resolution.errorCode ?? resolution.error?.name,
-                resolution.error?.message,
-              );
-              retryable += 1;
-              continue;
             }
+
+            const delay = decision.action === 'RETRY' ? decision.delayMs : 1000;
+            const nextAttemptAtIso = new Date(this.clock() + delay).toISOString();
+            await this.outboxRepo.markRetryable(
+              context,
+              cmd.commandId,
+              nextAttemptAtIso,
+              resolution.errorCode ?? resolution.error?.name,
+              resolution.error?.message,
+            );
+            retryable += 1;
+            continue;
           }
         }
 
-        const result = await this.transport.dispatch(cmd);
+        const result = await this.transport.dispatch(effectiveCmd);
 
         if (result.ok) {
-          await this.outboxRepo.markAcknowledged(
-            context,
-            cmd.commandId,
-            result.receipt,
-            result.receipt.resultingVersion,
-          );
+          await this.acknowledge(context, cmd, result.receipt);
           acknowledged += 1;
         } else {
           const decision = this.retryPolicy.evaluateError(
@@ -196,6 +215,7 @@ export class SyncCoordinator {
           );
 
           if (decision.action === 'REJECT') {
+            await this.rejectDraftIfNeeded(context, cmd, decision.errorCode);
             await this.outboxRepo.markRejected(
               context,
               cmd.commandId,
@@ -204,6 +224,12 @@ export class SyncCoordinator {
             );
             rejected += 1;
           } else if (decision.action === 'CONFLICT') {
+            if (cmd.commandType === 'CATALOG_CREATE') {
+              await this.draftRepo.markCreateConflict(context, cmd, result.errorData ?? {
+                code: decision.errorCode,
+                message: decision.errorMessage,
+              });
+            }
             await this.outboxRepo.markNeedsReconciliation(
               context,
               cmd.commandId,
@@ -225,16 +251,12 @@ export class SyncCoordinator {
         }
       }
 
-      if (claimedBatch.length < batchSize) {
-        hasMore = false;
-      }
+      if (claimedBatch.length < batchSize) hasMore = false;
     }
 
-    // Count blocked commands
     const blockedCommands = await this.outboxRepo.listCommands(context, ['BLOCKED']);
     blocked = blockedCommands.length;
 
-    // 2. Reconcile change feed
     let changesApplied = 0;
     let lastFeedError: string | undefined;
     try {

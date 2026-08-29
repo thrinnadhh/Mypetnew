@@ -1,7 +1,11 @@
 import * as Crypto from 'expo-crypto';
 import type { SqliteDatabase } from '../data/database/driver';
 import type { MerchantPartitionContext } from '../data/models/partition-context';
-import type { CatalogCreatePayload, OfflineCommandRecord } from '../data/models/outbox-types';
+import {
+  computeCanonicalPayloadJson,
+  type CatalogCreatePayload,
+  type OfflineCommandRecord,
+} from '../data/models/outbox-types';
 import { CommandOutboxRepository } from '../data/repositories/command-outbox-repository';
 import {
   type LocalCatalogDraft,
@@ -16,6 +20,50 @@ export type QueuedCatalogDraft = {
   draft: LocalCatalogDraft;
   command: OfflineCommandRecord;
 };
+
+function canonicalDraftInput(context: MerchantPartitionContext, draft: LocalCatalogDraft): string {
+  return computeCanonicalPayloadJson({
+    tempListingId: draft.tempListingId,
+    outletId: context.outletId,
+    barcodeType: draft.barcodeType,
+    barcode: draft.barcode,
+    name: draft.name,
+    kind: draft.kind,
+    mrpPaise: draft.mrpPaise,
+    sellingPricePaise: draft.sellingPricePaise,
+    category: draft.category,
+    brand: draft.brand ?? null,
+    description: draft.description ?? null,
+    petType: draft.petType ?? null,
+    lifeStage: draft.lifeStage ?? null,
+    packLabel: draft.packLabel ?? null,
+    sku: draft.sku ?? null,
+  });
+}
+
+function canonicalQueueInput(
+  context: MerchantPartitionContext,
+  tempListingId: string,
+  input: QueueCatalogDraftInput,
+): string {
+  return computeCanonicalPayloadJson({
+    tempListingId,
+    outletId: context.outletId,
+    barcodeType: input.barcodeType,
+    barcode: input.barcode,
+    name: input.name,
+    kind: input.kind,
+    mrpPaise: input.mrpPaise,
+    sellingPricePaise: input.sellingPricePaise,
+    category: input.category,
+    brand: input.brand ?? null,
+    description: input.description ?? null,
+    petType: input.petType ?? null,
+    lifeStage: input.lifeStage ?? null,
+    packLabel: input.packLabel ?? null,
+    sku: input.sku ?? null,
+  });
+}
 
 export class OfflineCatalogDraftService {
   private readonly drafts: OfflineCatalogDraftRepository;
@@ -40,6 +88,9 @@ export class OfflineCatalogDraftService {
     input: QueueCatalogDraftInput,
   ): Promise<QueuedCatalogDraft> {
     const draft = await this.drafts.createDraft(context, input);
+    if (canonicalDraftInput(context, draft) !== canonicalQueueInput(context, draft.tempListingId, input)) {
+      throw new Error('LOCAL_DRAFT_IMMUTABILITY_VIOLATION');
+    }
     const command = await this.ensureCreateCommand(context, draft);
     return { draft: (await this.drafts.getDraft(context, draft.tempListingId)) ?? draft, command };
   }

@@ -53,6 +53,9 @@ jobs:
       - name: Verify free-tier backup script syntax
         run: bash -n ./scripts/supabase/export-free-tier-backup.sh
 
+      - name: Verify Storage provisioner syntax
+        run: node --check ./scripts/supabase/provision-storage.mjs
+
       - name: Test Merchant Operations gate failures
         run: node --test scripts/merchant-operations/validate-program.test.mjs
 

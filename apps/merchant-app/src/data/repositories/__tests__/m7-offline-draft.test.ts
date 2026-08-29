@@ -9,6 +9,7 @@ import { BarcodeLocalRepository } from '../barcode-local-repository';
 import { CatalogLocalRepository } from '../catalog-local-repository';
 import { CommandOutboxRepository } from '../command-outbox-repository';
 import { DraftLocalRepository } from '../draft-local-repository';
+import { PartitionDiscoveryRepository } from '../partition-discovery-repository';
 import { PendingMediaRepository } from '../pending-media-repository';
 import { DraftSyncReconciler } from '../../../sync/draft-sync-reconciler';
 
@@ -62,7 +63,7 @@ describe('M7 offline barcode draft and identity reconciliation', () => {
       kind: 'PRODUCT',
       mrpPaise: 1000,
       sellingPricePaise: 900,
-    })).rejects.toThrow('BARCODE_INVALID');
+    })).rejects.toMatchObject({ name: 'BARCODE_INVALID' });
     expect(await drafts.listDrafts(contextA)).toHaveLength(0);
     await db.close();
   });
@@ -99,7 +100,7 @@ describe('M7 offline barcode draft and identity reconciliation', () => {
     }
   });
 
-  it('isolates drafts by account, organization, and outlet', async () => {
+  it('isolates drafts and cached partition discovery by account, organization, and outlet', async () => {
     const db = createNodeSqliteDatabase(':memory:');
     await new DatabaseBootstrapper().bootstrap(db);
     const drafts = new DraftLocalRepository(db);
@@ -111,11 +112,22 @@ describe('M7 offline barcode draft and identity reconciliation', () => {
       mrpPaise: 10000,
       sellingPricePaise: 9000,
     });
+    await drafts.createDraft(contextB, {
+      barcodeType: 'GTIN_13',
+      barcode: '5901234123457',
+      name: 'Account B only',
+      kind: 'PRODUCT',
+      mrpPaise: 10000,
+      sellingPricePaise: 9000,
+    });
 
     expect(await drafts.getDraft(contextB, created.localId)).toBeNull();
     expect(await drafts.getDraft(contextOtherOutlet, created.localId)).toBeNull();
-    expect(await drafts.listDrafts(contextB)).toHaveLength(0);
     expect(await drafts.listDrafts(contextOtherOutlet)).toHaveLength(0);
+
+    const partitions = new PartitionDiscoveryRepository(db);
+    expect(await partitions.listKnownPartitionsForAccount('acc-a')).toEqual([contextA]);
+    expect(await partitions.listKnownPartitionsForAccount('acc-b')).toEqual([contextB]);
     await db.close();
   });
 

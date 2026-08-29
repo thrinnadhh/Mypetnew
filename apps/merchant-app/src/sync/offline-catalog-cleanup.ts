@@ -11,10 +11,9 @@ export type OfflineCatalogCleanupResult = {
 };
 
 /**
- * Deletes only terminal successful/failed media bookkeeping and fully-synced draft copies.
+ * Deletes only terminal media bookkeeping and fully-synced draft copies.
  * LOCAL_DRAFT, QUEUED, CONFLICT, REJECTED drafts and retryable/in-flight media are retained.
- * Temp->canonical mappings are intentionally retained because old dependent commands may still
- * need identity translation during replay/recovery.
+ * Temp->canonical mappings are retained because dependent commands can still need translation.
  */
 export async function cleanupOfflineCatalogState(
   db: SqliteDatabase,
@@ -33,17 +32,17 @@ export async function cleanupOfflineCatalogState(
     );
 
     const drafts = await tx.run(
-      `DELETE FROM ${TABLE_LOCAL_CATALOG_DRAFTS} d
-       WHERE d.account_id = ? AND d.organization_id = ? AND d.outlet_id = ?
-         AND d.state = 'SYNCED'
-         AND d.updated_at < ?
+      `DELETE FROM ${TABLE_LOCAL_CATALOG_DRAFTS}
+       WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
+         AND state = 'SYNCED'
+         AND updated_at < ?
          AND NOT EXISTS (
-           SELECT 1 FROM ${TABLE_CATALOG_MEDIA_JOBS} m
-           WHERE m.account_id = d.account_id
-             AND m.organization_id = d.organization_id
-             AND m.outlet_id = d.outlet_id
-             AND m.temp_listing_id = d.temp_listing_id
-             AND m.state IN ('PENDING', 'UPLOADING', 'RETRYABLE')
+           SELECT 1 FROM ${TABLE_CATALOG_MEDIA_JOBS}
+           WHERE ${TABLE_CATALOG_MEDIA_JOBS}.account_id = ${TABLE_LOCAL_CATALOG_DRAFTS}.account_id
+             AND ${TABLE_CATALOG_MEDIA_JOBS}.organization_id = ${TABLE_LOCAL_CATALOG_DRAFTS}.organization_id
+             AND ${TABLE_CATALOG_MEDIA_JOBS}.outlet_id = ${TABLE_LOCAL_CATALOG_DRAFTS}.outlet_id
+             AND ${TABLE_CATALOG_MEDIA_JOBS}.temp_listing_id = ${TABLE_LOCAL_CATALOG_DRAFTS}.temp_listing_id
+             AND ${TABLE_CATALOG_MEDIA_JOBS}.state IN ('PENDING', 'UPLOADING', 'RETRYABLE')
          );`,
       [context.accountId, context.organizationId, context.outletId, olderThanIso],
     );

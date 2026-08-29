@@ -74,9 +74,10 @@ class M7OfflineCatalogDraftController(
         @RequestBody request: OfflineCatalogDraftRequest,
     ): ResponseEntity<OfflineCatalogDraftReceipt> {
         requireSchema(commandType, schemaVersion)
-        val principal = authentication.domainPrincipal()
-        val outlet = providers.requireActiveOutlet(principal, request.outletId, MerchantPermission.CATALOG_WRITE)
         val cleaned = clean(request)
+        requireKeyBinding(idempotencyKey, cleaned.tempListingId)
+        val principal = authentication.domainPrincipal()
+        val outlet = providers.requireActiveOutlet(principal, cleaned.outletId, MerchantPermission.CATALOG_WRITE)
         val normalizedBarcode = BarcodeNormalizer.normalize(cleaned.barcodeType, cleaned.barcode)
         val existingBefore = findByBarcode(outlet.organizationId, outlet.id, cleaned.barcodeType, normalizedBarcode)
 
@@ -114,18 +115,15 @@ class M7OfflineCatalogDraftController(
         if (request.commandType != "CATALOG_CREATE" || request.payloadSchemaVersion != 1) {
             throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported catalog-create receipt schema")
         }
+
         val principal = authentication.domainPrincipal()
-        val payload = request.payload
-        val tempListingId = payload["tempListingId"] as? String
-            ?: throw DomainException("VALIDATION_ERROR", "Missing tempListingId")
-        val outletId = UUID.fromString(payload["outletId"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing outletId"))
+        val cleaned = clean(payloadRequest(request.payload))
+        requireKeyBinding(request.idempotencyKey, cleaned.tempListingId)
 
         val row = jdbc.query(
             """
-            SELECT l.id, l.organization_id, l.outlet_id, l.barcode_type, l.normalized_barcode,
-                   l.name, l.listing_kind, l.commerce_mode, l.mrp_paise, l.selling_price_paise,
-                   l.category, l.brand, l.description, l.pet_type, l.life_stage, l.pack_label, l.sku,
-                   l.create_request_fingerprint, l.created_at, h.actor_id
+            SELECT l.id, l.organization_id, l.outlet_id, l.create_request_fingerprint,
+                   l.created_at, h.actor_id
             FROM mypet.catalog_listing l
             LEFT JOIN mypet.catalog_listing_history h
               ON h.listing_id = l.id AND h.listing_version = 0 AND h.mutation_type = 'CREATE'
@@ -135,51 +133,71 @@ class M7OfflineCatalogDraftController(
                 id = rs.getObject("id", UUID::class.java),
                 organizationId = rs.getObject("organization_id", UUID::class.java),
                 outletId = rs.getObject("outlet_id", UUID::class.java),
-                barcodeType = BarcodeType.valueOf(rs.getString("barcode_type")),
-                normalizedBarcode = rs.getString("normalized_barcode"),
-                name = rs.getString("name"),
-                kind = ListingKind.valueOf(rs.getString("listing_kind")),
-                commerceMode = CommerceMode.valueOf(rs.getString("commerce_mode")),
-                mrpPaise = rs.getLong("mrp_paise"),
-                sellingPricePaise = rs.getLong("selling_price_paise"),
-                category = rs.getString("category"),
-                brand = rs.getString("brand"),
-                description = rs.getString("description"),
-                petType = rs.getString("pet_type"),
-                lifeStage = rs.getString("life_stage"),
-                packLabel = rs.getString("pack_label"),
-                sku = rs.getString("sku"),
                 fingerprint = rs.getString("create_request_fingerprint"),
                 createdAt = rs.getTimestamp("created_at").toInstant(),
                 actorId = rs.getObject("actor_id", UUID::class.java),
             ) },
-            outletId,
+            cleaned.outletId,
             request.idempotencyKey,
         ).singleOrNull() ?: throw DomainException("RESOURCE_NOT_FOUND", "No receipt found for idempotency key")
 
         if (row.actorId == null || row.actorId != principal.actorId) {
             throw DomainException("PERMISSION_DENIED", "Historical actor mismatch")
         }
-        val cleaned = clean(payloadRequest(payload))
+        if (row.outletId != cleaned.outletId) {
+            throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "Receipt outlet does not match request")
+        }
+
         val normalized = BarcodeNormalizer.normalize(cleaned.barcodeType, cleaned.barcode)
         val commerceMode = if (cleaned.kind == ListingKind.MEDICINE) CommerceMode.VIEW_ONLY else CommerceMode.COMMERCE
-        val expected = createFingerprint(
-            row.organizationId,
-            cleaned.copy(outletId = row.outletId),
-            normalized,
-            commerceMode,
-        )
+        val expected = createFingerprint(row.organizationId, cleaned, normalized, commerceMode)
         if (!MessageDigest.isEqual(row.fingerprint.toByteArray(Charsets.UTF_8), expected.toByteArray(Charsets.UTF_8))) {
             throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "Payload does not match historical receipt")
         }
+
         val listing = catalog.getManagedListing(row.organizationId, row.outletId, row.id)
-        return receipt(tempListingId, "CREATED", listing, row.createdAt)
+        return receipt(cleaned.tempListingId, "CREATED", listing, row.createdAt)
     }
 
     private fun requireSchema(commandType: String, schemaVersion: String) {
         if (commandType != "CATALOG_CREATE" || schemaVersion != "1") {
             throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Endpoint accepts CATALOG_CREATE schema version 1")
         }
+    }
+
+    private fun requireKeyBinding(idempotencyKey: String, tempListingId: String) {
+        val localId = parseTempListingId(tempListingId)
+        val expected = "catalog-create:$localId"
+        if (!MessageDigest.isEqual(
+                idempotencyKey.toByteArray(StandardCharsets.UTF_8),
+                expected.toByteArray(StandardCharsets.UTF_8),
+            )
+        ) {
+            throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "Idempotency key is not bound to temporary listing identity")
+        }
+    }
+
+    private fun parseTempListingId(value: String): UUID {
+        val trimmed = value.trim()
+        if (!trimmed.startsWith("local_")) {
+            throw DomainException("VALIDATION_ERROR", "Invalid temporary listing identity")
+        }
+        return runCatching { UUID.fromString(trimmed.removePrefix("local_")) }
+            .getOrElse { throw DomainException("VALIDATION_ERROR", "Invalid temporary listing identity") }
+    }
+
+    private fun parseUuid(payload: Map<String, Any?>, field: String): UUID {
+        val raw = payload[field] as? String
+            ?: throw DomainException("VALIDATION_ERROR", "Missing $field")
+        return runCatching { UUID.fromString(raw) }
+            .getOrElse { throw DomainException("VALIDATION_ERROR", "Invalid $field") }
+    }
+
+    private inline fun <reified E : Enum<E>> parseEnum(payload: Map<String, Any?>, field: String): E {
+        val raw = payload[field] as? String
+            ?: throw DomainException("VALIDATION_ERROR", "Missing $field")
+        return enumValues<E>().firstOrNull { it.name == raw }
+            ?: throw DomainException("VALIDATION_ERROR", "Invalid $field")
     }
 
     private fun createCommand(
@@ -206,21 +224,20 @@ class M7OfflineCatalogDraftController(
         imageUrls = emptyList(),
     )
 
-    private fun clean(request: OfflineCatalogDraftRequest): OfflineCatalogDraftRequest = request.copy(
-        tempListingId = request.tempListingId.trim().also {
-            if (!it.matches(Regex("local_[0-9a-fA-F-]{36}"))) {
-                throw DomainException("VALIDATION_ERROR", "Invalid temporary listing identity")
-            }
-        },
-        name = request.name.trim(),
-        category = request.category.trim().lowercase(),
-        brand = optional(request.brand),
-        description = optional(request.description),
-        petType = optional(request.petType),
-        lifeStage = optional(request.lifeStage),
-        packLabel = optional(request.packLabel),
-        sku = optional(request.sku),
-    )
+    private fun clean(request: OfflineCatalogDraftRequest): OfflineCatalogDraftRequest {
+        val localId = parseTempListingId(request.tempListingId)
+        return request.copy(
+            tempListingId = "local_$localId",
+            name = request.name.trim(),
+            category = request.category.trim().lowercase(),
+            brand = optional(request.brand),
+            description = optional(request.description),
+            petType = optional(request.petType),
+            lifeStage = optional(request.lifeStage),
+            packLabel = optional(request.packLabel),
+            sku = optional(request.sku),
+        )
+    }
 
     private fun optional(value: String?): String? = value?.trim()?.takeIf(String::isNotEmpty)
 
@@ -261,14 +278,17 @@ class M7OfflineCatalogDraftController(
     )
 
     private fun payloadRequest(payload: Map<String, Any?>) = OfflineCatalogDraftRequest(
-        tempListingId = payload["tempListingId"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing tempListingId"),
-        outletId = UUID.fromString(payload["outletId"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing outletId")),
-        barcodeType = BarcodeType.valueOf(payload["barcodeType"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing barcodeType")),
+        tempListingId = payload["tempListingId"] as? String
+            ?: throw DomainException("VALIDATION_ERROR", "Missing tempListingId"),
+        outletId = parseUuid(payload, "outletId"),
+        barcodeType = parseEnum(payload, "barcodeType"),
         barcode = payload["barcode"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing barcode"),
         name = payload["name"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing name"),
-        kind = ListingKind.valueOf(payload["kind"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing kind")),
-        mrpPaise = (payload["mrpPaise"] as? Number)?.toLong() ?: throw DomainException("VALIDATION_ERROR", "Missing mrpPaise"),
-        sellingPricePaise = (payload["sellingPricePaise"] as? Number)?.toLong() ?: throw DomainException("VALIDATION_ERROR", "Missing sellingPricePaise"),
+        kind = parseEnum(payload, "kind"),
+        mrpPaise = (payload["mrpPaise"] as? Number)?.toLong()
+            ?: throw DomainException("VALIDATION_ERROR", "Missing mrpPaise"),
+        sellingPricePaise = (payload["sellingPricePaise"] as? Number)?.toLong()
+            ?: throw DomainException("VALIDATION_ERROR", "Missing sellingPricePaise"),
         category = payload["category"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing category"),
         brand = payload["brand"] as? String,
         description = payload["description"] as? String,
@@ -319,20 +339,6 @@ class M7OfflineCatalogDraftController(
         val id: UUID,
         val organizationId: UUID,
         val outletId: UUID,
-        val barcodeType: BarcodeType,
-        val normalizedBarcode: String,
-        val name: String,
-        val kind: ListingKind,
-        val commerceMode: CommerceMode,
-        val mrpPaise: Long,
-        val sellingPricePaise: Long,
-        val category: String,
-        val brand: String?,
-        val description: String?,
-        val petType: String?,
-        val lifeStage: String?,
-        val packLabel: String?,
-        val sku: String?,
         val fingerprint: String,
         val createdAt: Instant,
         val actorId: UUID?,

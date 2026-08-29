@@ -1,5 +1,6 @@
 import { merchantApiFetch } from '../auth/session';
 import {
+  type CatalogCreatePayload,
   type CatalogLifecyclePayload,
   type CatalogUpdatePayload,
   type InventoryAdjustmentPayload,
@@ -20,6 +21,7 @@ export type TransportResult =
       status?: number;
       retryAfter?: string | null;
       error: Error;
+      errorData?: unknown;
     };
 
 export type ResolveReceiptResult =
@@ -54,7 +56,10 @@ export class SyncTransport {
   async resolveReceipt(command: OfflineCommandRecord): Promise<ResolveReceiptResult> {
     try {
       const payload = JSON.parse(command.payloadJson) as Record<string, unknown>;
-      const response = await this.fetchFn('/api/v1/merchant/sync/receipts/resolve', {
+      const path = command.commandType === 'CATALOG_CREATE'
+        ? '/api/v1/merchant/sync/catalog/drafts/resolve'
+        : '/api/v1/merchant/sync/receipts/resolve';
+      const response = await this.fetchFn(path, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -89,7 +94,7 @@ export class SyncTransport {
 
       const data = (await response.json()) as Record<string, unknown>;
       const receipt: ServerReceiptData = {
-        receiptId: (data.receiptId as string) ?? command.idempotencyKey,
+        receiptId: typeof data.receiptId === 'string' ? data.receiptId : command.idempotencyKey,
         resultingVersion: typeof data.resultingVersion === 'number' ? data.resultingVersion : undefined,
         resultingOnHand: typeof data.resultingOnHand === 'number' ? data.resultingOnHand : undefined,
         resultingReserved: typeof data.resultingReserved === 'number' ? data.resultingReserved : undefined,
@@ -113,7 +118,6 @@ export class SyncTransport {
   }
 
   async dispatch(command: OfflineCommandRecord): Promise<TransportResult> {
-    // Validate payload schema version before attempting any network transport
     if (!isSupportedCommandPayloadVersion(command.commandType, command.payloadSchemaVersion)) {
       const error = new Error(
         `COMMAND_SCHEMA_UNSUPPORTED: Payload schema version ${command.payloadSchemaVersion} is not supported for ${command.commandType}`,
@@ -144,6 +148,29 @@ export class SyncTransport {
           reason: inv.reason,
           referenceType: inv.referenceType ?? null,
           referenceId: inv.referenceId ?? null,
+        };
+        break;
+      }
+      case 'CATALOG_CREATE': {
+        const create = payload as CatalogCreatePayload;
+        path = '/api/v1/merchant/sync/catalog/drafts/reconcile';
+        method = 'POST';
+        body = {
+          tempListingId: create.tempListingId,
+          outletId: create.outletId,
+          barcodeType: create.barcodeType,
+          barcode: create.barcode,
+          name: create.name,
+          kind: create.kind,
+          mrpPaise: create.mrpPaise,
+          sellingPricePaise: create.sellingPricePaise,
+          category: create.category,
+          brand: create.brand ?? null,
+          description: create.description ?? null,
+          petType: create.petType ?? null,
+          lifeStage: create.lifeStage ?? null,
+          packLabel: create.packLabel ?? null,
+          sku: create.sku ?? null,
         };
         break;
       }
@@ -217,24 +244,28 @@ export class SyncTransport {
           code?: string;
           message?: string;
           error?: string;
+          outcome?: string;
+          canonicalListingId?: string;
+          canonicalListing?: unknown;
         } | null;
         const errorMsg = errorBody?.message ?? errorBody?.error ?? `HTTP ${response.status} from ${path}`;
         const error = new Error(errorMsg);
-        error.name = errorBody?.code ?? `HTTP_${response.status}`;
+        error.name = errorBody?.code ?? (errorBody?.outcome === 'CONFLICT' ? 'CATALOG_DRAFT_CONFLICT' : `HTTP_${response.status}`);
         return {
           ok: false,
           status: response.status,
           retryAfter,
           error,
+          errorData: errorBody,
         };
       }
 
       const responseData = (await response.json().catch(() => ({}))) as Record<string, unknown>;
       const resultingVersion =
-        typeof responseData.version === 'number'
-          ? responseData.version
-          : typeof responseData.resultingOnHand === 'number'
-            ? undefined
+        typeof responseData.resultingVersion === 'number'
+          ? responseData.resultingVersion
+          : typeof responseData.version === 'number'
+            ? responseData.version
             : undefined;
 
       const resultingOnHand =
@@ -248,16 +279,20 @@ export class SyncTransport {
           : undefined;
 
       const receiptId =
-        typeof responseData.id === 'string'
-          ? responseData.id
-          : undefined;
+        typeof responseData.receiptId === 'string'
+          ? responseData.receiptId
+          : typeof responseData.id === 'string'
+            ? responseData.id
+            : undefined;
 
       const receipt: ServerReceiptData = {
         receiptId,
         resultingVersion,
         resultingOnHand,
         resultingReserved,
-        serverTimestamp: new Date().toISOString(),
+        serverTimestamp: typeof responseData.serverTimestamp === 'string'
+          ? responseData.serverTimestamp
+          : new Date().toISOString(),
         rawResponse: responseData,
       };
 

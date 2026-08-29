@@ -1,5 +1,6 @@
 import { merchantApiFetch } from '../auth/session';
 import {
+  type CatalogCreatePayload,
   type CatalogLifecyclePayload,
   type CatalogUpdatePayload,
   type InventoryAdjustmentPayload,
@@ -9,40 +10,15 @@ import {
 } from '../data/models/outbox-types';
 
 export type TransportResult =
-  | {
-      ok: true;
-      status: number;
-      data: unknown;
-      receipt: ServerReceiptData;
-    }
-  | {
-      ok: false;
-      status?: number;
-      retryAfter?: string | null;
-      error: Error;
-    };
+  | { ok: true; status: number; data: unknown; receipt: ServerReceiptData }
+  | { ok: false; status?: number; retryAfter?: string | null; error: Error };
 
 export type ResolveReceiptResult =
-  | {
-      ok: true;
-      found: true;
-      receipt: ServerReceiptData;
-    }
-  | {
-      ok: true;
-      found: false;
-    }
-  | {
-      ok: false;
-      status?: number;
-      errorCode: string;
-      error: Error;
-    };
+  | { ok: true; found: true; receipt: ServerReceiptData }
+  | { ok: true; found: false }
+  | { ok: false; status?: number; errorCode: string; error: Error };
 
-export type FetchFunction = (
-  path: string,
-  options?: RequestInit,
-) => Promise<Response>;
+export type FetchFunction = (path: string, options?: RequestInit) => Promise<Response>;
 
 export class SyncTransport {
   constructor(private readonly fetchFn: FetchFunction = merchantApiFetch) {}
@@ -54,7 +30,10 @@ export class SyncTransport {
   async resolveReceipt(command: OfflineCommandRecord): Promise<ResolveReceiptResult> {
     try {
       const payload = JSON.parse(command.payloadJson) as Record<string, unknown>;
-      const response = await this.fetchFn('/api/v1/merchant/sync/receipts/resolve', {
+      const receiptPath = command.commandType === 'CATALOG_CREATE'
+        ? '/api/v1/merchant/sync/create-receipts/resolve'
+        : '/api/v1/merchant/sync/receipts/resolve';
+      const response = await this.fetchFn(receiptPath, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -69,65 +48,45 @@ export class SyncTransport {
         }),
       });
 
-      if (response.status === 404) {
-        return { ok: true, found: false };
-      }
-
+      if (response.status === 404) return { ok: true, found: false };
       if (!response.ok) {
         const errorBody = (await response.json().catch(() => null)) as { code?: string; message?: string } | null;
         const code = errorBody?.code ?? `HTTP_${response.status}`;
-        const message = errorBody?.message ?? `HTTP ${response.status}`;
-        const error = new Error(message);
+        const error = new Error(errorBody?.message ?? `HTTP ${response.status}`);
         error.name = code;
-        return {
-          ok: false,
-          status: response.status,
-          errorCode: code,
-          error,
-        };
+        return { ok: false, status: response.status, errorCode: code, error };
       }
 
       const data = (await response.json()) as Record<string, unknown>;
-      const receipt: ServerReceiptData = {
-        receiptId: (data.receiptId as string) ?? command.idempotencyKey,
-        resultingVersion: typeof data.resultingVersion === 'number' ? data.resultingVersion : undefined,
-        resultingOnHand: typeof data.resultingOnHand === 'number' ? data.resultingOnHand : undefined,
-        resultingReserved: typeof data.resultingReserved === 'number' ? data.resultingReserved : undefined,
-        serverTimestamp: (data.serverTimestamp as string) ?? new Date().toISOString(),
-        rawResponse: data,
-      };
-
       return {
         ok: true,
         found: true,
-        receipt,
+        receipt: {
+          receiptId: typeof data.receiptId === 'string' ? data.receiptId : command.idempotencyKey,
+          entityId: typeof data.entityId === 'string' ? data.entityId : undefined,
+          resultingVersion: typeof data.resultingVersion === 'number' ? data.resultingVersion : undefined,
+          resultingOnHand: typeof data.resultingOnHand === 'number' ? data.resultingOnHand : undefined,
+          resultingReserved: typeof data.resultingReserved === 'number' ? data.resultingReserved : undefined,
+          serverTimestamp: typeof data.serverTimestamp === 'string' ? data.serverTimestamp : new Date().toISOString(),
+          rawResponse: data,
+        },
       };
     } catch (networkError) {
       const error = networkError instanceof Error ? networkError : new Error(String(networkError));
-      return {
-        ok: false,
-        errorCode: 'NETWORK_ERROR',
-        error,
-      };
+      return { ok: false, errorCode: 'NETWORK_ERROR', error };
     }
   }
 
   async dispatch(command: OfflineCommandRecord): Promise<TransportResult> {
-    // Validate payload schema version before attempting any network transport
     if (!isSupportedCommandPayloadVersion(command.commandType, command.payloadSchemaVersion)) {
       const error = new Error(
         `COMMAND_SCHEMA_UNSUPPORTED: Payload schema version ${command.payloadSchemaVersion} is not supported for ${command.commandType}`,
       );
       error.name = 'COMMAND_SCHEMA_UNSUPPORTED';
-      return {
-        ok: false,
-        status: 400,
-        error,
-      };
+      return { ok: false, status: 400, error };
     }
 
     const payload = JSON.parse(command.payloadJson) as Record<string, unknown>;
-
     let path = '';
     let method = 'POST';
     let body: Record<string, unknown> = {};
@@ -136,7 +95,6 @@ export class SyncTransport {
       case 'INVENTORY_ADJUSTMENT': {
         const inv = payload as InventoryAdjustmentPayload;
         path = '/api/v1/merchant/inventory/adjustments';
-        method = 'POST';
         body = {
           outletId: inv.outletId,
           listingId: inv.listingId,
@@ -144,6 +102,28 @@ export class SyncTransport {
           reason: inv.reason,
           referenceType: inv.referenceType ?? null,
           referenceId: inv.referenceId ?? null,
+        };
+        break;
+      }
+      case 'CATALOG_CREATE': {
+        const cat = payload as CatalogCreatePayload;
+        path = '/api/v1/merchant/listings';
+        body = {
+          outletId: cat.outletId,
+          barcodeType: cat.barcodeType,
+          barcode: cat.barcode,
+          name: cat.name,
+          kind: cat.kind,
+          mrpPaise: cat.mrpPaise,
+          sellingPricePaise: cat.sellingPricePaise,
+          category: cat.category,
+          brand: cat.brand ?? null,
+          description: cat.description ?? null,
+          petType: cat.petType ?? null,
+          lifeStage: cat.lifeStage ?? null,
+          packLabel: cat.packLabel ?? null,
+          sku: cat.sku ?? null,
+          imageUrls: [],
         };
         break;
       }
@@ -170,31 +150,19 @@ export class SyncTransport {
       case 'CATALOG_ACTIVATE': {
         const cat = payload as CatalogLifecyclePayload;
         path = `/api/v1/merchant/listings/${encodeURIComponent(cat.listingId)}/activate`;
-        method = 'POST';
-        body = {
-          outletId: cat.outletId,
-          expectedVersion: cat.expectedVersion,
-        };
+        body = { outletId: cat.outletId, expectedVersion: cat.expectedVersion };
         break;
       }
       case 'CATALOG_DEACTIVATE': {
         const cat = payload as CatalogLifecyclePayload;
         path = `/api/v1/merchant/listings/${encodeURIComponent(cat.listingId)}/deactivate`;
-        method = 'POST';
-        body = {
-          outletId: cat.outletId,
-          expectedVersion: cat.expectedVersion,
-        };
+        body = { outletId: cat.outletId, expectedVersion: cat.expectedVersion };
         break;
       }
       default: {
         const error = new Error(`COMMAND_SCHEMA_UNSUPPORTED: Unsupported command type ${(command as { commandType: string }).commandType}`);
         error.name = 'COMMAND_SCHEMA_UNSUPPORTED';
-        return {
-          ok: false,
-          status: 400,
-          error,
-        };
+        return { ok: false, status: 400, error };
       }
     }
 
@@ -209,70 +177,36 @@ export class SyncTransport {
         },
         body: JSON.stringify(body),
       });
-
       const retryAfter = response.headers.get('Retry-After');
-
       if (!response.ok) {
         const errorBody = (await response.json().catch(() => null)) as {
           code?: string;
           message?: string;
           error?: string;
         } | null;
-        const errorMsg = errorBody?.message ?? errorBody?.error ?? `HTTP ${response.status} from ${path}`;
-        const error = new Error(errorMsg);
+        const error = new Error(errorBody?.message ?? errorBody?.error ?? `HTTP ${response.status} from ${path}`);
         error.name = errorBody?.code ?? `HTTP_${response.status}`;
-        return {
-          ok: false,
-          status: response.status,
-          retryAfter,
-          error,
-        };
+        return { ok: false, status: response.status, retryAfter, error };
       }
 
       const responseData = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-      const resultingVersion =
-        typeof responseData.version === 'number'
-          ? responseData.version
-          : typeof responseData.resultingOnHand === 'number'
-            ? undefined
-            : undefined;
-
-      const resultingOnHand =
-        typeof responseData.resultingOnHand === 'number'
-          ? responseData.resultingOnHand
-          : undefined;
-
-      const resultingReserved =
-        typeof responseData.resultingReserved === 'number'
-          ? responseData.resultingReserved
-          : undefined;
-
-      const receiptId =
-        typeof responseData.id === 'string'
-          ? responseData.id
-          : undefined;
-
-      const receipt: ServerReceiptData = {
-        receiptId,
-        resultingVersion,
-        resultingOnHand,
-        resultingReserved,
-        serverTimestamp: new Date().toISOString(),
-        rawResponse: responseData,
-      };
-
       return {
         ok: true,
         status: response.status,
         data: responseData,
-        receipt,
+        receipt: {
+          receiptId: typeof responseData.id === 'string' ? responseData.id : undefined,
+          entityId: typeof responseData.id === 'string' ? responseData.id : undefined,
+          resultingVersion: typeof responseData.version === 'number' ? responseData.version : undefined,
+          resultingOnHand: typeof responseData.resultingOnHand === 'number' ? responseData.resultingOnHand : undefined,
+          resultingReserved: typeof responseData.resultingReserved === 'number' ? responseData.resultingReserved : undefined,
+          serverTimestamp: typeof responseData.updatedAt === 'string' ? responseData.updatedAt : new Date().toISOString(),
+          rawResponse: responseData,
+        },
       };
     } catch (networkError) {
       const error = networkError instanceof Error ? networkError : new Error(String(networkError));
-      return {
-        ok: false,
-        error,
-      };
+      return { ok: false, error };
     }
   }
 }

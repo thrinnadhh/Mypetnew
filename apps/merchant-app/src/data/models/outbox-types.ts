@@ -2,12 +2,14 @@ import * as Crypto from 'expo-crypto';
 
 export type OfflineCommandType =
   | 'INVENTORY_ADJUSTMENT'
+  | 'CATALOG_CREATE'
   | 'CATALOG_UPDATE'
   | 'CATALOG_ACTIVATE'
   | 'CATALOG_DEACTIVATE';
 
 export const SUPPORTED_COMMAND_PAYLOAD_VERSIONS: Record<OfflineCommandType, readonly number[]> = {
   INVENTORY_ADJUSTMENT: [1],
+  CATALOG_CREATE: [1],
   CATALOG_UPDATE: [1],
   CATALOG_ACTIVATE: [1],
   CATALOG_DEACTIVATE: [1],
@@ -39,6 +41,23 @@ export type InventoryAdjustmentPayload = {
   referenceId?: string | null;
 };
 
+export type CatalogCreatePayload = {
+  outletId: string;
+  barcodeType: 'GTIN_8' | 'GTIN_12' | 'GTIN_13' | 'GTIN_14' | 'INTERNAL';
+  barcode: string;
+  name: string;
+  kind: 'PRODUCT' | 'MEDICINE';
+  mrpPaise: number;
+  sellingPricePaise: number;
+  category: string;
+  brand?: string | null;
+  description?: string | null;
+  petType?: string | null;
+  lifeStage?: string | null;
+  packLabel?: string | null;
+  sku?: string | null;
+};
+
 export type CatalogUpdatePayload = {
   outletId: string;
   listingId: string;
@@ -64,6 +83,7 @@ export type CatalogLifecyclePayload = {
 
 export type OfflineCommandPayload =
   | InventoryAdjustmentPayload
+  | CatalogCreatePayload
   | CatalogUpdatePayload
   | CatalogLifecyclePayload
   | Record<string, unknown>;
@@ -111,6 +131,7 @@ export type ClaimedCommand = {
 
 export type ServerReceiptData = {
   receiptId?: string;
+  entityId?: string;
   resultingVersion?: number;
   resultingOnHand?: number;
   resultingReserved?: number;
@@ -118,22 +139,13 @@ export type ServerReceiptData = {
   rawResponse?: unknown;
 };
 
-/**
- * Deterministically sorts object keys for canonical JSON serialization.
- */
 function canonicalizeJson(obj: unknown): unknown {
-  if (obj === null || typeof obj !== 'object') {
-    return obj;
-  }
-  if (Array.isArray(obj)) {
-    return obj.map(canonicalizeJson);
-  }
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(canonicalizeJson);
   const record = obj as Record<string, unknown>;
   const sortedKeys = Object.keys(record).sort();
   const result: Record<string, unknown> = {};
-  for (const key of sortedKeys) {
-    result[key] = canonicalizeJson(record[key]);
-  }
+  for (const key of sortedKeys) result[key] = canonicalizeJson(record[key]);
   return result;
 }
 

@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 export const TABLE_PROJECTION_SYNC_STATE = 'projection_sync_state';
 export const TABLE_CATALOG_ITEMS = 'catalog_items';
@@ -11,9 +11,10 @@ export const TABLE_BOOTSTRAP_STAGING_ITEMS = 'bootstrap_staging_items';
 export const TABLE_BOOTSTRAP_STAGING_BALANCES = 'bootstrap_staging_balances';
 export const TABLE_BOOTSTRAP_STAGING_BARCODES = 'bootstrap_staging_barcodes';
 export const TABLE_BOOTSTRAP_STAGING_STATE = 'bootstrap_staging_state';
+export const TABLE_CATALOG_DRAFTS = 'catalog_drafts';
+export const TABLE_PENDING_MEDIA = 'pending_media';
 
 export const V1_SCHEMA_STATEMENTS = [
-  // 1. Sync metadata
   `CREATE TABLE IF NOT EXISTS ${TABLE_PROJECTION_SYNC_STATE} (
     account_id TEXT NOT NULL,
     organization_id TEXT NOT NULL,
@@ -26,8 +27,6 @@ export const V1_SCHEMA_STATEMENTS = [
     last_error TEXT NULL,
     PRIMARY KEY (account_id, organization_id, outlet_id, projection_name)
   );`,
-
-  // 2. Catalog items projection
   `CREATE TABLE IF NOT EXISTS ${TABLE_CATALOG_ITEMS} (
     account_id TEXT NOT NULL,
     organization_id TEXT NOT NULL,
@@ -57,8 +56,6 @@ export const V1_SCHEMA_STATEMENTS = [
     local_updated_at TEXT NOT NULL,
     PRIMARY KEY (account_id, organization_id, outlet_id, id)
   );`,
-
-  // 3. Catalog barcode secondary / lookup index table
   `CREATE TABLE IF NOT EXISTS ${TABLE_CATALOG_BARCODES} (
     account_id TEXT NOT NULL,
     organization_id TEXT NOT NULL,
@@ -71,8 +68,6 @@ export const V1_SCHEMA_STATEMENTS = [
     updated_at TEXT NOT NULL,
     PRIMARY KEY (account_id, organization_id, outlet_id, listing_id, barcode_type, normalized_barcode)
   );`,
-
-  // 4. Inventory balance projection
   `CREATE TABLE IF NOT EXISTS ${TABLE_INVENTORY_BALANCES} (
     account_id TEXT NOT NULL,
     organization_id TEXT NOT NULL,
@@ -88,26 +83,19 @@ export const V1_SCHEMA_STATEMENTS = [
     tombstoned_at TEXT NULL,
     PRIMARY KEY (account_id, organization_id, outlet_id, listing_id)
   );`,
-
-  // Indexes
   `CREATE INDEX IF NOT EXISTS idx_catalog_items_partition_status
     ON ${TABLE_CATALOG_ITEMS} (account_id, organization_id, outlet_id, status, is_tombstone);`,
-
   `CREATE INDEX IF NOT EXISTS idx_catalog_items_barcode
     ON ${TABLE_CATALOG_ITEMS} (account_id, organization_id, outlet_id, barcode_type, normalized_barcode, is_tombstone);`,
-
   `CREATE INDEX IF NOT EXISTS idx_catalog_barcodes_lookup
     ON ${TABLE_CATALOG_BARCODES} (account_id, organization_id, outlet_id, barcode_type, normalized_barcode, is_tombstone);`,
-
   `CREATE INDEX IF NOT EXISTS idx_inventory_balances_partition
     ON ${TABLE_INVENTORY_BALANCES} (account_id, organization_id, outlet_id, is_tombstone);`,
-
   `CREATE INDEX IF NOT EXISTS idx_sync_state_partition
     ON ${TABLE_PROJECTION_SYNC_STATE} (account_id, organization_id, outlet_id);`,
 ];
 
 export const V2_SCHEMA_STATEMENTS = [
-  // 5. Partitioned durable tombstone ledger
   `CREATE TABLE IF NOT EXISTS ${TABLE_PROJECTION_TOMBSTONES} (
     account_id TEXT NOT NULL,
     organization_id TEXT NOT NULL,
@@ -119,13 +107,11 @@ export const V2_SCHEMA_STATEMENTS = [
     deleted_at TEXT NOT NULL,
     PRIMARY KEY (account_id, organization_id, outlet_id, projection_name, entity_id)
   );`,
-
   `CREATE INDEX IF NOT EXISTS idx_projection_tombstones_lookup
     ON ${TABLE_PROJECTION_TOMBSTONES} (account_id, organization_id, outlet_id, projection_name, entity_id);`,
 ];
 
 export const V3_SCHEMA_STATEMENTS = [
-  // 6. Partitioned durable offline command outbox
   `CREATE TABLE IF NOT EXISTS ${TABLE_OFFLINE_COMMANDS} (
     account_id TEXT NOT NULL,
     organization_id TEXT NOT NULL,
@@ -152,8 +138,6 @@ export const V3_SCHEMA_STATEMENTS = [
     PRIMARY KEY (account_id, organization_id, outlet_id, command_id),
     UNIQUE (account_id, organization_id, outlet_id, idempotency_key)
   );`,
-
-  // 7. Partitioned offline command dependency ledger
   `CREATE TABLE IF NOT EXISTS ${TABLE_OFFLINE_COMMAND_DEPENDENCIES} (
     account_id TEXT NOT NULL,
     organization_id TEXT NOT NULL,
@@ -162,20 +146,15 @@ export const V3_SCHEMA_STATEMENTS = [
     depends_on_command_id TEXT NOT NULL,
     PRIMARY KEY (account_id, organization_id, outlet_id, command_id, depends_on_command_id)
   );`,
-
-  // Indexes
   `CREATE INDEX IF NOT EXISTS idx_offline_commands_partition_state
     ON ${TABLE_OFFLINE_COMMANDS} (account_id, organization_id, outlet_id, state, next_attempt_at);`,
-
   `CREATE UNIQUE INDEX IF NOT EXISTS uq_offline_commands_idempotency
     ON ${TABLE_OFFLINE_COMMANDS} (account_id, organization_id, outlet_id, idempotency_key);`,
-
   `CREATE INDEX IF NOT EXISTS idx_offline_command_dependencies_parent
     ON ${TABLE_OFFLINE_COMMAND_DEPENDENCIES} (account_id, organization_id, outlet_id, depends_on_command_id);`,
 ];
 
 export const V4_SCHEMA_STATEMENTS = [
-  // 8. Bootstrap staging items
   `CREATE TABLE IF NOT EXISTS ${TABLE_BOOTSTRAP_STAGING_ITEMS} (
     generation_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
@@ -203,8 +182,6 @@ export const V4_SCHEMA_STATEMENTS = [
     server_updated_at TEXT NOT NULL,
     PRIMARY KEY (generation_id, account_id, organization_id, outlet_id, id)
   );`,
-
-  // 9. Bootstrap staging balances
   `CREATE TABLE IF NOT EXISTS ${TABLE_BOOTSTRAP_STAGING_BALANCES} (
     generation_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
@@ -217,8 +194,6 @@ export const V4_SCHEMA_STATEMENTS = [
     server_updated_at TEXT NOT NULL,
     PRIMARY KEY (generation_id, account_id, organization_id, outlet_id, listing_id)
   );`,
-
-  // 10. Bootstrap staging barcodes
   `CREATE TABLE IF NOT EXISTS ${TABLE_BOOTSTRAP_STAGING_BARCODES} (
     generation_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
@@ -231,8 +206,6 @@ export const V4_SCHEMA_STATEMENTS = [
     updated_at TEXT NOT NULL,
     PRIMARY KEY (generation_id, account_id, organization_id, outlet_id, normalized_barcode)
   );`,
-
-  // 11. Bootstrap staging state
   `CREATE TABLE IF NOT EXISTS ${TABLE_BOOTSTRAP_STAGING_STATE} (
     generation_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
@@ -245,9 +218,67 @@ export const V4_SCHEMA_STATEMENTS = [
   );`,
 ];
 
+export const V5_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS ${TABLE_CATALOG_DRAFTS} (
+    account_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    outlet_id TEXT NOT NULL,
+    local_id TEXT NOT NULL,
+    create_command_id TEXT NULL,
+    barcode_type TEXT NOT NULL,
+    normalized_barcode TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    commerce_mode TEXT NOT NULL,
+    mrp_paise INTEGER NOT NULL,
+    selling_price_paise INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    brand TEXT NULL,
+    description TEXT NULL,
+    pet_type TEXT NULL,
+    life_stage TEXT NULL,
+    pack_label TEXT NULL,
+    sku TEXT NULL,
+    status TEXT NOT NULL,
+    canonical_listing_id TEXT NULL,
+    rejection_code TEXT NULL,
+    rejection_details TEXT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (account_id, organization_id, outlet_id, local_id)
+  );`,
+  `CREATE INDEX IF NOT EXISTS idx_catalog_drafts_partition_barcode
+    ON ${TABLE_CATALOG_DRAFTS} (account_id, organization_id, outlet_id, barcode_type, normalized_barcode, status);`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS uq_catalog_drafts_create_command
+    ON ${TABLE_CATALOG_DRAFTS} (account_id, organization_id, outlet_id, create_command_id)
+    WHERE create_command_id IS NOT NULL;`,
+  `CREATE TABLE IF NOT EXISTS ${TABLE_PENDING_MEDIA} (
+    account_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    outlet_id TEXT NOT NULL,
+    media_id TEXT NOT NULL,
+    local_listing_id TEXT NOT NULL,
+    canonical_listing_id TEXT NULL,
+    local_uri TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT NULL,
+    last_error TEXT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (account_id, organization_id, outlet_id, media_id)
+  );`,
+  `CREATE INDEX IF NOT EXISTS idx_pending_media_partition_status
+    ON ${TABLE_PENDING_MEDIA} (account_id, organization_id, outlet_id, status, next_attempt_at);`,
+  `CREATE INDEX IF NOT EXISTS idx_pending_media_listing
+    ON ${TABLE_PENDING_MEDIA} (account_id, organization_id, outlet_id, local_listing_id, canonical_listing_id);`,
+];
+
 export const ALL_SCHEMA_STATEMENTS = [
   ...V1_SCHEMA_STATEMENTS,
   ...V2_SCHEMA_STATEMENTS,
   ...V3_SCHEMA_STATEMENTS,
   ...V4_SCHEMA_STATEMENTS,
+  ...V5_SCHEMA_STATEMENTS,
 ];

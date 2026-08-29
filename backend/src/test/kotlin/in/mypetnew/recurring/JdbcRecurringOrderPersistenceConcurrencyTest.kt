@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
 import javax.sql.DataSource
 
 class JdbcRecurringOrderPersistenceConcurrencyTest {
-    private val now = Instant.parse("2026-08-26T00:00:00Z")
+    private val now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
 
     @Test
     fun `two scheduler instances create exactly one durable proposal for the same due cycle`() {

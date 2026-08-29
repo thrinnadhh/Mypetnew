@@ -3,7 +3,9 @@ import { MerchantDatabase, createProductionMerchantDatabase } from '../database/
 import type { SqliteDatabase } from '../database/driver';
 import { BarcodeLocalRepository } from '../repositories/barcode-local-repository';
 import { CatalogLocalRepository } from '../repositories/catalog-local-repository';
+import { DraftLocalRepository } from '../repositories/draft-local-repository';
 import { InventoryLocalRepository } from '../repositories/inventory-local-repository';
+import { PendingMediaRepository } from '../repositories/pending-media-repository';
 import { SyncStateRepository } from '../repositories/sync-state-repository';
 
 export type MerchantDatabaseContextState = {
@@ -13,7 +15,9 @@ export type MerchantDatabaseContextState = {
   database: MerchantDatabase | null;
   catalogRepo: CatalogLocalRepository | null;
   barcodeRepo: BarcodeLocalRepository | null;
+  draftRepo: DraftLocalRepository | null;
   inventoryRepo: InventoryLocalRepository | null;
+  pendingMediaRepo: PendingMediaRepository | null;
   syncStateRepo: SyncStateRepository | null;
 };
 
@@ -24,7 +28,9 @@ const defaultState: MerchantDatabaseContextState = {
   database: null,
   catalogRepo: null,
   barcodeRepo: null,
+  draftRepo: null,
   inventoryRepo: null,
+  pendingMediaRepo: null,
   syncStateRepo: null,
 };
 
@@ -53,7 +59,7 @@ export function MerchantDatabaseProvider({
         try {
           await dbToClose.close();
         } catch {
-          // Ignore error during cleanup close
+          // Ignore cleanup failures during unmount.
         }
       }
     }
@@ -61,7 +67,6 @@ export function MerchantDatabaseProvider({
     async function initDatabase() {
       try {
         setState((prev) => ({ ...prev, isLoading: true, error: null }));
-
         let db: MerchantDatabase;
         if (databaseInstance) {
           db = new MerchantDatabase(databaseInstance);
@@ -74,49 +79,33 @@ export function MerchantDatabaseProvider({
           await cleanupDb(activeOwnedDb);
           return;
         }
-
         await db.initialize();
-
         if (isCancelled) {
           await cleanupDb(activeOwnedDb);
           return;
         }
-
-        const catalogRepo = new CatalogLocalRepository(db);
-        const barcodeRepo = new BarcodeLocalRepository(db);
-        const inventoryRepo = new InventoryLocalRepository(db);
-        const syncStateRepo = new SyncStateRepository(db);
 
         setState({
           isReady: true,
           isLoading: false,
           error: null,
           database: db,
-          catalogRepo,
-          barcodeRepo,
-          inventoryRepo,
-          syncStateRepo,
+          catalogRepo: new CatalogLocalRepository(db),
+          barcodeRepo: new BarcodeLocalRepository(db),
+          draftRepo: new DraftLocalRepository(db),
+          inventoryRepo: new InventoryLocalRepository(db),
+          pendingMediaRepo: new PendingMediaRepository(db),
+          syncStateRepo: new SyncStateRepository(db),
         });
       } catch (err) {
         await cleanupDb(activeOwnedDb);
         if (isCancelled) return;
-
         const error = err instanceof Error ? err : new Error(String(err));
-        setState({
-          isReady: false,
-          isLoading: false,
-          error,
-          database: null,
-          catalogRepo: null,
-          barcodeRepo: null,
-          inventoryRepo: null,
-          syncStateRepo: null,
-        });
+        setState({ ...defaultState, isLoading: false, error });
       }
     }
 
     void initDatabase();
-
     return () => {
       isCancelled = true;
       void cleanupDb(activeOwnedDb);

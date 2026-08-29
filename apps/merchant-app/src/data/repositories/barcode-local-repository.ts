@@ -75,6 +75,10 @@ export type BarcodeLookupOptions = {
   includeInactive?: boolean;
 };
 
+export type OfflineBarcodeResolution =
+  | { found: true; normalizedBarcode: string; barcodeType: BarcodeType; listing: MerchantListing }
+  | { found: false; normalizedBarcode: string; barcodeType: BarcodeType; listing: null; ambiguous?: MerchantListing[] };
+
 export class BarcodeLocalRepository {
   constructor(private readonly db: SqliteDatabase) {}
 
@@ -85,7 +89,6 @@ export class BarcodeLocalRepository {
     options: BarcodeLookupOptions = {},
   ): Promise<BarcodeLookupResult> {
     const normalizedBarcode = normalizeMerchantBarcode(barcodeType, rawBarcode);
-
     const statusClause = options.includeInactive ? '' : "AND i.status = 'ACTIVE'";
 
     const rows = await this.db.all<BarcodeJoinDbRow>(
@@ -110,36 +113,43 @@ export class BarcodeLocalRepository {
          AND i.is_tombstone = 0
          ${statusClause}
        ORDER BY b.is_primary DESC, i.id ASC;`,
-      [
-        context.accountId,
-        context.organizationId,
-        context.outletId,
-        barcodeType,
-        normalizedBarcode,
-      ],
+      [context.accountId, context.organizationId, context.outletId, barcodeType, normalizedBarcode],
     );
 
     if (rows.length === 0) {
-      return {
-        type: 'NOT_FOUND',
-        normalizedBarcode,
-        barcodeType,
-      };
+      return { type: 'NOT_FOUND', normalizedBarcode, barcodeType };
     }
-
     if (rows.length === 1) {
-      return {
-        type: 'FOUND',
-        listing: mapRowToListing(rows[0]),
-      };
+      return { type: 'FOUND', listing: mapRowToListing(rows[0]) };
     }
-
-    // Multiple matches in the same outlet partition
     return {
       type: 'AMBIGUOUS',
       matches: rows.map(mapRowToListing),
       normalizedBarcode,
       barcodeType,
+    };
+  }
+
+  async processScanOffline(
+    context: MerchantPartitionContext,
+    barcodeType: BarcodeType,
+    rawBarcode: string,
+  ): Promise<OfflineBarcodeResolution> {
+    const result = await this.findByBarcode(context, barcodeType, rawBarcode);
+    if (result.type === 'FOUND') {
+      return {
+        found: true,
+        normalizedBarcode: result.listing.normalizedBarcode,
+        barcodeType: result.listing.barcodeType,
+        listing: result.listing,
+      };
+    }
+    return {
+      found: false,
+      normalizedBarcode: result.normalizedBarcode,
+      barcodeType: result.barcodeType,
+      listing: null,
+      ambiguous: result.type === 'AMBIGUOUS' ? result.matches : undefined,
     };
   }
 

@@ -71,11 +71,13 @@ export default function OfflineCatalogOnboardingScreen() {
       const accountId = await currentOfflineMerchantAccountId();
       if (!accountId) {
         setContexts([]);
+        setOfflineContext(false);
         setMessage('A previously authenticated native Merchant session is required for offline drafts.');
         return;
       }
 
       let resolved: MerchantPartitionContext[] = [];
+      let usingOfflineCache = false;
       try {
         const remote = await fetchMerchantCatalogContext();
         if (remote.organizationId) {
@@ -83,20 +85,20 @@ export default function OfflineCatalogOnboardingScreen() {
             .filter((outletId) => canWriteCatalog(remote.permissionsByOutlet, outletId))
             .map((outletId) => createPartitionContext(accountId, remote.organizationId!, outletId));
         }
-        setOfflineContext(false);
       } catch (error) {
         if (!isNetworkError(error)) throw error;
         resolved = await discoverOfflineCatalogPartitions(database, accountId);
-        setOfflineContext(true);
+        usingOfflineCache = true;
       }
 
+      setOfflineContext(usingOfflineCache);
       setContexts(resolved);
       const first = resolved[0] ?? null;
       setSelectedKey(first ? partitionKey(first) : null);
       await loadDrafts(first);
       if (resolved.length === 0) {
         setMessage('No cached Merchant outlet is available. Reconnect once to establish an authorized catalog partition.');
-      } else if (offlineContext) {
+      } else if (usingOfflineCache) {
         setMessage('Offline mode: new work stays local and will be reauthorized by the server before it can become canonical.');
       }
     } catch (error) {
@@ -104,10 +106,13 @@ export default function OfflineCatalogOnboardingScreen() {
     } finally {
       setLoading(false);
     }
-  }, [database, isReady, loadDrafts, offlineContext]);
+  }, [database, isReady, loadDrafts]);
 
   useEffect(() => {
-    void loadContext();
+    const startup = setTimeout(() => {
+      void loadContext();
+    }, 0);
+    return () => clearTimeout(startup);
   }, [loadContext]);
 
   function updateForm<K extends keyof CatalogFormState>(key: K, value: CatalogFormState[K]) {

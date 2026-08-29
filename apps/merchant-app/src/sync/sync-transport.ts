@@ -30,7 +30,10 @@ export class SyncTransport {
   async resolveReceipt(command: OfflineCommandRecord): Promise<ResolveReceiptResult> {
     try {
       const payload = JSON.parse(command.payloadJson) as Record<string, unknown>;
-      const response = await this.fetchFn('/api/v1/merchant/sync/receipts/resolve', {
+      const receiptPath = command.commandType === 'CATALOG_CREATE'
+        ? '/api/v1/merchant/sync/create-receipts/resolve'
+        : '/api/v1/merchant/sync/receipts/resolve';
+      const response = await this.fetchFn(receiptPath, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

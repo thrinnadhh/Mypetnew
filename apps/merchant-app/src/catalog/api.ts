@@ -119,6 +119,15 @@ export async function fetchCatalogPage(
   return (await response.json()) as CatalogPage;
 }
 
+export async function fetchCatalogListing(outletId: string, listingId: string): Promise<MerchantListing> {
+  const params = new URLSearchParams({ outletId });
+  const response = await merchantApiFetch(
+    `/api/v1/merchant/listings/${encodeURIComponent(listingId)}?${params.toString()}`,
+  );
+  if (!response.ok) throw await apiError(response, 'Could not load the canonical listing.');
+  return (await response.json()) as MerchantListing;
+}
+
 export async function createListing(outletId: string, input: CreateListingInput): Promise<MerchantListing> {
   const response = await merchantApiFetch('/api/v1/merchant/listings', {
     method: 'POST',

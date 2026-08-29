@@ -196,10 +196,11 @@ export class SyncCoordinator {
             await this.conflict(context, cmd, decision.errorCode, decision.errorMessage);
             rejected += 1;
           } else {
+            const delay = decision.action === 'RETRY' ? decision.delayMs : 1000;
             await this.outboxRepo.markRetryable(
               context,
               cmd.commandId,
-              new Date(this.clock() + decision.delayMs).toISOString(),
+              new Date(this.clock() + delay).toISOString(),
               result.error.name,
               result.error.message,
             );

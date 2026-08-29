@@ -17,7 +17,7 @@ concurrency:
 jobs:
   repository-contract:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,6 +52,12 @@ jobs:
       - name: Verify Merchant Operations program contract
         run: ./scripts/verify-merchant-operations.sh
 
+      - name: Run real PostgreSQL Merchant Operations certification
+        run: ./gradlew :backend:merchantOpsPostgresTest --no-daemon --no-configuration-cache
+
+      - name: Run Merchant Operations concurrency certification
+        run: ./gradlew :backend:merchantOpsConcurrencyTest --no-daemon --no-configuration-cache
+
       - name: Verify backend and security baseline
         run: ./scripts/verify.sh
 
@@ -66,6 +72,8 @@ jobs:
           if-no-files-found: warn
           path: |
             backend/build/reports/tests/test
+            backend/build/reports/tests/merchantOpsPostgresTest
+            backend/build/reports/tests/merchantOpsConcurrencyTest
             backend/build/reports/jacoco/test/html
 
   live-drift:

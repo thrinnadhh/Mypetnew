@@ -16,6 +16,21 @@ export type CatalogMediaSyncSummary = {
 
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
+export function encodeBase64Bytes(bytes: Uint8Array): string {
+  let output = '';
+  for (let offset = 0; offset < bytes.length; offset += 3) {
+    const a = bytes[offset] ?? 0;
+    const b = bytes[offset + 1] ?? 0;
+    const c = bytes[offset + 2] ?? 0;
+    const combined = (a << 16) | (b << 8) | c;
+    output += BASE64_ALPHABET[(combined >> 18) & 63];
+    output += BASE64_ALPHABET[(combined >> 12) & 63];
+    output += offset + 1 < bytes.length ? BASE64_ALPHABET[(combined >> 6) & 63] : '=';
+    output += offset + 2 < bytes.length ? BASE64_ALPHABET[combined & 63] : '=';
+  }
+  return output;
+}
+
 export function decodeBase64Bytes(value: string): Uint8Array {
   const clean = value.replace(/\s/g, '');
   if (!clean || clean.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(clean)) {
@@ -62,12 +77,13 @@ export class CatalogMediaJobCoordinator {
         const listing = await this.fetchListing(context.outletId, job.canonicalListingId);
         const bytes = decodeBase64Bytes(job.bytesBase64);
         if (bytes.byteLength !== job.sizeBytes) throw new Error('CATALOG_MEDIA_LOCAL_BYTES_INVALID');
+        const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
         const asset: CatalogMediaAsset = {
           uri: `memory://${job.mediaJobId}`,
           name: job.filename,
           type: job.contentType,
           size: job.sizeBytes,
-          file: new Blob([bytes], { type: job.contentType }),
+          file: new Blob([arrayBuffer], { type: job.contentType }),
         };
         await this.upload(listing, asset, job.idempotencyKey);
         await this.drafts.markMediaAcknowledged(context, job.mediaJobId);
@@ -87,7 +103,6 @@ export class CatalogMediaJobCoordinator {
           await this.drafts.markMediaRejected(context, job.mediaJobId, error.name || error.message);
           rejected += 1;
         } else {
-          // Version conflict and storage/network errors are retried after reloading canonical listing state.
           await this.drafts.markMediaRetryable(context, job.mediaJobId, error.name || 'CATALOG_MEDIA_RETRYABLE');
           retryable += 1;
         }

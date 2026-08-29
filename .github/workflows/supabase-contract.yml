@@ -37,6 +37,9 @@ jobs:
       - name: Verify Flyway migration sequence
         run: bash ./scripts/supabase/verify-repository-migrations.sh
 
+      - name: Verify Supabase architecture boundaries
+        run: bash ./scripts/supabase/verify-feature-boundaries.sh
+
       - name: Verify Supabase audit script is read-only
         run: |
           if grep -Ein '^[[:space:]]*(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|comment|vacuum|reindex|cluster)[[:space:]]' infra/supabase/audit_baseline.sql; then

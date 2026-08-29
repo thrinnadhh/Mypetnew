@@ -1,6 +1,7 @@
 import * as Crypto from 'expo-crypto';
 import type { SqliteDatabase } from '../data/database/driver';
 import type { MerchantPartitionContext } from '../data/models/partition-context';
+import type { OfflineCommandRecord, ServerReceiptData } from '../data/models/outbox-types';
 import { CommandOutboxRepository } from '../data/repositories/command-outbox-repository';
 import { OfflineCatalogDraftRepository } from '../data/repositories/offline-catalog-draft-repository';
 import { SyncRetryPolicy } from './retry-policy';
@@ -62,10 +63,10 @@ export class SyncCoordinator {
 
   private async acknowledge(
     context: MerchantPartitionContext,
-    originalCommand: Awaited<ReturnType<CommandOutboxRepository['getCommand']>> extends infer T ? NonNullable<T> : never,
-    receipt: Parameters<CommandOutboxRepository['markAcknowledged']>[2],
+    originalCommand: OfflineCommandRecord,
+    receipt: ServerReceiptData,
   ): Promise<void> {
-    // Persist temp->canonical mapping before making dependent commands eligible.
+    // Mapping first: ACK makes dependent commands eligible immediately.
     if (originalCommand.commandType === 'CATALOG_CREATE') {
       await this.draftRepo.applyCreateReceipt(context, originalCommand, receipt);
     }
@@ -79,7 +80,7 @@ export class SyncCoordinator {
 
   private async rejectDraftIfNeeded(
     context: MerchantPartitionContext,
-    command: Awaited<ReturnType<CommandOutboxRepository['getCommand']>> extends infer T ? NonNullable<T> : never,
+    command: OfflineCommandRecord,
     errorCode: string,
   ): Promise<void> {
     if (command.commandType === 'CATALOG_CREATE') {

@@ -28,13 +28,13 @@ import java.util.concurrent.TimeUnit
 import javax.sql.DataSource
 
 class GuardedRecurringOrderPersistenceConcurrencyTest {
-    private val now = Instant.parse("2026-08-26T00:00:00Z")
+    private val now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
 
     @Test
     fun `confirm racing expiry cannot resurrect an expired proposal`() {
         val database = database()
         val subscription = subscription()
-        val proposal = proposal(subscription, expiresAt = now)
+        val proposal = proposal(subscription, expiresAt = now.minus(Duration.ofMinutes(1)))
         insertSubscription(database, subscription)
         insertProposal(database, proposal)
         val confirmer = guarded(database)

@@ -42,7 +42,7 @@ class M7OfflineBarcodeDraftPostgresContractTest {
         jdbc.update("INSERT INTO mypet.merchant_organization(id, name, status, owner_actor_id) VALUES (?, 'M7 Org', 'ACTIVE', ?)", organizationId, actorId)
         jdbc.update("INSERT INTO mypet.provider_outlet(id, organization_id, name, status, pickup_enabled) VALUES (?, ?, 'M7 Outlet', 'ACTIVE', TRUE)", outletId, organizationId)
         jdbc.update("INSERT INTO mypet.outlet_capability(outlet_id, capability, verified) VALUES (?, 'PRODUCT_STORE', TRUE)", outletId)
-        jdbc.update("INSERT INTO mypet.outlet_capability(outlet_id, capability, verified) VALUES (?, 'PHARMACY', TRUE)", outletId)
+        jdbc.update("INSERT INTO mypet.outlet_capability(outlet_id, capability, verified) VALUES (?, 'MEDICINE_CATALOG_VIEW_ONLY', TRUE)", outletId)
         jdbc.update("INSERT INTO mypet.merchant_staff(account_id, organization_id, outlet_id, permission, active) VALUES (?, ?, ?, 'OWNER', TRUE)", actorId, organizationId, outletId)
         return Triple(actorId, organizationId, outletId)
     }
@@ -62,7 +62,11 @@ class M7OfflineBarcodeDraftPostgresContractTest {
         mrpPaise = 12000,
         sellingPricePaise = 11000,
         category = if (kind == ListingKind.MEDICINE) "medicine" else "food",
-        capabilities = if (kind == ListingKind.MEDICINE) setOf(ProviderCapability.PHARMACY) else setOf(ProviderCapability.PRODUCT_STORE),
+        capabilities = if (kind == ListingKind.MEDICINE) {
+            setOf(ProviderCapability.MEDICINE_CATALOG_VIEW_ONLY)
+        } else {
+            setOf(ProviderCapability.PRODUCT_STORE)
+        },
     )
 
     @Test
@@ -123,7 +127,7 @@ class M7OfflineBarcodeDraftPostgresContractTest {
                 mrpPaise = 5000,
                 sellingPricePaise = 4500,
                 category = "medicine",
-                capabilities = setOf(ProviderCapability.PHARMACY),
+                capabilities = setOf(ProviderCapability.MEDICINE_CATALOG_VIEW_ONLY),
             ),
             "m7-medicine-create",
             actorId,

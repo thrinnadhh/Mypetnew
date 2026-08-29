@@ -35,8 +35,6 @@ jobs:
           node-version: "22"
 
       - name: Verify Flyway migration sequence
-        env:
-          EXPECTED_LATEST_MIGRATION: "29"
         run: bash ./scripts/supabase/verify-repository-migrations.sh
 
       - name: Verify Supabase audit script is read-only
@@ -45,6 +43,9 @@ jobs:
             echo "Baseline audit contains a mutating SQL statement." >&2
             exit 1
           fi
+
+      - name: Verify free-tier backup script syntax
+        run: bash -n ./scripts/supabase/export-free-tier-backup.sh
 
       - name: Test Merchant Operations gate failures
         run: node --test scripts/merchant-operations/validate-program.test.mjs

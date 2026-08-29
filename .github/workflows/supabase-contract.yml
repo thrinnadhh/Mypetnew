@@ -1,0 +1,91 @@
+name: supabase-contract
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, "infra/supabase-hardening-v29"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: gradle/actions/wrapper-validation@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify Flyway migration sequence
+        env:
+          EXPECTED_LATEST_MIGRATION: "29"
+        run: bash ./scripts/supabase/verify-repository-migrations.sh
+
+      - name: Verify Supabase audit script is read-only
+        run: |
+          if grep -Ein '^[[:space:]]*(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|comment|vacuum|reindex|cluster)[[:space:]]' infra/supabase/audit_baseline.sql; then
+            echo "Baseline audit contains a mutating SQL statement." >&2
+            exit 1
+          fi
+
+      - name: Test Merchant Operations gate failures
+        run: node --test scripts/merchant-operations/validate-program.test.mjs
+
+      - name: Verify Merchant Operations program contract
+        run: ./scripts/verify-merchant-operations.sh
+
+      - name: Verify backend and security baseline
+        run: ./scripts/verify.sh
+
+      - name: Verify patch whitespace
+        run: git diff --check "origin/${GITHUB_BASE_REF:-main}...HEAD"
+
+      - name: Upload backend test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-contract-evidence-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            backend/build/reports/tests/test
+            backend/build/reports/jacoco/test/html
+
+  live-drift:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require protected staging database URL
+        run: |
+          if [[ -z "$SUPABASE_DATABASE_URL" ]]; then
+            echo "Repository secret SUPABASE_DATABASE_URL is required for manual live drift certification." >&2
+            exit 1
+          fi
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Verify repository and live Flyway state match
+        run: bash ./scripts/supabase/verify-live-drift.sh

@@ -13,9 +13,8 @@ fail() {
 # Supabase JS client would create a second auth/data-access surface and requires
 # an explicit architecture change to this guard.
 if grep -RIl --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.expo \
-  -E '"@supabase/supabase-js"|from[[:space:]]+["'"']@supabase/supabase-js["'"']' \
-  apps 2>/dev/null | grep -q .; then
-  fail "client application imports @supabase/supabase-js"
+  -F '@supabase/supabase-js' apps 2>/dev/null | grep -q .; then
+  fail "client application references @supabase/supabase-js"
 fi
 
 # Never place privileged Supabase/database credentials in app source or app env

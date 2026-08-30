@@ -12,6 +12,7 @@ on:
       - main
       - restore/customer-app-from-mypet
       - "trial/*"
+      - "infra/supabase-hardening-*"
 
 permissions:
   contents: read
@@ -32,6 +33,13 @@ jobs:
           cache-dependency-path: apps/customer-app/package-lock.json
       - name: Install Customer dependencies
         run: npm ci --no-audit --no-fund
+      - name: Assert direct Supabase SDK is absent from installed Customer tree
+        run: |
+          if npm ls @supabase/supabase-js --depth=0 >/dev/null 2>&1; then
+            echo "Customer app unexpectedly installs @supabase/supabase-js." >&2
+            exit 1
+          fi
+          echo "Customer installed dependency tree has no direct Supabase SDK."
       - name: Guard Customer production dependency advisories
         run: node ./scripts/check-dependency-audit.mjs
       - name: Guard Customer network architecture

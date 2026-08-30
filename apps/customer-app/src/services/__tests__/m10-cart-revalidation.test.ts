@@ -163,6 +163,81 @@ describe('M10 cart revalidation', () => {
     expect(result.items[0].product.id).toBe(second.product.id);
   });
 
+  it('fails closed when the batch duplicates one line and omits another', async () => {
+    const first = cartItem('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 90, 1);
+    const second = cartItem('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 75, 1);
+    mockedFetch.mockResolvedValueOnce(response({
+      outletId: first.product.providerId,
+      pincode: '517501',
+      materialChanged: false,
+      checkoutAllowed: true,
+      lines: [
+        {
+          listingId: first.product.id,
+          requestedQuantity: 1,
+          acceptedQuantity: 1,
+          changes: [],
+          canonical: canonical(first.product.id, 9_000, 4),
+        },
+        {
+          listingId: first.product.id,
+          requestedQuantity: 1,
+          acceptedQuantity: 1,
+          changes: [],
+          canonical: canonical(first.product.id, 9_000, 4),
+        },
+      ],
+    }));
+
+    await expect(revalidateCartItemsAgainstCatalog([first, second], '517501'))
+      .rejects.toThrow('inconsistent product line set');
+  });
+
+  it('fails closed on canonical identity substitution', async () => {
+    const first = cartItem('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 90, 1);
+    const foreignId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    mockedFetch.mockResolvedValueOnce(response({
+      outletId: first.product.providerId,
+      pincode: '517501',
+      materialChanged: false,
+      checkoutAllowed: true,
+      lines: [
+        {
+          listingId: first.product.id,
+          requestedQuantity: 1,
+          acceptedQuantity: 1,
+          changes: [],
+          canonical: canonical(foreignId, 9_000, 4),
+        },
+      ],
+    }));
+
+    await expect(revalidateCartItemsAgainstCatalog([first], '517501'))
+      .rejects.toThrow('mismatched canonical product data');
+  });
+
+  it('fails closed on quantity inflation or request echo drift', async () => {
+    const first = cartItem('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 90, 1);
+    mockedFetch.mockResolvedValueOnce(response({
+      outletId: first.product.providerId,
+      pincode: '517501',
+      materialChanged: false,
+      checkoutAllowed: true,
+      lines: [
+        {
+          listingId: first.product.id,
+          requestedQuantity: 1,
+          acceptedQuantity: 2,
+          changes: [],
+          canonical: canonical(first.product.id, 9_000, 4),
+        },
+      ],
+    }));
+
+    await expect(revalidateCartItemsAgainstCatalog([first], '517501'))
+      .rejects.toThrow('invalid cart quantities');
+  });
+
   it('fails before network for mixed-outlet and oversized carts', async () => {
     const first = cartItem('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 90, 1);
     const foreign = cartItem('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 75, 1);

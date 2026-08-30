@@ -141,7 +141,7 @@ class M10PublicCatalogQueryPostgresContractTest {
             LIMIT 51 OFFSET 0
             """.trimIndent(),
             String::class.java,
-        )
+        ).map { requireNotNull(it) { "PostgreSQL EXPLAIN returned a null plan line" } }
         assertTrue(plan.any { it.contains("Limit") }, plan.joinToString("\n"))
         assertTrue(plan.any { it.contains("catalog_listing") }, plan.joinToString("\n"))
         assertTrue(plan.none { it.contains("never executed") }, plan.joinToString("\n"))

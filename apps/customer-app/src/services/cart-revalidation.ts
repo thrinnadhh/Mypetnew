@@ -162,15 +162,20 @@ export async function revalidateCartItemsAgainstCatalog(
   for (const line of response.lines) {
     const current = currentById.get(line.listingId);
     if (!current) throw new Error('Cart service returned an unexpected product line.');
-    const removed = line.acceptedQuantity <= 0 || !line.canonical
+
+    const canonical = line.canonical;
+    if (
+      line.acceptedQuantity <= 0
+      || canonical == null
       || line.changes.includes('PRODUCT_UNAVAILABLE')
       || line.changes.includes('STORE_UNAVAILABLE')
-      || line.changes.includes('SERVICEABILITY_CHANGED');
-    if (removed) {
+      || line.changes.includes('SERVICEABILITY_CHANGED')
+    ) {
       removedCount += 1;
       continue;
     }
-    const liveProduct = mapListingToCommerceProduct(line.canonical);
+
+    const liveProduct = mapListingToCommerceProduct(canonical);
     if (liveProduct.providerId !== expectedProviderId || !isCommerceEligible(liveProduct)) {
       removedCount += 1;
       continue;

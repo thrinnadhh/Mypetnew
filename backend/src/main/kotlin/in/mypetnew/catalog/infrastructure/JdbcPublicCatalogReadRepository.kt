@@ -7,7 +7,11 @@ import `in`.mypetnew.catalog.domain.PublicCatalogReadPage
 import `in`.mypetnew.catalog.domain.PublicCatalogReadQuery
 import `in`.mypetnew.catalog.domain.PublicCatalogReadRepository
 import `in`.mypetnew.catalog.domain.PublicCatalogReadRow
+import `in`.mypetnew.catalog.domain.PublicOutletReadPage
+import `in`.mypetnew.catalog.domain.PublicOutletReadQuery
+import `in`.mypetnew.catalog.domain.PublicOutletReadRow
 import `in`.mypetnew.common.error.DomainException
+import `in`.mypetnew.provider.domain.ProviderCapability
 import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.ResultSet
 import java.util.UUID
@@ -15,13 +19,87 @@ import java.util.UUID
 class JdbcPublicCatalogReadRepository(
     private val jdbc: JdbcTemplate,
 ) : PublicCatalogReadRepository {
-    override fun search(query: PublicCatalogReadQuery): PublicCatalogReadPage {
-        val where = mutableListOf(
-            "l.active = TRUE",
-            "o.status = 'ACTIVE'",
-        )
+    override fun searchOutlets(query: PublicOutletReadQuery): PublicOutletReadPage {
+        val where = mutableListOf("o.status = 'ACTIVE'")
         val parameters = mutableListOf<Any>()
+        query.capability?.let { capability ->
+            where += "EXISTS (SELECT 1 FROM mypet.outlet_capability oc WHERE oc.outlet_id = o.id AND oc.capability = ?)"
+            parameters += capability.name
+        }
+        query.pincode?.let { pincode ->
+            where += "EXISTS (SELECT 1 FROM mypet.outlet_service_pincode sp WHERE sp.outlet_id = o.id AND sp.pincode = ? AND sp.active = TRUE)"
+            parameters += pincode
+        }
+        query.search?.let { term ->
+            where += "LOWER(o.name) LIKE ? ESCAPE '!'"
+            parameters += "%${escapeLike(term.lowercase())}%"
+        }
+        val offset = query.page.toLong() * query.pageSize.toLong()
+        parameters += query.pageSize + 1
+        parameters += offset
+        val headers = jdbc.query(
+            """
+            SELECT o.id, o.organization_id, o.name, o.pickup_enabled
+            FROM mypet.provider_outlet o
+            WHERE ${where.joinToString(" AND ")}
+            ORDER BY LOWER(o.name) ASC, o.id ASC
+            LIMIT ? OFFSET ?
+            """.trimIndent(),
+            { rs, _ ->
+                PublicOutletReadRow(
+                    id = rs.getObject("id", UUID::class.java),
+                    organizationId = rs.getObject("organization_id", UUID::class.java),
+                    name = rs.getString("name"),
+                    capabilities = emptyList(),
+                    pickupEnabled = rs.getBoolean("pickup_enabled"),
+                )
+            },
+            *parameters.toTypedArray(),
+        )
+        val visible = headers.take(query.pageSize)
+        val capabilities = capabilitiesFor(visible.map { it.id })
+        return PublicOutletReadPage(
+            items = visible.map { it.copy(capabilities = capabilities[it.id].orEmpty()) },
+            page = query.page,
+            pageSize = query.pageSize,
+            hasNext = headers.size > query.pageSize,
+        )
+    }
 
+    override fun outlet(outletId: UUID, capability: ProviderCapability?, pincode: String?): PublicOutletReadRow? {
+        val where = mutableListOf("o.id = ?", "o.status = 'ACTIVE'")
+        val parameters = mutableListOf<Any>(outletId)
+        capability?.let {
+            where += "EXISTS (SELECT 1 FROM mypet.outlet_capability oc WHERE oc.outlet_id = o.id AND oc.capability = ?)"
+            parameters += it.name
+        }
+        pincode?.let {
+            where += "EXISTS (SELECT 1 FROM mypet.outlet_service_pincode sp WHERE sp.outlet_id = o.id AND sp.pincode = ? AND sp.active = TRUE)"
+            parameters += it
+        }
+        val row = jdbc.query(
+            """
+            SELECT o.id, o.organization_id, o.name, o.pickup_enabled
+            FROM mypet.provider_outlet o
+            WHERE ${where.joinToString(" AND ")}
+            """.trimIndent(),
+            { rs, _ ->
+                PublicOutletReadRow(
+                    id = rs.getObject("id", UUID::class.java),
+                    organizationId = rs.getObject("organization_id", UUID::class.java),
+                    name = rs.getString("name"),
+                    capabilities = emptyList(),
+                    pickupEnabled = rs.getBoolean("pickup_enabled"),
+                )
+            },
+            *parameters.toTypedArray(),
+        ).singleOrNull() ?: return null
+        return row.copy(capabilities = capabilitiesFor(listOf(row.id))[row.id].orEmpty())
+    }
+
+    override fun search(query: PublicCatalogReadQuery): PublicCatalogReadPage {
+        val where = mutableListOf("l.active = TRUE", "o.status = 'ACTIVE'")
+        val parameters = mutableListOf<Any>()
         query.pincode?.let { pincode ->
             where += "EXISTS (SELECT 1 FROM mypet.outlet_service_pincode sp WHERE sp.outlet_id = o.id AND sp.pincode = ? AND sp.active = TRUE)"
             parameters += pincode
@@ -60,8 +138,7 @@ class JdbcPublicCatalogReadRepository(
         parameters += offset
         val rows = jdbc.query(
             """
-            SELECT ${columns(serviceabilitySql = "TRUE")},
-                   image.image_url AS primary_image_url
+            SELECT ${columns(serviceabilitySql = "TRUE")}, image.image_url AS primary_image_url
             FROM mypet.catalog_listing l
             JOIN mypet.provider_outlet o ON o.id = l.outlet_id AND o.organization_id = l.organization_id
             LEFT JOIN mypet.inventory_balance b
@@ -74,20 +151,12 @@ class JdbcPublicCatalogReadRepository(
             { rs, _ -> mapRow(rs, listOfNotNull(rs.getString("primary_image_url"))) },
             *parameters.toTypedArray(),
         )
-        return PublicCatalogReadPage(
-            items = rows.take(query.pageSize),
-            page = query.page,
-            pageSize = query.pageSize,
-            hasNext = rows.size > query.pageSize,
-        )
+        return PublicCatalogReadPage(rows.take(query.pageSize), query.page, query.pageSize, rows.size > query.pageSize)
     }
 
     override fun detail(listingId: UUID, pincode: String?): PublicCatalogReadRow? {
-        val serviceability = if (pincode == null) {
-            "TRUE"
-        } else {
+        val serviceability = if (pincode == null) "TRUE" else
             "EXISTS (SELECT 1 FROM mypet.outlet_service_pincode sp WHERE sp.outlet_id = o.id AND sp.pincode = ? AND sp.active = TRUE)"
-        }
         val parameters = mutableListOf<Any>()
         if (pincode != null) parameters += pincode
         parameters += listingId
@@ -113,6 +182,7 @@ class JdbcPublicCatalogReadRepository(
             throw DomainException("CART_REVALIDATION_LIMIT_EXCEEDED", "Too many cart lines were supplied")
         }
         val placeholders = ordered.joinToString(",") { "?" }
+        val args = mutableListOf<Any>(pincode).apply { addAll(ordered) }
         val rows = jdbc.query(
             """
             SELECT ${columns("EXISTS (SELECT 1 FROM mypet.outlet_service_pincode sp WHERE sp.outlet_id = o.id AND sp.pincode = ? AND sp.active = TRUE)")}
@@ -124,11 +194,21 @@ class JdbcPublicCatalogReadRepository(
             ORDER BY l.id ASC
             """.trimIndent(),
             { rs, _ -> mapRow(rs, emptyList()) },
-            pincode,
-            *ordered.toTypedArray(),
+            *args.toTypedArray(),
         )
         val images = imagesFor(rows.map { it.id })
         return rows.associate { row -> row.id to row.copy(imageUrls = images[row.id].orEmpty()) }
+    }
+
+    private fun capabilitiesFor(outletIds: Collection<UUID>): Map<UUID, List<ProviderCapability>> {
+        val ordered = outletIds.distinct().sortedBy(UUID::toString)
+        if (ordered.isEmpty()) return emptyMap()
+        val placeholders = ordered.joinToString(",") { "?" }
+        return jdbc.query(
+            "SELECT outlet_id, capability FROM mypet.outlet_capability WHERE outlet_id IN ($placeholders) ORDER BY outlet_id, capability",
+            { rs, _ -> rs.getObject("outlet_id", UUID::class.java) to ProviderCapability.valueOf(rs.getString("capability")) },
+            *ordered.toTypedArray(),
+        ).groupBy({ it.first }, { it.second })
     }
 
     private fun imagesFor(listingIds: Collection<UUID>): Map<UUID, List<String>> {
@@ -136,12 +216,7 @@ class JdbcPublicCatalogReadRepository(
         if (ordered.isEmpty()) return emptyMap()
         val placeholders = ordered.joinToString(",") { "?" }
         return jdbc.query(
-            """
-            SELECT listing_id, image_url
-            FROM mypet.catalog_listing_image
-            WHERE listing_id IN ($placeholders)
-            ORDER BY listing_id ASC, position ASC
-            """.trimIndent(),
+            "SELECT listing_id, image_url FROM mypet.catalog_listing_image WHERE listing_id IN ($placeholders) ORDER BY listing_id ASC, position ASC",
             { rs, _ -> rs.getObject("listing_id", UUID::class.java) to rs.getString("image_url") },
             *ordered.toTypedArray(),
         ).groupBy({ it.first }, { it.second })
@@ -174,32 +249,13 @@ class JdbcPublicCatalogReadRepository(
     )
 
     private fun columns(serviceabilitySql: String): String = """
-        l.id,
-        l.organization_id,
-        l.outlet_id,
-        o.name AS outlet_name,
-        l.name,
-        l.listing_kind,
-        l.category,
-        l.brand,
-        l.description,
-        l.pet_type,
-        l.life_stage,
-        l.pack_label,
-        l.sku,
-        l.mrp_paise,
-        l.selling_price_paise,
-        l.commerce_mode,
+        l.id, l.organization_id, l.outlet_id, o.name AS outlet_name, l.name, l.listing_kind,
+        l.category, l.brand, l.description, l.pet_type, l.life_stage, l.pack_label, l.sku,
+        l.mrp_paise, l.selling_price_paise, l.commerce_mode,
         GREATEST(COALESCE(b.on_hand, 0) - COALESCE(b.reserved, 0), 0) AS available_quantity,
-        o.pickup_enabled,
-        l.active AS listing_active,
-        (o.status = 'ACTIVE') AS outlet_active,
-        ($serviceabilitySql) AS serviceable,
-        l.created_at
+        o.pickup_enabled, l.active AS listing_active, (o.status = 'ACTIVE') AS outlet_active,
+        ($serviceabilitySql) AS serviceable, l.created_at
     """.trimIndent()
 
-    private fun escapeLike(value: String): String = value
-        .replace("!", "!!")
-        .replace("%", "!%")
-        .replace("_", "!_")
+    private fun escapeLike(value: String): String = value.replace("!", "!!").replace("%", "!%").replace("_", "!_")
 }

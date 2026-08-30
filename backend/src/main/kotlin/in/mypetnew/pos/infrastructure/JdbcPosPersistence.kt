@@ -10,6 +10,7 @@ import org.springframework.dao.DuplicateKeyException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionTemplate
 import java.sql.ResultSet
+import java.sql.Timestamp
 import java.util.UUID
 
 class JdbcPosPersistence(
@@ -62,7 +63,7 @@ class JdbcPosPersistence(
                 requestFingerprint,
                 sale.loyaltyAwarded,
                 sale.traceId,
-                sale.completedAt,
+                Timestamp.from(sale.completedAt),
             )
             sale.lines.forEach { (listingId, line) ->
                 jdbc.update(

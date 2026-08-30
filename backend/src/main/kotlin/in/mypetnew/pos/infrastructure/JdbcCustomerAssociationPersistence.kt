@@ -6,6 +6,7 @@ import `in`.mypetnew.pos.domain.CustomerAssociationPersistence
 import org.springframework.dao.DuplicateKeyException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionTemplate
+import java.sql.Timestamp
 import java.time.Instant
 import java.util.UUID
 
@@ -31,7 +32,7 @@ class JdbcCustomerAssociationPersistence(
                 challenge.customerId,
                 challenge.organizationId,
                 challenge.outletId,
-                challenge.expiresAt,
+                Timestamp.from(challenge.expiresAt),
                 idempotencyKey,
                 requestFingerprint,
             )
@@ -44,6 +45,19 @@ class JdbcCustomerAssociationPersistence(
                 )
         }
     }
+
+    override fun resolveCustomerForReplay(challengeId: UUID, organizationId: UUID, outletId: UUID): UUID? =
+        jdbc.query(
+            """
+            SELECT customer_id
+            FROM mypet.pos_customer_association_challenge
+            WHERE id = ? AND organization_id = ? AND outlet_id = ?
+            """.trimIndent(),
+            { result, _ -> result.getObject("customer_id", UUID::class.java) },
+            challengeId,
+            organizationId,
+            outletId,
+        ).singleOrNull()
 
     override fun consume(challengeId: UUID, organizationId: UUID, outletId: UUID, at: Instant): UUID =
         transactions.execute {
@@ -77,7 +91,7 @@ class JdbcCustomerAssociationPersistence(
                 SET consumed_at = ?
                 WHERE id = ? AND consumed_at IS NULL
                 """.trimIndent(),
-                at,
+                Timestamp.from(at),
                 challengeId,
             )
             if (updated != 1) invalid()

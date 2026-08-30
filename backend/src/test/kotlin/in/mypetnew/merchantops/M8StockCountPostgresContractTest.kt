@@ -12,6 +12,7 @@ import `in`.mypetnew.merchantops.testsupport.MerchantOpsContract
 import `in`.mypetnew.merchantops.testsupport.MerchantOpsPostgres
 import `in`.mypetnew.merchantops.testsupport.MerchantScenarioFixture
 import `in`.mypetnew.merchantops.testsupport.PostgresTestDatabase
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -32,6 +33,11 @@ class M8StockCountPostgresContractTest {
     private val persistence = JdbcInventoryPersistence(jdbc, tx)
     private val inventoryService = InventoryService(persistence)
     private val fixture = MerchantScenarioFixture(dataSource)
+
+    @BeforeEach
+    fun resetDatabase() {
+        PostgresTestDatabase.resetAndMigrate()
+    }
 
     @Test
     fun `M8-COUNT-001 count session lifecycle captures cutoff and applies reconciliation adjustments`() {

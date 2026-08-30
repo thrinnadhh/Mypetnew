@@ -17,6 +17,7 @@ import `in`.mypetnew.merchantops.testsupport.MerchantOpsContract
 import `in`.mypetnew.merchantops.testsupport.MerchantOpsPostgres
 import `in`.mypetnew.merchantops.testsupport.MerchantScenarioFixture
 import `in`.mypetnew.merchantops.testsupport.PostgresTestDatabase
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -36,6 +37,11 @@ class M8InventoryOperationsPostgresContractTest {
     private val persistence = JdbcInventoryPersistence(jdbc, tx)
     private val inventoryService = InventoryService(persistence)
     private val fixture = MerchantScenarioFixture(dataSource)
+
+    @BeforeEach
+    fun resetDatabase() {
+        PostgresTestDatabase.resetAndMigrate()
+    }
 
     @Test
     fun `M8-OPS-001 receiving increases on-hand and appends immutable RECEIVING movement with optional batch metadata`() {

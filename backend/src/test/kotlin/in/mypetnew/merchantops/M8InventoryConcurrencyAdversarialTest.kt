@@ -11,6 +11,7 @@ import `in`.mypetnew.merchantops.testsupport.MerchantOpsConcurrency
 import `in`.mypetnew.merchantops.testsupport.MerchantOpsPostgres
 import `in`.mypetnew.merchantops.testsupport.MerchantScenarioFixture
 import `in`.mypetnew.merchantops.testsupport.PostgresTestDatabase
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -33,6 +34,11 @@ class M8InventoryConcurrencyAdversarialTest {
     private val persistence = JdbcInventoryPersistence(jdbc, tx)
     private val inventoryService = InventoryService(persistence)
     private val fixture = MerchantScenarioFixture(dataSource)
+
+    @BeforeEach
+    fun resetDatabase() {
+        PostgresTestDatabase.resetAndMigrate()
+    }
 
     @Test
     fun `M8 concurrent bidirectional transfers across outlets complete without deadlocks and preserve net stock`() {

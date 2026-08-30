@@ -674,7 +674,8 @@ class JdbcInventoryPersistence(
             return reconstructCountResult(initialSession)
         }
 
-        return requireNotNull(transactions.execute {
+        var reviewRequired = false
+        val result = transactions.execute {
             val sessionRow = jdbc.query(
                 """
                 SELECT id, organization_id, outlet_id, status, cutoff_sequence_number,
@@ -722,6 +723,36 @@ class JdbcInventoryPersistence(
                 },
                 sessionId,
             )
+
+            // Preflight every line while holding the canonical balance locks. A review-required
+            // outcome must commit independently of the DomainException returned to the caller, and
+            // no count adjustment may be applied before the full session has passed validation.
+            for (line in lines) {
+                val scope = InventoryScope(organizationId, outletId, line.listingId)
+                ensureBalance(scope)
+                val before = lockBalance(scope)
+                val deltaAfterCutoff = jdbc.queryForObject(
+                    """
+                    SELECT COALESCE(SUM(quantity_delta), 0)
+                    FROM mypet.inventory_movement
+                    WHERE organization_id = ? AND outlet_id = ? AND listing_id = ? AND occurred_at > ?
+                    """.trimIndent(),
+                    Long::class.java,
+                    organizationId,
+                    outletId,
+                    line.listingId,
+                    Timestamp.from(sessionRow.cutoffTs),
+                ) ?: 0L
+                val targetCurrentOnHand = safeAdd(line.countedQuantity, deltaAfterCutoff.toInt())
+                if (targetCurrentOnHand < before.reserved || targetCurrentOnHand < 0) {
+                    jdbc.update(
+                        "UPDATE mypet.inventory_count_session SET status = 'REVIEW_REQUIRED', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        sessionId,
+                    )
+                    reviewRequired = true
+                    return@execute null
+                }
+            }
 
             val results = mutableListOf<CountReconciliationLineResult>()
 
@@ -859,7 +890,15 @@ class JdbcInventoryPersistence(
                 lines = results,
                 submittedAt = Instant.now(),
             )
-        })
+        }
+
+        if (reviewRequired) {
+            throw DomainException(
+                "COUNT_CUTOFF_CONFLICT",
+                "Count reconciliation violated negative-stock constraints; moved to review",
+            )
+        }
+        return requireNotNull(result)
     }
 
     private fun reconstructCountResult(session: InventoryCountSession): CountReconciliationResult {

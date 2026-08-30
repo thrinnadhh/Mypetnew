@@ -56,6 +56,9 @@ jobs:
       - name: Verify Storage provisioner syntax
         run: node --check ./scripts/supabase/provision-storage.mjs
 
+      - name: Test Supabase backup and Storage tooling
+        run: node --test ./scripts/supabase/export-free-tier-backup.test.mjs ./scripts/supabase/provision-storage.test.mjs
+
       - name: Test Merchant Operations gate failures
         run: node --test scripts/merchant-operations/validate-program.test.mjs
 

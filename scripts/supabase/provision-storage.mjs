@@ -58,22 +58,38 @@ async function storageRequest(path, options = {}) {
   return { response, body };
 }
 
+function isMissingBucket(result) {
+  return (
+    result.response.status === 404 ||
+    result.body?.code === 'NoSuchBucket' ||
+    String(result.body?.statusCode ?? '') === '404'
+  );
+}
+
 async function getBucket(id) {
   return storageRequest(`/bucket/${encodeURIComponent(id)}`, { method: 'GET' });
+}
+
+function toStorageApiPayload(bucket, { includeIdentity }) {
+  return {
+    ...(includeIdentity ? { id: bucket.id, name: bucket.name } : {}),
+    public: bucket.public,
+    file_size_limit: bucket.fileSizeLimit,
+    allowed_mime_types: bucket.allowedMimeTypes,
+  };
 }
 
 async function createBucket(bucket) {
   return storageRequest('/bucket', {
     method: 'POST',
-    body: JSON.stringify(bucket),
+    body: JSON.stringify(toStorageApiPayload(bucket, { includeIdentity: true })),
   });
 }
 
 async function updateBucket(bucket) {
-  const { id, name: _name, ...options } = bucket;
-  return storageRequest(`/bucket/${encodeURIComponent(id)}`, {
+  return storageRequest(`/bucket/${encodeURIComponent(bucket.id)}`, {
     method: 'PUT',
-    body: JSON.stringify(options),
+    body: JSON.stringify(toStorageApiPayload(bucket, { includeIdentity: false })),
   });
 }
 
@@ -111,7 +127,7 @@ function assertBucket(actual, expected) {
 for (const bucket of desiredBuckets) {
   let current = await getBucket(bucket.id);
 
-  if (current.response.status === 404) {
+  if (isMissingBucket(current)) {
     const created = await createBucket(bucket);
     if (!created.response.ok) {
       throw new Error(

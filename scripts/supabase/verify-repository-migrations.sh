@@ -10,7 +10,10 @@ if [[ ! -d "$MIGRATION_DIR" ]]; then
   exit 1
 fi
 
-mapfile -t migration_files < <(find "$MIGRATION_DIR" -maxdepth 1 -type f -name 'V*__*.sql' -print | sort -V)
+migration_files=()
+while IFS= read -r file; do
+  migration_files+=("$file")
+done < <(find "$MIGRATION_DIR" -maxdepth 1 -type f -name 'V*__*.sql' -print | sort)
 
 if (( ${#migration_files[@]} == 0 )); then
   echo "No Flyway versioned migrations found." >&2
@@ -18,7 +21,6 @@ if (( ${#migration_files[@]} == 0 )); then
 fi
 
 versions=()
-declare -A seen=()
 
 for file in "${migration_files[@]}"; do
   base="$(basename "$file")"
@@ -30,27 +32,27 @@ for file in "${migration_files[@]}"; do
   version="${BASH_REMATCH[1]}"
   version=$((10#$version))
 
-  if [[ -n "${seen[$version]:-}" ]]; then
-    echo "Duplicate Flyway version V${version}: ${seen[$version]} and $base" >&2
-    exit 1
-  fi
-
-  seen[$version]="$base"
   versions+=("$version")
 done
 
-mapfile -t sorted_versions < <(printf '%s\n' "${versions[@]}" | sort -n)
+sorted_versions=( $(printf '%s\n' "${versions[@]}" | sort -n) )
 
 expected=1
+previous=0
 for version in "${sorted_versions[@]}"; do
+  if (( version == previous )); then
+    echo "Duplicate Flyway version V${version}." >&2
+    exit 1
+  fi
   if (( version != expected )); then
     echo "Flyway migration gap/order error: expected V${expected}, found V${version}" >&2
     exit 1
   fi
+  previous="$version"
   expected=$((expected + 1))
 done
 
-latest="${sorted_versions[-1]}"
+latest="${sorted_versions[$((${#sorted_versions[@]} - 1))]}"
 
 if [[ -n "$EXPECTED_LATEST_MIGRATION" && "$latest" != "$EXPECTED_LATEST_MIGRATION" ]]; then
   echo "Repository latest migration mismatch: expected V${EXPECTED_LATEST_MIGRATION}, found V${latest}" >&2

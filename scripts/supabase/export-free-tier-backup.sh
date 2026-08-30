@@ -27,10 +27,12 @@ BACKUP_DIR="${BACKUP_ROOT}/${TIMESTAMP}"
 mkdir -p "${BACKUP_DIR}"
 chmod 700 "${BACKUP_DIR}"
 
-DUMP_FILE="${BACKUP_DIR}/petshop-staging.dump"
+MYPET_DUMP_FILE="${BACKUP_DIR}/petshop-staging-mypet.dump"
+LEGACY_DUMP_FILE="${BACKUP_DIR}/petshop-staging-legacy-captain.dump"
 META_FILE="${BACKUP_DIR}/baseline.txt"
 CHECKSUM_FILE="${BACKUP_DIR}/SHA256SUMS"
-LIST_FILE="${BACKUP_DIR}/restore-list.txt"
+MYPET_LIST_FILE="${BACKUP_DIR}/restore-list-mypet.txt"
+LEGACY_LIST_FILE="${BACKUP_DIR}/restore-list-legacy-captain.txt"
 
 umask 077
 
@@ -56,28 +58,46 @@ pg_dump "${SUPABASE_DATABASE_URL}" \
   --no-owner \
   --no-privileges \
   --schema=mypet \
+  --file="${MYPET_DUMP_FILE}"
+
+pg_dump "${SUPABASE_DATABASE_URL}" \
+  --format=custom \
+  --compress=9 \
+  --no-owner \
+  --no-privileges \
   --table=public.captain_locations \
   --table=public.captain_onboarding \
   --table=public.captain_support_tickets \
-  --file="${DUMP_FILE}"
+  --file="${LEGACY_DUMP_FILE}"
 
-pg_restore --list "${DUMP_FILE}" > "${LIST_FILE}"
+pg_restore --list "${MYPET_DUMP_FILE}" > "${MYPET_LIST_FILE}"
+pg_restore --list "${LEGACY_DUMP_FILE}" > "${LEGACY_LIST_FILE}"
 
-if [[ ! -s "${DUMP_FILE}" || ! -s "${LIST_FILE}" ]]; then
-  echo "Backup verification failed: dump or restore list is empty." >&2
-  exit 1
-fi
+for file in "${MYPET_DUMP_FILE}" "${LEGACY_DUMP_FILE}" "${MYPET_LIST_FILE}" "${LEGACY_LIST_FILE}"; do
+  if [[ ! -s "${file}" ]]; then
+    echo "Backup verification failed: ${file} is empty." >&2
+    exit 1
+  fi
+done
+
+CHECKSUM_TARGETS=(
+  "$(basename "${MYPET_DUMP_FILE}")"
+  "$(basename "${LEGACY_DUMP_FILE}")"
+  "$(basename "${META_FILE}")"
+  "$(basename "${MYPET_LIST_FILE}")"
+  "$(basename "${LEGACY_LIST_FILE}")"
+)
 
 if command -v shasum >/dev/null 2>&1; then
-  (cd "${BACKUP_DIR}" && shasum -a 256 "$(basename "${DUMP_FILE}")" "$(basename "${META_FILE}")" "$(basename "${LIST_FILE}")" > "$(basename "${CHECKSUM_FILE}")")
+  (cd "${BACKUP_DIR}" && shasum -a 256 "${CHECKSUM_TARGETS[@]}" > "$(basename "${CHECKSUM_FILE}")")
 elif command -v sha256sum >/dev/null 2>&1; then
-  (cd "${BACKUP_DIR}" && sha256sum "$(basename "${DUMP_FILE}")" "$(basename "${META_FILE}")" "$(basename "${LIST_FILE}")" > "$(basename "${CHECKSUM_FILE}")")
+  (cd "${BACKUP_DIR}" && sha256sum "${CHECKSUM_TARGETS[@]}" > "$(basename "${CHECKSUM_FILE}")")
 else
   echo "Neither shasum nor sha256sum is available." >&2
   exit 1
 fi
 
-chmod 600 "${DUMP_FILE}" "${META_FILE}" "${LIST_FILE}" "${CHECKSUM_FILE}"
+chmod 600 "${MYPET_DUMP_FILE}" "${LEGACY_DUMP_FILE}" "${META_FILE}" "${MYPET_LIST_FILE}" "${LEGACY_LIST_FILE}" "${CHECKSUM_FILE}"
 
 echo "Verified staging backup created at: ${BACKUP_DIR}"
 echo "Keep this directory outside the repository and do not commit it."

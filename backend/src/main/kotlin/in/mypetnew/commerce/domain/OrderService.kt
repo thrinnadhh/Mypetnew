@@ -1,5 +1,6 @@
 package `in`.mypetnew.commerce.domain
 
+import `in`.mypetnew.catalog.domain.CommerceMode
 import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.common.error.DomainException
@@ -91,6 +92,7 @@ class OrderService(
     private val persistence: OrderPersistence = InMemoryOrderPersistence(),
     private val clock: Clock = Clock.systemUTC(),
     private val onlinePaymentHold: Duration = Duration.ofMinutes(15),
+    private val listingAuthority: CommerceListingAuthority? = null,
 ) {
     fun checkout(
         quote: Quote,
@@ -116,23 +118,21 @@ class OrderService(
         if (quote.pricing.grandTotalPaise < 0) {
             throw DomainException("PRICE_INVALID", "The server quote total is invalid")
         }
-        val snapshots = quote.lines.entries
+        val expectedLines = quote.lines.entries
             .sortedBy { it.key.toString() }
-            .map { (listingId, line) ->
-                OrderLineSnapshot(
-                    listingId = listingId,
-                    listingName = listingNames[listingId]
-                        ?: throw DomainException("LISTING_UNAVAILABLE", "A quoted listing is unavailable"),
-                    quantity = line.first,
-                    unitPricePaise = line.second,
-                )
-            }
+            .map { (listingId, line) -> ExpectedOrderLine(listingId, line.first, line.second) }
         val fingerprint = checkoutFingerprint(quote, organizationId)
         replayCheckout(quote.customerId, idempotencyKey, fingerprint)?.let { return it }
 
         try {
             return persistence.inTransaction {
                 replayCheckout(quote.customerId, idempotencyKey, fingerprint)?.let { return@inTransaction it }
+                val snapshots = canonicalOrderSnapshots(
+                    expectedLines = expectedLines,
+                    organizationId = organizationId,
+                    outletId = quote.outletId,
+                    fallbackListingNames = listingNames,
+                )
                 val order = ProductOrder(
                     id = UUID.randomUUID(),
                     customerId = quote.customerId,
@@ -324,6 +324,53 @@ class OrderService(
 
     fun get(orderId: UUID): ProductOrder = persistence.get(orderId)
 
+
+    private fun canonicalOrderSnapshots(
+        expectedLines: List<ExpectedOrderLine>,
+        organizationId: UUID,
+        outletId: UUID,
+        fallbackListingNames: Map<UUID, String>,
+    ): List<OrderLineSnapshot> {
+        val authority = listingAuthority
+        if (authority == null) {
+            return expectedLines.map { line ->
+                OrderLineSnapshot(
+                    listingId = line.listingId,
+                    listingName = fallbackListingNames[line.listingId]
+                        ?: throw DomainException("LISTING_UNAVAILABLE", "A quoted listing is unavailable"),
+                    quantity = line.quantity,
+                    unitPricePaise = line.unitPricePaise,
+                )
+            }
+        }
+
+        val locked = authority.lockForCommerce(expectedLines.map { it.listingId })
+        if (locked.size != expectedLines.size) staleQuote()
+        return expectedLines.map { expected ->
+            val current = locked[expected.listingId] ?: staleQuote()
+            if (
+                current.organizationId != organizationId ||
+                current.outletId != outletId ||
+                !current.active ||
+                current.commerceMode != CommerceMode.COMMERCE ||
+                current.sellingPricePaise != expected.unitPricePaise
+            ) {
+                staleQuote()
+            }
+            OrderLineSnapshot(
+                listingId = current.id,
+                listingName = current.name,
+                quantity = expected.quantity,
+                unitPricePaise = current.sellingPricePaise,
+            )
+        }
+    }
+
+    private fun staleQuote(): Nothing = throw DomainException(
+        "QUOTE_STALE",
+        "A cart item changed after this quote was created",
+    )
+
     private fun replayCheckout(customerId: UUID, idempotencyKey: String, fingerprint: String): ProductOrder? {
         val existing = persistence.findCheckout(customerId, idempotencyKey) ?: return null
         if (existing.requestFingerprint != fingerprint) {
@@ -398,6 +445,12 @@ class OrderService(
         .digest(value.toByteArray(StandardCharsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
 }
+
+private data class ExpectedOrderLine(
+    val listingId: UUID,
+    val quantity: Int,
+    val unitPricePaise: Long,
+)
 
 private class InMemoryOrderPersistence : OrderPersistence {
     override val rollsBackOnFailure: Boolean = false

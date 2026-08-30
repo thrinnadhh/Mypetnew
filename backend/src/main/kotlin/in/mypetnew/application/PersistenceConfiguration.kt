@@ -10,11 +10,13 @@ import `in`.mypetnew.catalog.domain.InventoryPersistence
 import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.catalog.infrastructure.JdbcCatalogPersistence
 import `in`.mypetnew.catalog.infrastructure.JdbcInventoryPersistence
+import `in`.mypetnew.commerce.domain.CommerceListingAuthority
 import `in`.mypetnew.commerce.domain.CustomerOrderQuery
 import `in`.mypetnew.commerce.domain.OrderPersistence
 import `in`.mypetnew.commerce.domain.OrderService
 import `in`.mypetnew.commerce.domain.QuotePersistence
 import `in`.mypetnew.commerce.domain.QuoteService
+import `in`.mypetnew.commerce.infrastructure.JdbcCommerceListingAuthority
 import `in`.mypetnew.commerce.infrastructure.JdbcCustomerOrderQuery
 import `in`.mypetnew.commerce.infrastructure.JdbcOrderPersistence
 import `in`.mypetnew.commerce.infrastructure.JdbcQuotePersistence
@@ -91,6 +93,9 @@ class PersistenceConfiguration {
     fun productionInventoryService(persistence: InventoryPersistence): InventoryService = InventoryService(persistence)
 
     @Bean
+    fun commerceListingAuthority(jdbc: JdbcTemplate): CommerceListingAuthority = JdbcCommerceListingAuthority(jdbc)
+
+    @Bean
     fun quotePersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): QuotePersistence =
         JdbcQuotePersistence(jdbc, transactions)
 
@@ -132,8 +137,11 @@ class PersistenceConfiguration {
     fun customerOrderQuery(jdbc: JdbcTemplate): CustomerOrderQuery = JdbcCustomerOrderQuery(jdbc)
 
     @Bean
-    fun productionOrderService(inventory: InventoryService, persistence: OrderPersistence): OrderService =
-        OrderService(inventory, persistence)
+    fun productionOrderService(
+        inventory: InventoryService,
+        persistence: OrderPersistence,
+        listingAuthority: CommerceListingAuthority,
+    ): OrderService = OrderService(inventory, persistence, listingAuthority = listingAuthority)
 
     @Bean
     fun productionPaymentService(persistence: PaymentPersistence, gateway: PaymentGateway): PaymentService =
@@ -233,7 +241,15 @@ class PersistenceConfiguration {
         inventory: InventoryService,
         loyalty: LoyaltyService,
         persistence: PosPersistence,
-    ): PosService = PosService(inventory, loyalty, persistence)
+        listingAuthority: CommerceListingAuthority,
+        customerAssociations: CustomerAssociationChallengeService,
+    ): PosService = PosService(
+        inventory,
+        loyalty,
+        persistence,
+        listingAuthority = listingAuthority,
+        customerAssociations = customerAssociations,
+    )
 
     @Bean
     fun captainOnboardingPersistence(jdbc: JdbcTemplate, transactions: TransactionTemplate): `in`.mypetnew.delivery.domain.CaptainOnboardingPersistence =

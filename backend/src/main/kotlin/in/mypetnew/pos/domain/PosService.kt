@@ -1,6 +1,8 @@
 package `in`.mypetnew.pos.domain
 
+import `in`.mypetnew.catalog.domain.CommerceMode
 import `in`.mypetnew.catalog.domain.InventoryService
+import `in`.mypetnew.commerce.domain.CommerceListingAuthority
 import `in`.mypetnew.catalog.domain.StockReason
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.loyalty.domain.LoyaltyService
@@ -57,6 +59,8 @@ class PosService(
     private val loyalty: LoyaltyService,
     private val persistence: PosPersistence = InMemoryPosPersistence(),
     private val clock: Clock = Clock.systemUTC(),
+    private val listingAuthority: CommerceListingAuthority? = null,
+    private val customerAssociations: CustomerAssociationChallengeService? = null,
 ) {
     fun complete(
         merchantId: UUID,
@@ -68,32 +72,57 @@ class PosService(
         listingNames: Map<UUID, String> = lines.keys.associateWith { it.toString() },
         cashierId: UUID = InventoryService.SYSTEM_ACTOR_ID,
         traceId: String = InventoryService.SYSTEM_TRACE_ID,
+        associationChallengeId: UUID? = null,
     ): PosSale {
         validateKey(idempotencyKey, traceId)
+        if (customerId != null && associationChallengeId != null) {
+            throw DomainException("POS_CUSTOMER_ASSOCIATION_INVALID", "POS customer association is ambiguous")
+        }
         if (lines.isEmpty()) throw DomainException("POS_CART_EMPTY", "The POS cart is empty")
-        var totalPaise = 0L
         lines.forEach { (_, line) ->
             val (quantity, unitPricePaise) = line
             if (quantity <= 0 || unitPricePaise < 0) {
                 throw DomainException("POS_LINE_INVALID", "A POS line is invalid")
             }
-            totalPaise = Math.addExact(totalPaise, Math.multiplyExact(quantity.toLong(), unitPricePaise))
         }
         if (listingNames.keys != lines.keys || listingNames.values.any { it.isBlank() || it.length > 160 }) {
             throw DomainException("POS_LINE_INVALID", "A POS line snapshot is invalid")
         }
-        val fingerprint = fingerprint(merchantId, outletId, customerId, lines, payment)
-        replay(outletId, idempotencyKey, fingerprint)?.let { return it }
+        val fingerprint = fingerprint(
+            merchantId,
+            outletId,
+            customerId,
+            associationChallengeId,
+            lines,
+            payment,
+            cashierId,
+        )
+        replay(outletId, idempotencyKey, fingerprint) { sale ->
+            legacyReplayMatches(sale, merchantId, outletId, customerId, associationChallengeId, lines, payment, cashierId)
+        }?.let { return it }
 
         try {
             return persistence.inTransaction {
-                replay(outletId, idempotencyKey, fingerprint)?.let { return@inTransaction it }
+                replay(outletId, idempotencyKey, fingerprint) { sale ->
+                    legacyReplayMatches(sale, merchantId, outletId, customerId, associationChallengeId, lines, payment, cashierId)
+                }?.let { return@inTransaction it }
+                val canonical = canonicalPosLines(merchantId, outletId, lines, listingNames)
+                val resolvedCustomerId = associationChallengeId?.let { challengeId ->
+                    val associations = customerAssociations ?: throw DomainException(
+                        "POS_CUSTOMER_ASSOCIATION_UNAVAILABLE",
+                        "Customer association is unavailable for POS completion",
+                    )
+                    associations.consume(challengeId, merchantId, outletId)
+                } ?: customerId
+                val totalPaise = canonical.lines.values.fold(0L) { total, line ->
+                    Math.addExact(total, Math.multiplyExact(line.first.toLong(), line.second))
+                }
                 val sale = PosSale(
                     id = UUID.randomUUID(),
                     merchantId = merchantId,
                     outletId = outletId,
-                    customerId = customerId,
-                    lines = lines.toSortedMap(compareBy(UUID::toString)),
+                    customerId = resolvedCustomerId,
+                    lines = canonical.lines,
                     totalPaise = totalPaise,
                     paymentDeclaration = payment,
                     completedAt = clock.instant(),
@@ -101,7 +130,7 @@ class PosService(
                     cashierId = cashierId,
                     traceId = traceId,
                 )
-                persistence.insert(sale, listingNames, idempotencyKey, fingerprint)
+                persistence.insert(sale, canonical.listingNames, idempotencyKey, fingerprint)
                 val sold = mutableListOf<Pair<UUID, Int>>()
                 try {
                     sale.lines.forEach { (listingId, line) ->
@@ -114,7 +143,7 @@ class PosService(
                         )
                         sold += listingId to line.first
                     }
-                    val award = customerId?.let {
+                    val award = resolvedCustomerId?.let {
                         loyalty.award(it, merchantId, "POS_SALE:${sale.id}", totalPaise)
                     }
                     val awarded = award?.awarded == true
@@ -140,14 +169,57 @@ class PosService(
                 }
             }
         } catch (race: PosIdempotencyRace) {
-            return replay(outletId, idempotencyKey, fingerprint)
-                ?: throw DomainException("POS_CONFLICT", "POS completion raced with another request; retry")
+            return replay(outletId, idempotencyKey, fingerprint) { sale ->
+                legacyReplayMatches(sale, merchantId, outletId, customerId, associationChallengeId, lines, payment, cashierId)
+            } ?: throw DomainException("POS_CONFLICT", "POS completion raced with another request; retry")
         }
     }
 
-    private fun replay(outletId: UUID, idempotencyKey: String, fingerprint: String): PosSale? {
+    private fun canonicalPosLines(
+        merchantId: UUID,
+        outletId: UUID,
+        requested: Map<UUID, Pair<Int, Long>>,
+        fallbackListingNames: Map<UUID, String>,
+    ): CanonicalPosLines {
+        val ordered = requested.toSortedMap(compareBy(UUID::toString))
+        val authority = listingAuthority
+        if (authority == null) {
+            return CanonicalPosLines(ordered, fallbackListingNames)
+        }
+
+        val locked = authority.lockForCommerce(ordered.keys)
+        if (locked.size != ordered.size) unavailable()
+        val canonicalLines = linkedMapOf<UUID, Pair<Int, Long>>()
+        val canonicalNames = linkedMapOf<UUID, String>()
+        ordered.forEach { (listingId, requestedLine) ->
+            val current = locked[listingId] ?: unavailable()
+            if (
+                current.organizationId != merchantId ||
+                current.outletId != outletId ||
+                !current.active ||
+                current.commerceMode != CommerceMode.COMMERCE
+            ) {
+                unavailable()
+            }
+            canonicalLines[listingId] = requestedLine.first to current.sellingPricePaise
+            canonicalNames[listingId] = current.name
+        }
+        return CanonicalPosLines(canonicalLines, canonicalNames)
+    }
+
+    private fun unavailable(): Nothing = throw DomainException(
+        "LISTING_UNAVAILABLE",
+        "A POS item is unavailable",
+    )
+
+    private fun replay(
+        outletId: UUID,
+        idempotencyKey: String,
+        fingerprint: String,
+        legacyCompatible: (PosSale) -> Boolean,
+    ): PosSale? {
         val existing = persistence.find(outletId, idempotencyKey) ?: return null
-        if (existing.requestFingerprint != fingerprint) {
+        if (existing.requestFingerprint != fingerprint && !legacyCompatible(existing.sale)) {
             throw DomainException(
                 "IDEMPOTENCY_FINGERPRINT_MISMATCH",
                 "The idempotency key was already used for another request",
@@ -156,23 +228,59 @@ class PosService(
         return existing.sale
     }
 
+    private fun legacyReplayMatches(
+        sale: PosSale,
+        merchantId: UUID,
+        outletId: UUID,
+        customerId: UUID?,
+        associationChallengeId: UUID?,
+        lines: Map<UUID, Pair<Int, Long>>,
+        payment: PaymentDeclaration,
+        cashierId: UUID,
+    ): Boolean {
+        val expectedCustomerId = if (associationChallengeId != null) {
+            customerAssociations?.resolveCustomerForReplay(associationChallengeId, merchantId, outletId)
+                ?: return false
+        } else {
+            customerId
+        }
+        return sale.merchantId == merchantId &&
+            sale.outletId == outletId &&
+            sale.customerId == expectedCustomerId &&
+            sale.paymentDeclaration == payment &&
+            sale.cashierId == cashierId &&
+            sale.lines.mapValues { it.value.first } == lines.mapValues { it.value.first }
+    }
+
     private fun fingerprint(
         merchantId: UUID,
         outletId: UUID,
         customerId: UUID?,
+        associationChallengeId: UUID?,
         lines: Map<UUID, Pair<Int, Long>>,
         payment: PaymentDeclaration,
+        cashierId: UUID,
     ): String {
-        val canonical = listOf(merchantId, outletId, customerId, canonicalLines(lines), payment).joinToString(":")
+        // Unit prices are server state, not caller intent. Excluding them keeps retry identity stable
+        // across a server-side reprice while persisted replays still return the original receipt.
+        val canonical = listOf(
+            merchantId,
+            outletId,
+            customerId,
+            associationChallengeId,
+            canonicalQuantities(lines),
+            payment,
+            cashierId,
+        ).joinToString(":")
         return MessageDigest.getInstance("SHA-256")
             .digest(canonical.toByteArray(StandardCharsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
     }
 
-    private fun canonicalLines(lines: Map<UUID, Pair<Int, Long>>): String = lines
+    private fun canonicalQuantities(lines: Map<UUID, Pair<Int, Long>>): String = lines
         .toSortedMap(compareBy(UUID::toString))
         .entries
-        .joinToString(",") { "${it.key}=${it.value.first}@${it.value.second}" }
+        .joinToString(",") { "${it.key}=${it.value.first}" }
 
     private fun validateKey(idempotencyKey: String, traceId: String) {
         if (!idempotencyKey.matches(Regex("[A-Za-z0-9._:-]{1,128}"))) {
@@ -183,6 +291,11 @@ class PosService(
         }
     }
 }
+
+private data class CanonicalPosLines(
+    val lines: Map<UUID, Pair<Int, Long>>,
+    val listingNames: Map<UUID, String>,
+)
 
 private class InMemoryPosPersistence : PosPersistence {
     override val rollsBackOnFailure: Boolean = false

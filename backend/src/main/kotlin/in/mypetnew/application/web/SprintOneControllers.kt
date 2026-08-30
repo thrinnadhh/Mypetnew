@@ -536,7 +536,6 @@ class MerchantCommerceApiController(
     private val orders: OrderService,
     private val dispatch: DispatchService,
     private val pos: PosService,
-    private val associations: CustomerAssociationChallengeService,
     private val notifications: NotificationService,
 ) {
     @PostMapping("/orders/{orderId}/transitions")
@@ -617,9 +616,6 @@ class MerchantCommerceApiController(
             request.outletId,
             MerchantPermission.POS_OPERATE,
         )
-        val customerId = request.associationChallengeId?.let {
-            associations.consume(it, outlet.organizationId, outlet.id)
-        }
         val listingNames = mutableMapOf<UUID, String>()
         val lines = request.lines.associate { line ->
             val listing = catalog.getListing(line.listingId)
@@ -636,13 +632,14 @@ class MerchantCommerceApiController(
         val sale = pos.complete(
             merchantId = outlet.organizationId,
             outletId = outlet.id,
-            customerId = customerId,
+            customerId = null,
             lines = lines,
             payment = request.paymentDeclaration,
             idempotencyKey = idempotencyKey,
             listingNames = listingNames,
             cashierId = principal.actorId,
             traceId = currentTraceId(),
+            associationChallengeId = request.associationChallengeId,
         )
         if (sale.customerId != null && sale.loyaltyAwarded) {
             notifications.enqueue(

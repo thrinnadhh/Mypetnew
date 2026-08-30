@@ -26,6 +26,7 @@ interface CustomerAssociationPersistence {
     ): CustomerAssociationChallenge
 
     fun consume(challengeId: UUID, organizationId: UUID, outletId: UUID, at: Instant): UUID
+    fun resolveCustomerForReplay(challengeId: UUID, organizationId: UUID, outletId: UUID): UUID?
 }
 
 class CustomerAssociationChallengeService(
@@ -57,6 +58,9 @@ class CustomerAssociationChallengeService(
     fun consume(challengeId: UUID, organizationId: UUID, outletId: UUID): UUID =
         persistence.consume(challengeId, organizationId, outletId, clock.instant())
 
+    fun resolveCustomerForReplay(challengeId: UUID, organizationId: UUID, outletId: UUID): UUID? =
+        persistence.resolveCustomerForReplay(challengeId, organizationId, outletId)
+
     private fun validateIdempotencyKey(key: String) {
         if (!key.matches(Regex("[A-Za-z0-9._:-]{1,128}"))) {
             throw DomainException("IDEMPOTENCY_KEY_INVALID", "The idempotency key is invalid")
@@ -83,6 +87,13 @@ private class InMemoryCustomerAssociationPersistence : CustomerAssociationPersis
         requestFingerprint,
     ) {
         challenge.also { challenges[it.id] = it }
+    }
+
+    @Synchronized
+    override fun resolveCustomerForReplay(challengeId: UUID, organizationId: UUID, outletId: UUID): UUID? {
+        val challenge = challenges[challengeId] ?: return null
+        if (challenge.organizationId != organizationId || challenge.outletId != outletId) return null
+        return challenge.customerId
     }
 
     @Synchronized

@@ -109,11 +109,15 @@ class DomainConfiguration {
 
     @Bean
     @Profile("test", "development")
-    fun posService(inventory: InventoryService, loyalty: LoyaltyService) = PosService(inventory, loyalty)
+    fun customerAssociationChallengeService() = CustomerAssociationChallengeService()
 
     @Bean
     @Profile("test", "development")
-    fun customerAssociationChallengeService() = CustomerAssociationChallengeService()
+    fun posService(
+        inventory: InventoryService,
+        loyalty: LoyaltyService,
+        customerAssociations: CustomerAssociationChallengeService,
+    ) = PosService(inventory, loyalty, customerAssociations = customerAssociations)
 
     @Bean
     @Profile("test", "development")

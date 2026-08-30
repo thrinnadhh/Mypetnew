@@ -1,11 +1,35 @@
 package `in`.mypetnew.catalog.domain
 
+import `in`.mypetnew.provider.domain.ProviderCapability
 import java.time.Instant
 import java.util.UUID
 
 const val MAX_PUBLIC_CATALOG_PAGE_SIZE = 50
 const val MAX_PUBLIC_CATALOG_OFFSET = 100_000
 const val MAX_PUBLIC_CART_REVALIDATION_LINES = 50
+
+data class PublicOutletReadQuery(
+    val page: Int,
+    val pageSize: Int,
+    val capability: ProviderCapability? = null,
+    val pincode: String? = null,
+    val search: String? = null,
+)
+
+data class PublicOutletReadRow(
+    val id: UUID,
+    val organizationId: UUID,
+    val name: String,
+    val capabilities: List<ProviderCapability>,
+    val pickupEnabled: Boolean,
+)
+
+data class PublicOutletReadPage(
+    val items: List<PublicOutletReadRow>,
+    val page: Int,
+    val pageSize: Int,
+    val hasNext: Boolean,
+)
 
 data class PublicCatalogReadQuery(
     val page: Int,
@@ -57,6 +81,9 @@ data class PublicCatalogReadPage(
 )
 
 interface PublicCatalogReadRepository {
+    fun searchOutlets(query: PublicOutletReadQuery): PublicOutletReadPage
+    fun outlet(outletId: UUID, capability: ProviderCapability?, pincode: String?): PublicOutletReadRow?
+
     fun search(query: PublicCatalogReadQuery): PublicCatalogReadPage
 
     /** Returns null only when the listing itself does not exist. */

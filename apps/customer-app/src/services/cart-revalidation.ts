@@ -39,12 +39,24 @@ interface CartRevalidationResponseDto {
   checkoutAllowed: boolean;
 }
 
+const ALLOWED_REVALIDATION_CHANGES = new Set<CartRevalidationChange>([
+  'PRICE_CHANGED',
+  'QUANTITY_REDUCED',
+  'PRODUCT_UNAVAILABLE',
+  'STORE_UNAVAILABLE',
+  'SERVICEABILITY_CHANGED',
+]);
+
 function requireServicePincode(pincode: string): string {
   const normalized = pincode.trim();
   if (!/^[1-9][0-9]{5}$/.test(normalized)) {
     throw new Error('Select a valid service PIN before refreshing the cart.');
   }
   return normalized;
+}
+
+function normalizeRequestedQuantity(quantity: number): number {
+  return Number.isFinite(quantity) ? Math.max(1, Math.floor(quantity)) : 1;
 }
 
 function maxKnownStock(item: CartItem): number {
@@ -70,6 +82,51 @@ function validateSingleOutlet(currentItems: readonly CartItem[]): string {
     throw new Error('The cart contains items from more than one store and must be reviewed.');
   }
   return expectedProviderId;
+}
+
+function validateBatchResponse(
+  response: CartRevalidationResponseDto,
+  currentById: ReadonlyMap<string, CartItem>,
+  expectedProviderId: string,
+): void {
+  if (!Array.isArray(response.lines) || response.lines.length !== currentById.size) {
+    throw new Error('Cart service returned an incomplete revalidation result.');
+  }
+
+  const seen = new Set<string>();
+  for (const line of response.lines) {
+    if (!line || typeof line.listingId !== 'string' || !currentById.has(line.listingId) || seen.has(line.listingId)) {
+      throw new Error('Cart service returned an inconsistent product line set.');
+    }
+    seen.add(line.listingId);
+
+    const current = currentById.get(line.listingId)!;
+    const requestedQuantity = normalizeRequestedQuantity(current.quantity);
+    if (
+      !Number.isInteger(line.requestedQuantity)
+      || line.requestedQuantity !== requestedQuantity
+      || !Number.isInteger(line.acceptedQuantity)
+      || line.acceptedQuantity < 0
+      || line.acceptedQuantity > requestedQuantity
+    ) {
+      throw new Error('Cart service returned invalid cart quantities.');
+    }
+    if (!Array.isArray(line.changes) || line.changes.some((change) => !ALLOWED_REVALIDATION_CHANGES.has(change))) {
+      throw new Error('Cart service returned an invalid cart change result.');
+    }
+
+    const canonical = line.canonical;
+    if (line.acceptedQuantity > 0 && canonical == null) {
+      throw new Error('Cart service omitted canonical product data for an accepted line.');
+    }
+    if (canonical != null && (canonical.id !== line.listingId || canonical.outletId !== expectedProviderId)) {
+      throw new Error('Cart service returned mismatched canonical product data.');
+    }
+  }
+
+  if (seen.size !== currentById.size) {
+    throw new Error('Cart service returned an incomplete revalidation result.');
+  }
 }
 
 async function revalidateDemoCart(
@@ -105,7 +162,7 @@ async function revalidateDemoCart(
       removedCount += 1;
       continue;
     }
-    const requestedQuantity = Number.isFinite(current.quantity) ? Math.max(1, Math.floor(current.quantity)) : 1;
+    const requestedQuantity = normalizeRequestedQuantity(current.quantity);
     const quantity = Math.min(requestedQuantity, stock);
     if (quantity !== current.quantity) quantityChangedCount += 1;
     if (selectedVariant.price !== current.unitPrice) priceChangedCount += 1;
@@ -146,7 +203,7 @@ export async function revalidateCartItemsAgainstCatalog(
       pincode: servicePincode,
       lines: currentItems.map((item) => ({
         listingId: item.product.id,
-        quantity: Number.isFinite(item.quantity) ? Math.max(1, Math.floor(item.quantity)) : 1,
+        quantity: normalizeRequestedQuantity(item.quantity),
         observedUnitPricePaise: Math.round(item.unitPrice * 100),
       })),
     },
@@ -154,15 +211,14 @@ export async function revalidateCartItemsAgainstCatalog(
   if (response.outletId !== expectedProviderId || response.pincode !== servicePincode) {
     throw new Error('Cart service returned an inconsistent store or serviceability scope.');
   }
+  validateBatchResponse(response, currentById, expectedProviderId);
 
   const refreshed: CartItem[] = [];
   let removedCount = 0;
   let priceChangedCount = 0;
   let quantityChangedCount = 0;
   for (const line of response.lines) {
-    const current = currentById.get(line.listingId);
-    if (!current) throw new Error('Cart service returned an unexpected product line.');
-
+    const current = currentById.get(line.listingId)!;
     const canonical = line.canonical;
     if (
       line.acceptedQuantity <= 0
@@ -176,9 +232,8 @@ export async function revalidateCartItemsAgainstCatalog(
     }
 
     const liveProduct = mapListingToCommerceProduct(canonical);
-    if (liveProduct.providerId !== expectedProviderId || !isCommerceEligible(liveProduct)) {
-      removedCount += 1;
-      continue;
+    if (liveProduct.id !== line.listingId || liveProduct.providerId !== expectedProviderId || !isCommerceEligible(liveProduct)) {
+      throw new Error('Cart service returned mismatched canonical product data.');
     }
     const selectedVariant = variantForCurrentListing(current, liveProduct);
     if (!selectedVariant?.inStock || line.acceptedQuantity > selectedVariant.stockCount) {
@@ -190,9 +245,6 @@ export async function revalidateCartItemsAgainstCatalog(
     refreshed.push({ product: liveProduct, selectedVariant, quantity: line.acceptedQuantity, unitPrice: selectedVariant.price });
   }
 
-  if (response.lines.length !== currentItems.length) {
-    throw new Error('Cart service returned an incomplete revalidation result.');
-  }
   return {
     items: refreshed,
     materialChanged: response.materialChanged || removedCount > 0 || priceChangedCount > 0 || quantityChangedCount > 0,

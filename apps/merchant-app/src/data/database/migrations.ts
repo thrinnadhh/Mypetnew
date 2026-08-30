@@ -6,6 +6,7 @@ import {
   V3_SCHEMA_STATEMENTS,
   V4_SCHEMA_STATEMENTS,
   V5_SCHEMA_STATEMENTS,
+  V6_SCHEMA_STATEMENTS,
 } from './schema';
 
 export type Migration = {
@@ -48,6 +49,13 @@ export const MIGRATIONS: Migration[] = [
     description: 'Add partitioned offline catalog drafts and pending media reconciliation',
     up: async (db: SqliteDatabase | SqliteTransaction) => {
       for (const statement of V5_SCHEMA_STATEMENTS) await db.exec(statement);
+    },
+  },
+  {
+    version: 6,
+    description: 'Add partitioned offline inventory count draft sessions and count lines',
+    up: async (db: SqliteDatabase | SqliteTransaction) => {
+      for (const statement of V6_SCHEMA_STATEMENTS) await db.exec(statement);
     },
   },
 ];

@@ -1,11 +1,22 @@
 package `in`.mypetnew.catalog.infrastructure
 
+import `in`.mypetnew.catalog.domain.CountLineInput
+import `in`.mypetnew.catalog.domain.CountReconciliationLineResult
+import `in`.mypetnew.catalog.domain.CountReconciliationResult
+import `in`.mypetnew.catalog.domain.CountSessionStatus
 import `in`.mypetnew.catalog.domain.InventoryBalance
+import `in`.mypetnew.catalog.domain.InventoryCountLine
+import `in`.mypetnew.catalog.domain.InventoryCountSession
 import `in`.mypetnew.catalog.domain.InventoryHistoryPage
 import `in`.mypetnew.catalog.domain.InventoryPersistence
 import `in`.mypetnew.catalog.domain.InventoryScope
+import `in`.mypetnew.catalog.domain.InventoryTransfer
+import `in`.mypetnew.catalog.domain.MerchantSyncPublisher
+import `in`.mypetnew.catalog.domain.ReturnType
 import `in`.mypetnew.catalog.domain.StockMovement
 import `in`.mypetnew.catalog.domain.StockReason
+import `in`.mypetnew.catalog.domain.TransferResult
+import `in`.mypetnew.catalog.domain.TransferStatus
 import `in`.mypetnew.common.error.DomainException
 import org.springframework.dao.DuplicateKeyException
 import org.springframework.jdbc.core.JdbcTemplate
@@ -17,8 +28,6 @@ import java.sql.Timestamp
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.UUID
-
-import `in`.mypetnew.catalog.domain.MerchantSyncPublisher
 
 class JdbcInventoryPersistence(
     private val jdbc: JdbcTemplate,
@@ -91,6 +100,903 @@ class JdbcInventoryPersistence(
             balance.copy(onHand = newOnHand)
         }
     }
+
+    override fun receive(
+        scope: InventoryScope,
+        quantity: Int,
+        idempotencyKey: String,
+        actorId: UUID,
+        traceId: String,
+        referenceType: String?,
+        referenceId: String?,
+        batchNumber: String?,
+        expiryDate: String?,
+    ): StockMovement {
+        if (quantity <= 0) invalidQuantity()
+        val sourceType = referenceType ?: "RECEIVING"
+        val sourceReference = referenceId ?: idempotencyKey
+        val reqFingerprint = fingerprint(
+            scope.organizationId,
+            scope.outletId,
+            scope.listingId,
+            quantity,
+            StockReason.RECEIVING.name,
+            referenceType,
+            referenceId,
+            batchNumber,
+            expiryDate,
+        )
+        return mutate(
+            scope = scope,
+            operationScope = "inventory-receiving",
+            idempotencyKey = idempotencyKey,
+            fingerprint = reqFingerprint,
+            reason = StockReason.RECEIVING,
+            quantityDelta = quantity,
+            sourceType = sourceType,
+            sourceReference = sourceReference,
+            actorId = actorId,
+            traceId = traceId,
+        ) { balance ->
+            val newOnHand = safeAdd(balance.onHand, quantity)
+            balance.copy(onHand = newOnHand)
+        }
+    }
+
+    override fun damage(
+        scope: InventoryScope,
+        quantity: Int,
+        idempotencyKey: String,
+        actorId: UUID,
+        traceId: String,
+        reasonDetails: String?,
+        referenceId: String?,
+    ): StockMovement {
+        if (quantity <= 0) invalidQuantity()
+        val sourceType = "DAMAGE"
+        val sourceReference = referenceId ?: idempotencyKey
+        val reqFingerprint = fingerprint(
+            scope.organizationId,
+            scope.outletId,
+            scope.listingId,
+            quantity,
+            StockReason.DAMAGE.name,
+            reasonDetails,
+            referenceId,
+        )
+        return mutate(
+            scope = scope,
+            operationScope = "inventory-damage",
+            idempotencyKey = idempotencyKey,
+            fingerprint = reqFingerprint,
+            reason = StockReason.DAMAGE,
+            quantityDelta = -quantity,
+            sourceType = sourceType,
+            sourceReference = sourceReference,
+            actorId = actorId,
+            traceId = traceId,
+        ) { balance ->
+            if (balance.onHand - balance.reserved < quantity) insufficient()
+            balance.copy(onHand = balance.onHand - quantity)
+        }
+    }
+
+    override fun expire(
+        scope: InventoryScope,
+        quantity: Int,
+        idempotencyKey: String,
+        actorId: UUID,
+        traceId: String,
+        batchReference: String?,
+        expiryDate: String?,
+    ): StockMovement {
+        if (quantity <= 0) invalidQuantity()
+        val sourceType = "EXPIRY"
+        val sourceReference = batchReference ?: idempotencyKey
+        val reqFingerprint = fingerprint(
+            scope.organizationId,
+            scope.outletId,
+            scope.listingId,
+            quantity,
+            StockReason.EXPIRY.name,
+            batchReference,
+            expiryDate,
+        )
+        return mutate(
+            scope = scope,
+            operationScope = "inventory-expiry",
+            idempotencyKey = idempotencyKey,
+            fingerprint = reqFingerprint,
+            reason = StockReason.EXPIRY,
+            quantityDelta = -quantity,
+            sourceType = sourceType,
+            sourceReference = sourceReference,
+            actorId = actorId,
+            traceId = traceId,
+        ) { balance ->
+            if (balance.onHand - balance.reserved < quantity) insufficient()
+            balance.copy(onHand = balance.onHand - quantity)
+        }
+    }
+
+    override fun shrink(
+        scope: InventoryScope,
+        quantity: Int,
+        idempotencyKey: String,
+        actorId: UUID,
+        traceId: String,
+        notes: String?,
+        referenceId: String?,
+    ): StockMovement {
+        if (quantity <= 0) invalidQuantity()
+        val sourceType = "SHRINKAGE"
+        val sourceReference = referenceId ?: idempotencyKey
+        val reqFingerprint = fingerprint(
+            scope.organizationId,
+            scope.outletId,
+            scope.listingId,
+            quantity,
+            StockReason.SHRINKAGE.name,
+            notes,
+            referenceId,
+        )
+        return mutate(
+            scope = scope,
+            operationScope = "inventory-shrinkage",
+            idempotencyKey = idempotencyKey,
+            fingerprint = reqFingerprint,
+            reason = StockReason.SHRINKAGE,
+            quantityDelta = -quantity,
+            sourceType = sourceType,
+            sourceReference = sourceReference,
+            actorId = actorId,
+            traceId = traceId,
+        ) { balance ->
+            if (balance.onHand - balance.reserved < quantity) insufficient()
+            balance.copy(onHand = balance.onHand - quantity)
+        }
+    }
+
+    override fun returnStock(
+        scope: InventoryScope,
+        quantity: Int,
+        returnType: ReturnType,
+        idempotencyKey: String,
+        actorId: UUID,
+        traceId: String,
+        referenceType: String?,
+        referenceId: String?,
+    ): StockMovement {
+        if (quantity <= 0) invalidQuantity()
+        val reason = if (returnType == ReturnType.CUSTOMER_RETURN) StockReason.CUSTOMER_RETURN else StockReason.VENDOR_RETURN
+        val delta = if (returnType == ReturnType.CUSTOMER_RETURN) quantity else -quantity
+        val sourceType = referenceType ?: returnType.name
+        val sourceReference = referenceId ?: idempotencyKey
+        val reqFingerprint = fingerprint(
+            scope.organizationId,
+            scope.outletId,
+            scope.listingId,
+            quantity,
+            returnType.name,
+            referenceType,
+            referenceId,
+        )
+        return mutate(
+            scope = scope,
+            operationScope = "inventory-return",
+            idempotencyKey = idempotencyKey,
+            fingerprint = reqFingerprint,
+            reason = reason,
+            quantityDelta = delta,
+            sourceType = sourceType,
+            sourceReference = sourceReference,
+            actorId = actorId,
+            traceId = traceId,
+        ) { balance ->
+            if (delta < 0 && (balance.onHand - balance.reserved < quantity)) insufficient()
+            val newOnHand = safeAdd(balance.onHand, delta)
+            balance.copy(onHand = newOnHand)
+        }
+    }
+
+    override fun transfer(
+        organizationId: UUID,
+        sourceOutletId: UUID,
+        destinationOutletId: UUID,
+        sourceListingId: UUID,
+        destinationListingId: UUID?,
+        quantity: Int,
+        idempotencyKey: String,
+        actorId: UUID,
+        traceId: String,
+    ): TransferResult {
+        if (quantity <= 0) invalidQuantity()
+        if (sourceOutletId == destinationOutletId) {
+            throw DomainException("INVALID_TRANSFER", "Source and destination outlet must be distinct")
+        }
+        validateCommand(idempotencyKey, traceId, "OUTLET_TRANSFER", idempotencyKey)
+
+        val targetDestListingId = destinationListingId ?: resolveDestinationListing(organizationId, destinationOutletId, sourceListingId)
+        val destScope = InventoryScope(organizationId, destinationOutletId, targetDestListingId)
+        val sourceScope = InventoryScope(organizationId, sourceOutletId, sourceListingId)
+
+        val reqFingerprint = fingerprint(
+            organizationId,
+            sourceOutletId,
+            destinationOutletId,
+            sourceListingId,
+            targetDestListingId,
+            quantity,
+        )
+
+        existingTransfer(organizationId, actorId, idempotencyKey)?.let { existing ->
+            if (existing.requestFingerprint != reqFingerprint) {
+                throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "The idempotency key was already used for another request")
+            }
+            val sourceMov = getMovementById(existing.sourceMovementId) ?: resourceUnavailable()
+            val destMov = getMovementById(existing.destinationMovementId) ?: resourceUnavailable()
+            return TransferResult(existing.transfer, sourceMov, destMov)
+        }
+
+        return requireNotNull(transactions.execute {
+            requireListingScope(sourceScope)
+            requireListingScope(destScope)
+            ensureBalance(sourceScope)
+            ensureBalance(destScope)
+
+            // Lock balance rows in deterministic order to prevent deadlocks
+            val (firstScope, secondScope) = if (sourceOutletId < destinationOutletId) {
+                sourceScope to destScope
+            } else {
+                destScope to sourceScope
+            }
+
+            val firstBal = lockBalance(firstScope)
+            val secondBal = lockBalance(secondScope)
+
+            val sourceBefore = if (firstScope == sourceScope) firstBal else secondBal
+            val destBefore = if (firstScope == destScope) firstBal else secondBal
+
+            existingTransfer(organizationId, actorId, idempotencyKey)?.let { existing ->
+                if (existing.requestFingerprint != reqFingerprint) {
+                    throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "The idempotency key was already used for another request")
+                }
+                val sourceMov = getMovementById(existing.sourceMovementId) ?: resourceUnavailable()
+                val destMov = getMovementById(existing.destinationMovementId) ?: resourceUnavailable()
+                return@execute TransferResult(existing.transfer, sourceMov, destMov)
+            }
+
+            if (sourceBefore.onHand - sourceBefore.reserved < quantity) {
+                insufficient()
+            }
+
+            val sourceNewOnHand = sourceBefore.onHand - quantity
+            val destNewOnHand = safeAdd(destBefore.onHand, quantity)
+
+            val updatedSource = jdbc.update(
+                """
+                UPDATE mypet.inventory_balance
+                SET on_hand = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE organization_id = ? AND outlet_id = ? AND listing_id = ? AND version = ?
+                """.trimIndent(),
+                sourceNewOnHand,
+                sourceScope.organizationId,
+                sourceScope.outletId,
+                sourceScope.listingId,
+                sourceBefore.version,
+            )
+            if (updatedSource != 1) {
+                throw DomainException("INVENTORY_CONFLICT", "Inventory changed concurrently; retry safely")
+            }
+
+            val updatedDest = jdbc.update(
+                """
+                UPDATE mypet.inventory_balance
+                SET on_hand = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE organization_id = ? AND outlet_id = ? AND listing_id = ? AND version = ?
+                """.trimIndent(),
+                destNewOnHand,
+                destScope.organizationId,
+                destScope.outletId,
+                destScope.listingId,
+                destBefore.version,
+            )
+            if (updatedDest != 1) {
+                throw DomainException("INVENTORY_CONFLICT", "Inventory changed concurrently; retry safely")
+            }
+
+            val transferId = UUID.randomUUID()
+            val sourceMovement = StockMovement(
+                id = UUID.randomUUID(),
+                listingId = sourceListingId,
+                reason = StockReason.TRANSFER_OUT,
+                quantityDelta = -quantity,
+                resultingOnHand = sourceNewOnHand,
+                resultingReserved = sourceBefore.reserved,
+                sourceReference = transferId.toString(),
+                occurredAt = Instant.now(),
+                organizationId = organizationId,
+                outletId = sourceOutletId,
+                actorId = actorId,
+                idempotencyKey = "transfer-out:$idempotencyKey",
+                sourceType = "OUTLET_TRANSFER",
+            )
+            val destMovement = StockMovement(
+                id = UUID.randomUUID(),
+                listingId = targetDestListingId,
+                reason = StockReason.TRANSFER_IN,
+                quantityDelta = quantity,
+                resultingOnHand = destNewOnHand,
+                resultingReserved = destBefore.reserved,
+                sourceReference = transferId.toString(),
+                occurredAt = Instant.now(),
+                organizationId = organizationId,
+                outletId = destinationOutletId,
+                actorId = actorId,
+                idempotencyKey = "transfer-in:$idempotencyKey",
+                sourceType = "OUTLET_TRANSFER",
+            )
+
+            insertMovement(sourceMovement, "inventory-transfer-out", reqFingerprint, traceId)
+            insertMovement(destMovement, "inventory-transfer-in", reqFingerprint, traceId)
+            insertReceipt(sourceMovement, "inventory-transfer-out", reqFingerprint)
+            insertReceipt(destMovement, "inventory-transfer-in", reqFingerprint)
+
+            jdbc.update(
+                """
+                INSERT INTO mypet.inventory_transfer (
+                    id, organization_id, source_outlet_id, destination_outlet_id,
+                    source_listing_id, destination_listing_id, quantity, status,
+                    actor_id, idempotency_key, request_fingerprint,
+                    source_movement_id, destination_movement_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """.trimIndent(),
+                transferId,
+                organizationId,
+                sourceOutletId,
+                destinationOutletId,
+                sourceListingId,
+                targetDestListingId,
+                quantity,
+                actorId,
+                idempotencyKey,
+                reqFingerprint,
+                sourceMovement.id,
+                destMovement.id,
+            )
+
+            insertPublication(sourceMovement, traceId)
+            insertPublication(destMovement, traceId)
+
+            syncPublisher?.publishInventoryBalanceChange(
+                InventoryBalance(
+                    organizationId = organizationId,
+                    outletId = sourceOutletId,
+                    listingId = sourceListingId,
+                    onHand = sourceNewOnHand,
+                    reserved = sourceBefore.reserved,
+                    version = sourceBefore.version + 1,
+                    updatedAt = Instant.now(),
+                ),
+            )
+            syncPublisher?.publishInventoryBalanceChange(
+                InventoryBalance(
+                    organizationId = organizationId,
+                    outletId = destinationOutletId,
+                    listingId = targetDestListingId,
+                    onHand = destNewOnHand,
+                    reserved = destBefore.reserved,
+                    version = destBefore.version + 1,
+                    updatedAt = Instant.now(),
+                ),
+            )
+
+            val transferRecord = InventoryTransfer(
+                id = transferId,
+                organizationId = organizationId,
+                sourceOutletId = sourceOutletId,
+                destinationOutletId = destinationOutletId,
+                sourceListingId = sourceListingId,
+                destinationListingId = targetDestListingId,
+                quantity = quantity,
+                status = TransferStatus.COMPLETED,
+                actorId = actorId,
+                idempotencyKey = idempotencyKey,
+                sourceMovementId = sourceMovement.id,
+                destinationMovementId = destMovement.id,
+                createdAt = Instant.now(),
+            )
+
+            TransferResult(transferRecord, sourceMovement, destMovement)
+        })
+    }
+
+    override fun startCountSession(
+        organizationId: UUID,
+        outletId: UUID,
+        actorId: UUID,
+        traceId: String,
+        initialCutoffSequence: Long?,
+    ): InventoryCountSession {
+        val sessionId = UUID.randomUUID()
+        val cutoffSeq = initialCutoffSequence ?: (
+            jdbc.queryForObject(
+                """
+                SELECT COALESCE(MAX(sequence_number), 0)
+                FROM mypet.merchant_sync_change_log
+                WHERE organization_id = ? AND outlet_id = ?
+                """.trimIndent(),
+                Long::class.java,
+                organizationId,
+                outletId,
+            ) ?: 0L
+        )
+
+        jdbc.update(
+            """
+            INSERT INTO mypet.inventory_count_session (
+                id, organization_id, outlet_id, status, cutoff_sequence_number,
+                cutoff_timestamp, actor_id, created_at, updated_at
+            ) VALUES (?, ?, ?, 'OPEN', ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """.trimIndent(),
+            sessionId,
+            organizationId,
+            outletId,
+            cutoffSeq,
+            actorId,
+        )
+
+        return getCountSession(organizationId, outletId, sessionId)
+    }
+
+    override fun getCountSession(
+        organizationId: UUID,
+        outletId: UUID,
+        sessionId: UUID,
+    ): InventoryCountSession {
+        val session = jdbc.query(
+            """
+            SELECT id, organization_id, outlet_id, status, cutoff_sequence_number,
+                   cutoff_timestamp, actor_id, submit_idempotency_key, reconciliation_summary,
+                   created_at, updated_at, submitted_at
+            FROM mypet.inventory_count_session
+            WHERE id = ? AND organization_id = ? AND outlet_id = ?
+            """.trimIndent(),
+            { rs, _ ->
+                InventoryCountSession(
+                    id = rs.getObject("id", UUID::class.java),
+                    organizationId = rs.getObject("organization_id", UUID::class.java),
+                    outletId = rs.getObject("outlet_id", UUID::class.java),
+                    status = CountSessionStatus.valueOf(rs.getString("status")),
+                    cutoffSequenceNumber = rs.getLong("cutoff_sequence_number"),
+                    cutoffTimestamp = rs.getObject("cutoff_timestamp", OffsetDateTime::class.java).toInstant(),
+                    actorId = rs.getObject("actor_id", UUID::class.java),
+                    submitIdempotencyKey = rs.getString("submit_idempotency_key"),
+                    reconciliationSummary = rs.getString("reconciliation_summary"),
+                    createdAt = rs.getObject("created_at", OffsetDateTime::class.java).toInstant(),
+                    updatedAt = rs.getObject("updated_at", OffsetDateTime::class.java).toInstant(),
+                    submittedAt = rs.getObject("submitted_at", OffsetDateTime::class.java)?.toInstant(),
+                )
+            },
+            sessionId,
+            organizationId,
+            outletId,
+        ).singleOrNull() ?: resourceUnavailable()
+
+        val lines = jdbc.query(
+            """
+            SELECT listing_id, counted_quantity, cutoff_on_hand, reconciled_delta,
+                   resulting_on_hand, created_at, updated_at
+            FROM mypet.inventory_count_line
+            WHERE session_id = ?
+            ORDER BY created_at, listing_id
+            """.trimIndent(),
+            { rs, _ ->
+                InventoryCountLine(
+                    listingId = rs.getObject("listing_id", UUID::class.java),
+                    countedQuantity = rs.getInt("counted_quantity"),
+                    cutoffOnHand = rs.getInt("cutoff_on_hand"),
+                    reconciledDelta = rs.getObject("reconciled_delta") as? Int,
+                    resultingOnHand = rs.getObject("resulting_on_hand") as? Int,
+                    createdAt = rs.getObject("created_at", OffsetDateTime::class.java).toInstant(),
+                    updatedAt = rs.getObject("updated_at", OffsetDateTime::class.java).toInstant(),
+                )
+            },
+            sessionId,
+        )
+
+        return session.copy(lines = lines)
+    }
+
+    override fun updateCountLines(
+        organizationId: UUID,
+        outletId: UUID,
+        sessionId: UUID,
+        lines: List<CountLineInput>,
+    ): InventoryCountSession {
+        return requireNotNull(transactions.execute {
+            val session = getCountSession(organizationId, outletId, sessionId)
+            if (session.status != CountSessionStatus.OPEN) {
+                throw DomainException("INVALID_COUNT_STATE", "Count session is not open for modifications")
+            }
+
+            for (input in lines) {
+                requireListingScope(InventoryScope(organizationId, outletId, input.listingId))
+                val cutoffOnHand = jdbc.queryForObject(
+                    """
+                    SELECT on_hand FROM mypet.inventory_balance
+                    WHERE organization_id = ? AND outlet_id = ? AND listing_id = ?
+                    """.trimIndent(),
+                    Int::class.java,
+                    organizationId,
+                    outletId,
+                    input.listingId,
+                ) ?: 0
+
+                jdbc.update(
+                    """
+                    INSERT INTO mypet.inventory_count_line (
+                        session_id, listing_id, counted_quantity, cutoff_on_hand, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (session_id, listing_id) DO UPDATE
+                    SET counted_quantity = EXCLUDED.counted_quantity,
+                        updated_at = CURRENT_TIMESTAMP
+                    """.trimIndent(),
+                    sessionId,
+                    input.listingId,
+                    input.countedQuantity,
+                    cutoffOnHand,
+                )
+            }
+
+            jdbc.update(
+                "UPDATE mypet.inventory_count_session SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                sessionId,
+            )
+
+            getCountSession(organizationId, outletId, sessionId)
+        })
+    }
+
+    override fun submitCountSession(
+        organizationId: UUID,
+        outletId: UUID,
+        sessionId: UUID,
+        idempotencyKey: String,
+        actorId: UUID,
+        traceId: String,
+    ): CountReconciliationResult {
+        validateCommand(idempotencyKey, traceId, "COUNT_SESSION", idempotencyKey)
+        val initialSession = getCountSession(organizationId, outletId, sessionId)
+
+        // Idempotency replay check
+        if (initialSession.status == CountSessionStatus.SUBMITTED && initialSession.submitIdempotencyKey == idempotencyKey) {
+            return reconstructCountResult(initialSession)
+        }
+
+        var reviewRequired = false
+        val result = transactions.execute {
+            val sessionRow = jdbc.query(
+                """
+                SELECT id, organization_id, outlet_id, status, cutoff_sequence_number,
+                       cutoff_timestamp, actor_id, submit_idempotency_key
+                FROM mypet.inventory_count_session
+                WHERE id = ? AND organization_id = ? AND outlet_id = ?
+                FOR UPDATE
+                """.trimIndent(),
+                { rs, _ ->
+                    object {
+                        val status = CountSessionStatus.valueOf(rs.getString("status"))
+                        val submitKey = rs.getString("submit_idempotency_key")
+                        val cutoffTs = rs.getObject("cutoff_timestamp", OffsetDateTime::class.java).toInstant()
+                    }
+                },
+                sessionId,
+                organizationId,
+                outletId,
+            ).singleOrNull() ?: resourceUnavailable()
+
+            if (sessionRow.status == CountSessionStatus.SUBMITTED) {
+                if (sessionRow.submitKey == idempotencyKey) {
+                    val current = getCountSession(organizationId, outletId, sessionId)
+                    return@execute reconstructCountResult(current)
+                }
+                throw DomainException("COUNT_ALREADY_SUBMITTED", "Count session is already submitted")
+            }
+            if (sessionRow.status != CountSessionStatus.OPEN) {
+                throw DomainException("INVALID_COUNT_STATE", "Count session is not in OPEN status")
+            }
+
+            val lines = jdbc.query(
+                """
+                SELECT listing_id, counted_quantity, cutoff_on_hand
+                FROM mypet.inventory_count_line
+                WHERE session_id = ?
+                ORDER BY listing_id
+                """.trimIndent(),
+                { rs, _ ->
+                    object {
+                        val listingId = rs.getObject("listing_id", UUID::class.java)
+                        val countedQuantity = rs.getInt("counted_quantity")
+                        val cutoffOnHand = rs.getInt("cutoff_on_hand")
+                    }
+                },
+                sessionId,
+            )
+
+            // Preflight every line while holding the canonical balance locks. A review-required
+            // outcome must commit independently of the DomainException returned to the caller, and
+            // no count adjustment may be applied before the full session has passed validation.
+            for (line in lines) {
+                val scope = InventoryScope(organizationId, outletId, line.listingId)
+                ensureBalance(scope)
+                val before = lockBalance(scope)
+                val deltaAfterCutoff = jdbc.queryForObject(
+                    """
+                    SELECT COALESCE(SUM(quantity_delta), 0)
+                    FROM mypet.inventory_movement
+                    WHERE organization_id = ? AND outlet_id = ? AND listing_id = ? AND occurred_at > ?
+                    """.trimIndent(),
+                    Long::class.java,
+                    organizationId,
+                    outletId,
+                    line.listingId,
+                    Timestamp.from(sessionRow.cutoffTs),
+                ) ?: 0L
+                val targetCurrentOnHand = safeAdd(line.countedQuantity, deltaAfterCutoff.toInt())
+                if (targetCurrentOnHand < before.reserved || targetCurrentOnHand < 0) {
+                    jdbc.update(
+                        "UPDATE mypet.inventory_count_session SET status = 'REVIEW_REQUIRED', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        sessionId,
+                    )
+                    reviewRequired = true
+                    return@execute null
+                }
+            }
+
+            val results = mutableListOf<CountReconciliationLineResult>()
+
+            for (line in lines) {
+                val scope = InventoryScope(organizationId, outletId, line.listingId)
+                ensureBalance(scope)
+                val before = lockBalance(scope)
+
+                // Calculate movements occurring after cutoff
+                val deltaAfterCutoff = jdbc.queryForObject(
+                    """
+                    SELECT COALESCE(SUM(quantity_delta), 0)
+                    FROM mypet.inventory_movement
+                    WHERE organization_id = ? AND outlet_id = ? AND listing_id = ? AND occurred_at > ?
+                    """.trimIndent(),
+                    Long::class.java,
+                    organizationId,
+                    outletId,
+                    line.listingId,
+                    Timestamp.from(sessionRow.cutoffTs),
+                ) ?: 0L
+
+                val targetCurrentOnHand = safeAdd(line.countedQuantity, deltaAfterCutoff.toInt())
+                val currentOnHand = before.onHand
+                val countAdjustmentDelta = targetCurrentOnHand - currentOnHand
+
+                if (targetCurrentOnHand < before.reserved || targetCurrentOnHand < 0) {
+                    jdbc.update(
+                        "UPDATE mypet.inventory_count_session SET status = 'REVIEW_REQUIRED', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        sessionId,
+                    )
+                    throw DomainException("COUNT_CUTOFF_CONFLICT", "Count reconciliation violated negative-stock constraints; moved to review")
+                }
+
+                var movementId: UUID? = null
+                if (countAdjustmentDelta != 0) {
+                    val updated = jdbc.update(
+                        """
+                        UPDATE mypet.inventory_balance
+                        SET on_hand = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+                        WHERE organization_id = ? AND outlet_id = ? AND listing_id = ? AND version = ?
+                        """.trimIndent(),
+                        targetCurrentOnHand,
+                        organizationId,
+                        outletId,
+                        line.listingId,
+                        before.version,
+                    )
+                    if (updated != 1) {
+                        throw DomainException("INVENTORY_CONFLICT", "Inventory changed concurrently; retry safely")
+                    }
+
+                    val lineIdempotencyKey = "$idempotencyKey:${line.listingId}"
+                    val lineFp = fingerprint(
+                        organizationId,
+                        outletId,
+                        line.listingId,
+                        countAdjustmentDelta,
+                        StockReason.COUNT_ADJUSTMENT.name,
+                    )
+
+                    val movement = StockMovement(
+                        id = UUID.randomUUID(),
+                        listingId = line.listingId,
+                        reason = StockReason.COUNT_ADJUSTMENT,
+                        quantityDelta = countAdjustmentDelta,
+                        resultingOnHand = targetCurrentOnHand,
+                        resultingReserved = before.reserved,
+                        sourceReference = sessionId.toString(),
+                        occurredAt = Instant.now(),
+                        organizationId = organizationId,
+                        outletId = outletId,
+                        actorId = actorId,
+                        idempotencyKey = lineIdempotencyKey,
+                        sourceType = "COUNT_SESSION",
+                    )
+                    insertMovement(movement, "count-adjustment", lineFp, traceId)
+                    insertReceipt(movement, "count-adjustment", lineFp)
+                    insertPublication(movement, traceId)
+
+                    syncPublisher?.publishInventoryBalanceChange(
+                        InventoryBalance(
+                            organizationId = organizationId,
+                            outletId = outletId,
+                            listingId = line.listingId,
+                            onHand = targetCurrentOnHand,
+                            reserved = before.reserved,
+                            version = before.version + 1,
+                            updatedAt = Instant.now(),
+                        ),
+                    )
+                    movementId = movement.id
+                }
+
+                jdbc.update(
+                    """
+                    UPDATE mypet.inventory_count_line
+                    SET reconciled_delta = ?, resulting_on_hand = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE session_id = ? AND listing_id = ?
+                    """.trimIndent(),
+                    countAdjustmentDelta,
+                    targetCurrentOnHand,
+                    sessionId,
+                    line.listingId,
+                )
+
+                results.add(
+                    CountReconciliationLineResult(
+                        listingId = line.listingId,
+                        countedQuantity = line.countedQuantity,
+                        cutoffOnHand = line.cutoffOnHand,
+                        deltaAfterCutoff = deltaAfterCutoff.toInt(),
+                        targetCurrentOnHand = targetCurrentOnHand,
+                        currentOnHandBeforeAdjustment = currentOnHand,
+                        countAdjustmentDelta = countAdjustmentDelta,
+                        resultingOnHand = targetCurrentOnHand,
+                        movementId = movementId,
+                    ),
+                )
+            }
+
+            jdbc.update(
+                """
+                UPDATE mypet.inventory_count_session
+                SET status = 'SUBMITTED', submit_idempotency_key = ?, submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """.trimIndent(),
+                idempotencyKey,
+                sessionId,
+            )
+
+            CountReconciliationResult(
+                sessionId = sessionId,
+                status = CountSessionStatus.SUBMITTED,
+                lines = results,
+                submittedAt = Instant.now(),
+            )
+        }
+
+        if (reviewRequired) {
+            throw DomainException(
+                "COUNT_CUTOFF_CONFLICT",
+                "Count reconciliation violated negative-stock constraints; moved to review",
+            )
+        }
+        return requireNotNull(result)
+    }
+
+    private fun reconstructCountResult(session: InventoryCountSession): CountReconciliationResult {
+        val lines = session.lines.map { line ->
+            CountReconciliationLineResult(
+                listingId = line.listingId,
+                countedQuantity = line.countedQuantity,
+                cutoffOnHand = line.cutoffOnHand,
+                deltaAfterCutoff = (line.resultingOnHand ?: line.cutoffOnHand) - line.countedQuantity - (line.reconciledDelta ?: 0),
+                targetCurrentOnHand = line.resultingOnHand ?: line.cutoffOnHand,
+                currentOnHandBeforeAdjustment = (line.resultingOnHand ?: line.cutoffOnHand) - (line.reconciledDelta ?: 0),
+                countAdjustmentDelta = line.reconciledDelta ?: 0,
+                resultingOnHand = line.resultingOnHand ?: line.cutoffOnHand,
+            )
+        }
+        return CountReconciliationResult(
+            sessionId = session.id,
+            status = session.status,
+            lines = lines,
+            submittedAt = session.submittedAt ?: session.updatedAt,
+        )
+    }
+
+    private fun resolveDestinationListing(organizationId: UUID, destinationOutletId: UUID, sourceListingId: UUID): UUID {
+        val sourceBarcode = jdbc.query(
+            "SELECT barcode_type, normalized_barcode FROM mypet.catalog_listing WHERE id = ? AND organization_id = ?",
+            { rs, _ -> rs.getString("barcode_type") to rs.getString("normalized_barcode") },
+            sourceListingId,
+            organizationId,
+        ).singleOrNull() ?: resourceUnavailable()
+
+        val destListing = jdbc.query(
+            """
+            SELECT id FROM mypet.catalog_listing
+            WHERE organization_id = ? AND outlet_id = ? AND barcode_type = ? AND normalized_barcode = ?
+            """.trimIndent(),
+            { rs, _ -> rs.getObject("id", UUID::class.java) },
+            organizationId,
+            destinationOutletId,
+            sourceBarcode.first,
+            sourceBarcode.second,
+        ).singleOrNull()
+
+        return destListing ?: throw DomainException("INVALID_TRANSFER", "Destination outlet listing not found for item barcode")
+    }
+
+    private fun existingTransfer(
+        organizationId: UUID,
+        actorId: UUID,
+        idempotencyKey: String,
+    ): StoredTransfer? = jdbc.query(
+        """
+        SELECT id, organization_id, source_outlet_id, destination_outlet_id,
+               source_listing_id, destination_listing_id, quantity, status,
+               actor_id, idempotency_key, request_fingerprint,
+               source_movement_id, destination_movement_id, created_at
+        FROM mypet.inventory_transfer
+        WHERE organization_id = ? AND actor_id = ? AND idempotency_key = ?
+        """.trimIndent(),
+        { rs, _ ->
+            val transfer = InventoryTransfer(
+                id = rs.getObject("id", UUID::class.java),
+                organizationId = rs.getObject("organization_id", UUID::class.java),
+                sourceOutletId = rs.getObject("source_outlet_id", UUID::class.java),
+                destinationOutletId = rs.getObject("destination_outlet_id", UUID::class.java),
+                sourceListingId = rs.getObject("source_listing_id", UUID::class.java),
+                destinationListingId = rs.getObject("destination_listing_id", UUID::class.java),
+                quantity = rs.getInt("quantity"),
+                status = TransferStatus.valueOf(rs.getString("status")),
+                actorId = rs.getObject("actor_id", UUID::class.java),
+                idempotencyKey = rs.getString("idempotency_key"),
+                sourceMovementId = rs.getObject("source_movement_id", UUID::class.java),
+                destinationMovementId = rs.getObject("destination_movement_id", UUID::class.java),
+                createdAt = rs.getObject("created_at", OffsetDateTime::class.java).toInstant(),
+            )
+            StoredTransfer(
+                transfer = transfer,
+                requestFingerprint = rs.getString("request_fingerprint"),
+                sourceMovementId = transfer.sourceMovementId,
+                destinationMovementId = transfer.destinationMovementId,
+            )
+        },
+        organizationId,
+        actorId,
+        idempotencyKey,
+    ).singleOrNull()
+
+    private fun getMovementById(movementId: UUID): StockMovement? = jdbc.query(
+        """
+        SELECT id, organization_id, outlet_id, listing_id, reason, quantity_delta,
+               resulting_on_hand, resulting_reserved, source_type, source_reference,
+               actor_id, idempotency_key, occurred_at
+        FROM mypet.inventory_movement
+        WHERE id = ?
+        """.trimIndent(),
+        { rs, _ -> movement(rs) },
+        movementId,
+    ).singleOrNull()
 
     override fun reserve(
         listingId: UUID,
@@ -223,8 +1129,6 @@ class JdbcInventoryPersistence(
         ).firstOrNull()
     }
 
-    // Server-internal customer/order lookups use globally unique listing IDs after the caller has
-    // validated the listing. Merchant authorization boundaries use the tenant-scoped methods below.
     override fun available(listingId: UUID): Int = jdbc.query(
         """
         SELECT b.on_hand, b.reserved
@@ -707,5 +1611,11 @@ class JdbcInventoryPersistence(
         val movement: StockMovement,
         val operationScope: String,
         val requestFingerprint: String,
+    )
+    private data class StoredTransfer(
+        val transfer: InventoryTransfer,
+        val requestFingerprint: String,
+        val sourceMovementId: UUID,
+        val destinationMovementId: UUID,
     )
 }

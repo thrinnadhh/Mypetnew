@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 5;
+export const CURRENT_SCHEMA_VERSION = 6;
 
 export const TABLE_PROJECTION_SYNC_STATE = 'projection_sync_state';
 export const TABLE_CATALOG_ITEMS = 'catalog_items';
@@ -13,6 +13,8 @@ export const TABLE_BOOTSTRAP_STAGING_BARCODES = 'bootstrap_staging_barcodes';
 export const TABLE_BOOTSTRAP_STAGING_STATE = 'bootstrap_staging_state';
 export const TABLE_CATALOG_DRAFTS = 'catalog_drafts';
 export const TABLE_PENDING_MEDIA = 'pending_media';
+export const TABLE_INVENTORY_COUNT_DRAFTS = 'inventory_count_drafts';
+export const TABLE_INVENTORY_COUNT_DRAFT_LINES = 'inventory_count_draft_lines';
 
 export const V1_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS ${TABLE_PROJECTION_SYNC_STATE} (
@@ -275,10 +277,48 @@ export const V5_SCHEMA_STATEMENTS = [
     ON ${TABLE_PENDING_MEDIA} (account_id, organization_id, outlet_id, local_listing_id, canonical_listing_id);`,
 ];
 
+export const V6_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS ${TABLE_INVENTORY_COUNT_DRAFTS} (
+    account_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    outlet_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    cutoff_cursor TEXT NULL,
+    cutoff_timestamp TEXT NOT NULL,
+    submit_command_id TEXT NULL,
+    last_error_code TEXT NULL,
+    last_error_details TEXT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    submitted_at TEXT NULL,
+    PRIMARY KEY (account_id, organization_id, outlet_id, session_id)
+  );`,
+  `CREATE TABLE IF NOT EXISTS ${TABLE_INVENTORY_COUNT_DRAFT_LINES} (
+    account_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    outlet_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    listing_id TEXT NOT NULL,
+    counted_quantity INTEGER NOT NULL,
+    cutoff_on_hand INTEGER NOT NULL,
+    reconciled_delta INTEGER NULL,
+    resulting_on_hand INTEGER NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (account_id, organization_id, outlet_id, session_id, listing_id)
+  );`,
+  `CREATE INDEX IF NOT EXISTS idx_count_drafts_partition
+    ON ${TABLE_INVENTORY_COUNT_DRAFTS} (account_id, organization_id, outlet_id, status);`,
+  `CREATE INDEX IF NOT EXISTS idx_count_draft_lines_partition
+    ON ${TABLE_INVENTORY_COUNT_DRAFT_LINES} (account_id, organization_id, outlet_id, session_id);`,
+];
+
 export const ALL_SCHEMA_STATEMENTS = [
   ...V1_SCHEMA_STATEMENTS,
   ...V2_SCHEMA_STATEMENTS,
   ...V3_SCHEMA_STATEMENTS,
   ...V4_SCHEMA_STATEMENTS,
   ...V5_SCHEMA_STATEMENTS,
+  ...V6_SCHEMA_STATEMENTS,
 ];

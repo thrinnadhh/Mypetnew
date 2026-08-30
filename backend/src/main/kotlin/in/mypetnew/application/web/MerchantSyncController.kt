@@ -5,6 +5,7 @@ import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.catalog.domain.MerchantSyncBootstrapResponse
 import `in`.mypetnew.catalog.domain.MerchantSyncChangePage
 import `in`.mypetnew.catalog.domain.MerchantSyncFeedService
+import `in`.mypetnew.catalog.domain.ReturnType
 import `in`.mypetnew.catalog.domain.StockReason
 import `in`.mypetnew.common.auth.Authorizer
 import `in`.mypetnew.common.auth.Principal
@@ -91,6 +92,13 @@ class MerchantSyncController(
 
         return when (request.commandType) {
             "INVENTORY_ADJUSTMENT" -> resolveInventoryReceipt(principal, actorId, request)
+            "INVENTORY_RECEIVING" -> resolveInventoryOperationReceipt(principal, actorId, request, "inventory-receiving", StockReason.RECEIVING)
+            "INVENTORY_DAMAGE" -> resolveInventoryOperationReceipt(principal, actorId, request, "inventory-damage", StockReason.DAMAGE)
+            "INVENTORY_EXPIRY" -> resolveInventoryOperationReceipt(principal, actorId, request, "inventory-expiry", StockReason.EXPIRY)
+            "INVENTORY_SHRINKAGE" -> resolveInventoryOperationReceipt(principal, actorId, request, "inventory-shrinkage", StockReason.SHRINKAGE)
+            "INVENTORY_RETURN" -> resolveInventoryReturnReceipt(principal, actorId, request)
+            "INVENTORY_TRANSFER" -> resolveInventoryTransferReceipt(principal, actorId, request)
+            "INVENTORY_COUNT_SUBMIT" -> resolveInventoryCountReceipt(principal, actorId, request)
             "CATALOG_UPDATE" -> resolveCatalogUpdateReceipt(principal, actorId, request)
             "CATALOG_ACTIVATE", "CATALOG_DEACTIVATE" -> resolveCatalogLifecycleReceipt(principal, actorId, request)
             else -> throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported command type ${request.commandType}")
@@ -144,7 +152,6 @@ class MerchantSyncController(
         val referenceType = payload["referenceType"] as? String
         val referenceId = payload["referenceId"] as? String
 
-        // Canonical fingerprint comparison
         val expectedFp = InventoryService.computeFingerprint(
             row.orgId,
             outletId,
@@ -166,6 +173,255 @@ class MerchantSyncController(
             resultingOnHand = row.onHand,
             resultingReserved = row.reserved,
             serverTimestamp = row.createdAt.toInstant().toString(),
+        )
+    }
+
+    private fun resolveInventoryOperationReceipt(
+        principal: Principal,
+        actorId: UUID,
+        request: ResolveReceiptRequest,
+        expectedOpScope: String,
+        reason: StockReason,
+    ): ResolveReceiptResponse {
+        val payload = request.payload
+        val outletId = UUID.fromString(payload["outletId"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing outletId"))
+        val listingId = UUID.fromString(payload["listingId"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing listingId"))
+        val quantity = (payload["quantity"] as? Number)?.toInt() ?: throw DomainException("VALIDATION_ERROR", "Missing quantity")
+
+        val row = jdbc.query(
+            """
+            SELECT id, organization_id, outlet_id, listing_id, actor_id, idempotency_key,
+                   operation_scope, request_fingerprint, movement_id, resulting_on_hand,
+                   resulting_reserved, created_at
+            FROM mypet.inventory_command_receipt
+            WHERE actor_id = ? AND idempotency_key = ? AND outlet_id = ? AND listing_id = ?
+            """.trimIndent(),
+            { rs, _ ->
+                object {
+                    val orgId = rs.getObject("organization_id", UUID::class.java)
+                    val outId = rs.getObject("outlet_id", UUID::class.java)
+                    val listId = rs.getObject("listing_id", UUID::class.java)
+                    val actId = rs.getObject("actor_id", UUID::class.java)
+                    val opScope = rs.getString("operation_scope")
+                    val storedFp = rs.getString("request_fingerprint")
+                    val movementId = rs.getObject("movement_id", UUID::class.java)
+                    val onHand = rs.getInt("resulting_on_hand")
+                    val reserved = rs.getInt("resulting_reserved")
+                    val createdAt = rs.getTimestamp("created_at")
+                }
+            },
+            actorId,
+            request.idempotencyKey,
+            outletId,
+            listingId,
+        ).firstOrNull() ?: throw DomainException("RESOURCE_NOT_FOUND", "No receipt found for idempotency key")
+
+        if (row.orgId == null || row.outId != outletId || row.listId != listingId || row.actId != actorId || row.opScope != expectedOpScope) {
+            throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "Stored receipt metadata mismatch")
+        }
+
+        val expectedFp = when (request.commandType) {
+            "INVENTORY_RECEIVING" -> {
+                val referenceType = payload["referenceType"] as? String
+                val referenceId = payload["referenceId"] as? String
+                val batchNumber = payload["batchNumber"] as? String
+                val expiryDate = payload["expiryDate"] as? String
+                InventoryService.computeFingerprint(row.orgId, outletId, listingId, quantity, StockReason.RECEIVING.name, referenceType, referenceId, batchNumber, expiryDate)
+            }
+            "INVENTORY_DAMAGE" -> {
+                val reasonDetails = payload["reasonDetails"] as? String
+                val referenceId = payload["referenceId"] as? String
+                InventoryService.computeFingerprint(row.orgId, outletId, listingId, quantity, StockReason.DAMAGE.name, reasonDetails, referenceId)
+            }
+            "INVENTORY_EXPIRY" -> {
+                val batchReference = payload["batchReference"] as? String
+                val expiryDate = payload["expiryDate"] as? String
+                InventoryService.computeFingerprint(row.orgId, outletId, listingId, quantity, StockReason.EXPIRY.name, batchReference, expiryDate)
+            }
+            "INVENTORY_SHRINKAGE" -> {
+                val notes = payload["notes"] as? String
+                val referenceId = payload["referenceId"] as? String
+                InventoryService.computeFingerprint(row.orgId, outletId, listingId, quantity, StockReason.SHRINKAGE.name, notes, referenceId)
+            }
+            else -> throw DomainException("COMMAND_SCHEMA_UNSUPPORTED", "Unsupported operation")
+        }
+
+        if (!MessageDigest.isEqual(row.storedFp.toByteArray(Charsets.UTF_8), expectedFp.toByteArray(Charsets.UTF_8))) {
+            throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "Payload does not match historical receipt")
+        }
+
+        return ResolveReceiptResponse(
+            status = "ACCEPTED",
+            receiptId = row.movementId.toString(),
+            commandType = request.commandType,
+            entityId = listingId,
+            resultingOnHand = row.onHand,
+            resultingReserved = row.reserved,
+            serverTimestamp = row.createdAt.toInstant().toString(),
+        )
+    }
+
+    private fun resolveInventoryReturnReceipt(
+        principal: Principal,
+        actorId: UUID,
+        request: ResolveReceiptRequest,
+    ): ResolveReceiptResponse {
+        val payload = request.payload
+        val outletId = UUID.fromString(payload["outletId"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing outletId"))
+        val listingId = UUID.fromString(payload["listingId"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing listingId"))
+        val quantity = (payload["quantity"] as? Number)?.toInt() ?: throw DomainException("VALIDATION_ERROR", "Missing quantity")
+        val returnTypeStr = payload["returnType"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing returnType")
+        val returnType = ReturnType.valueOf(returnTypeStr)
+        val referenceType = payload["referenceType"] as? String
+        val referenceId = payload["referenceId"] as? String
+
+        val row = jdbc.query(
+            """
+            SELECT id, organization_id, outlet_id, listing_id, actor_id, idempotency_key,
+                   operation_scope, request_fingerprint, movement_id, resulting_on_hand,
+                   resulting_reserved, created_at
+            FROM mypet.inventory_command_receipt
+            WHERE actor_id = ? AND idempotency_key = ? AND outlet_id = ? AND listing_id = ?
+            """.trimIndent(),
+            { rs, _ ->
+                object {
+                    val orgId = rs.getObject("organization_id", UUID::class.java)
+                    val outId = rs.getObject("outlet_id", UUID::class.java)
+                    val listId = rs.getObject("listing_id", UUID::class.java)
+                    val actId = rs.getObject("actor_id", UUID::class.java)
+                    val opScope = rs.getString("operation_scope")
+                    val storedFp = rs.getString("request_fingerprint")
+                    val movementId = rs.getObject("movement_id", UUID::class.java)
+                    val onHand = rs.getInt("resulting_on_hand")
+                    val reserved = rs.getInt("resulting_reserved")
+                    val createdAt = rs.getTimestamp("created_at")
+                }
+            },
+            actorId,
+            request.idempotencyKey,
+            outletId,
+            listingId,
+        ).firstOrNull() ?: throw DomainException("RESOURCE_NOT_FOUND", "No receipt found for idempotency key")
+
+        if (row.orgId == null || row.outId != outletId || row.listId != listingId || row.actId != actorId || row.opScope != "inventory-return") {
+            throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "Stored receipt metadata mismatch")
+        }
+
+        val expectedFp = InventoryService.computeFingerprint(
+            row.orgId,
+            outletId,
+            listingId,
+            quantity,
+            returnType.name,
+            referenceType,
+            referenceId,
+        )
+
+        if (!MessageDigest.isEqual(row.storedFp.toByteArray(Charsets.UTF_8), expectedFp.toByteArray(Charsets.UTF_8))) {
+            throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "Payload does not match historical receipt")
+        }
+
+        return ResolveReceiptResponse(
+            status = "ACCEPTED",
+            receiptId = row.movementId.toString(),
+            commandType = "INVENTORY_RETURN",
+            entityId = listingId,
+            resultingOnHand = row.onHand,
+            resultingReserved = row.reserved,
+            serverTimestamp = row.createdAt.toInstant().toString(),
+        )
+    }
+
+    private fun resolveInventoryTransferReceipt(
+        principal: Principal,
+        actorId: UUID,
+        request: ResolveReceiptRequest,
+    ): ResolveReceiptResponse {
+        val payload = request.payload
+        val sourceOutletId = UUID.fromString(payload["sourceOutletId"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing sourceOutletId"))
+        val destOutletId = UUID.fromString(payload["destinationOutletId"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing destinationOutletId"))
+        val sourceListingId = UUID.fromString(payload["sourceListingId"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing sourceListingId"))
+        val quantity = (payload["quantity"] as? Number)?.toInt() ?: throw DomainException("VALIDATION_ERROR", "Missing quantity")
+
+        val row = jdbc.query(
+            """
+            SELECT id, organization_id, source_outlet_id, destination_outlet_id,
+                   source_listing_id, destination_listing_id, quantity, status,
+                   actor_id, idempotency_key, request_fingerprint, created_at
+            FROM mypet.inventory_transfer
+            WHERE actor_id = ? AND idempotency_key = ? AND source_outlet_id = ?
+            """.trimIndent(),
+            { rs, _ ->
+                object {
+                    val id = rs.getObject("id", UUID::class.java)
+                    val orgId = rs.getObject("organization_id", UUID::class.java)
+                    val srcOutId = rs.getObject("source_outlet_id", UUID::class.java)
+                    val dstOutId = rs.getObject("destination_outlet_id", UUID::class.java)
+                    val srcListId = rs.getObject("source_listing_id", UUID::class.java)
+                    val dstListId = rs.getObject("destination_listing_id", UUID::class.java)
+                    val storedFp = rs.getString("request_fingerprint")
+                    val createdAt = rs.getTimestamp("created_at")
+                }
+            },
+            actorId,
+            request.idempotencyKey,
+            sourceOutletId,
+        ).firstOrNull() ?: throw DomainException("RESOURCE_NOT_FOUND", "No receipt found for idempotency key")
+
+        val expectedFp = InventoryService.computeFingerprint(
+            row.orgId,
+            sourceOutletId,
+            destOutletId,
+            sourceListingId,
+            row.dstListId,
+            quantity,
+        )
+
+        if (!MessageDigest.isEqual(row.storedFp.toByteArray(Charsets.UTF_8), expectedFp.toByteArray(Charsets.UTF_8))) {
+            throw DomainException("IDEMPOTENCY_FINGERPRINT_MISMATCH", "Payload does not match historical receipt")
+        }
+
+        return ResolveReceiptResponse(
+            status = "ACCEPTED",
+            receiptId = row.id.toString(),
+            commandType = "INVENTORY_TRANSFER",
+            entityId = sourceListingId,
+            serverTimestamp = row.createdAt.toInstant().toString(),
+        )
+    }
+
+    private fun resolveInventoryCountReceipt(
+        principal: Principal,
+        actorId: UUID,
+        request: ResolveReceiptRequest,
+    ): ResolveReceiptResponse {
+        val payload = request.payload
+        val outletId = UUID.fromString(payload["outletId"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing outletId"))
+        val sessionId = UUID.fromString(payload["sessionId"] as? String ?: throw DomainException("VALIDATION_ERROR", "Missing sessionId"))
+
+        val row = jdbc.query(
+            """
+            SELECT id, organization_id, outlet_id, status, submit_idempotency_key, submitted_at, created_at
+            FROM mypet.inventory_count_session
+            WHERE id = ? AND outlet_id = ? AND submit_idempotency_key = ? AND status = 'SUBMITTED'
+            """.trimIndent(),
+            { rs, _ ->
+                object {
+                    val id = rs.getObject("id", UUID::class.java)
+                    val submittedAt = rs.getTimestamp("submitted_at") ?: rs.getTimestamp("created_at")
+                }
+            },
+            sessionId,
+            outletId,
+            request.idempotencyKey,
+        ).firstOrNull() ?: throw DomainException("RESOURCE_NOT_FOUND", "No receipt found for count submit key")
+
+        return ResolveReceiptResponse(
+            status = "ACCEPTED",
+            receiptId = row.id.toString(),
+            commandType = "INVENTORY_COUNT_SUBMIT",
+            entityId = sessionId,
+            serverTimestamp = row.submittedAt.toInstant().toString(),
         )
     }
 

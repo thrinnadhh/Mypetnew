@@ -7,6 +7,8 @@ import {
   TABLE_CATALOG_DRAFTS,
   TABLE_CATALOG_ITEMS,
   TABLE_INVENTORY_BALANCES,
+  TABLE_INVENTORY_COUNT_DRAFTS,
+  TABLE_INVENTORY_COUNT_DRAFT_LINES,
   TABLE_OFFLINE_COMMANDS,
   TABLE_OFFLINE_COMMAND_DEPENDENCIES,
   TABLE_PENDING_MEDIA,
@@ -14,18 +16,18 @@ import {
   TABLE_PROJECTION_TOMBSTONES,
 } from '../schema';
 
-describe('M7 SQLite Bootstrap and Migrations', () => {
-  it('performs clean bootstrap to schema version 5 and creates M7 draft/media tables', async () => {
+describe('M8 SQLite Bootstrap and Migrations', () => {
+  it('performs clean bootstrap to schema version 6 and creates M8 count draft tables', async () => {
     const db = createNodeSqliteDatabase(':memory:');
     const bootstrapper = new DatabaseBootstrapper();
 
     const result = await bootstrapper.bootstrap(db);
     expect(result.isInitialized).toBe(true);
     expect(result.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(result.schemaVersion).toBe(5);
+    expect(result.schemaVersion).toBe(6);
 
     const version = await getSchemaVersion(db);
-    expect(version).toBe(5);
+    expect(version).toBe(6);
 
     const tables = await db.all<{ name: string }>(
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';",
@@ -41,21 +43,23 @@ describe('M7 SQLite Bootstrap and Migrations', () => {
     expect(tableNames).toContain(TABLE_OFFLINE_COMMAND_DEPENDENCIES);
     expect(tableNames).toContain(TABLE_CATALOG_DRAFTS);
     expect(tableNames).toContain(TABLE_PENDING_MEDIA);
+    expect(tableNames).toContain(TABLE_INVENTORY_COUNT_DRAFTS);
+    expect(tableNames).toContain(TABLE_INVENTORY_COUNT_DRAFT_LINES);
 
     await db.close();
   });
 
-  it('runs migration chain forward through 5 and remains idempotent at 5', async () => {
+  it('runs migration chain forward through 6 and remains idempotent at 6', async () => {
     const db = createNodeSqliteDatabase(':memory:');
 
-    for (let target = 1; target <= 5; target += 1) {
+    for (let target = 1; target <= 6; target += 1) {
       const result = await runMigrations(db, target);
       expect(result.currentVersion).toBe(target);
       expect(result.appliedVersions).toEqual([target]);
     }
 
-    const idempotent = await runMigrations(db, 5);
-    expect(idempotent.currentVersion).toBe(5);
+    const idempotent = await runMigrations(db, 6);
+    expect(idempotent.currentVersion).toBe(6);
     expect(idempotent.appliedVersions).toEqual([]);
 
     await db.close();

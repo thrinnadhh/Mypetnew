@@ -4,6 +4,13 @@ import {
   type CatalogLifecyclePayload,
   type CatalogUpdatePayload,
   type InventoryAdjustmentPayload,
+  type InventoryCountSubmitPayload,
+  type InventoryDamagePayload,
+  type InventoryExpiryPayload,
+  type InventoryReceivingPayload,
+  type InventoryReturnPayload,
+  type InventoryShrinkagePayload,
+  type InventoryTransferPayload,
   type OfflineCommandRecord,
   type ServerReceiptData,
   isSupportedCommandPayloadVersion,
@@ -105,6 +112,87 @@ export class SyncTransport {
         };
         break;
       }
+      case 'INVENTORY_RECEIVING': {
+        const rec = payload as InventoryReceivingPayload;
+        path = '/api/v1/merchant/inventory/receiving';
+        body = {
+          outletId: rec.outletId,
+          listingId: rec.listingId,
+          quantity: rec.quantity,
+          referenceType: rec.referenceType ?? null,
+          referenceId: rec.referenceId ?? null,
+          batchNumber: rec.batchNumber ?? null,
+          expiryDate: rec.expiryDate ?? null,
+        };
+        break;
+      }
+      case 'INVENTORY_DAMAGE': {
+        const dam = payload as InventoryDamagePayload;
+        path = '/api/v1/merchant/inventory/damage';
+        body = {
+          outletId: dam.outletId,
+          listingId: dam.listingId,
+          quantity: dam.quantity,
+          reasonDetails: dam.reasonDetails ?? null,
+          referenceId: dam.referenceId ?? null,
+        };
+        break;
+      }
+      case 'INVENTORY_EXPIRY': {
+        const exp = payload as InventoryExpiryPayload;
+        path = '/api/v1/merchant/inventory/expiry';
+        body = {
+          outletId: exp.outletId,
+          listingId: exp.listingId,
+          quantity: exp.quantity,
+          batchReference: exp.batchReference ?? null,
+          expiryDate: exp.expiryDate ?? null,
+        };
+        break;
+      }
+      case 'INVENTORY_SHRINKAGE': {
+        const shr = payload as InventoryShrinkagePayload;
+        path = '/api/v1/merchant/inventory/shrinkage';
+        body = {
+          outletId: shr.outletId,
+          listingId: shr.listingId,
+          quantity: shr.quantity,
+          notes: shr.notes ?? null,
+          referenceId: shr.referenceId ?? null,
+        };
+        break;
+      }
+      case 'INVENTORY_RETURN': {
+        const ret = payload as InventoryReturnPayload;
+        path = '/api/v1/merchant/inventory/returns';
+        body = {
+          outletId: ret.outletId,
+          listingId: ret.listingId,
+          quantity: ret.quantity,
+          returnType: ret.returnType,
+          referenceType: ret.referenceType ?? null,
+          referenceId: ret.referenceId ?? null,
+        };
+        break;
+      }
+      case 'INVENTORY_TRANSFER': {
+        const tr = payload as InventoryTransferPayload;
+        path = '/api/v1/merchant/inventory/transfers';
+        body = {
+          sourceOutletId: tr.sourceOutletId,
+          destinationOutletId: tr.destinationOutletId,
+          sourceListingId: tr.sourceListingId,
+          destinationListingId: tr.destinationListingId ?? null,
+          quantity: tr.quantity,
+        };
+        break;
+      }
+      case 'INVENTORY_COUNT_SUBMIT': {
+        const cnt = payload as InventoryCountSubmitPayload;
+        path = `/api/v1/merchant/inventory/counts/${encodeURIComponent(cnt.sessionId)}/submit`;
+        body = { outletId: cnt.outletId };
+        break;
+      }
       case 'CATALOG_CREATE': {
         const cat = payload as CatalogCreatePayload;
         path = '/api/v1/merchant/listings';
@@ -195,12 +283,12 @@ export class SyncTransport {
         status: response.status,
         data: responseData,
         receipt: {
-          receiptId: typeof responseData.id === 'string' ? responseData.id : undefined,
-          entityId: typeof responseData.id === 'string' ? responseData.id : undefined,
+          receiptId: typeof responseData.id === 'string' ? responseData.id : (typeof responseData.sessionId === 'string' ? responseData.sessionId : undefined),
+          entityId: typeof responseData.id === 'string' ? responseData.id : (typeof responseData.sessionId === 'string' ? responseData.sessionId : undefined),
           resultingVersion: typeof responseData.version === 'number' ? responseData.version : undefined,
           resultingOnHand: typeof responseData.resultingOnHand === 'number' ? responseData.resultingOnHand : undefined,
           resultingReserved: typeof responseData.resultingReserved === 'number' ? responseData.resultingReserved : undefined,
-          serverTimestamp: typeof responseData.updatedAt === 'string' ? responseData.updatedAt : new Date().toISOString(),
+          serverTimestamp: typeof responseData.updatedAt === 'string' ? responseData.updatedAt : (typeof responseData.submittedAt === 'string' ? responseData.submittedAt : new Date().toISOString()),
           rawResponse: responseData,
         },
       };

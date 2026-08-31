@@ -8,9 +8,11 @@ import `in`.mypetnew.appointment.infrastructure.MerchantAppointmentRequestView
 import `in`.mypetnew.common.auth.Authorizer
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
+import `in`.mypetnew.identity.infrastructure.MerchantPrincipalResolver
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RestController
 import java.time.Instant
 import java.util.UUID
@@ -37,6 +39,7 @@ data class MerchantAppointmentInboxResponse(
 @RestController
 class MerchantAppointmentInboxController(
     private val query: MerchantAppointmentQuery,
+    private val merchantPrincipals: MerchantPrincipalResolver,
 ) {
     @GetMapping("/api/v1/merchant/appointments")
     fun list(
@@ -49,9 +52,20 @@ class MerchantAppointmentInboxController(
         return PageResponse(result.items.map(::response), page, pageSize, result.hasNext)
     }
 
-    private fun merchantPrincipal(authentication: Authentication): Principal = authentication.domainPrincipal().also {
-        Authorizer.requireRole(it, Role.MERCHANT)
+    @GetMapping("/api/v1/merchant/appointments/{appointmentId}")
+    fun get(
+        authentication: Authentication,
+        @PathVariable appointmentId: UUID,
+    ): MerchantAppointmentInboxResponse {
+        val result = query.get(merchantPrincipal(authentication), appointmentId)
+            ?: throw `in`.mypetnew.common.error.DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
+        return response(result)
     }
+
+    private fun merchantPrincipal(authentication: Authentication): Principal =
+        merchantPrincipals.reauthorize(authentication.domainPrincipal()).also {
+            Authorizer.requireRole(it, Role.MERCHANT)
+        }
 
     private fun response(request: MerchantAppointmentRequestView) = MerchantAppointmentInboxResponse(
         appointmentId = request.appointmentId,

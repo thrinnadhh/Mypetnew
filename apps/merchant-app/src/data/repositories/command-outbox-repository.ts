@@ -499,6 +499,29 @@ export class CommandOutboxRepository {
     return rows.map(mapRowToRecord);
   }
 
+  async getStateCounts(
+    context: MerchantPartitionContext,
+  ): Promise<Record<OfflineCommandState, number>> {
+    const rows = await this.db.all<{ state: OfflineCommandState; command_count: number }>(
+      `SELECT state, COUNT(*) AS command_count
+       FROM ${TABLE_OFFLINE_COMMANDS}
+       WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
+       GROUP BY state;`,
+      [context.accountId, context.organizationId, context.outletId],
+    );
+    const counts: Record<OfflineCommandState, number> = {
+      PENDING: 0,
+      SENDING: 0,
+      ACKNOWLEDGED: 0,
+      REJECTED: 0,
+      BLOCKED: 0,
+      RETRYABLE: 0,
+      NEEDS_RECONCILIATION: 0,
+    };
+    for (const row of rows) counts[row.state] = Number(row.command_count);
+    return counts;
+  }
+
   async getCommandDependencies(
     context: MerchantPartitionContext,
     commandId: string,

@@ -14,6 +14,7 @@ import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
 import `in`.mypetnew.engagement.domain.NotificationService
 import `in`.mypetnew.engagement.domain.SafeRoute
+import `in`.mypetnew.merchantops.infrastructure.MerchantNotificationRecipientQuery
 import `in`.mypetnew.provider.domain.ProviderService
 import org.springframework.http.HttpStatus
 import org.springframework.security.core.Authentication
@@ -204,7 +205,11 @@ class MerchantAppointmentApiController(
 
 @RestController
 @RequestMapping("/api/v1/customer/appointments")
-class CustomerAppointmentApiController(private val appointments: AppointmentService) {
+class CustomerAppointmentApiController(
+    private val appointments: AppointmentService,
+    private val notifications: NotificationService,
+    private val merchantRecipients: MerchantNotificationRecipientQuery,
+) {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     fun hold(
@@ -228,17 +233,56 @@ class CustomerAppointmentApiController(private val appointments: AppointmentServ
     )
 
     @PostMapping("/{appointmentId}/confirm")
-    fun confirm(authentication: Authentication, @PathVariable appointmentId: UUID): CustomerAppointmentResponse =
-        appointmentResponse(appointments.confirm(customer(authentication), appointmentId))
+    fun confirm(authentication: Authentication, @PathVariable appointmentId: UUID): CustomerAppointmentResponse {
+        val appointment = appointments.confirm(customer(authentication), appointmentId)
+        notifyMerchant(appointment, cancelled = false)
+        return appointmentResponse(appointment)
+    }
 
     @PostMapping("/{appointmentId}/cancel")
     fun cancel(
         authentication: Authentication,
         @PathVariable appointmentId: UUID,
         @RequestBody(required = false) request: CustomerAppointmentCancelRequest?,
-    ): CustomerAppointmentResponse = appointmentResponse(
-        appointments.cancel(customer(authentication), appointmentId, request?.reason),
-    )
+    ): CustomerAppointmentResponse {
+        val principal = customer(authentication)
+        val before = appointments.get(principal, appointmentId)
+        val appointment = appointments.cancel(principal, appointmentId, request?.reason)
+        if (before.status in setOf(AppointmentStatus.BOOKED, AppointmentStatus.CONFIRMED)) {
+            notifyMerchant(appointment, cancelled = true)
+        }
+        return appointmentResponse(appointment)
+    }
+
+    private fun notifyMerchant(appointment: CustomerAppointment, cancelled: Boolean) {
+        val recipients = merchantRecipients.appointmentRecipients(appointment.organizationId, appointment.outletId)
+        val template = if (cancelled) {
+            Triple(
+                "merchant-appointment-cancelled-v1",
+                "Appointment cancelled",
+                "A customer cancelled an appointment. Open MyPet Merchant for details.",
+            )
+        } else {
+            Triple(
+                "merchant-appointment-booked-v1",
+                "New appointment request",
+                "Open MyPet Merchant to review a new appointment request.",
+            )
+        }
+        recipients.forEach { recipientId ->
+            runCatching {
+                notifications.enqueue(
+                    sourceEventId = appointment.id,
+                    recipientId = recipientId,
+                    templateVersion = template.first,
+                    title = template.second,
+                    body = template.third,
+                    route = SafeRoute.MERCHANT_APPOINTMENT,
+                    resourceId = appointment.id,
+                )
+            }
+        }
+    }
 
     @GetMapping("/{appointmentId}")
     fun get(authentication: Authentication, @PathVariable appointmentId: UUID): CustomerAppointmentResponse =

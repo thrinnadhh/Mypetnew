@@ -43,4 +43,4 @@ Requires `AUDIT_VIEW`, `X-Admin-Purpose: AUDIT_REVIEW`, and `X-Admin-Reason`. Re
 - `backend/src/test/kotlin/in/mypetnew/merchantops/M12AdminControlPlanePostgresContractTest.kt`
 - `backend/src/test/kotlin/in/mypetnew/api/M12AdminApiContractTest.kt`
 
-`M12-ADMIN-001` remains `PLANNED` until GitHub CI is green on the exact implementation head. Only then may the manifest be changed to `ENFORCED`, followed by a fresh exact-head CI run on the certification commit.
+`M12-ADMIN-001` is `ENFORCED` after GitHub CI passed on implementation head `e4851a0c473232f6c11828495cfe88ba8cd9ac31`. The certification commit must receive a fresh exact-head CI run before PR #139 may merge.

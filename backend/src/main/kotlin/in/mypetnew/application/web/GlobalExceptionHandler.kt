@@ -10,6 +10,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.HttpRequestMethodNotSupportedException
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 import org.springframework.web.multipart.MaxUploadSizeExceededException
 import org.springframework.web.servlet.NoHandlerFoundException
@@ -78,6 +79,11 @@ class GlobalExceptionHandler {
     fun noResource(request: HttpServletRequest): ResponseEntity<ApiErrorEnvelope> =
         ResponseEntity.status(HttpStatus.NOT_FOUND)
             .body(envelope("RESOURCE_NOT_FOUND", "The requested resource is unavailable", request))
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException::class)
+    fun methodNotAllowed(request: HttpServletRequest): ResponseEntity<ApiErrorEnvelope> =
+        ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+            .body(envelope("METHOD_NOT_ALLOWED", "The request method is not supported", request))
 
     @ExceptionHandler(MaxUploadSizeExceededException::class)
     fun oversizedUpload(request: HttpServletRequest): ResponseEntity<ApiErrorEnvelope> =

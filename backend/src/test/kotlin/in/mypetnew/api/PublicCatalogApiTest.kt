@@ -420,6 +420,10 @@ class PublicCatalogApiTest {
         val result = mockMvc.post(path) {
             header("Authorization", "Bearer $token")
             header("Idempotency-Key", key)
+            if (path.startsWith("/api/v1/admin/outlets/")) {
+                header("X-Admin-Purpose", "PROVIDER_REVIEW")
+                header("X-Admin-Reason", "Approve provider after verification review")
+            }
             contentType = MediaType.APPLICATION_JSON
             content = body
         }.andExpect { status { is2xxSuccessful() } }.andReturn()

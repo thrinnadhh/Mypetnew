@@ -29,7 +29,7 @@ import java.util.UUID
         "mypet.security.token-secret=test-only-secret-that-is-longer-than-32-bytes",
         "mypet.security.token-issuer=mypetnew-p2-test",
         "mypet.security.token-audience=mypetnew-test-clients",
-        "spring.datasource.url=jdbc:h2:mem=p2api;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
+        "spring.datasource.url=jdbc:h2:mem:p2api;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
         "spring.flyway.enabled=false",
@@ -255,6 +255,10 @@ class CustomerProfileDataApiTest {
         val result = mockMvc.post(path) {
             header("Authorization", "Bearer $token")
             header("Idempotency-Key", key)
+            if (path.startsWith("/api/v1/admin/outlets/")) {
+                header("X-Admin-Purpose", "PROVIDER_REVIEW")
+                header("X-Admin-Reason", "Approve provider after verification review")
+            }
             contentType = MediaType.APPLICATION_JSON
             content = body
         }.andExpect { status { is2xxSuccessful() } }.andReturn()

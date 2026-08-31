@@ -499,6 +499,91 @@ export class CommandOutboxRepository {
     return rows.map(mapRowToRecord);
   }
 
+  async requestManualRetry(
+    context: MerchantPartitionContext,
+    commandId: string,
+    nowMs: number = Date.now(),
+  ): Promise<OfflineCommandRecord> {
+    const command = await this.getCommand(context, commandId);
+    if (!command) {
+      throw new Error('COMMAND_NOT_FOUND: The queued operation no longer exists in this partition');
+    }
+    if (command.state !== 'RETRYABLE') {
+      throw new Error(`COMMAND_RETRY_NOT_ALLOWED: ${command.state} commands cannot be manually retried`);
+    }
+    if (command.nextAttemptAt) {
+      const retryAt = Date.parse(command.nextAttemptAt);
+      if (!Number.isFinite(retryAt)) {
+        throw new Error('COMMAND_RETRY_STATE_INVALID: Retry-after state is malformed');
+      }
+      if (retryAt > nowMs) {
+        throw new Error('COMMAND_RETRY_AFTER_PENDING: The server retry-after window has not elapsed');
+      }
+    }
+    const nowIso = new Date(nowMs).toISOString();
+    const update = await this.db.run(
+      `UPDATE ${TABLE_OFFLINE_COMMANDS}
+       SET state = 'PENDING', next_attempt_at = NULL, updated_at = ?
+       WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
+         AND command_id = ? AND state = 'RETRYABLE';`,
+      [nowIso, context.accountId, context.organizationId, context.outletId, commandId],
+    );
+    if (update.changes !== 1) {
+      throw new Error('COMMAND_RETRY_RACED: The command state changed before retry could be claimed');
+    }
+    const updated = await this.getCommand(context, commandId);
+    if (
+      !updated
+      || updated.state !== 'PENDING'
+      || updated.commandId !== command.commandId
+      || updated.idempotencyKey !== command.idempotencyKey
+    ) {
+      throw new Error('COMMAND_RETRY_IDENTITY_VIOLATION: Durable command identity changed during retry');
+    }
+    return updated;
+  }
+
+  async listOperationalAttention(
+    context: MerchantPartitionContext,
+    limit = 50,
+  ): Promise<OfflineCommandRecord[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error('COMMAND_PAGE_SIZE_INVALID');
+    }
+    const rows = await this.db.all<CommandDbRow>(
+      `SELECT * FROM ${TABLE_OFFLINE_COMMANDS}
+       WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
+         AND state IN ('RETRYABLE', 'NEEDS_RECONCILIATION', 'REJECTED', 'BLOCKED')
+       ORDER BY updated_at DESC, created_at DESC
+       LIMIT ?;`,
+      [context.accountId, context.organizationId, context.outletId, limit],
+    );
+    return rows.map(mapRowToRecord);
+  }
+
+  async getStateCounts(
+    context: MerchantPartitionContext,
+  ): Promise<Record<OfflineCommandState, number>> {
+    const rows = await this.db.all<{ state: OfflineCommandState; command_count: number }>(
+      `SELECT state, COUNT(*) AS command_count
+       FROM ${TABLE_OFFLINE_COMMANDS}
+       WHERE account_id = ? AND organization_id = ? AND outlet_id = ?
+       GROUP BY state;`,
+      [context.accountId, context.organizationId, context.outletId],
+    );
+    const counts: Record<OfflineCommandState, number> = {
+      PENDING: 0,
+      SENDING: 0,
+      ACKNOWLEDGED: 0,
+      REJECTED: 0,
+      BLOCKED: 0,
+      RETRYABLE: 0,
+      NEEDS_RECONCILIATION: 0,
+    };
+    for (const row of rows) counts[row.state] = Number(row.command_count);
+    return counts;
+  }
+
   async getCommandDependencies(
     context: MerchantPartitionContext,
     commandId: string,

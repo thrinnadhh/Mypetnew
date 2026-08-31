@@ -3,6 +3,7 @@ import { MerchantDatabase, createProductionMerchantDatabase } from '../database/
 import type { SqliteDatabase } from '../database/driver';
 import { BarcodeLocalRepository } from '../repositories/barcode-local-repository';
 import { CatalogLocalRepository } from '../repositories/catalog-local-repository';
+import { CommandOutboxRepository } from '../repositories/command-outbox-repository';
 import { DraftLocalRepository } from '../repositories/draft-local-repository';
 import { InventoryLocalRepository } from '../repositories/inventory-local-repository';
 import { PendingMediaRepository } from '../repositories/pending-media-repository';
@@ -14,6 +15,7 @@ export type MerchantDatabaseContextState = {
   error: Error | null;
   database: MerchantDatabase | null;
   catalogRepo: CatalogLocalRepository | null;
+  outboxRepo: CommandOutboxRepository | null;
   barcodeRepo: BarcodeLocalRepository | null;
   draftRepo: DraftLocalRepository | null;
   inventoryRepo: InventoryLocalRepository | null;
@@ -27,6 +29,7 @@ const defaultState: MerchantDatabaseContextState = {
   error: null,
   database: null,
   catalogRepo: null,
+  outboxRepo: null,
   barcodeRepo: null,
   draftRepo: null,
   inventoryRepo: null,
@@ -91,6 +94,7 @@ export function MerchantDatabaseProvider({
           error: null,
           database: db,
           catalogRepo: new CatalogLocalRepository(db),
+          outboxRepo: new CommandOutboxRepository(db),
           barcodeRepo: new BarcodeLocalRepository(db),
           draftRepo: new DraftLocalRepository(db),
           inventoryRepo: new InventoryLocalRepository(db),

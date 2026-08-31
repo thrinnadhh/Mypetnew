@@ -79,6 +79,43 @@ class CustomerNotificationTemplateContractTest {
     }
 
     @Test
+    fun `merchant appointment templates are approved safely routed and idempotent`() {
+        val sourceEventId = UUID.randomUUID()
+        val recipientId = UUID.randomUUID()
+        val resourceId = UUID.randomUUID()
+        fun merchantAppointment(template: String, title: String, body: String) = service.enqueue(
+            sourceEventId = sourceEventId,
+            recipientId = recipientId,
+            templateVersion = template,
+            title = title,
+            body = body,
+            route = SafeRoute.MERCHANT_APPOINTMENT,
+            resourceId = resourceId,
+        )
+
+        val booked = merchantAppointment(
+            "merchant-appointment-booked-v1",
+            "New appointment request",
+            "Open MyPet Merchant to review a new appointment request.",
+        )
+        val duplicate = merchantAppointment(
+            "merchant-appointment-booked-v1",
+            "New appointment request",
+            "Open MyPet Merchant to review a new appointment request.",
+        )
+        val cancelled = merchantAppointment(
+            "merchant-appointment-cancelled-v1",
+            "Appointment cancelled",
+            "A customer cancelled an appointment. Open MyPet Merchant for details.",
+        )
+
+        assertEquals(booked.id, duplicate.id)
+        assertEquals("merchant/appointments/detail", booked.payload["route"])
+        assertEquals("merchant/appointments/detail", cancelled.payload["route"])
+        assertEquals(2, service.forRecipient(recipientId).size)
+    }
+
+    @Test
     fun `unapproved or mutated customer templates fail closed`() {
         assertThrows<DomainException> {
             enqueue(
@@ -103,5 +140,6 @@ class CustomerNotificationTemplateContractTest {
         val wireValues = SafeRoute.entries.map(SafeRoute::wireValue)
         assertTrue("customer/orders/detail" in wireValues)
         assertTrue("customer/appointments/detail" in wireValues)
+        assertTrue("merchant/appointments/detail" in wireValues)
     }
 }

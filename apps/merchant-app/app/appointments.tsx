@@ -1,5 +1,5 @@
-import { Link } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { Link, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -18,6 +18,7 @@ import {
   fetchPendingAppointmentRequests,
   type MerchantAppointmentRequest,
 } from '../src/appointments/api';
+import { prioritizeAppointmentNavigation } from '../src/appointments/model';
 import { hasRuntimeMerchantSession } from '../src/auth/session';
 
 type LoadState = 'loading' | 'ready' | 'error' | 'unauthenticated';
@@ -51,10 +52,15 @@ function schedule(value: string): string {
 }
 
 export default function MerchantAppointmentsScreen() {
+  const { appointmentId } = useLocalSearchParams<{ appointmentId?: string }>();
   const [requests, setRequests] = useState<MerchantAppointmentRequest[]>([]);
   const [state, setState] = useState<LoadState>(hasRuntimeMerchantSession() ? 'loading' : 'unauthenticated');
   const [refreshing, setRefreshing] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
+  const displayRequests = useMemo(
+    () => prioritizeAppointmentNavigation(requests, appointmentId),
+    [appointmentId, requests],
+  );
 
   const load = useCallback(async (refresh = false) => {
     if (!hasRuntimeMerchantSession()) {
@@ -166,16 +172,17 @@ export default function MerchantAppointmentsScreen() {
             </View>
           ) : null}
 
-          {requests.map((request) => {
+          {displayRequests.map((request) => {
             const busy = actingId === request.appointmentId;
+            const navigated = appointmentId === request.appointmentId;
             return (
-              <View key={request.appointmentId} style={styles.card}>
+              <View key={request.appointmentId} style={[styles.card, navigated && styles.navigatedCard]}>
                 <View style={styles.cardHeader}>
                   <View style={styles.flex}>
                     <Text style={styles.service}>{request.serviceName}</Text>
                     <Text style={styles.pet}>Pet: {request.petName}</Text>
                   </View>
-                  <View style={styles.pendingPill}><Text style={styles.pendingText}>NEW REQUEST</Text></View>
+                  <View style={styles.pendingPill}><Text style={styles.pendingText}>{navigated ? 'OPENED' : 'NEW REQUEST'}</Text></View>
                 </View>
                 <Text style={styles.schedule}>{schedule(request.startsAt)}</Text>
                 <Text style={styles.fee}>{money(request.pricePaise)} · {paymentLabel(request)}</Text>
@@ -219,6 +226,7 @@ const styles = StyleSheet.create({
   stateTitle: { fontSize: 18, fontWeight: '800', color: '#111827' },
   body: { fontSize: 15, lineHeight: 21, color: '#64748b', textAlign: 'center' },
   card: { backgroundColor: '#ffffff', borderRadius: 16, padding: 16, gap: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: '#dbe2ea' },
+  navigatedCard: { borderWidth: 2, borderColor: '#2563eb' },
   cardHeader: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
   flex: { flex: 1 },
   service: { fontSize: 18, lineHeight: 24, fontWeight: '800', color: '#111827' },

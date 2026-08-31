@@ -48,25 +48,35 @@ class MerchantAppointmentQuery(
         pageSize: Int,
     ): MerchantAppointmentRequestPage {
         Authorizer.requireRole(merchant, Role.MERCHANT)
-        if (page < 0 || pageSize !in 1..100) {
+        if (page < 0 || pageSize !in 1..100 || page.toLong() * pageSize.toLong() > 100_000L) {
             throw DomainException("PAGE_SIZE_INVALID", "Pagination values are outside the allowed range")
         }
+        val organizationId = merchant.organizationId ?: return MerchantAppointmentRequestPage(emptyList(), false)
         if (merchant.outletIds.isEmpty()) return MerchantAppointmentRequestPage(emptyList(), false)
 
         val rows = jdbc.sql(
             """
-            SELECT id, outlet_id, service_id, slot_id, pet_name, service_name,
-                   starts_at, ends_at, status,
-                   payment_mode AS payment_method,
-                   payment_state AS payment_status,
-                   price_paise, notes, created_at, updated_at
-            FROM mypet.appointment
-            WHERE outlet_id IN (:outlet_ids)
-              AND (:status IS NULL OR status = :status)
-            ORDER BY created_at DESC, id DESC
+            SELECT a.id, a.outlet_id, a.service_id, a.slot_id, a.pet_name, a.service_name,
+                   a.starts_at, a.ends_at, a.status,
+                   a.payment_mode AS payment_method,
+                   a.payment_state AS payment_status,
+                   a.price_paise, a.notes, a.created_at, a.updated_at
+            FROM mypet.appointment a
+            JOIN mypet.provider_outlet o
+              ON o.id = a.outlet_id
+             AND o.organization_id = a.organization_id
+             AND o.status = 'ACTIVE'
+            JOIN mypet.merchant_organization organization
+              ON organization.id = a.organization_id
+             AND organization.status = 'ACTIVE'
+            WHERE a.organization_id = :organization_id
+              AND a.outlet_id IN (:outlet_ids)
+              AND a.status = COALESCE(:status, a.status)
+            ORDER BY a.created_at DESC, a.id DESC
             LIMIT :limit OFFSET :offset
             """.trimIndent(),
-        ).param("outlet_ids", merchant.outletIds)
+        ).param("organization_id", organizationId)
+            .param("outlet_ids", merchant.outletIds)
             .param("status", status?.name)
             .param("limit", pageSize + 1)
             .param("offset", page.toLong() * pageSize.toLong())
@@ -74,6 +84,35 @@ class MerchantAppointmentQuery(
             .list()
 
         return MerchantAppointmentRequestPage(rows.take(pageSize), rows.size > pageSize)
+    }
+
+    fun get(merchant: Principal, appointmentId: UUID): MerchantAppointmentRequestView? {
+        Authorizer.requireRole(merchant, Role.MERCHANT)
+        val organizationId = merchant.organizationId ?: return null
+        if (merchant.outletIds.isEmpty()) return null
+        return jdbc.sql(
+            """
+            SELECT a.id, a.outlet_id, a.service_id, a.slot_id, a.pet_name, a.service_name,
+                   a.starts_at, a.ends_at, a.status,
+                   a.payment_mode AS payment_method,
+                   a.payment_state AS payment_status,
+                   a.price_paise, a.notes, a.created_at, a.updated_at
+            FROM mypet.appointment a
+            JOIN mypet.provider_outlet o
+              ON o.id = a.outlet_id
+             AND o.organization_id = a.organization_id
+             AND o.status = 'ACTIVE'
+            JOIN mypet.merchant_organization organization
+              ON organization.id = a.organization_id
+             AND organization.status = 'ACTIVE'
+            WHERE a.id = :appointmentId
+              AND a.organization_id = :organizationId
+              AND a.outlet_id IN (:outletIds)
+            """.trimIndent(),
+        ).param("appointmentId", appointmentId)
+            .param("organizationId", organizationId)
+            .param("outletIds", merchant.outletIds)
+            .query(::mapRequest).optional().orElse(null)
     }
 
     private fun mapRequest(row: ResultSet, @Suppress("UNUSED_PARAMETER") rowNum: Int) = MerchantAppointmentRequestView(

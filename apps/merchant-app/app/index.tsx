@@ -1,11 +1,12 @@
 import { Link } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Button, SafeAreaView, StyleSheet, Text, View } from "react-native";
+import { Button, SafeAreaView, ScrollView, StyleSheet, Text, View } from "react-native";
 import {
   hasRuntimeMerchantSession,
   logoutMerchant,
   restoreMerchantSession,
 } from "../src/auth/session";
+import { MerchantDashboardContent } from "./dashboard";
 
 type StartupState = "loading" | "authenticated" | "signed-out" | "offline" | "error";
 
@@ -42,9 +43,7 @@ export default function MerchantEntryScreen() {
   }, []);
 
   useEffect(() => {
-    const startup = setTimeout(() => {
-      void restore();
-    }, 0);
+    const startup = setTimeout(() => void restore(), 0);
     return () => clearTimeout(startup);
   }, [restore]);
 
@@ -56,48 +55,23 @@ export default function MerchantEntryScreen() {
       await logoutMerchant();
       setState("signed-out");
     } catch (error) {
-      if (!hasRuntimeMerchantSession()) {
-        setState("signed-out");
-      } else {
+      if (!hasRuntimeMerchantSession()) setState("signed-out");
+      else {
         setState("authenticated");
-        setMessage(
-          isLikelyNetworkError(error)
-            ? "Sign out did not complete while offline. Reconnect and try again."
-            : "Sign out did not complete. Try again.",
-        );
+        setMessage(isLikelyNetworkError(error)
+          ? "Sign out did not complete while offline. Reconnect and try again."
+          : "Sign out did not complete. Try again.");
       }
     } finally {
       setSigningOut(false);
     }
   }
 
-  return (
-    <SafeAreaView style={styles.page}>
-      <Text style={styles.title}>MyPet Merchant</Text>
-      {state === "loading" ? <Text accessibilityLiveRegion="polite">Restoring your secure session…</Text> : null}
-      {state === "authenticated" ? (
-        <>
-          <Text style={styles.body}>Merchant session active.</Text>
-          <View style={styles.primaryLinkBox}>
-            <Text style={styles.primaryLinkTitle}>Catalog management</Text>
-            <Text style={styles.primaryLinkBody}>Create products, update price and metadata, search listings, and activate or deactivate safely with version checks.</Text>
-            <Link href="/catalog" accessibilityRole="button" style={styles.primaryLink}>Open catalog</Link>
-          </View>
-          <View style={styles.primaryLinkBox}>
-            <Text style={styles.primaryLinkTitle}>Barcode lookup</Text>
-            <Text style={styles.primaryLinkBody}>Validate GTIN or internal barcodes and resolve existing listings inside the selected Merchant outlet.</Text>
-            <Link href="/barcode" accessibilityRole="button" style={styles.primaryLink}>Open barcode lookup</Link>
-          </View>
-          <View style={styles.primaryLinkBox}>
-            <Text style={styles.primaryLinkTitle}>Inventory ledger</Text>
-            <Text style={styles.primaryLinkBody}>Review canonical stock, commit whole-unit adjustments, retry safely, and inspect immutable movement history.</Text>
-            <Link href="/inventory" accessibilityRole="button" style={styles.primaryLink}>Open inventory</Link>
-          </View>
-          <View style={styles.primaryLinkBox}>
-            <Text style={styles.primaryLinkTitle}>New booking requests</Text>
-            <Text style={styles.primaryLinkBody}>Accept or reject grooming and veterinary requests before customers see Confirmed.</Text>
-            <Link href="/appointments" accessibilityRole="button" style={styles.primaryLink}>Open booking requests</Link>
-          </View>
+  if (state === "authenticated") {
+    return (
+      <SafeAreaView style={styles.page}>
+        <MerchantDashboardContent showHomeLink={false} />
+        <View style={styles.sessionActions}>
           {message ? <Text accessibilityRole="alert" style={styles.body}>{message}</Text> : null}
           <Button
             title={signingOut ? "Signing out…" : "Sign out"}
@@ -105,31 +79,38 @@ export default function MerchantEntryScreen() {
             onPress={() => void signOut()}
             accessibilityLabel="Sign out of MyPet Merchant"
           />
-        </>
-      ) : null}
-      {state === "signed-out" ? (
-        <>
-          <Text style={styles.body}>Sign in with your authorized Merchant mobile number to continue.</Text>
-          <Link href="/login" accessibilityRole="button">Sign in</Link>
-        </>
-      ) : null}
-      {state === "offline" || state === "error" ? (
-        <>
-          <Text accessibilityRole="alert" style={styles.body}>{message}</Text>
-          <Button title="Retry" onPress={() => void restore()} accessibilityLabel="Retry Merchant session restore" />
-          <Link href="/login" accessibilityRole="button">Sign in again</Link>
-        </>
-      ) : null}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.page}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <Text style={styles.title}>MyPet Merchant</Text>
+        {state === "loading" ? <Text accessibilityLiveRegion="polite">Restoring your secure session…</Text> : null}
+        {state === "signed-out" ? (
+          <>
+            <Text style={styles.body}>Sign in with your authorized Merchant mobile number to continue.</Text>
+            <Link href="/login" accessibilityRole="button">Sign in</Link>
+          </>
+        ) : null}
+        {state === "offline" || state === "error" ? (
+          <>
+            <Text accessibilityRole="alert" style={styles.body}>{message}</Text>
+            <Button title="Retry" onPress={() => void restore()} accessibilityLabel="Retry Merchant session restore" />
+            <Link href="/login" accessibilityRole="button">Sign in again</Link>
+          </>
+        ) : null}
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, padding: 24, justifyContent: "center", alignItems: "center", gap: 16, backgroundColor: "#fff" },
+  page: { flex: 1, backgroundColor: "#fff" },
+  content: { flexGrow: 1, padding: 24, alignItems: "center", gap: 16 },
   title: { fontSize: 26, fontWeight: "700" },
   body: { fontSize: 16, color: "#4b5563", textAlign: "center" },
-  primaryLinkBox: { width: "100%", maxWidth: 520, gap: 8, padding: 18, borderRadius: 16, backgroundColor: "#f0fdf4", borderWidth: 1, borderColor: "#bbf7d0" },
-  primaryLinkTitle: { fontSize: 18, fontWeight: "800", color: "#14532d" },
-  primaryLinkBody: { fontSize: 14, lineHeight: 20, color: "#166534" },
-  primaryLink: { color: "#166534", fontWeight: "800", paddingVertical: 6 },
+  sessionActions: { paddingHorizontal: 24, paddingBottom: 16, gap: 8 },
 });

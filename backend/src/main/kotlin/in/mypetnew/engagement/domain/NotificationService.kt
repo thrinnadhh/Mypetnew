@@ -18,6 +18,9 @@ enum class SafeRoute(val wireValue: String) {
     CUSTOMER_ORDER("customer/orders/detail"),
     CUSTOMER_APPOINTMENT("customer/appointments/detail"),
     MERCHANT_ORDER("merchant/orders/detail"),
+    MERCHANT_APPOINTMENT("merchant/appointments/detail"),
+    MERCHANT_CATALOG("merchant/catalog/detail"),
+    MERCHANT_INVENTORY("merchant/inventory/detail"),
     CAPTAIN_OFFER("captain/dispatch/offer"),
     INBOX("inbox"),
 }
@@ -424,6 +427,16 @@ class NotificationService(private val repository: NotificationRepository = InMem
                 "Order update",
                 "Your order was cancelled by the store. Open MyPet for details.",
                 SafeRoute.CUSTOMER_ORDER,
+            ),
+            "merchant-appointment-booked-v1" to ApprovedTemplate(
+                "New appointment request",
+                "Open MyPet Merchant to review a new appointment request.",
+                SafeRoute.MERCHANT_APPOINTMENT,
+            ),
+            "merchant-appointment-cancelled-v1" to ApprovedTemplate(
+                "Appointment cancelled",
+                "A customer cancelled an appointment. Open MyPet Merchant for details.",
+                SafeRoute.MERCHANT_APPOINTMENT,
             ),
             "customer-appointment-confirmed-v1" to ApprovedTemplate(
                 "Appointment confirmed",

@@ -1,0 +1,202 @@
+name: overnight-e2e-certification
+
+on:
+  schedule:
+    # 00:30 Asia/Kolkata (19:00 UTC on the previous date)
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: overnight-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend / API + state transitions
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - name: Run backend tests and coverage gate
+        run: ./gradlew :backend:test :backend:jacocoTestCoverageVerification --no-daemon --stacktrace
+      - name: Upload backend test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-evidence-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            backend/build/reports/tests
+            backend/build/reports/jacoco
+            backend/build/test-results
+
+  customer:
+    name: Customer / frontend + checkout flows
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/customer-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/customer-app/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check:network-boundaries
+      - run: npm run typecheck
+      - run: npm run lint
+      - name: Customer ↔ Merchant consistency / checkout contracts
+        run: npm run test:merchant-consistency
+      - name: Full Customer regression
+        run: npm test -- --runInBand
+      - name: Upload Customer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-test-evidence-${{ github.sha }}
+          if-no-files-found: warn
+          path: apps/customer-app/coverage
+
+  merchant:
+    name: Merchant / frontend + offline + contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/merchant-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/merchant-app/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Route hygiene
+        run: |
+          npm run check:routes
+          node --test ../../scripts/merchant-app/verify-route-hygiene.test.mjs
+      - run: npm run typecheck
+      - run: npm run lint
+      - name: Merchant API/contracts
+        run: npm run test:contract
+      - name: Merchant offline/reconnect harness
+        run: npm run test:offline
+      - name: Full Merchant regression + coverage
+        run: npm run test:ci
+      - name: Upload Merchant evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: merchant-test-evidence-${{ github.sha }}
+          if-no-files-found: warn
+          path: apps/merchant-app/coverage
+
+  captain:
+    name: Captain / frontend + fulfillment E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/captain-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/captain-app/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run lint
+      - name: Captain architecture boundaries
+        run: npm run test:architecture
+      - name: Captain fulfillment journey E2E suite
+        run: npm run test:e2e
+      - name: Full Captain regression
+        run: npm test
+      - name: Upload Captain evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: captain-test-evidence-${{ github.sha }}
+          if-no-files-found: warn
+          path: apps/captain-app/coverage
+
+  admin:
+    name: Admin / frontend discovery + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Locate and test Admin frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          ADMIN_DIR=""
+          for candidate in apps/admin-app apps/admin-web admin-app admin-web; do
+            if [ -f "$candidate/package.json" ]; then ADMIN_DIR="$candidate"; break; fi
+          done
+          if [ -z "$ADMIN_DIR" ]; then
+            echo "## Admin frontend: BLOCKED" >> "$GITHUB_STEP_SUMMARY"
+            echo "No tracked Admin frontend package exists in the current repository tree." >> "$GITHUB_STEP_SUMMARY"
+            echo "This run must not be interpreted as Admin UI E2E certification." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          cd "$ADMIN_DIR"
+          npm ci --no-audit --no-fund
+          npm run typecheck --if-present
+          npm run lint --if-present
+          npm test --if-present -- --runInBand
+          npm run build --if-present
+          echo "## Admin frontend: TESTED ($ADMIN_DIR)" >> "$GITHUB_STEP_SUMMARY"
+
+  certification:
+    name: Cross-app overnight certification summary
+    if: always()
+    needs: [backend, customer, merchant, captain, admin]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write exact-SHA certification
+        shell: bash
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          # MyPetNew overnight certification
+          Exact SHA: \`${GITHUB_SHA}\`
+
+          | Surface | Result |
+          |---|---|
+          | Backend API/state transitions | ${{ needs.backend.result }} |
+          | Customer frontend + checkout contracts | ${{ needs.customer.result }} |
+          | Merchant frontend + offline/contracts | ${{ needs.merchant.result }} |
+          | Captain frontend + fulfillment E2E | ${{ needs.captain.result }} |
+          | Admin frontend discovery/tests | ${{ needs.admin.result }}* |
+
+          \*A successful Admin job can still mean BLOCKED when no Admin package exists; inspect the Admin job summary.
+
+          ## E2E interpretation
+          Captain \`test:e2e\` and the app/backend contract suites are automated journey/contract evidence. They are **not** a substitute for a real multi-process device flow (Customer UI → live backend → Merchant UI → Captain UI → Admin UI). Full device-level cross-app certification requires runnable Admin UI plus a seeded live test environment and device/UI runner.
+          EOF
+          if [ "${{ needs.backend.result }}" != success ] || \
+             [ "${{ needs.customer.result }}" != success ] || \
+             [ "${{ needs.merchant.result }}" != success ] || \
+             [ "${{ needs.captain.result }}" != success ]; then
+            echo "Required overnight gate failed." >&2
+            exit 1
+          fi

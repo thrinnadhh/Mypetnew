@@ -1,6 +1,7 @@
 import { Link, type Href } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Button, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Button, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { loadOfflineMerchantAccountId } from '../src/auth/offline-account';
 import { fetchMerchantCatalogContext, type MerchantCatalogContext } from '../src/catalog/api';
 import { useMerchantDatabase } from '../src/data';

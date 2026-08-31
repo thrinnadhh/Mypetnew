@@ -3,13 +3,13 @@ import * as ImagePicker from 'expo-image-picker';
 import {
   Button,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   type BarcodeType,
   type CatalogMediaAsset,

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Button, SafeAreaView, ScrollView, Text, TextInput, View } from 'react-native';
+import { Button, ScrollView, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { fetchCatalogPage, fetchMerchantCatalogContext, type MerchantListing } from '../src/catalog/api';
 import {
   createInventoryAdjustmentCommand,

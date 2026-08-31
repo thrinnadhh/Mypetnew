@@ -20,11 +20,11 @@ beforeEach(() => fetchMock.mockReset());
 describe('M11 staff permission gating and API', () => {
   const accountId = '5e1b20ac-3cc0-4180-aa91-3b7eeb447ccb';
 
-  it('allows owners and outlet managers while reserving OWNER mutation for owners', () => {
+  it('allows owners and outlet managers while keeping canonical OWNER membership immutable', () => {
     expect(canManageStaff(['OWNER'])).toBe(true);
     expect(canManageStaff(['OUTLET_MANAGE'])).toBe(true);
     expect(canManageStaff(['CATALOG_WRITE'])).toBe(false);
-    expect(canManagePermission(['OWNER'], 'OWNER')).toBe(true);
+    expect(canManagePermission(['OWNER'], 'OWNER')).toBe(false);
     expect(canManagePermission(['OUTLET_MANAGE'], 'OWNER')).toBe(false);
     expect(canManagePermission(['OUTLET_MANAGE'], 'CATALOG_WRITE')).toBe(true);
   });

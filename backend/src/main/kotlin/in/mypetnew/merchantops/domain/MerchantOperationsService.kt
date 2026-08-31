@@ -10,6 +10,7 @@ import java.time.Instant
 import java.util.UUID
 
 const val M11_LOW_STOCK_THRESHOLD = 5
+const val M11_MAX_OUTLET_SCOPE = 100
 
 data class MerchantDashboardMetrics(
     val pendingAppointments: Long,
@@ -225,12 +226,26 @@ class MerchantOperationsService(
         organizationId: UUID,
         outletId: UUID?,
     ): List<UUID> {
+        val candidateOutletIds = if (outletId == null) {
+            principal.outletIds
+        } else {
+            if (outletId !in principal.outletIds) resourceUnavailable()
+            setOf(outletId)
+        }
         val activeOutletIds = persistence.activeAuthorizedOutletIds(
             principal.actorId,
             organizationId,
-            principal.outletIds,
+            candidateOutletIds,
         )
-        if (outletId == null) return activeOutletIds
+        if (outletId == null) {
+            if (activeOutletIds.size > M11_MAX_OUTLET_SCOPE) {
+                throw DomainException(
+                    "OUTLET_SCOPE_TOO_LARGE",
+                    "Select one outlet to load Merchant operations",
+                )
+            }
+            return activeOutletIds
+        }
         if (outletId !in activeOutletIds) resourceUnavailable()
         return listOf(outletId)
     }

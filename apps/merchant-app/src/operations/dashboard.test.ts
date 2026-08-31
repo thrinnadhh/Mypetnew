@@ -64,6 +64,6 @@ describe('M11 canonical Merchant dashboard', () => {
     expect(dashboardMetricDestination('activeCatalog')).toEqual({ pathname: '/catalog' });
     expect(dashboardMetricDestination('lowStockInventory')).toEqual({ pathname: '/inventory' });
     expect(dashboardMetricDestination('outOfStockInventory')).toEqual({ pathname: '/inventory' });
-    expect(dashboardMetricDestination('orderWork')).toEqual({ pathname: '/dashboard' });
+    expect(dashboardMetricDestination('orderWork')).toEqual({ pathname: '/orders' });
   });
 });

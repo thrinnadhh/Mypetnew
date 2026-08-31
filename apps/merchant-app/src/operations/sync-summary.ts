@@ -3,7 +3,10 @@ import type { MerchantPartitionContext } from '../data/models/partition-context'
 import type { CommandOutboxRepository } from '../data/repositories/command-outbox-repository';
 import type { SyncStateRepository } from '../data/repositories/sync-state-repository';
 
-const OPERATIONAL_PROJECTIONS = ['BARCODE', 'CATALOG', 'INVENTORY'] as const;
+const ATOMIC_OPERATIONAL_PROJECTION = 'all' as const;
+const LEGACY_OPERATIONAL_PROJECTIONS = ['CATALOG', 'INVENTORY'] as const;
+type OperationalProjection = typeof ATOMIC_OPERATIONAL_PROJECTION
+  | typeof LEGACY_OPERATIONAL_PROJECTIONS[number];
 
 export type OperationalCommandSummary = {
   pending: number;
@@ -17,7 +20,7 @@ export type OperationalCommandSummary = {
 
 export type OperationalProjectionSummary = {
   outletId: string;
-  projection: typeof OPERATIONAL_PROJECTIONS[number];
+  projection: OperationalProjection;
   freshness: ProjectionFreshness;
 };
 
@@ -53,7 +56,11 @@ export async function summarizeOperationalSync(
     commands.blocked += counts.BLOCKED;
     commands.acknowledged += counts.ACKNOWLEDGED;
 
-    for (const projection of OPERATIONAL_PROJECTIONS) {
+    const atomicState = await syncState.getSyncState(context, ATOMIC_OPERATIONAL_PROJECTION);
+    const operationalProjections: readonly OperationalProjection[] = atomicState
+      ? [ATOMIC_OPERATIONAL_PROJECTION]
+      : LEGACY_OPERATIONAL_PROJECTIONS;
+    for (const projection of operationalProjections) {
       projections.push({
         outletId: context.outletId,
         projection,

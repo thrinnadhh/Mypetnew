@@ -48,7 +48,7 @@ class MerchantAppointmentQuery(
         pageSize: Int,
     ): MerchantAppointmentRequestPage {
         Authorizer.requireRole(merchant, Role.MERCHANT)
-        if (page < 0 || pageSize !in 1..100) {
+        if (page < 0 || pageSize !in 1..100 || page.toLong() * pageSize.toLong() > 100_000L) {
             throw DomainException("PAGE_SIZE_INVALID", "Pagination values are outside the allowed range")
         }
         val organizationId = merchant.organizationId ?: return MerchantAppointmentRequestPage(emptyList(), false)
@@ -71,7 +71,7 @@ class MerchantAppointmentQuery(
              AND organization.status = 'ACTIVE'
             WHERE a.organization_id = :organization_id
               AND a.outlet_id IN (:outlet_ids)
-              AND (:status IS NULL OR a.status = :status)
+              AND a.status = COALESCE(:status, a.status)
             ORDER BY a.created_at DESC, a.id DESC
             LIMIT :limit OFFSET :offset
             """.trimIndent(),

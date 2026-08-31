@@ -144,6 +144,7 @@ export function MerchantDashboardContent({ showHomeLink = true }: DashboardConte
             <>
               <Text>Pending {sync.commands.pending} · Sending {sync.commands.sending} · Retry {sync.commands.retry}</Text>
               <Text>Reconcile {sync.commands.reconciliation} · Rejected {sync.commands.rejected} · Blocked {sync.commands.blocked}</Text>
+              <Text>Acknowledged {sync.commands.acknowledged}</Text>
               {sync.projections.map((projection) => (
                 <Text key={`${projection.outletId}-${projection.projection}`} style={styles.muted}>
                   {projection.projection}: {projection.freshness}
@@ -154,6 +155,8 @@ export function MerchantDashboardContent({ showHomeLink = true }: DashboardConte
         </View>
 
         <View style={styles.actions}>
+          <Link href="/sync-status" style={styles.actionLink}>Sync & conflict status</Link>
+          <Link href="/orders" style={styles.actionLink}>Order work</Link>
           <Link href="/notifications" style={styles.actionLink}>Notification inbox</Link>
           {staffOutletId ? (
             <Link href={{ pathname: '/staff', params: { outletId: staffOutletId } }} style={styles.actionLink}>

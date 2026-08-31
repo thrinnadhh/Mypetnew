@@ -3,6 +3,7 @@ package `in`.mypetnew.merchantops.infrastructure
 import `in`.mypetnew.common.auth.MerchantPermission
 import `in`.mypetnew.common.error.DomainException
 import `in`.mypetnew.merchantops.domain.MerchantDashboardMetrics
+import `in`.mypetnew.merchantops.domain.M11_MAX_OUTLET_SCOPE
 import `in`.mypetnew.merchantops.domain.MerchantOperationsPersistence
 import `in`.mypetnew.merchantops.domain.MerchantNotificationPage
 import `in`.mypetnew.merchantops.domain.MerchantOperationalNotification
@@ -47,10 +48,12 @@ class JdbcMerchantOperationsPersistence(
               AND o.id IN (:outletIds)
               AND o.status = 'ACTIVE'
             ORDER BY o.id
+            LIMIT :scopeLimit
             """.trimIndent(),
         ).param("accountId", accountId)
             .param("organizationId", organizationId)
             .param("outletIds", tokenOutletIds)
+            .param("scopeLimit", M11_MAX_OUTLET_SCOPE + 1)
             .query(UUID::class.java)
             .list()
             .filterNotNull()

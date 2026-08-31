@@ -255,7 +255,11 @@ class CustomerAppointmentApiController(
     }
 
     private fun notifyMerchant(appointment: CustomerAppointment, cancelled: Boolean) {
-        val recipients = merchantRecipients.appointmentRecipients(appointment.organizationId, appointment.outletId)
+        // Notifications are an operational side effect: a delivery/query failure must never roll
+        // back or mask the canonical customer appointment transition that already succeeded.
+        val recipients = runCatching {
+            merchantRecipients.appointmentRecipients(appointment.organizationId, appointment.outletId)
+        }.getOrDefault(emptyList())
         val template = if (cancelled) {
             Triple(
                 "merchant-appointment-cancelled-v1",

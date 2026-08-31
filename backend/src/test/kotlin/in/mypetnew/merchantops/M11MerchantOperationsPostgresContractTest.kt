@@ -121,6 +121,28 @@ class M11MerchantOperationsPostgresContractTest {
     }
 
     @Test
+    fun `dashboard rejects an unbounded all-outlet scope while retaining bounded outlet selection`() {
+        val context = context()
+        val owner = context.merchant("Owner")
+        val organization = context.organization(owner, "Large scope")
+        val outlets = (1..101).map { index ->
+            context.outlet(organization, "Outlet $index", owner, MerchantPermission.OWNER)
+        }
+        val authentication = context.authentication(owner)
+
+        assertEquals(
+            "OUTLET_SCOPE_TOO_LARGE",
+            assertThrows(DomainException::class.java) {
+                context.controller.dashboard(authentication, null)
+            }.code,
+        )
+        assertEquals(
+            listOf(outlets.last()),
+            context.controller.dashboard(authentication, outlets.last()).outletIds,
+        )
+    }
+
+    @Test
     fun `staff grants re-enable and revoke exact permissions while canonical owner remains immutable`() {
         val context = context()
         val owner = context.merchant("Owner")

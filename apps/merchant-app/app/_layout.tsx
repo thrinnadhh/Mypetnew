@@ -34,6 +34,8 @@ function RootNavigation() {
       <Stack.Screen name="dashboard" options={{ title: "Operations dashboard" }} />
       <Stack.Screen name="staff" options={{ title: "Staff permissions" }} />
       <Stack.Screen name="notifications" options={{ title: "Notifications" }} />
+      <Stack.Screen name="orders" options={{ title: "Order work" }} />
+      <Stack.Screen name="sync-status" options={{ title: "Sync & conflicts" }} />
     </Stack>
   );
 }

@@ -28,10 +28,14 @@ beforeEach(() => fetchMock.mockReset());
 
 describe('M11 Merchant notification inbox and route allowlist', () => {
   it('loads a bounded page from the canonical notification inbox', async () => {
-    const page = { items: [notification('merchant/appointments/detail')], page: 0, pageSize: 50, hasNext: false };
+    const first = notification('merchant/appointments/detail');
+    const page = { items: [first, first, { ...first, id: 'notification-2' }], page: 0, pageSize: 50, hasNext: false };
     fetchMock.mockResolvedValue(response(true, page));
-    await expect(fetchMerchantNotifications()).resolves.toEqual(page);
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/notifications?page=0&pageSize=50');
+    await expect(fetchMerchantNotifications()).resolves.toEqual({
+      ...page,
+      items: [first, { ...first, id: 'notification-2' }],
+    });
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/merchant/notifications?page=0&pageSize=50');
   });
 
   it('routes only recognized Merchant resources and preserves appointment IDs as navigation hints', () => {
@@ -40,7 +44,7 @@ describe('M11 Merchant notification inbox and route allowlist', () => {
       params: { appointmentId: '5e1b20ac-3cc0-4180-aa91-3b7eeb447ccb' },
     });
     expect(notificationDestination(notification('merchant/orders/detail'))).toEqual({
-      pathname: '/dashboard',
+      pathname: '/orders',
     });
     expect(notificationDestination(notification('merchant/catalog/detail'))).toEqual({
       pathname: '/catalog',

@@ -19,7 +19,14 @@ export const MERCHANT_PERMISSIONS: readonly MerchantPermission[] = [
   'LOYALTY_OPERATE',
 ];
 
-export const STAFF_PERMISSIONS = MERCHANT_PERMISSIONS;
+export const STAFF_PERMISSIONS: readonly MerchantPermission[] = [
+  'OUTLET_MANAGE',
+  'CATALOG_WRITE',
+  'INVENTORY_WRITE',
+  'ORDER_FULFIL',
+  'POS_OPERATE',
+  'LOYALTY_OPERATE',
+];
 
 export type StaffGrant = {
   accountId: string;
@@ -53,8 +60,7 @@ export function canManagePermission(
   actorPermissions: readonly string[],
   permission: MerchantPermission,
 ): boolean {
-  if (!canManageStaff(actorPermissions)) return false;
-  return permission !== 'OWNER' || actorPermissions.includes('OWNER');
+  return permission !== 'OWNER' && canManageStaff(actorPermissions);
 }
 
 export async function fetchStaffGrants(

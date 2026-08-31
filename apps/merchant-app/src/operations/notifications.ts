@@ -31,9 +31,18 @@ export async function fetchMerchantNotifications(
   page = 0,
   pageSize = 50,
 ): Promise<MerchantNotificationPage> {
-  const response = await merchantApiFetch(`/api/v1/notifications?page=${page}&pageSize=${pageSize}`);
+  const response = await merchantApiFetch(`/api/v1/merchant/notifications?page=${page}&pageSize=${pageSize}`);
   if (!response.ok) throw await apiError(response, 'Could not load notifications.');
-  return (await response.json()) as MerchantNotificationPage;
+  const result = (await response.json()) as MerchantNotificationPage;
+  const seen = new Set<string>();
+  return {
+    ...result,
+    items: result.items.filter((item) => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    }),
+  };
 }
 
 export function notificationDestination(notification: MerchantNotification): OperationsDestination {
@@ -43,7 +52,7 @@ export function notificationDestination(notification: MerchantNotification): Ope
         ? { pathname: '/appointments', params: { appointmentId: notification.resourceId } }
         : DASHBOARD;
     case 'merchant/orders/detail':
-      return DASHBOARD;
+      return UUID.test(notification.resourceId) ? { pathname: '/orders' } : DASHBOARD;
     case 'merchant/catalog/detail':
       return { pathname: '/catalog' };
     case 'merchant/inventory/detail':

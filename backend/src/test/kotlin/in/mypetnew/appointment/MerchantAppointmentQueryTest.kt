@@ -153,6 +153,9 @@ class MerchantAppointmentQueryTest {
         assertEquals("PAGE_SIZE_INVALID", assertThrows(DomainException::class.java) {
             query.list(merchant, AppointmentStatus.BOOKED, -1, 20)
         }.code)
+        assertEquals("PAGE_SIZE_INVALID", assertThrows(DomainException::class.java) {
+            query.list(merchant, AppointmentStatus.BOOKED, 100_001, 1)
+        }.code)
         assertThrows(DomainException::class.java) {
             query.list(customer, AppointmentStatus.BOOKED, 0, 20)
         }

@@ -18,7 +18,7 @@ export type MerchantDashboardSnapshot = {
 };
 
 export type OperationsDestination = {
-  pathname: '/appointments' | '/catalog' | '/inventory' | '/dashboard';
+  pathname: '/appointments' | '/catalog' | '/inventory' | '/dashboard' | '/orders' | '/sync-status';
   params?: { appointmentId: string };
 };
 
@@ -81,7 +81,7 @@ export function dashboardMetricDestination(key: MerchantDashboardMetricKey): Ope
     case 'outOfStockInventory':
       return { pathname: '/inventory' };
     case 'orderWork':
-      return { pathname: '/dashboard' };
+      return { pathname: '/orders' };
   }
 }
 

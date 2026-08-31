@@ -55,6 +55,10 @@ jobs:
           console.log('Merchant production dependency advisory gate passed.');
           NODE
           rm -f audit.json
+      - name: Verify Merchant route hygiene
+        run: |
+          node ../../scripts/merchant-app/verify-route-hygiene.mjs
+          node --test ../../scripts/merchant-app/verify-route-hygiene.test.mjs
       - name: Typecheck Merchant app
         run: npm run typecheck
       - name: Lint Merchant app

@@ -1,6 +1,7 @@
 import { router } from "expo-router";
 import { useState } from "react";
-import { Button, SafeAreaView, Text, TextInput } from "react-native";
+import { Button, Text, TextInput } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { requestMerchantOtp, verifyMerchantOtp } from "../src/auth/session";
 
 function displayError(error: unknown): string {

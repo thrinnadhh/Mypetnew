@@ -1,6 +1,7 @@
 import { Link } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Button, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   fetchMerchantOrderWork,
   orderTargets,

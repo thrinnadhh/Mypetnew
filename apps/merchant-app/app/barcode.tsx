@@ -3,13 +3,13 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Button,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { loadOfflineMerchantAccountId } from '../src/auth/offline-account';
 import { installationId } from '../src/auth/session';
 import { resolveMerchantBarcode } from '../src/barcode/api';

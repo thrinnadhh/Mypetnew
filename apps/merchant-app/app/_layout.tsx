@@ -2,6 +2,7 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { MerchantDatabaseProvider, useMerchantDatabase } from "../src/data";
 
 function RootNavigation() {
@@ -32,9 +33,13 @@ function RootNavigation() {
       <Stack.Screen name="index" options={{ title: "MyPet Merchant" }} />
       <Stack.Screen name="login" options={{ title: "Merchant sign in" }} />
       <Stack.Screen name="dashboard" options={{ title: "Operations dashboard" }} />
-      <Stack.Screen name="staff" options={{ title: "Staff permissions" }} />
-      <Stack.Screen name="notifications" options={{ title: "Notifications" }} />
+      <Stack.Screen name="inventory" options={{ title: "Inventory & stock" }} />
+      <Stack.Screen name="catalog" options={{ title: "Catalog & products" }} />
+      <Stack.Screen name="barcode" options={{ title: "Barcode onboarding" }} />
       <Stack.Screen name="orders" options={{ title: "Order work" }} />
+      <Stack.Screen name="appointments" options={{ title: "Booking requests" }} />
+      <Stack.Screen name="notifications" options={{ title: "Notifications" }} />
+      <Stack.Screen name="staff" options={{ title: "Staff permissions" }} />
       <Stack.Screen name="sync-status" options={{ title: "Sync & conflicts" }} />
     </Stack>
   );
@@ -42,10 +47,12 @@ function RootNavigation() {
 
 export default function RootLayout() {
   return (
-    <MerchantDatabaseProvider>
-      <StatusBar style="auto" />
-      <RootNavigation />
-    </MerchantDatabaseProvider>
+    <SafeAreaProvider>
+      <MerchantDatabaseProvider>
+        <StatusBar style="auto" />
+        <RootNavigation />
+      </MerchantDatabaseProvider>
+    </SafeAreaProvider>
   );
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import MerchantInventoryScreen from './inventory';
-import { fetchCatalogPage, fetchMerchantCatalogContext } from '../src/catalog/api';
-import { fetchInventoryBalance, fetchInventoryMovements } from '../src/inventory/api';
+import MerchantInventoryScreen from '../../../app/inventory';
+import { fetchCatalogPage, fetchMerchantCatalogContext } from '../../catalog/api';
+import { fetchInventoryBalance, fetchInventoryMovements } from '../../inventory/api';
 
 jest.mock('react', () => {
   const actual = jest.requireActual('react');
@@ -12,12 +12,12 @@ jest.mock('react', () => {
   };
 });
 
-jest.mock('../src/catalog/api', () => ({
+jest.mock('../../catalog/api', () => ({
   fetchCatalogPage: jest.fn(),
   fetchMerchantCatalogContext: jest.fn(),
 }));
 
-jest.mock('../src/inventory/api', () => ({
+jest.mock('../../inventory/api', () => ({
   createInventoryAdjustmentCommand: jest.fn(),
   fetchInventoryBalance: jest.fn(),
   fetchInventoryMovements: jest.fn(),

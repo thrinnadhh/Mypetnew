@@ -1,5 +1,7 @@
 package `in`.mypetnew.application.web
 
+import `in`.mypetnew.adminops.domain.AdminOperationPurpose
+import `in`.mypetnew.adminops.domain.AdminOperationsService
 import `in`.mypetnew.catalog.domain.BarcodeType
 import `in`.mypetnew.catalog.domain.CatalogLifecycleCommand
 import `in`.mypetnew.catalog.domain.CatalogSearchPage
@@ -53,7 +55,10 @@ data class SubmitOutletRequest(
 )
 
 @RestController
-class ProviderApiController(private val providers: ProviderService) {
+class ProviderApiController(
+    private val providers: ProviderService,
+    private val adminOperations: AdminOperationsService,
+) {
     @PostMapping("/api/v1/merchant/outlets")
     fun submit(
         authentication: Authentication,
@@ -72,7 +77,16 @@ class ProviderApiController(private val providers: ProviderService) {
         authentication: Authentication,
         @PathVariable outletId: UUID,
         @RequestHeader("Idempotency-Key") idempotencyKey: String,
-    ) = providers.approveOutlet(authentication.domainPrincipal(), outletId, idempotencyKey)
+        @RequestHeader("X-Admin-Purpose") purpose: AdminOperationPurpose,
+        @RequestHeader("X-Admin-Reason") reason: String,
+    ) = adminOperations.approveOutlet(
+        admin = authentication.domainPrincipal(),
+        outletId = outletId,
+        purpose = purpose,
+        reason = reason,
+        idempotencyKey = idempotencyKey,
+        traceId = currentAdminTraceId(),
+    )
 }
 
 data class CreateListingRequest(

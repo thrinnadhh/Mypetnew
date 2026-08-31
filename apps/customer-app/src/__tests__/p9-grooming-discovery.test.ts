@@ -129,7 +129,7 @@ describe('P9 grooming discovery contract', () => {
     expect(button).toContain('minHeight: touchTarget');
   });
 
-  it('keeps the backend public outlet endpoint authoritative for activity, capability, PIN, stable ordering, pagination and minimization', () => {
+  it('keeps the backend public outlet endpoint authoritative for activity, capability, PIN, stable ordering, bounded pagination and minimization', () => {
     const backend = source('../../backend/src/main/kotlin/in/mypetnew/application/web/PublicCatalogController.kt');
     const apiTest = source('../../backend/src/test/kotlin/in/mypetnew/api/PublicCatalogApiTest.kt');
 
@@ -138,7 +138,8 @@ describe('P9 grooming discovery contract', () => {
     expect(backend).toContain('(pincodeFilter == null || pincodeFilter in outlet.servicePinCodes)');
     expect(backend).toContain('sortedWith(compareBy<ProviderOutlet> { it.name.lowercase() }.thenBy { it.id.toString() })');
     expect(backend).toContain('return PaginationHelper.paginate(visible, page, pageSize)');
-    expect(backend).toContain('pageSize !in 1..100');
+    expect(backend).toContain('pageSize !in 1..MAX_PUBLIC_CATALOG_PAGE_SIZE');
+    expect(backend).toContain('offset > MAX_PUBLIC_CATALOG_OFFSET');
     expect(backend).toContain('data class PublicOutletSummary(');
     expect(backend).not.toContain('data class PublicOutletSummary(\n    val ownerActorId');
 
@@ -148,6 +149,8 @@ describe('P9 grooming discovery contract', () => {
     expect(apiTest).toContain('param("capability", "PRODUCT_STORE")');
     expect(apiTest).toContain('mockMvc.get("/api/v1/public/outlets/$outlet2Id")');
     expect(apiTest).toContain('jsonPath("$.items[0].ownerActorId") { doesNotExist() }');
+    expect(apiTest).toContain('param("page", "5001")');
+    expect(apiTest).toContain('jsonPath("$.code") { value("PAGE_SIZE_INVALID") }');
   });
 
   it('preserves fail-closed direct groomer validation for P10 handoff', () => {

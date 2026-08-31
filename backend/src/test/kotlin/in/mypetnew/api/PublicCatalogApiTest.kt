@@ -39,16 +39,17 @@ class PublicCatalogApiTest {
     @Autowired private lateinit var json: ObjectMapper
 
     @Test
-    fun `public outlets endpoints enforce active filter, capability, q search, overflow safety, invalid params, and data minimization`() {
+    fun `public outlets endpoints enforce active filter, capability, q search, bounded pagination, invalid params, and data minimization`() {
         val admin = Principal(UUID.randomUUID(), Role.ADMIN, permissions = setOf(AdminPermission.PROVIDER_REVIEW))
         val adminToken = tokens.issue(admin)
+        val isolatedPincode = "517599"
 
         val merchant1Token = tokens.issue(Principal(UUID.randomUUID(), Role.MERCHANT))
         val outlet1Node = post(
             "/api/v1/merchant/outlets",
             merchant1Token,
             "out-1",
-            """{"name":"Happy Pets Outlet Alpha","capabilities":["PRODUCT_STORE"],"servicePinCodes":["517501"]}""",
+            """{"name":"Happy Pets Outlet Alpha","capabilities":["PRODUCT_STORE"],"servicePinCodes":["$isolatedPincode"]}""",
         )
         val outlet1Id = outlet1Node.uuid("id")
         post("/api/v1/admin/outlets/$outlet1Id/approve", adminToken, "app-1", "{}")
@@ -58,7 +59,7 @@ class PublicCatalogApiTest {
             "/api/v1/merchant/outlets",
             merchant2Token,
             "out-2",
-            """{"name":"Unapproved Pet Clinic","capabilities":["PRODUCT_STORE"],"servicePinCodes":["517501"]}""",
+            """{"name":"Unapproved Pet Clinic","capabilities":["PRODUCT_STORE"],"servicePinCodes":["$isolatedPincode"]}""",
         )
         val outlet2Id = outlet2Node.uuid("id")
 
@@ -79,26 +80,38 @@ class PublicCatalogApiTest {
 
         mockMvc.get("/api/v1/public/outlets") {
             param("capability", "PRODUCT_STORE")
+            param("pincode", isolatedPincode)
         }.andExpect {
             status { isOk() }
             jsonPath("$.items.length()") { value(1) }
+            jsonPath("$.items[0].id") { value(outlet1Id.toString()) }
         }
 
         mockMvc.get("/api/v1/public/outlets") {
             param("capability", "MEDICINE_CATALOG_VIEW_ONLY")
+            param("pincode", isolatedPincode)
         }.andExpect {
             status { isOk() }
             jsonPath("$.items.length()") { value(0) }
         }
 
         mockMvc.get("/api/v1/public/outlets") {
-            param("page", Int.MAX_VALUE.toString())
+            param("page", "5000")
             param("pageSize", "20")
         }.andExpect {
             status { isOk() }
             jsonPath("$.items.length()") { value(0) }
-            jsonPath("$.page") { value(Int.MAX_VALUE) }
+            jsonPath("$.page") { value(5000) }
             jsonPath("$.hasNext") { value(false) }
+        }
+
+        mockMvc.get("/api/v1/public/outlets") {
+            param("page", "5001")
+            param("pageSize", "20")
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.code") { value("PAGE_SIZE_INVALID") }
+            jsonPath("$.traceId") { exists() }
         }
 
         mockMvc.get("/api/v1/public/outlets") {
@@ -110,7 +123,7 @@ class PublicCatalogApiTest {
         }
 
         mockMvc.get("/api/v1/public/outlets") {
-            param("pageSize", "101")
+            param("pageSize", "51")
         }.andExpect {
             status { isBadRequest() }
             jsonPath("$.code") { value("PAGE_SIZE_INVALID") }
@@ -130,7 +143,7 @@ class PublicCatalogApiTest {
     }
 
     @Test
-    fun `public catalog list and detail enforce filters, availability, medicine view only, overflow safety, and data minimization`() {
+    fun `public catalog list and detail enforce filters, availability, medicine view only, bounded pagination, and data minimization`() {
         val adminToken = tokens.issue(Principal(UUID.randomUUID(), Role.ADMIN, permissions = setOf(AdminPermission.PROVIDER_REVIEW)))
 
         val merchantActor = UUID.randomUUID()
@@ -270,12 +283,23 @@ class PublicCatalogApiTest {
 
         mockMvc.get("/api/v1/public/catalog") {
             param("outletId", outletId.toString())
-            param("page", Int.MAX_VALUE.toString())
+            param("page", "5000")
+            param("pageSize", "20")
         }.andExpect {
             status { isOk() }
             jsonPath("$.items.length()") { value(0) }
-            jsonPath("$.page") { value(Int.MAX_VALUE) }
+            jsonPath("$.page") { value(5000) }
             jsonPath("$.hasNext") { value(false) }
+        }
+
+        mockMvc.get("/api/v1/public/catalog") {
+            param("outletId", outletId.toString())
+            param("page", "5001")
+            param("pageSize", "20")
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.code") { value("PAGE_SIZE_INVALID") }
+            jsonPath("$.traceId") { exists() }
         }
 
         mockMvc.get("/api/v1/public/catalog") {

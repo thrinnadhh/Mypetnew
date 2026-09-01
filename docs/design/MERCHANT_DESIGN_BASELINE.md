@@ -143,9 +143,20 @@ The Merchant application strictly enforces backend-defined appointment lifecycle
 * `BOOKED` / `CONFIRMED` -> `CANCELLED` ("Cancel Appointment", requires reason)
 
 ### Offline & Stale-State Behavior
-* **Offline Read:** Cached appointment data is displayed with `OfflineBanner` ("Cached — last known server state").
+* **Offline Read:** MF4R does not claim a persistent appointment cache that does not exist. The screen may retain the last successfully loaded data for the same outlet during the current process session; switching to an outlet that cannot be loaded while offline clears the prior outlet data and states that no appointment cache is available.
 * **Offline Transitions:** Mutation actions are disabled when offline to preserve authoritative backend state rules.
 * **Stale Reconciliation:** When an appointment status transition is rejected due to server state change (e.g. action taken on another device), the UI alerts the merchant, re-fetches canonical state from the server, and updates the local workload.
+
+### MF4R Runtime & Contract Repairs
+* **Explicit Outlet Scope:** `/api/v1/merchant/appointments` accepts an authorized `outletId`; the backend enforces the authenticated merchant's outlet scope before querying. Omitting `outletId` preserves the shared All Outlets consolidated view across authorized outlets. The UI clears the prior scope immediately during a switch to prevent cross-outlet stale presentation.
+* **Operational Query Semantics:** Merchant workload queries exclude transient `HOLD` / `HOLD_EXPIRED` payment-reservation records. Active work is ordered by scheduled start time; terminal history follows active work in reverse scheduled order.
+* **Pagination & Virtualization:** The appointment work queue uses a `FlatList` and loads canonical pages of 50 records as the merchant scrolls instead of silently truncating after the first 100.
+* **Deep-Link Resolution:** A notification/deep-link appointment absent from page zero is fetched canonically by ID, checked against merchant outlet scope, and opened in its owning outlet context.
+* **Destructive Reasons:** `REJECTED` and `CANCELLED` require a <=240-character operator reason in both client and backend validation. The reason is persisted to appointment history and passed into terminal payment/refund projection.
+* **Complete Action Reachability:** `NO_SHOW`, `CANCELLED`, and `REJECTED` remain distinct reachable actions rather than collapsing to the first destructive action.
+* **Runtime Effect Safety:** Appointment initialization no longer depends on state that it mutates, preventing repeated context/workload fetch loops. The inherited MF3 Orders loader was repaired with the same explicit-context pattern.
+* **Navigation Truthfulness:** Appointments mark the bottom navigation's `More` destination active rather than visually selecting `Orders`.
+* **Mounted Regression Tests:** Appointment screen tests mount the real React hook lifecycle with `react-test-renderer`; they cover initialization count, outlet switching, offline isolation, pagination, deep links, reason propagation, and no-show reachability.
 
 ---
 

@@ -46,6 +46,7 @@ class MerchantAppointmentQuery(
         status: AppointmentStatus?,
         page: Int,
         pageSize: Int,
+        outletId: UUID? = null,
     ): MerchantAppointmentRequestPage {
         Authorizer.requireRole(merchant, Role.MERCHANT)
         if (page < 0 || pageSize !in 1..100 || page.toLong() * pageSize.toLong() > 100_000L) {
@@ -53,6 +54,12 @@ class MerchantAppointmentQuery(
         }
         val organizationId = merchant.organizationId ?: return MerchantAppointmentRequestPage(emptyList(), false)
         if (merchant.outletIds.isEmpty()) return MerchantAppointmentRequestPage(emptyList(), false)
+        val scopedOutletIds = if (outletId == null) {
+            merchant.outletIds
+        } else {
+            Authorizer.requireOutlet(merchant, outletId)
+            setOf(outletId)
+        }
 
         val rows = jdbc.sql(
             """
@@ -71,12 +78,17 @@ class MerchantAppointmentQuery(
              AND organization.status = 'ACTIVE'
             WHERE a.organization_id = :organization_id
               AND a.outlet_id IN (:outlet_ids)
+              AND a.status NOT IN ('HOLD', 'HOLD_EXPIRED')
               AND a.status = COALESCE(:status, a.status)
-            ORDER BY a.created_at DESC, a.id DESC
+            ORDER BY
+              CASE WHEN a.status IN ('BOOKED', 'CONFIRMED', 'CHECKED_IN', 'IN_SERVICE') THEN 0 ELSE 1 END ASC,
+              CASE WHEN a.status IN ('BOOKED', 'CONFIRMED', 'CHECKED_IN', 'IN_SERVICE') THEN a.starts_at END ASC,
+              CASE WHEN a.status NOT IN ('BOOKED', 'CONFIRMED', 'CHECKED_IN', 'IN_SERVICE') THEN a.starts_at END DESC,
+              a.id ASC
             LIMIT :limit OFFSET :offset
             """.trimIndent(),
         ).param("organization_id", organizationId)
-            .param("outlet_ids", merchant.outletIds)
+            .param("outlet_ids", scopedOutletIds)
             .param("status", status?.name)
             .param("limit", pageSize + 1)
             .param("offset", page.toLong() * pageSize.toLong())

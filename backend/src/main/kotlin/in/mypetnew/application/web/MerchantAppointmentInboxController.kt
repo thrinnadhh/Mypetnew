@@ -45,10 +45,11 @@ class MerchantAppointmentInboxController(
     fun list(
         authentication: Authentication,
         @RequestParam(required = false) status: AppointmentStatus?,
+        @RequestParam(required = false) outletId: UUID?,
         @RequestParam(defaultValue = "0") page: Int,
         @RequestParam(defaultValue = "20") pageSize: Int,
     ): PageResponse<MerchantAppointmentInboxResponse> {
-        val result = query.list(merchantPrincipal(authentication), status, page, pageSize)
+        val result = query.list(merchantPrincipal(authentication), status, page, pageSize, outletId)
         return PageResponse(result.items.map(::response), page, pageSize, result.hasNext)
     }
 

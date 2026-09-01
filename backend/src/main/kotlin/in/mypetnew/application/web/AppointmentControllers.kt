@@ -58,7 +58,11 @@ data class MerchantServiceRequest(
 )
 
 data class MerchantServiceSlotRequest(val startsAt: Instant)
-data class MerchantAppointmentStatusRequest(val outletId: UUID, val status: AppointmentStatus)
+data class MerchantAppointmentStatusRequest(
+    val outletId: UUID,
+    val status: AppointmentStatus,
+    val reason: String? = null,
+)
 
 data class CustomerAppointmentCreateRequest(
     val outletId: UUID,
@@ -176,7 +180,7 @@ class MerchantAppointmentApiController(
         // authenticated merchant must still hold fulfilment authority for an
         // ACTIVE outlet in the same server-owned organization.
         providers.requireActiveOutlet(principal, request.outletId, MerchantPermission.ORDER_FULFIL)
-        val appointment = appointments.merchantTransition(principal, request.outletId, appointmentId, request.status)
+        val appointment = appointments.merchantTransition(principal, request.outletId, appointmentId, request.status, request.reason)
         notifyCustomer(appointment)
         return appointmentResponse(appointment)
     }

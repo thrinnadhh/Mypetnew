@@ -57,8 +57,7 @@ export function AppointmentDetailModal({
     (t) => t === 'CONFIRMED' || t === 'CHECKED_IN' || t === 'IN_SERVICE' || t === 'COMPLETED',
   );
 
-  // Destructive actions: REJECTED, CANCELLED, NO_SHOW
-  const destructiveAction = availableTargets.find(
+  const destructiveActions = availableTargets.filter(
     (t) => t === 'REJECTED' || t === 'CANCELLED' || t === 'NO_SHOW',
   );
 
@@ -220,15 +219,16 @@ export function AppointmentDetailModal({
           {/* Action Bar Footer */}
           {availableTargets.length > 0 ? (
             <View style={styles.footerActions}>
-              {destructiveAction ? (
+              {destructiveActions.map((target) => (
                 <SecondaryButton
-                  title={appointmentActionTitle(destructiveAction)}
-                  onPress={() => onTransition(appointment, destructiveAction)}
+                  key={target}
+                  title={appointmentActionTitle(target)}
+                  onPress={() => onTransition(appointment, target)}
                   disabled={busy || offline}
                   style={styles.destructiveBtn}
-                  testID="modal-destructive-action-btn"
+                  testID={`modal-action-${target}`}
                 />
-              ) : null}
+              ))}
               {primaryAction ? (
                 <PrimaryButton
                   title={appointmentActionTitle(primaryAction)}
@@ -450,6 +450,7 @@ const styles = StyleSheet.create({
   },
   footerActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     padding: spacing.md,
     gap: spacing.sm,
     borderTopWidth: 1,

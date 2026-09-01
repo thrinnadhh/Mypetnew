@@ -111,6 +111,7 @@ export async function fetchPendingAppointmentRequests(): Promise<MerchantAppoint
 export async function transitionMerchantAppointment(
   appointment: MerchantAppointmentRequest,
   target: MerchantAppointmentStatus,
+  reason?: string,
 ): Promise<MerchantAppointmentRequest> {
   const allowed = appointmentTargets(appointment);
   if (!allowed.includes(target)) {
@@ -118,11 +119,26 @@ export async function transitionMerchantAppointment(
     error.name = 'APPOINTMENT_STATE_INVALID';
     throw error;
   }
+  const normalizedReason = reason?.trim();
+  if ((target === 'REJECTED' || target === 'CANCELLED') && !normalizedReason) {
+    const error = new Error('A reason is required for this appointment transition.');
+    error.name = 'APPOINTMENT_REASON_REQUIRED';
+    throw error;
+  }
+  if (normalizedReason && normalizedReason.length > 240) {
+    const error = new Error('The appointment transition reason is too long.');
+    error.name = 'APPOINTMENT_REASON_INVALID';
+    throw error;
+  }
   const response = await merchantApiFetch(
     `/api/v1/merchant/appointments/${encodeURIComponent(appointment.appointmentId)}/status`,
     {
       method: 'POST',
-      body: JSON.stringify({ outletId: appointment.outletId, status: target }),
+      body: JSON.stringify({
+        outletId: appointment.outletId,
+        status: target,
+        ...(normalizedReason ? { reason: normalizedReason } : {}),
+      }),
     },
   );
   if (!response.ok) {
@@ -141,6 +157,7 @@ export async function transitionMerchantAppointment(
 export async function decideAppointmentRequest(
   request: MerchantAppointmentRequest,
   decision: 'CONFIRMED' | 'REJECTED',
+  reason?: string,
 ): Promise<MerchantAppointmentRequest> {
-  return transitionMerchantAppointment(request, decision);
+  return transitionMerchantAppointment(request, decision, reason);
 }

@@ -101,15 +101,16 @@ class OnlineAwareJdbcAppointmentPersistence(
         allowedFrom: Set<AppointmentStatus>,
         target: AppointmentStatus,
         actorId: UUID,
+        reason: String?,
         now: Instant,
     ): CustomerAppointment? {
-        val result = delegate.merchantTransition(outletId, appointmentId, allowedFrom, target, actorId, now)
+        val result = delegate.merchantTransition(outletId, appointmentId, allowedFrom, target, actorId, reason, now)
             ?.let(::enrich) ?: return null
         if (
             result.paymentMethod == AppointmentPaymentMethod.ONLINE_PAYMENT &&
             target in setOf(AppointmentStatus.REJECTED, AppointmentStatus.CANCELLED)
         ) {
-            terminalPayments.projectTerminalAppointment(result.id, "MERCHANT_${target.name}", now)
+            terminalPayments.projectTerminalAppointment(result.id, reason ?: "MERCHANT_${target.name}", now)
             return enrich(result)
         }
         return result

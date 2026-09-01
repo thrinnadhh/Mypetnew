@@ -120,6 +120,53 @@ class MerchantAppointmentQueryTest {
     }
 
     @Test
+    fun `inbox honors explicit authorized outlet selection`() {
+        val secondOwnedOutlet = UUID.randomUUID()
+        jdbc.sql(
+            "INSERT INTO mypet.provider_outlet(id, organization_id, status) VALUES (:id, :organizationId, 'ACTIVE')",
+        ).param("id", secondOwnedOutlet).param("organizationId", ownedOrganization).update()
+        val first = insert(ownedOutlet, AppointmentStatus.BOOKED, "First", "Grooming", 10_000)
+        val second = insert(
+            secondOwnedOutlet,
+            AppointmentStatus.BOOKED,
+            "Second",
+            "Vet",
+            20_000,
+            organizationId = ownedOrganization,
+        )
+        val merchant = Principal(
+            UUID.randomUUID(),
+            Role.MERCHANT,
+            organizationId = ownedOrganization,
+            outletIds = setOf(ownedOutlet, secondOwnedOutlet),
+        )
+
+        assertEquals(listOf(first), query.list(merchant, null, 0, 20, ownedOutlet).items.map { it.appointmentId })
+        assertEquals(listOf(second), query.list(merchant, null, 0, 20, secondOwnedOutlet).items.map { it.appointmentId })
+    }
+
+    @Test
+    fun `inbox hides transient holds and orders active work by scheduled time`() {
+        val base = Instant.parse("2026-09-01T08:00:00Z")
+        val later = insert(ownedOutlet, AppointmentStatus.BOOKED, "Later", "Later service", 10_000, startsAt = base.plusSeconds(7_200))
+        val terminal = insert(ownedOutlet, AppointmentStatus.COMPLETED, "Done", "Completed service", 10_000, startsAt = base.minusSeconds(3_600))
+        val sooner = insert(ownedOutlet, AppointmentStatus.CONFIRMED, "Sooner", "Sooner service", 10_000, startsAt = base.plusSeconds(3_600))
+        insert(ownedOutlet, AppointmentStatus.HOLD, "Holding", "Pending payment", 10_000, startsAt = base.plusSeconds(1_800))
+        insert(ownedOutlet, AppointmentStatus.HOLD_EXPIRED, "Expired", "Expired hold", 10_000, startsAt = base.minusSeconds(1_800))
+        val merchant = Principal(
+            UUID.randomUUID(),
+            Role.MERCHANT,
+            organizationId = ownedOrganization,
+            outletIds = setOf(ownedOutlet),
+        )
+
+        assertEquals(
+            listOf(sooner, later, terminal),
+            query.list(merchant, null, 0, 20, ownedOutlet).items.map { it.appointmentId },
+        )
+    }
+
+    @Test
     fun `inbox supports merchant pagination without leaking foreign outlets`() {
         repeat(3) { index -> insert(ownedOutlet, AppointmentStatus.BOOKED, "Pet $index", "Service $index", 10_000L + index) }
         repeat(2) { index -> insert(foreignOutlet, AppointmentStatus.BOOKED, "Foreign $index", "Foreign", 20_000) }
@@ -218,9 +265,11 @@ class MerchantAppointmentQueryTest {
         paymentMethod: AppointmentPaymentMethod = AppointmentPaymentMethod.PAY_AT_PROVIDER,
         paymentStatus: AppointmentPaymentStatus = AppointmentPaymentStatus.NOT_REQUIRED,
         organizationId: UUID = if (outletId == ownedOutlet) ownedOrganization else foreignOrganization,
+        startsAt: Instant? = null,
     ): UUID {
         val id = UUID.randomUUID()
         val createdAt = Instant.parse("2026-08-16T06:00:00Z").plusMillis((Math.random() * 1_000).toLong())
+        val scheduledStart = startsAt ?: createdAt.plusSeconds(3_600)
         jdbc.sql(
             """
             INSERT INTO mypet.appointment(
@@ -240,8 +289,8 @@ class MerchantAppointmentQueryTest {
             .param("slot_id", UUID.randomUUID())
             .param("pet_name", petName)
             .param("service_name", serviceName)
-            .param("starts_at", createdAt.plusSeconds(3_600))
-            .param("ends_at", createdAt.plusSeconds(5_400))
+            .param("starts_at", scheduledStart)
+            .param("ends_at", scheduledStart.plusSeconds(1_800))
             .param("status", status.name)
             .param("payment_mode", paymentMethod.name)
             .param("payment_state", paymentStatus.name)

@@ -65,15 +65,29 @@ describe('merchant appointment confirmation client', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/merchant/appointments?page=0&pageSize=100&status=BOOKED');
   });
 
-  it.each(['CONFIRMED', 'REJECTED'] as const)('posts provider %s decision with server outlet scope', async (decision) => {
-    fetchMock.mockResolvedValue(response(true, { ...request, status: decision }));
+  it('posts provider confirmation with server outlet scope', async () => {
+    fetchMock.mockResolvedValue(response(true, { ...request, status: 'CONFIRMED' }));
 
-    await expect(decideAppointmentRequest(request, decision)).resolves.toMatchObject({ status: decision });
+    await expect(decideAppointmentRequest(request, 'CONFIRMED')).resolves.toMatchObject({ status: 'CONFIRMED' });
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/merchant/appointments/appointment-1/status',
       {
         method: 'POST',
-        body: JSON.stringify({ outletId: 'outlet-1', status: decision }),
+        body: JSON.stringify({ outletId: 'outlet-1', status: 'CONFIRMED' }),
+      },
+    );
+  });
+
+  it('posts trimmed rejection reason with the transition', async () => {
+    fetchMock.mockResolvedValue(response(true, { ...request, status: 'REJECTED' }));
+
+    await expect(decideAppointmentRequest(request, 'REJECTED', '  Provider unavailable  '))
+      .resolves.toMatchObject({ status: 'REJECTED' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/merchant/appointments/appointment-1/status',
+      {
+        method: 'POST',
+        body: JSON.stringify({ outletId: 'outlet-1', status: 'REJECTED', reason: 'Provider unavailable' }),
       },
     );
   });
@@ -90,14 +104,30 @@ describe('merchant appointment confirmation client', () => {
     const fromReq: MerchantAppointmentRequest = { ...request, status: fromStatus };
     fetchMock.mockResolvedValue(response(true, { ...request, status: toStatus }));
 
-    await expect(transitionMerchantAppointment(fromReq, toStatus)).resolves.toMatchObject({ status: toStatus });
+    const reason = toStatus === 'REJECTED' || toStatus === 'CANCELLED' ? 'Operational conflict' : undefined;
+    await expect(transitionMerchantAppointment(fromReq, toStatus, reason)).resolves.toMatchObject({ status: toStatus });
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/merchant/appointments/appointment-1/status',
       {
         method: 'POST',
-        body: JSON.stringify({ outletId: 'outlet-1', status: toStatus }),
+        body: JSON.stringify({
+          outletId: 'outlet-1',
+          status: toStatus,
+          ...(reason ? { reason } : {}),
+        }),
       },
     );
+  });
+
+  it('requires a reason for reject and cancel before making network request', async () => {
+    await expect(transitionMerchantAppointment(request, 'REJECTED')).rejects.toMatchObject({
+      name: 'APPOINTMENT_REASON_REQUIRED',
+    });
+    const confirmed = { ...request, status: 'CONFIRMED' as const };
+    await expect(transitionMerchantAppointment(confirmed, 'CANCELLED', '   ')).rejects.toMatchObject({
+      name: 'APPOINTMENT_REASON_REQUIRED',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('rejects invalid client-side transition before making network request', async () => {

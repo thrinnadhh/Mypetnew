@@ -257,6 +257,7 @@ class JdbcAppointmentPersistence(
         allowedFrom: Set<AppointmentStatus>,
         target: AppointmentStatus,
         actorId: UUID,
+        reason: String?,
         now: Instant,
     ): CustomerAppointment? = transaction.execute {
         val current = jdbc.sql(
@@ -283,7 +284,7 @@ class JdbcAppointmentPersistence(
             .param("now", now.jdbcTimestamp())
             .param("id", appointmentId)
             .update()
-        appendHistory(appointmentId, target, actorId, now, "MERCHANT_STATUS")
+        appendHistory(appointmentId, target, actorId, now, reason ?: "MERCHANT_STATUS")
         current.copy(status = target, holdExpiresAt = null, updatedAt = now)
     }
 

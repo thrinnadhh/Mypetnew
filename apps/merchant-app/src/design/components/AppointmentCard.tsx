@@ -51,9 +51,8 @@ export function AppointmentCard({
     (t) => t === 'CONFIRMED' || t === 'CHECKED_IN' || t === 'IN_SERVICE' || t === 'COMPLETED',
   );
 
-  // Destructive action candidates: REJECTED, CANCELLED
-  const destructiveAction = availableTargets.find(
-    (t) => t === 'REJECTED' || t === 'CANCELLED',
+  const destructiveActions = availableTargets.filter(
+    (t) => t === 'REJECTED' || t === 'CANCELLED' || t === 'NO_SHOW',
   );
 
   const durationMinutes = Math.max(
@@ -158,15 +157,16 @@ export function AppointmentCard({
           />
         ) : null}
 
-        {destructiveAction ? (
+        {destructiveActions.map((target) => (
           <SecondaryButton
-            title={appointmentActionTitle(destructiveAction)}
-            onPress={() => onTransition(appointment, destructiveAction)}
+            key={target}
+            title={appointmentActionTitle(target)}
+            onPress={() => onTransition(appointment, target)}
             disabled={busy || offline}
             style={styles.destructiveBtn}
-            testID={testID ? `${testID}-action-${destructiveAction}` : undefined}
+            testID={testID ? `${testID}-action-${target}` : undefined}
           />
-        ) : null}
+        ))}
 
         {primaryAction ? (
           <PrimaryButton
@@ -332,6 +332,7 @@ const styles = StyleSheet.create({
   },
   actionsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: spacing.xs,
     paddingTop: spacing.xs,

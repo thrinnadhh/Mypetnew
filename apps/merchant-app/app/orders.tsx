@@ -53,18 +53,18 @@ export default function MerchantOrdersScreen() {
   const [confirmTarget, setConfirmTarget] = useState<MerchantOrderStatus | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
 
-  const load = useCallback(async (selectedOutlet?: string) => {
+  const load = useCallback(async (context: MerchantCatalogContext, selectedOutlet?: string) => {
     setMessage('');
     try {
       const page = await fetchMerchantOrderWork(selectedOutlet);
       setItems(page.items);
 
-      if (outboxRepo && syncStateRepo && merchantContext?.organizationId) {
+      if (outboxRepo && syncStateRepo && context.organizationId) {
         try {
           const accountId = await loadOfflineMerchantAccountId();
           if (accountId) {
-            const orgId = merchantContext.organizationId;
-            const outletIds = selectedOutlet ? [selectedOutlet] : merchantContext.outletIds;
+            const orgId = context.organizationId;
+            const outletIds = selectedOutlet ? [selectedOutlet] : context.outletIds;
             const partitions = outletIds.map((id) => createPartitionContext(accountId, orgId, id));
             setSync(await summarizeOperationalSync(partitions, syncStateRepo, outboxRepo));
           }
@@ -76,13 +76,14 @@ export default function MerchantOrdersScreen() {
       setItems([]);
       setMessage(error instanceof Error ? error.message : 'Order workload is currently unavailable.');
     }
-  }, [merchantContext, outboxRepo, syncStateRepo]);
+  }, [outboxRepo, syncStateRepo]);
 
   const refresh = useCallback(async () => {
+    if (!merchantContext) return;
     setRefreshing(true);
-    await load(outletId);
+    await load(merchantContext, outletId);
     setRefreshing(false);
-  }, [load, outletId]);
+  }, [load, merchantContext, outletId]);
 
   useEffect(() => {
     let active = true;
@@ -94,7 +95,7 @@ export default function MerchantOrdersScreen() {
         setMerchantContext(context);
         const initialOutlet = context.outletIds[0];
         setOutletId(initialOutlet);
-        await load(initialOutlet);
+        await load(context, initialOutlet);
       } catch (error) {
         if (active) setMessage(error instanceof Error ? error.message : 'Orders unavailable.');
       } finally {
@@ -133,7 +134,7 @@ export default function MerchantOrdersScreen() {
     setOutletId(selected);
     setLoading(true);
     void (async () => {
-      await load(selected);
+      if (merchantContext) await load(merchantContext, selected);
       setLoading(false);
     })();
   }
@@ -184,7 +185,7 @@ export default function MerchantOrdersScreen() {
       if (activeDetailOrder?.orderId === order.orderId) {
         setActiveDetailOrder(null);
       }
-      await load(outletId);
+      if (merchantContext) await load(merchantContext, outletId);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Order state transition failed.');
     } finally {

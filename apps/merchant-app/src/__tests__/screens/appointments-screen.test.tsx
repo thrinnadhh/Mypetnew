@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import React from 'react';
+import { Alert } from 'react-native';
+import TestRenderer, { act } from 'react-test-renderer';
 import MerchantAppointmentsScreen from '../../../app/appointments';
 import {
   fetchMerchantAppointment,
@@ -7,28 +9,24 @@ import {
   type MerchantAppointmentRequest,
 } from '../../appointments/api';
 import { fetchMerchantCatalogContext } from '../../catalog/api';
+import {
+  AppointmentCard,
+  AppointmentDetailModal,
+  BottomNavigation,
+  ConfirmationModal,
+  MerchantHeader,
+} from '../../design';
 
-jest.mock('react', () => {
-  const actual = jest.requireActual('react');
-  return {
-    ...actual,
-    useEffect: jest.fn(),
-    useState: jest.fn((initial: unknown) => [
-      typeof initial === 'function' ? (initial as () => unknown)() : initial,
-      jest.fn(),
-    ]),
-    useCallback: jest.fn((fn: unknown) => fn),
-    useMemo: jest.fn((fn: () => unknown) => fn()),
-  };
-});
+const mockRouterPush = jest.fn();
+const mockSearchParams = jest.fn(() => ({} as { appointmentId?: string }));
 
 jest.mock('expo-router', () => ({
   router: {
-    push: jest.fn(),
+    push: mockRouterPush,
     replace: jest.fn(),
   },
-  useLocalSearchParams: jest.fn(() => ({})),
-  Link: ({ children }: { children: unknown }) => children,
+  useLocalSearchParams: () => mockSearchParams(),
+  Link: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 jest.mock('../../catalog/api', () => ({
@@ -61,119 +59,239 @@ jest.mock('../../data', () => ({
   }),
 }));
 
-const effectMock = useEffect as jest.MockedFunction<typeof useEffect>;
-const stateMock = useState as jest.MockedFunction<typeof useState>;
 const contextMock = fetchMerchantCatalogContext as jest.MockedFunction<typeof fetchMerchantCatalogContext>;
 const appointmentsMock = fetchMerchantAppointments as jest.MockedFunction<typeof fetchMerchantAppointments>;
 const singleAppointmentMock = fetchMerchantAppointment as jest.MockedFunction<typeof fetchMerchantAppointment>;
 const transitionMock = transitionMerchantAppointment as jest.MockedFunction<typeof transitionMerchantAppointment>;
 
-const mockAppointment: MerchantAppointmentRequest = {
-  appointmentId: 'apt-1',
-  outletId: 'outlet-1',
-  serviceId: 'srv-1',
-  slotId: 'slot-1',
-  petName: 'Max',
-  serviceName: 'Full Grooming Bath',
-  startsAt: '2026-09-01T10:00:00Z',
-  endsAt: '2026-09-01T10:45:00Z',
-  status: 'BOOKED',
-  paymentMethod: 'ONLINE_PAYMENT',
-  paymentStatus: 'PAID',
-  pricePaise: 149900,
-  currency: 'INR',
-  notes: 'Hypoallergenic shampoo please',
-  createdAt: '2026-09-01T08:00:00Z',
-  updatedAt: '2026-09-01T08:00:00Z',
-};
+const OUTLET_1 = '00000000-0000-4000-8000-000000000101';
+const OUTLET_2 = '00000000-0000-4000-8000-000000000102';
+const APPOINTMENT_1 = '00000000-0000-4000-8000-000000000201';
+const APPOINTMENT_2 = '00000000-0000-4000-8000-000000000202';
+
+function appointment(
+  appointmentId: string,
+  outletId = OUTLET_1,
+  status: MerchantAppointmentRequest['status'] = 'BOOKED',
+): MerchantAppointmentRequest {
+  return {
+    appointmentId,
+    outletId,
+    serviceId: '00000000-0000-4000-8000-000000000301',
+    slotId: '00000000-0000-4000-8000-000000000401',
+    petName: appointmentId === APPOINTMENT_1 ? 'Max' : 'Bella',
+    serviceName: status === 'CONFIRMED' ? 'Annual Vaccination' : 'Full Grooming Bath',
+    startsAt: '2026-09-01T12:00:00Z',
+    endsAt: '2026-09-01T12:45:00Z',
+    status,
+    paymentMethod: 'PAY_AT_PROVIDER',
+    paymentStatus: 'NOT_REQUIRED',
+    pricePaise: 149900,
+    currency: 'INR',
+    notes: 'Handle gently',
+    createdAt: '2026-09-01T08:00:00Z',
+    updatedAt: '2026-09-01T08:00:00Z',
+  };
+}
+
+async function flush() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  });
+}
+
+const mountedRenderers: TestRenderer.ReactTestRenderer[] = [];
+
+async function renderScreen() {
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => {
+    renderer = TestRenderer.create(<MerchantAppointmentsScreen />);
+  });
+  mountedRenderers.push(renderer);
+  await flush();
+  return renderer;
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
-  stateMock.mockImplementation(((initial: unknown) => [
-    typeof initial === 'function' ? (initial as () => unknown)() : initial,
-    jest.fn(),
-  ]) as unknown as typeof useState);
+  mockSearchParams.mockReturnValue({});
   contextMock.mockResolvedValue({
-    organizationId: 'org-1',
-    outletIds: ['outlet-1', 'outlet-2'],
-    permissionsByOutlet: { 'outlet-1': ['ORDER_FULFIL'], 'outlet-2': ['ORDER_FULFIL'] },
+    organizationId: '00000000-0000-4000-8000-000000000001',
+    outletIds: [OUTLET_1, OUTLET_2],
+    permissionsByOutlet: {
+      [OUTLET_1]: ['ORDER_FULFIL'],
+      [OUTLET_2]: ['ORDER_FULFIL'],
+    },
   });
   appointmentsMock.mockResolvedValue({
-    items: [
-      mockAppointment,
-      {
-        ...mockAppointment,
-        appointmentId: 'apt-2',
-        petName: 'Bella',
-        serviceName: 'Annual Vaccination',
-        status: 'CONFIRMED',
-        paymentMethod: 'PAY_AT_PROVIDER',
-        paymentStatus: 'NOT_REQUIRED',
-        pricePaise: 85000,
-      },
-    ],
+    items: [appointment(APPOINTMENT_1)],
     page: 0,
-    pageSize: 100,
+    pageSize: 50,
     hasNext: false,
   });
+  singleAppointmentMock.mockResolvedValue(appointment(APPOINTMENT_2, OUTLET_2, 'CONFIRMED'));
+  transitionMock.mockImplementation(async (current, target) => ({ ...current, status: target }));
+  jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
 });
 
-describe('MF4 Merchant Appointments Screen', () => {
-  it('renders appointments screen with modern design system and safe areas', () => {
-    expect(MerchantAppointmentsScreen()).toBeTruthy();
-    expect(effectMock).toHaveBeenCalled();
+afterEach(async () => {
+  await act(async () => {
+    mountedRenderers.splice(0).forEach((renderer) => renderer.unmount());
+    await Promise.resolve();
   });
+  jest.restoreAllMocks();
+});
 
-  it('loads canonical appointment workload on startup for current outlet', async () => {
-    MerchantAppointmentsScreen();
-    const startup = effectMock.mock.calls[0][0];
-    const cleanup = startup();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+describe('MF4R Merchant Appointments Screen', () => {
+  it('mounts once without a merchant-context reload loop', async () => {
+    const renderer = await renderScreen();
+    await flush();
 
     expect(contextMock).toHaveBeenCalledTimes(1);
+    expect(appointmentsMock).toHaveBeenCalledTimes(1);
     expect(appointmentsMock).toHaveBeenCalledWith({
-      outletId: 'outlet-1',
-      pageSize: 100,
+      outletId: OUTLET_1,
+      page: 0,
+      pageSize: 50,
     });
-    if (typeof cleanup === 'function') cleanup();
+    expect(renderer.root.findByProps({ testID: 'appointments-list' }).props.data).toHaveLength(1);
+    expect(renderer.root.findByType(BottomNavigation).props.activeTab).toBe('more');
   });
 
-  it('handles appointment load network error safely', async () => {
-    appointmentsMock.mockRejectedValue(new Error('Network request failed'));
-    MerchantAppointmentsScreen();
-    const startup = effectMock.mock.calls[0][0];
-    startup();
-    await Promise.resolve();
-    await Promise.resolve();
+  it('switches outlet with server-scoped data and never retains the previous outlet list', async () => {
+    appointmentsMock.mockImplementation(async (options) => ({
+      items: options?.outletId === OUTLET_2
+        ? [appointment(APPOINTMENT_2, OUTLET_2, 'CONFIRMED')]
+        : [appointment(APPOINTMENT_1, OUTLET_1)],
+      page: 0,
+      pageSize: 50,
+      hasNext: false,
+    }));
+    const renderer = await renderScreen();
 
-    expect(contextMock).toHaveBeenCalledTimes(1);
-    expect(appointmentsMock).toHaveBeenCalledWith({
-      outletId: 'outlet-1',
-      pageSize: 100,
+    await act(async () => {
+      renderer.root.findByType(MerchantHeader).props.onSelectOutlet(OUTLET_2);
     });
+    await flush();
+
+    expect(appointmentsMock).toHaveBeenLastCalledWith({ outletId: OUTLET_2, page: 0, pageSize: 50 });
+    const data = renderer.root.findByProps({ testID: 'appointments-list' }).props.data as MerchantAppointmentRequest[];
+    expect(data.map((item) => item.appointmentId)).toEqual([APPOINTMENT_2]);
+    expect(data.every((item) => item.outletId === OUTLET_2)).toBe(true);
   });
 
-  it('executes valid state transition successfully', async () => {
-    const updated: MerchantAppointmentRequest = { ...mockAppointment, status: 'CONFIRMED' };
-    transitionMock.mockResolvedValue(updated);
+  it('preserves the shared All Outlets consolidated mode', async () => {
+    appointmentsMock.mockResolvedValue({
+      items: [appointment(APPOINTMENT_1, OUTLET_1), appointment(APPOINTMENT_2, OUTLET_2, 'CONFIRMED')],
+      page: 0,
+      pageSize: 50,
+      hasNext: false,
+    });
+    const renderer = await renderScreen();
 
-    const result = await transitionMerchantAppointment(mockAppointment, 'CONFIRMED');
-    expect(transitionMock).toHaveBeenCalledWith(mockAppointment, 'CONFIRMED');
-    expect(result.status).toBe('CONFIRMED');
+    await act(async () => {
+      renderer.root.findByType(MerchantHeader).props.onSelectOutlet(undefined);
+    });
+    await flush();
+
+    expect(appointmentsMock).toHaveBeenLastCalledWith({ outletId: undefined, page: 0, pageSize: 50 });
+    const data = renderer.root.findByProps({ testID: 'appointments-list' }).props.data as MerchantAppointmentRequest[];
+    expect(data.map((item) => item.outletId).sort()).toEqual([OUTLET_1, OUTLET_2].sort());
+    expect(renderer.root.findByType(MerchantHeader).props.outletName).toBe('All Outlets');
   });
 
-  it('handles stale appointment state rejection gracefully', async () => {
-    const staleError = new Error('The appointment cannot be changed from its current state');
-    staleError.name = 'APPOINTMENT_STATE_INVALID';
-    transitionMock.mockRejectedValue(staleError);
-
-    const freshAppointment: MerchantAppointmentRequest = { ...mockAppointment, status: 'CONFIRMED' };
-    singleAppointmentMock.mockResolvedValue(freshAppointment);
-
-    await expect(transitionMerchantAppointment(mockAppointment, 'CONFIRMED')).rejects.toMatchObject({
-      name: 'APPOINTMENT_STATE_INVALID',
+  it('clears previous-outlet data when an offline outlet switch cannot load', async () => {
+    appointmentsMock.mockImplementation(async (options) => {
+      if (options?.outletId === OUTLET_2) throw new Error('Network request failed');
+      return { items: [appointment(APPOINTMENT_1, OUTLET_1)], page: 0, pageSize: 50, hasNext: false };
     });
+    const renderer = await renderScreen();
+
+    await act(async () => {
+      renderer.root.findByType(MerchantHeader).props.onSelectOutlet(OUTLET_2);
+    });
+    await flush();
+
+    const list = renderer.root.findByProps({ testID: 'appointments-list' });
+    expect(list.props.data).toEqual([]);
+    const alerts = renderer.root.findAll((node) => node.props.accessibilityRole === 'alert');
+    expect(alerts.some((node) => String(node.props.children).includes('no appointment cache is available for this outlet scope'))).toBe(true);
+  });
+
+  it('paginates beyond the first page and merges canonical records', async () => {
+    appointmentsMock.mockImplementation(async (options) => (options?.page ?? 0) === 0
+      ? { items: [appointment(APPOINTMENT_1)], page: 0, pageSize: 50, hasNext: true }
+      : { items: [appointment(APPOINTMENT_2)], page: 1, pageSize: 50, hasNext: false });
+    const renderer = await renderScreen();
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'appointments-list' }).props.onEndReached();
+    });
+    await flush();
+
+    expect(appointmentsMock).toHaveBeenLastCalledWith({ outletId: OUTLET_1, page: 1, pageSize: 50 });
+    const data = renderer.root.findByProps({ testID: 'appointments-list' }).props.data as MerchantAppointmentRequest[];
+    expect(data.map((item) => item.appointmentId)).toEqual([APPOINTMENT_1, APPOINTMENT_2]);
+  });
+
+  it('resolves a deep-linked appointment canonically even when it is absent from page zero', async () => {
+    mockSearchParams.mockReturnValue({ appointmentId: APPOINTMENT_2 });
+    appointmentsMock.mockImplementation(async (options) => ({
+      items: options?.outletId === OUTLET_1 ? [appointment(APPOINTMENT_1)] : [],
+      page: 0,
+      pageSize: 50,
+      hasNext: false,
+    }));
+    singleAppointmentMock.mockResolvedValue(appointment(APPOINTMENT_2, OUTLET_2, 'CONFIRMED'));
+    const renderer = await renderScreen();
+    await flush();
+
+    expect(singleAppointmentMock).toHaveBeenCalledWith(APPOINTMENT_2);
+    expect(appointmentsMock).toHaveBeenCalledWith({ outletId: OUTLET_2, page: 0, pageSize: 50 });
+    const detail = renderer.root.findByType(AppointmentDetailModal);
+    expect(detail.props.visible).toBe(true);
+    expect(detail.props.appointment?.appointmentId).toBe(APPOINTMENT_2);
+  });
+
+  it('passes the typed destructive reason into the canonical transition call', async () => {
+    const renderer = await renderScreen();
+    const card = renderer.root.findByType(AppointmentCard);
+
+    await act(async () => {
+      card.props.onTransition(card.props.appointment, 'REJECTED');
+    });
+    const confirmation = renderer.root.findByType(ConfirmationModal);
+    expect(confirmation.props.requireReason).toBe(true);
+
+    await act(async () => {
+      confirmation.props.onConfirm('Clinic emergency');
+    });
+    await flush();
+
+    expect(transitionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ appointmentId: APPOINTMENT_1 }),
+      'REJECTED',
+      'Clinic emergency',
+    );
+  });
+
+  it('exposes no-show as a real detail action instead of hiding it behind cancel', async () => {
+    appointmentsMock.mockResolvedValue({
+      items: [appointment(APPOINTMENT_1, OUTLET_1, 'CONFIRMED')],
+      page: 0,
+      pageSize: 50,
+      hasNext: false,
+    });
+    const renderer = await renderScreen();
+    const card = renderer.root.findByType(AppointmentCard);
+
+    await act(async () => {
+      card.props.onViewDetails(card.props.appointment);
+    });
+
+    expect(renderer.root.findByProps({ testID: 'modal-action-NO_SHOW' })).toBeTruthy();
+    expect(renderer.root.findByProps({ testID: 'modal-action-CANCELLED' })).toBeTruthy();
   });
 });

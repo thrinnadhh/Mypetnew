@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, FlatList, StyleSheet, Text, View } from 'react-native';
 import {
   appointmentTargets,
   fetchMerchantAppointment,
@@ -48,6 +48,30 @@ export type AppointmentFilterStatus =
   | 'COMPLETED'
   | 'CLOSED';
 
+const APPOINTMENT_PAGE_SIZE = 50;
+const CLOSED_STATUSES = new Set<MerchantAppointmentStatus>(['CANCELLED', 'REJECTED', 'NO_SHOW']);
+
+function isNetworkError(error: unknown): boolean {
+  return error instanceof Error && /network|fetch|offline|failed to fetch/i.test(error.message);
+}
+
+function isSameLocalDay(value: string, reference: Date): boolean {
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime())
+    && date.getFullYear() === reference.getFullYear()
+    && date.getMonth() === reference.getMonth()
+    && date.getDate() === reference.getDate();
+}
+
+function mergeAppointments(
+  current: MerchantAppointmentRequest[],
+  incoming: MerchantAppointmentRequest[],
+): MerchantAppointmentRequest[] {
+  const merged = new Map(current.map((item) => [item.appointmentId, item]));
+  incoming.forEach((item) => merged.set(item.appointmentId, item));
+  return [...merged.values()];
+}
+
 export default function MerchantAppointmentsScreen() {
   const { appointmentId } = useLocalSearchParams<{ appointmentId?: string }>();
   const { outboxRepo, syncStateRepo } = useMerchantDatabase();
@@ -55,6 +79,9 @@ export default function MerchantAppointmentsScreen() {
   const [merchantContext, setMerchantContext] = useState<MerchantCatalogContext>();
   const [outletId, setOutletId] = useState<string>();
   const [items, setItems] = useState<MerchantAppointmentRequest[]>([]);
+  const [nextPage, setNextPage] = useState(1);
+  const [hasNext, setHasNext] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [sync, setSync] = useState<OperationalSyncSummary>();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilter, setSelectedFilter] = useState<AppointmentFilterStatus>('ALL');
@@ -64,14 +91,17 @@ export default function MerchantAppointmentsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
 
-  // Modals state
   const [manualSelectedId, setManualSelectedId] = useState<string | null>(null);
-  const [hasDismissedDeepLink, setHasDismissedDeepLink] = useState(false);
+  const [dismissedDeepLinkId, setDismissedDeepLinkId] = useState<string | null>(null);
   const [confirmModalAppointment, setConfirmModalAppointment] = useState<MerchantAppointmentRequest | null>(null);
   const [confirmTarget, setConfirmTarget] = useState<MerchantAppointmentStatus | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
 
-  const activeAppointmentId = manualSelectedId ?? (!hasDismissedDeepLink && appointmentId ? appointmentId : null);
+  const lastSuccessfulOutletRef = useRef<string | undefined>(undefined);
+  const requestSequenceRef = useRef(0);
+  const resolvedDeepLinkRef = useRef<string | undefined>(undefined);
+
+  const activeAppointmentId = appointmentId && dismissedDeepLinkId !== appointmentId ? appointmentId : manualSelectedId;
   const activeDetailAppointment = useMemo(() => {
     if (!activeAppointmentId) return null;
     return items.find((item) => item.appointmentId === activeAppointmentId) ?? null;
@@ -83,53 +113,92 @@ export default function MerchantAppointmentsScreen() {
 
   const handleCloseDetail = useCallback(() => {
     setManualSelectedId(null);
-    setHasDismissedDeepLink(true);
-  }, []);
+    if (appointmentId) setDismissedDeepLinkId(appointmentId);
+  }, [appointmentId]);
 
-  const load = useCallback(async (selectedOutlet?: string) => {
-    setMessage('');
+  const load = useCallback(async (
+    context: MerchantCatalogContext,
+    selectedOutlet: string | undefined,
+    targetPage = 0,
+    append = false,
+  ) => {
+    const requestSequence = ++requestSequenceRef.current;
+    if (!append) setMessage('');
+
     if (!hasRuntimeMerchantSession()) {
-      setLoading(false);
+      if (!append) setItems([]);
+      setHasNext(false);
       return;
     }
+    const scopeKey = selectedOutlet ?? '__ALL_OUTLETS__';
+
     try {
       const page = await fetchMerchantAppointments({
         outletId: selectedOutlet,
-        pageSize: 100,
+        page: targetPage,
+        pageSize: APPOINTMENT_PAGE_SIZE,
       });
-      setItems(page.items);
-      setIsOffline(false);
+      if (requestSequence !== requestSequenceRef.current) return;
 
-      if (outboxRepo && syncStateRepo && merchantContext?.organizationId) {
+      setItems((current) => append ? mergeAppointments(current, page.items) : page.items);
+      setNextPage(targetPage + 1);
+      setHasNext(page.hasNext);
+      setIsOffline(false);
+      lastSuccessfulOutletRef.current = scopeKey;
+
+      if (outboxRepo && syncStateRepo && context.organizationId) {
         try {
           const accountId = await loadOfflineMerchantAccountId();
           if (accountId) {
-            const orgId = merchantContext.organizationId;
-            const outletIds = selectedOutlet ? [selectedOutlet] : merchantContext.outletIds;
-            const partitions = outletIds.map((id) => createPartitionContext(accountId, orgId, id));
-            setSync(await summarizeOperationalSync(partitions, syncStateRepo, outboxRepo));
+            const organizationId = context.organizationId;
+            const scopedOutletIds = selectedOutlet ? [selectedOutlet] : context.outletIds;
+            const partitions = scopedOutletIds.map((id) => createPartitionContext(accountId, organizationId, id));
+            const summary = await summarizeOperationalSync(partitions, syncStateRepo, outboxRepo);
+            if (requestSequence === requestSequenceRef.current) setSync(summary);
           }
         } catch {
-          // Sync reading error is secondary
+          if (requestSequence === requestSequenceRef.current) setSync(undefined);
         }
       }
     } catch (error) {
-      const isNetworkError = error instanceof Error && /network|fetch|offline|failed to fetch/i.test(error.message);
-      if (isNetworkError) {
+      if (requestSequence !== requestSequenceRef.current) return;
+      if (isNetworkError(error)) {
+        const hasSessionDataForOutlet = lastSuccessfulOutletRef.current === scopeKey;
         setIsOffline(true);
-        setMessage('Offline: Displaying cached appointment workload.');
+        setHasNext(false);
+        if (!hasSessionDataForOutlet) setItems([]);
+        setMessage(
+          hasSessionDataForOutlet
+            ? 'Offline: showing the last appointment data loaded for this outlet in this session.'
+            : 'Offline: no appointment cache is available for this outlet scope on this device.',
+        );
       } else {
-        setItems([]);
+        if (!append) setItems([]);
+        setHasNext(false);
         setMessage(error instanceof Error ? error.message : 'Appointments workload is currently unavailable.');
       }
     }
-  }, [merchantContext, outboxRepo, syncStateRepo]);
+  }, [outboxRepo, syncStateRepo]);
 
   const refresh = useCallback(async () => {
+    if (!merchantContext) return;
     setRefreshing(true);
-    await load(outletId);
-    setRefreshing(false);
-  }, [load, outletId]);
+    try {
+      await load(merchantContext, outletId, 0, false);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [load, merchantContext, outletId]);
+
+  const loadMore = useCallback(async () => {
+    if (!merchantContext || !hasNext || loadingMore || isOffline) return;
+    setLoadingMore(true);
+    try {
+      await load(merchantContext, outletId, nextPage, true);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [hasNext, isOffline, load, loadingMore, merchantContext, nextPage, outletId]);
 
   useEffect(() => {
     let active = true;
@@ -141,7 +210,7 @@ export default function MerchantAppointmentsScreen() {
         setMerchantContext(context);
         const initialOutlet = context.outletIds[0];
         setOutletId(initialOutlet);
-        await load(initialOutlet);
+        await load(context, initialOutlet, 0, false);
       } catch (error) {
         if (active) setMessage(error instanceof Error ? error.message : 'Appointments unavailable.');
       } finally {
@@ -150,8 +219,45 @@ export default function MerchantAppointmentsScreen() {
     })();
     return () => {
       active = false;
+      requestSequenceRef.current += 1;
     };
   }, [load]);
+
+
+  useEffect(() => {
+    if (!appointmentId || !merchantContext || dismissedDeepLinkId === appointmentId) return;
+    if (items.some((item) => item.appointmentId === appointmentId)) return;
+    if (resolvedDeepLinkRef.current === appointmentId) return;
+    resolvedDeepLinkRef.current = appointmentId;
+
+    let active = true;
+    void (async () => {
+      try {
+        const appointment = await fetchMerchantAppointment(appointmentId);
+        if (!active) return;
+        if (!merchantContext.outletIds.includes(appointment.outletId)) {
+          setMessage('This appointment is not available in your current merchant outlet scope.');
+          return;
+        }
+        setOutletId(appointment.outletId);
+        setLoading(true);
+        await load(merchantContext, appointment.outletId, 0, false);
+        if (!active) return;
+        setItems((current) => current.some((item) => item.appointmentId === appointment.appointmentId)
+          ? current
+          : [appointment, ...current]);
+      } catch (error) {
+        if (active) {
+          setMessage(error instanceof Error ? error.message : 'The linked appointment is unavailable.');
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [appointmentId, dismissedDeepLinkId, items, load, merchantContext]);
 
   const outletOptions = useMemo(() => {
     if (!merchantContext) return [];
@@ -163,7 +269,7 @@ export default function MerchantAppointmentsScreen() {
 
   const currentOutletName = useMemo(() => {
     if (!outletId) return 'All Outlets';
-    const found = outletOptions.find((o) => o.id === outletId);
+    const found = outletOptions.find((option) => option.id === outletId);
     return found ? found.name : outletId;
   }, [outletId, outletOptions]);
 
@@ -179,35 +285,38 @@ export default function MerchantAppointmentsScreen() {
   const pendingCount = sync ? sync.commands.pending + sync.commands.retry + sync.commands.reconciliation : 0;
 
   function handleSelectOutlet(selected?: string) {
+    if (!merchantContext) return;
     setOutletId(selected);
+    setItems([]);
+    setSync(undefined);
+    setHasNext(false);
     setLoading(true);
     void (async () => {
-      await load(selected);
-      setLoading(false);
+      try {
+        await load(merchantContext, selected, 0, false);
+      } finally {
+        setLoading(false);
+      }
     })();
   }
 
-  // Summary Metrics Counts
   const metrics = useMemo(() => {
+    const today = new Date();
+    let todayScheduled = 0;
     let booked = 0;
     let inService = 0;
     let completed = 0;
     items.forEach((item) => {
+      if (isSameLocalDay(item.startsAt, today) && !CLOSED_STATUSES.has(item.status)) todayScheduled += 1;
       if (item.status === 'BOOKED') booked += 1;
       else if (item.status === 'IN_SERVICE' || item.status === 'CHECKED_IN') inService += 1;
       else if (item.status === 'COMPLETED') completed += 1;
     });
-    return {
-      total: items.length,
-      booked,
-      inService,
-      completed,
-    };
+    return { todayScheduled, booked, inService, completed };
   }, [items]);
 
-  // Filter options with counts
   const filterOptions: FilterOption<AppointmentFilterStatus>[] = useMemo(() => {
-    const counts: Record<string, number> = {
+    const counts: Record<AppointmentFilterStatus, number> = {
       ALL: items.length,
       BOOKED: 0,
       CONFIRMED: 0,
@@ -217,16 +326,11 @@ export default function MerchantAppointmentsScreen() {
       CLOSED: 0,
     };
     items.forEach((item) => {
-      if (counts[item.status] !== undefined) {
-        counts[item.status] += 1;
-      }
-      if (item.status === 'CANCELLED' || item.status === 'REJECTED' || item.status === 'NO_SHOW') {
-        counts.CLOSED += 1;
-      }
+      if (item.status in counts) counts[item.status as AppointmentFilterStatus] += 1;
+      if (CLOSED_STATUSES.has(item.status)) counts.CLOSED += 1;
     });
-
     return [
-      { id: 'ALL', label: 'All', badge: counts.ALL || undefined },
+      { id: 'ALL', label: 'All Loaded', badge: counts.ALL || undefined },
       { id: 'BOOKED', label: 'Needs Attention', badge: counts.BOOKED || undefined },
       { id: 'CONFIRMED', label: 'Confirmed', badge: counts.CONFIRMED || undefined },
       { id: 'CHECKED_IN', label: 'Checked In', badge: counts.CHECKED_IN || undefined },
@@ -236,66 +340,57 @@ export default function MerchantAppointmentsScreen() {
     ];
   }, [items]);
 
-  // Prioritized and Filtered items
   const filteredItems = useMemo(() => {
     const prioritized = prioritizeAppointmentNavigation(items, appointmentId);
     return prioritized.filter((item) => {
       if (selectedFilter !== 'ALL') {
         if (selectedFilter === 'CLOSED') {
-          if (item.status !== 'CANCELLED' && item.status !== 'REJECTED' && item.status !== 'NO_SHOW') {
-            return false;
-          }
+          if (!CLOSED_STATUSES.has(item.status)) return false;
         } else if (item.status !== selectedFilter) {
           return false;
         }
       }
-      if (searchQuery.trim()) {
-        const q = searchQuery.trim().toLowerCase();
-        const matchesPet = item.petName.toLowerCase().includes(q);
-        const matchesService = item.serviceName.toLowerCase().includes(q);
-        const matchesId = item.appointmentId.toLowerCase().includes(q);
-        const matchesNotes = item.notes ? item.notes.toLowerCase().includes(q) : false;
-        const matchesPayment = item.paymentStatus.toLowerCase().includes(q);
-        return matchesPet || matchesService || matchesId || matchesNotes || matchesPayment;
-      }
-      return true;
+      const q = searchQuery.trim().toLowerCase();
+      if (!q) return true;
+      return item.petName.toLowerCase().includes(q)
+        || item.serviceName.toLowerCase().includes(q)
+        || item.appointmentId.toLowerCase().includes(q)
+        || Boolean(item.notes?.toLowerCase().includes(q))
+        || item.paymentStatus.toLowerCase().includes(q);
     });
   }, [appointmentId, items, searchQuery, selectedFilter]);
 
   async function executeTransition(
     appointment: MerchantAppointmentRequest,
     target: MerchantAppointmentStatus,
+    reason?: string,
   ) {
     if (busyId) return;
     setBusyId(appointment.appointmentId);
     setMessage('');
     try {
-      const updated = await transitionMerchantAppointment(appointment, target);
-      setItems((current) =>
-        current.map((item) => (item.appointmentId === updated.appointmentId ? updated : item)),
-      );
+      const updated = await transitionMerchantAppointment(appointment, target, reason);
+      setItems((current) => current.map((item) => item.appointmentId === updated.appointmentId ? updated : item));
       Alert.alert(
         'Appointment Updated',
-        `${appointment.serviceName} for ${appointment.petName} is now ${appointmentStatusLabel(target)}.`,
+        `${appointment.serviceName} for ${appointment.petName} is now ${appointmentStatusLabel(updated.status)}.`,
       );
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'State transition failed.';
-      const isStale = error instanceof Error && (error.name === 'APPOINTMENT_STATE_INVALID' || error.message.includes('state'));
-      if (isStale) {
+      const errorMessage = error instanceof Error ? error.message : 'State transition failed.';
+      const stale = error instanceof Error && error.name === 'APPOINTMENT_STATE_INVALID';
+      if (stale) {
         Alert.alert(
           'Appointment State Changed',
-          'This appointment was updated on another device. Reloading latest server state.',
+          'This appointment was updated on another device. Reloading the latest server state.',
         );
         try {
           const fresh = await fetchMerchantAppointment(appointment.appointmentId);
-          setItems((current) =>
-            current.map((item) => (item.appointmentId === fresh.appointmentId ? fresh : item)),
-          );
+          setItems((current) => current.map((item) => item.appointmentId === fresh.appointmentId ? fresh : item));
         } catch {
-          await load(outletId);
+          if (merchantContext && outletId) await load(merchantContext, outletId, 0, false);
         }
       } else {
-        Alert.alert('Transition Failed', errorMsg);
+        Alert.alert('Transition Failed', errorMessage);
       }
     } finally {
       setBusyId(undefined);
@@ -307,12 +402,14 @@ export default function MerchantAppointmentsScreen() {
     target: MerchantAppointmentStatus,
   ) {
     if (isOffline) {
-      Alert.alert('Offline Mode', 'State transitions require live server connection. Reconnect and retry.');
+      Alert.alert('Offline Mode', 'State transitions require a live server connection. Reconnect and retry.');
       return;
     }
-    const destructive =
-      target === 'REJECTED' || target === 'CANCELLED' || target === 'NO_SHOW' || target === 'COMPLETED';
-    if (destructive) {
+    const requiresConfirmation = target === 'REJECTED'
+      || target === 'CANCELLED'
+      || target === 'NO_SHOW'
+      || target === 'COMPLETED';
+    if (requiresConfirmation) {
       setConfirmModalAppointment(appointment);
       setConfirmTarget(target);
       return;
@@ -320,11 +417,11 @@ export default function MerchantAppointmentsScreen() {
     void executeTransition(appointment, target);
   }
 
-  async function handleConfirmDestructive() {
+  async function handleConfirmDestructive(reason?: string) {
     if (!confirmModalAppointment || !confirmTarget) return;
     setConfirmLoading(true);
     try {
-      await executeTransition(confirmModalAppointment, confirmTarget);
+      await executeTransition(confirmModalAppointment, confirmTarget, reason);
       setConfirmModalAppointment(null);
       setConfirmTarget(null);
     } finally {
@@ -332,40 +429,115 @@ export default function MerchantAppointmentsScreen() {
     }
   }
 
-  const moreMenuItems = useMemo(
-    () => [
-      {
-        key: 'barcode',
-        label: 'Barcode Scanner',
-        icon: '📷',
-        subtitle: 'Scan & onboard products offline',
-        onPress: () => router.push('/barcode'),
-      },
-      {
-        key: 'appointments',
-        label: 'Booking Requests',
-        icon: '📅',
-        subtitle: 'Grooming & vet appointments',
-        badge: metrics.booked > 0 ? metrics.booked : undefined,
-        onPress: () => void refresh(),
-      },
-      {
-        key: 'notifications',
-        label: 'Notifications',
-        icon: '🔔',
-        subtitle: 'Inbox & operational alerts',
-        onPress: () => router.push('/notifications'),
-      },
-      {
-        key: 'sync',
-        label: 'Sync & Conflicts',
-        icon: '🔄',
-        subtitle: 'Device outbox and sync status',
-        badge: pendingCount > 0 ? pendingCount : undefined,
-        onPress: () => router.push('/sync-status'),
-      },
-    ],
-    [metrics.booked, pendingCount, refresh],
+  const moreMenuItems = useMemo(() => [
+    {
+      key: 'barcode',
+      label: 'Barcode Scanner',
+      icon: '📷',
+      subtitle: 'Scan & onboard products offline',
+      onPress: () => router.push('/barcode'),
+    },
+    {
+      key: 'appointments',
+      label: 'Booking Requests',
+      icon: '📅',
+      subtitle: 'Grooming & vet appointments',
+      badge: metrics.booked > 0 ? metrics.booked : undefined,
+      onPress: () => void refresh(),
+    },
+    {
+      key: 'notifications',
+      label: 'Notifications',
+      icon: '🔔',
+      subtitle: 'Inbox & operational alerts',
+      onPress: () => router.push('/notifications'),
+    },
+    {
+      key: 'sync',
+      label: 'Sync & Conflicts',
+      icon: '🔄',
+      subtitle: 'Device outbox and sync status',
+      badge: pendingCount > 0 ? pendingCount : undefined,
+      onPress: () => router.push('/sync-status'),
+    },
+  ], [metrics.booked, pendingCount, refresh]);
+
+  const listHeader = (
+    <View style={styles.listHeader}>
+      <View style={styles.metricsStrip}>
+        <MetricCard
+          label="Today"
+          value={metrics.todayScheduled}
+          detail="Visible schedule"
+          testID="kpi-total-appointments"
+          style={styles.metricCard}
+        />
+        <MetricCard
+          label="Needs Action"
+          value={metrics.booked}
+          detail="Booked requests"
+          testID="kpi-booked-appointments"
+          accentColor={metrics.booked > 0 ? colors.warning : colors.primary}
+          style={metrics.booked > 0 ? { ...styles.metricCard, ...styles.bookedMetricCard } : styles.metricCard}
+        />
+        <MetricCard
+          label="In Service"
+          value={metrics.inService}
+          detail="Active in salon/clinic"
+          testID="kpi-in-service-appointments"
+          style={styles.metricCard}
+        />
+      </View>
+
+      <View style={styles.controls}>
+        <SearchInput
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder="Search pet, service, notes, ref…"
+          accessibilityLabel="Search loaded appointments"
+          testID="appointments-search-input"
+        />
+        <FilterBar
+          options={filterOptions}
+          selectedId={selectedFilter}
+          onSelect={setSelectedFilter}
+          testID="appointments-filter-bar"
+        />
+      </View>
+
+      {message ? (
+        <View style={styles.noticeBanner}>
+          <Text accessibilityRole="alert" style={styles.noticeText}>{message}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+
+  const emptyState = loading ? (
+    <LoadingState message="Loading live appointment workload…" testID="appointments-loading-view" />
+  ) : items.length === 0 ? (
+    <EmptyState
+      title={isOffline ? 'Appointments Unavailable Offline' : 'No Scheduled Appointments'}
+      description={
+        isOffline
+          ? 'No appointment data has been loaded for this outlet scope in the current session. Reconnect to refresh.'
+          : 'New incoming grooming and veterinary booking requests will appear here for provider management.'
+      }
+      actionTitle="Refresh Schedule"
+      onAction={() => void refresh()}
+      testID="appointments-empty-state"
+    />
+  ) : (
+    <EmptyState
+      title="No Matching Appointments"
+      description={`No loaded appointments match the "${selectedFilter}" filter or "${searchQuery}" query.`}
+      actionTitle="Clear Filters"
+      onAction={() => {
+        setSelectedFilter('ALL');
+        setSearchQuery('');
+      }}
+      testID="appointments-filtered-empty-state"
+    />
   );
 
   return (
@@ -384,9 +556,7 @@ export default function MerchantAppointmentsScreen() {
 
       <MerchantScreen
         showHeader={false}
-        scrollable
-        refreshing={refreshing}
-        onRefresh={() => void refresh()}
+        scrollable={false}
         offlineBannerProps={
           syncMode === 'offline' || pendingCount > 0 || syncMode === 'failed'
             ? {
@@ -398,110 +568,39 @@ export default function MerchantAppointmentsScreen() {
             : undefined
         }
         showBottomNav={false}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={styles.screenContent}
       >
-        {/* Operational Summary KPI Bar */}
-        <View style={styles.metricsStrip}>
-          <MetricCard
-            label="Total Scheduled"
-            value={metrics.total}
-            detail="Today's workload"
-            testID="kpi-total-appointments"
-            style={styles.metricCard}
-          />
-          <MetricCard
-            label="Needs Action"
-            value={metrics.booked}
-            detail="Booked requests"
-            testID="kpi-booked-appointments"
-            accentColor={metrics.booked > 0 ? colors.warning : colors.primary}
-            style={metrics.booked > 0 ? { ...styles.metricCard, ...styles.bookedMetricCard } : styles.metricCard}
-          />
-          <MetricCard
-            label="In Service"
-            value={metrics.inService}
-            detail="Active in salon/clinic"
-            testID="kpi-in-service-appointments"
-            style={styles.metricCard}
-          />
-        </View>
-
-        {/* Controls Section: Search & Filters */}
-        <View style={styles.controls}>
-          <SearchInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Search pet, service, notes, ref…"
-            accessibilityLabel="Search appointments"
-            testID="appointments-search-input"
-          />
-
-          <FilterBar
-            options={filterOptions}
-            selectedId={selectedFilter}
-            onSelect={setSelectedFilter}
-            testID="appointments-filter-bar"
-          />
-        </View>
-
-        {/* Notice/Alert Banner */}
-        {message ? (
-          <View style={styles.noticeBanner}>
-            <Text accessibilityRole="alert" style={styles.noticeText}>
-              {message}
-            </Text>
-          </View>
-        ) : null}
-
-        {/* List Content */}
-        {loading ? (
-          <LoadingState message="Loading live appointment workload…" testID="appointments-loading-view" />
-        ) : filteredItems.length === 0 ? (
-          items.length === 0 ? (
-            <EmptyState
-              title="No Scheduled Appointments"
-              description="New incoming grooming and veterinary booking requests will appear here for provider management."
-              actionTitle="Refresh Schedule"
-              onAction={() => void refresh()}
-              testID="appointments-empty-state"
+        <FlatList
+          data={loading ? [] : filteredItems}
+          keyExtractor={(appointment) => appointment.appointmentId}
+          renderItem={({ item: appointment }) => (
+            <AppointmentCard
+              appointment={appointment}
+              availableTargets={appointmentTargets(appointment)}
+              onTransition={handleAppointmentTransition}
+              onViewDetails={handleOpenDetail}
+              busy={busyId === appointment.appointmentId}
+              offline={isOffline}
+              navigated={appointmentId === appointment.appointmentId}
+              testID={`appointment-card-${appointment.appointmentId}`}
             />
-          ) : (
-            <EmptyState
-              title="No Matching Appointments"
-              description={`No appointments match the "${selectedFilter}" filter or "${searchQuery}" query.`}
-              actionTitle="Clear Filters"
-              onAction={() => {
-                setSelectedFilter('ALL');
-                setSearchQuery('');
-              }}
-              testID="appointments-filtered-empty-state"
-            />
-          )
-        ) : (
-          <View style={styles.appointmentList}>
-            {filteredItems.map((appointment) => {
-              const isBusy = busyId === appointment.appointmentId;
-              const targets = appointmentTargets(appointment);
-              const isNavigated = appointmentId === appointment.appointmentId;
-              return (
-                <AppointmentCard
-                  key={appointment.appointmentId}
-                  appointment={appointment}
-                  availableTargets={targets}
-                  onTransition={handleAppointmentTransition}
-                  onViewDetails={handleOpenDetail}
-                  busy={isBusy}
-                  offline={isOffline}
-                  navigated={isNavigated}
-                  testID={`appointment-card-${appointment.appointmentId}`}
-                />
-              );
-            })}
-          </View>
-        )}
+          )}
+          ListHeaderComponent={listHeader}
+          ListEmptyComponent={emptyState}
+          ListFooterComponent={loadingMore ? <LoadingState message="Loading more appointments…" /> : null}
+          ItemSeparatorComponent={() => <View style={styles.itemSeparator} />}
+          contentContainerStyle={styles.listContent}
+          keyboardShouldPersistTaps="handled"
+          refreshing={refreshing}
+          onRefresh={() => void refresh()}
+          onEndReached={() => void loadMore()}
+          onEndReachedThreshold={0.4}
+          initialNumToRender={10}
+          windowSize={7}
+          testID="appointments-list"
+        />
       </MerchantScreen>
 
-      {/* Appointment Detail Modal */}
       <AppointmentDetailModal
         visible={Boolean(activeDetailAppointment)}
         appointment={activeDetailAppointment}
@@ -513,8 +612,8 @@ export default function MerchantAppointmentsScreen() {
         testID="appointment-detail-modal"
       />
 
-      {/* Destructive Action Confirmation Modal */}
       <ConfirmationModal
+        key={`${confirmModalAppointment?.appointmentId ?? 'none'}:${confirmTarget ?? 'none'}`}
         visible={Boolean(confirmModalAppointment && confirmTarget)}
         title={
           confirmTarget === 'REJECTED'
@@ -558,7 +657,7 @@ export default function MerchantAppointmentsScreen() {
         }
         reasonPlaceholder="e.g. Provider slot conflict, clinic emergency…"
         loading={confirmLoading}
-        onConfirm={() => void handleConfirmDestructive()}
+        onConfirm={(reason) => void handleConfirmDestructive(reason)}
         onCancel={() => {
           setConfirmModalAppointment(null);
           setConfirmTarget(null);
@@ -567,14 +666,13 @@ export default function MerchantAppointmentsScreen() {
       />
 
       <BottomNavigation
-        activeTab="orders"
+        activeTab="more"
         onTabPress={(tab) => {
           if (tab === 'home') router.push('/dashboard');
           else if (tab === 'inventory') router.push('/inventory');
           else if (tab === 'catalog') router.push('/catalog');
           else if (tab === 'orders') router.push('/orders');
         }}
-        orderBadge={metrics.booked > 0 ? metrics.booked : undefined}
         moreMenuItems={moreMenuItems}
       />
     </View>
@@ -586,10 +684,20 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.surfaceDim,
   },
-  content: {
+  screenContent: {
+    padding: 0,
+  },
+  listContent: {
     padding: spacing.md,
-    gap: spacing.md,
     paddingBottom: spacing.xxl,
+    flexGrow: 1,
+  },
+  listHeader: {
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  itemSeparator: {
+    height: spacing.md,
   },
   metricsStrip: {
     flexDirection: 'row',
@@ -617,8 +725,5 @@ const styles = StyleSheet.create({
     ...typography.bodyMd,
     color: colors.onWarningContainer,
     fontWeight: '600',
-  },
-  appointmentList: {
-    gap: spacing.md,
   },
 });

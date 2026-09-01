@@ -88,6 +88,7 @@ interface AppointmentPersistence {
         allowedFrom: Set<AppointmentStatus>,
         target: AppointmentStatus,
         actorId: UUID,
+        reason: String?,
         now: Instant,
     ): CustomerAppointment?
     fun get(customerId: UUID, appointmentId: UUID, now: Instant): CustomerAppointment?
@@ -181,6 +182,7 @@ class InMemoryAppointmentPersistence : AppointmentPersistence {
         allowedFrom: Set<AppointmentStatus>,
         target: AppointmentStatus,
         actorId: UUID,
+        reason: String?,
         now: Instant,
     ): CustomerAppointment? {
         expireHolds(now)
@@ -387,11 +389,19 @@ class AppointmentService(
         outletId: UUID,
         appointmentId: UUID,
         target: AppointmentStatus,
+        reason: String? = null,
     ): CustomerAppointment {
         Authorizer.requireRole(merchant, Role.MERCHANT)
         Authorizer.requireOutlet(merchant, outletId)
         val outlet = providers.getOutlet(outletId)
         if (merchant.organizationId == null || merchant.organizationId != outlet.organizationId) unavailable()
+        val normalizedReason = reason?.trim()?.takeIf { it.isNotEmpty() }
+        if (target in setOf(AppointmentStatus.REJECTED, AppointmentStatus.CANCELLED) && normalizedReason == null) {
+            throw DomainException("APPOINTMENT_REASON_REQUIRED", "A reason is required for this appointment transition")
+        }
+        if ((normalizedReason?.length ?: 0) > 240) {
+            throw DomainException("APPOINTMENT_REASON_INVALID", "The appointment transition reason is too long")
+        }
         val allowedFrom = when (target) {
             AppointmentStatus.CONFIRMED -> setOf(AppointmentStatus.BOOKED)
             AppointmentStatus.REJECTED -> setOf(AppointmentStatus.BOOKED)
@@ -411,6 +421,7 @@ class AppointmentService(
             allowedFrom,
             target,
             merchant.actorId,
+            normalizedReason,
             clock.instant(),
         ) ?: unavailable()
     }

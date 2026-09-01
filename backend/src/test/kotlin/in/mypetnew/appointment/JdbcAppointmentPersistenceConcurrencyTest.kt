@@ -74,6 +74,41 @@ class JdbcAppointmentPersistenceConcurrencyTest {
     }
 
     @Test
+    fun `merchant transition persists operator reason in appointment history`() {
+        val database = database()
+        val serviceId = UUID.randomUUID()
+        val slotId = UUID.randomUUID()
+        insertSlot(database, serviceId, slotId, now.plusSeconds(3_600))
+        val persistence = persistence(database)
+        val customerId = UUID.randomUUID()
+        val actorId = UUID.randomUUID()
+        val held = persistence.hold(
+            appointment(customerId, serviceId, slotId),
+            "reason-history",
+            "reason-history-fingerprint",
+            now,
+        )
+        val booked = persistence.confirm(customerId, held.id, now.plusSeconds(1))!!
+
+        persistence.merchantTransition(
+            booked.outletId,
+            booked.id,
+            setOf(AppointmentStatus.BOOKED),
+            AppointmentStatus.REJECTED,
+            actorId,
+            "Provider unavailable",
+            now.plusSeconds(2),
+        )
+
+        val note = JdbcTemplate(database).queryForObject(
+            "SELECT note FROM mypet.appointment_history WHERE appointment_id = ? AND status = 'REJECTED'",
+            String::class.java,
+            booked.id,
+        )
+        assertEquals("Provider unavailable", note)
+    }
+
+    @Test
     fun `expired JDBC hold releases slot and same key changed payload conflicts`() {
         val database = database()
         val serviceId = UUID.randomUUID()

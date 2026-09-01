@@ -191,11 +191,21 @@ class AppointmentMerchantLifecycleTest {
     }
 
     @Test
+    fun `merchant destructive transitions require a reason`() {
+        val rejected = bookedAppointment("merchant-reason-required")
+        val failure = assertThrows(DomainException::class.java) {
+            appointments.merchantTransition(merchant, outletId, rejected.id, AppointmentStatus.REJECTED)
+        }
+        assertEquals("APPOINTMENT_REASON_REQUIRED", failure.code)
+        assertEquals(AppointmentStatus.BOOKED, appointments.get(customer, rejected.id).status)
+    }
+
+    @Test
     fun `merchant may reject booked appointment or mark confirmed appointment no-show`() {
         val rejected = bookedAppointment("merchant-reject")
         assertEquals(
             AppointmentStatus.REJECTED,
-            appointments.merchantTransition(merchant, outletId, rejected.id, AppointmentStatus.REJECTED).status,
+            appointments.merchantTransition(merchant, outletId, rejected.id, AppointmentStatus.REJECTED, "Provider unavailable").status,
         )
 
         val noShow = bookedAppointment("merchant-noshow")

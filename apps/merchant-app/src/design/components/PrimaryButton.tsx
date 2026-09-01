@@ -2,6 +2,7 @@ import React from 'react';
 import {
   ActivityIndicator,
   Pressable,
+  StyleProp,
   StyleSheet,
   Text,
   ViewStyle,
@@ -14,10 +15,11 @@ export interface PrimaryButtonProps {
   loading?: boolean;
   disabled?: boolean;
   variant?: 'primary' | 'destructive' | 'success';
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   accessibilityLabel?: string;
   testID?: string;
 }
+
 
 export function PrimaryButton({
   title,

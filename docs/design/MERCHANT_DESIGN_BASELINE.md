@@ -9,6 +9,12 @@ This document records the baseline design constraints, Stitch MCP project refere
 * **Design System Asset Name:** `Merchant Operations Core`
 * **Stitch Screen Baseline:** `projects/16891330123471591482/screens/18165305735316726811`
 * **Stitch Dashboard Production Screen:** `projects/16891330123471591482/screens/d650cc3b79f64efc9b904c9bbea1f9da`
+* **Stitch Orders Production Screen:** `projects/16891330123471591482/screens/9ab5d6b4be3c4bed8ec0725818cfa63c`
+* **Stitch Inventory Production Screen:** `projects/16891330123471591482/screens/3987b29793444dd8980f3a0347fd83dd`
+* **Stitch Stock Adjustments Screen:** `projects/16891330123471591482/screens/e2e8886240644155a425e576709788ca`
+* **Stitch Movement Ledger Screen:** `projects/16891330123471591482/screens/02adf9ae32b64384bd0061f2ec9a28e5`
+* **Stitch Catalog Production Screen:** `projects/16891330123471591482/screens/b09a4b4bc1d74a378eacf46fdb381503`
+* **Stitch Product Editor Screen:** `projects/16891330123471591482/screens/0d05c260fe7f404d8eaed893a95f2d50`
 
 ---
 
@@ -23,20 +29,20 @@ This document records the baseline design constraints, Stitch MCP project refere
 | **Offline Persistence** | Prominent UI distinction between local SQLite cached data / outbox state and confirmed canonical backend state. |
 | **State Consistency** | Explicit, standardized representations for `isLoading`, `isReady`, `error` (with retry action), `offline`, and empty states. |
 | **Outlet Context** | Every operational surface clearly displays the active outlet identity and organization partition context with quick outlet switching affordances. |
-| **Safety Invariants** | No hidden or single-tap destructive actions; stock adjustments, damage write-offs, expiry reports, returns, and order rejections require explicit user confirmation. |
+| **Safety Invariants** | No hidden or single-tap destructive actions; stock adjustments, damage write-offs, expiry reports, returns, and order rejections require explicit user confirmation with validated reasons. |
 | **Canonical Distinction** | Local unacknowledged outbox commands are visually demarcated from server-acknowledged records. |
 
 ---
 
-## 3. MF2 Information Architecture & Primary Navigation
+## 3. Information Architecture & Primary Navigation
 
 The application uses an Android-friendly 5-destination bottom navigation bar combined with an operational "More" sheet to keep primary destinations accessible within 1 tap:
 
 ### Primary Bottom Navigation
 1. **Home (`/dashboard`)**: Operations KPI summary, outlet switcher, sync banner, quick actions.
-2. **Orders (`/orders`)**: Live order work queue, preparation, fulfilment state transitions.
-3. **Inventory (`/inventory`)**: Stock ledger, balance, count sessions, stock movements.
-4. **Catalog (`/catalog`)**: Product listings, active status filters, pricing, media synchronization.
+2. **Orders (`/orders`)**: Live order work queue, preparation, fulfilment state transitions, and cancellation reason modals.
+3. **Inventory (`/inventory`)**: Stock ledger, balance, 8 movement operation workflows, count sessions, stock timeline.
+4. **Catalog (`/catalog`)**: Product listings, active/inactive status filters, pricing & margin calculation, photo management.
 5. **More (Modal Sheet)**:
    * **Barcode Scanner (`/barcode`)**: Offline barcode resolution & product draft onboarding.
    * **Booking Requests (`/appointments`)**: Grooming & veterinary appointment management.
@@ -75,11 +81,13 @@ The application uses an Android-friendly 5-destination bottom navigation bar com
 * `headlineLg`: 28px / 36px (800 weight)
 * `headlineLgMobile`: 24px / 32px (800 weight)
 * `headlineMd`: 20px / 28px (700 weight)
+* `headlineSm`: 18px / 24px (700 weight)
 * `labelLg`: 16px / 24px (700 weight)
 * `labelMd`: 14px / 20px (600 weight)
 * `labelSm`: 12px / 16px (600 weight)
 * `bodyLg`: 16px / 24px (400 weight)
 * `bodyMd`: 14px / 20px (400 weight)
+* `bodySm`: 13px / 18px (400 weight)
 * `metricValue`: 32px / 38px (800 weight)
 * `codeSm`: 12px / 16px (500 weight monospace)
 
@@ -87,6 +95,7 @@ The application uses an Android-friendly 5-destination bottom navigation bar com
 
 ## 5. Reusable UI Primitives (`src/design/components/`)
 
+### Foundation Primitives
 * **`MerchantScreen`**: Standard container managing SafeAreaInsets, persistent header, scrollview/fixed layouts, and offline banners.
 * **`MerchantHeader`**: Context header rendering active outlet name, outlet switcher modal trigger, sync indicator, notification badge, and profile affordance.
 * **`BottomNavigation`**: 5-destination bottom navigation bar with active states, badges, and "More" operational sheet.
@@ -99,6 +108,18 @@ The application uses an Android-friendly 5-destination bottom navigation bar com
 * **`EmptyState`**, **`ErrorState`**, **`LoadingState`**: Accessible state containers with `accessibilityRole` and `accessibilityLiveRegion` support.
 * **`PrimaryButton`**, **`SecondaryButton`**, **`IconButton`**: Touch-accessible buttons guaranteeing >= 48dp touch targets.
 * **`OutletPickerModal`**: Modal dialog for fast switching between "All Outlets" and specific outlet partitions.
+
+### Operational Primitives (MF3)
+* **`FilterBar`**: Horizontal chip filter bar with badge counts and scroll support.
+* **`SearchInput`**: Accessible search field with clear action and optional barcode scanner trigger.
+* **`ConfirmationModal`**: Destructive action confirmation modal with validated reason text entry.
+* **`OrderCard`**: Production order card with elapsed time, amount, fulfillment mode, payment status, and action buttons.
+* **`OrderDetailModal`**: Modal sheet displaying complete order breakdown, items, and transition buttons.
+* **`InventoryCard`**: 3-col inventory stock metric card (On Hand, Reserved, Available) with stock badges, sync badges, and operations bar.
+* **`StockAdjustmentModal`**: Comprehensive modal supporting all 8 stock operation modes (Manual, Receiving, Damage, Expiry, Shrinkage, Return, Transfer, Count).
+* **`MovementLedgerModal`**: Historical stock movement timeline with +/- quantity delta badges and source references.
+* **`CatalogProductCard`**: Product card with image thumbnail, category/medicine chips, price comparison, image quota, active toggle, and edit action.
+* **`ProductEditorModal`**: Full product creation and edit modal sheet with validation, live margin calculation, and barcode scanner shortcut.
 
 ---
 
@@ -116,10 +137,9 @@ The application uses an Android-friendly 5-destination bottom navigation bar com
 
 ---
 
-## 7. Deferred Work (MF3+)
+## 7. Deferred Work (MF4+)
 
-* **MF3 — Catalog & Product Presentation Redesign**: Detailed product listing cards, category filtering, pricing edits, and media queue visualization.
-* **MF4 — Inventory Ledger & Count Operations Redesign**: Advanced multi-session stock counting, scanning viewfinder integration, and movement history views.
-* **MF5 — Order Fulfilment & Queue Flow Redesign**: Live order timeline, kitchen/packing tickets, and courier dispatch handoff.
-* **MF6 — Appointments & Service Booking Redesign**: Calendar slot grid, customer pet history, groomer/vet assignment.
-* **MF7 — Barcode Scanner & POS Hardware Integration**: Hardware laser scanner integration, viewfinder haptics, and fast barcode continuous scanning.
+* **MF4 — Appointments & Service Booking Redesign**: Calendar slot grid, customer pet history, groomer/vet assignment.
+* **MF5 — Barcode Scanner & POS Hardware Integration**: Hardware laser scanner integration, viewfinder haptics, and fast barcode continuous scanning.
+* **MF6 — Staff Access & Permissions Admin**: Multi-role assignment matrix, granular outlet permission management.
+* **MF7 — Store Performance Analytics & Reporting**: Sales revenue charts, bestsellers matrix, and shrinkage reconciliation reporting.

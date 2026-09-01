@@ -1,7 +1,35 @@
-import { useEffect, useState } from 'react';
-import { Button, ScrollView, Text, TextInput, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { fetchCatalogPage, fetchMerchantCatalogContext, type MerchantListing } from '../src/catalog/api';
+import { router } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+import { loadOfflineMerchantAccountId } from '../src/auth/offline-account';
+import {
+  fetchCatalogPage,
+  fetchMerchantCatalogContext,
+  type MerchantCatalogContext,
+  type MerchantListing,
+} from '../src/catalog/api';
+import { useMerchantDatabase } from '../src/data';
+import { createPartitionContext } from '../src/data/models/partition-context';
+import {
+  BottomNavigation,
+  EmptyState,
+  ErrorState,
+  FilterBar,
+  type FilterOption,
+  InventoryCard,
+  type InventorySyncState,
+  LoadingState,
+  MerchantHeader,
+  MerchantScreen,
+  MovementLedgerModal,
+  SearchInput,
+  StockAdjustmentModal,
+  type StockOperationMode,
+  type SyncStateMode,
+  colors,
+  spacing,
+  typography,
+} from '../src/design';
 import {
   createInventoryAdjustmentCommand,
   fetchInventoryBalance,
@@ -17,603 +45,591 @@ import {
   submitTransfer,
   updateStockCountLines,
   type InventoryAdjustmentCommand,
+  type InventoryAdjustmentReason,
   type InventoryBalance,
   type InventoryCountSession,
   type InventoryMovement,
 } from '../src/inventory/api';
+import { summarizeOperationalSync, type OperationalSyncSummary } from '../src/operations/sync-summary';
 
-export type InventoryOpMode =
-  | 'ADJUSTMENT'
-  | 'RECEIVING'
-  | 'DAMAGE'
-  | 'EXPIRY'
-  | 'SHRINKAGE'
-  | 'RETURN'
-  | 'TRANSFER'
-  | 'COUNT';
+export type InventoryFilter = 'ALL' | 'LOW_STOCK' | 'OUT_OF_STOCK' | 'PENDING_SYNC';
 
-export type OfflineSyncStatus =
-  | 'Saved locally'
-  | 'Pending sync'
-  | 'Syncing'
-  | 'Applied'
-  | 'Rejected'
-  | 'Needs review';
+type InventoryItemView = {
+  listing: MerchantListing;
+  balance: InventoryBalance;
+  syncState: InventorySyncState;
+  pendingCommand?: InventoryAdjustmentCommand;
+};
 
 export default function MerchantInventoryScreen() {
+  const { outboxRepo, syncStateRepo } = useMerchantDatabase();
+  const [merchantContext, setMerchantContext] = useState<MerchantCatalogContext>();
   const [outletId, setOutletId] = useState<string>();
-  const [listing, setListing] = useState<MerchantListing>();
-  const [balance, setBalance] = useState<InventoryBalance>();
-  const [history, setHistory] = useState<InventoryMovement[]>([]);
-  const [units, setUnits] = useState('1');
-  const [decrease, setDecrease] = useState(false);
+  const [items, setItems] = useState<InventoryItemView[]>([]);
+  const [sync, setSync] = useState<OperationalSyncSummary>();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedFilter, setSelectedFilter] = useState<InventoryFilter>('ALL');
   const [canWrite, setCanWrite] = useState(false);
-  const [pending, setPending] = useState<InventoryAdjustmentCommand>();
-  const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState('');
-  const [opMode, setOpMode] = useState<InventoryOpMode>('ADJUSTMENT');
-  const [syncStatus, setSyncStatus] = useState<OfflineSyncStatus>('Applied');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // M8 operation form state
-  const [refType, setRefType] = useState('');
-  const [refId, setRefId] = useState('');
-  const [batchNo, setBatchNo] = useState('');
-  const [expiryDate, setExpiryDate] = useState('');
-  const [destOutletId, setDestOutletId] = useState('');
-  const [returnType, setReturnType] = useState<'CUSTOMER_RETURN' | 'VENDOR_RETURN'>('CUSTOMER_RETURN');
-
-  // Stock count session state
+  // Modals state
+  const [activeAdjustItem, setActiveAdjustItem] = useState<InventoryItemView | null>(null);
+  const [adjustInitialMode, setAdjustInitialMode] = useState<StockOperationMode>('ADJUSTMENT');
+  const [ledgerItem, setLedgerItem] = useState<InventoryItemView | null>(null);
+  const [ledgerMovements, setLedgerMovements] = useState<InventoryMovement[]>([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
   const [countSession, setCountSession] = useState<InventoryCountSession>();
-  const [countedQty, setCountedQty] = useState('0');
 
-  async function refresh(outlet: string, item: MerchantListing) {
-    const [stock, movements] = await Promise.all([
-      fetchInventoryBalance(outlet, item.id),
-      fetchInventoryMovements(outlet, item.id, 0, 25),
-    ]);
-    setBalance(stock);
-    setHistory(movements.items);
-  }
+  const load = useCallback(async (selectedOutlet?: string) => {
+    setMessage('');
+    try {
+      if (!selectedOutlet) {
+        setItems([]);
+        return;
+      }
+      const catalogResult = await fetchCatalogPage(selectedOutlet, { pageSize: 50 });
+      const listings = catalogResult.items;
+
+      const balancePromises = listings.map(async (listing) => {
+        try {
+          const bal = await fetchInventoryBalance(selectedOutlet, listing.id);
+          return {
+            listing,
+            balance: bal,
+            syncState: 'Canonical' as InventorySyncState,
+          };
+        } catch {
+          // Fallback to local default / cached balance
+          return {
+            listing,
+            balance: {
+              organizationId: listing.organizationId,
+              outletId: selectedOutlet,
+              listingId: listing.id,
+              onHand: 0,
+              reserved: 0,
+              available: 0,
+              version: 0,
+              updatedAt: new Date().toISOString(),
+            },
+            syncState: 'Cached' as InventorySyncState,
+          };
+        }
+      });
+
+      const loadedItems = await Promise.all(balancePromises);
+      setItems(loadedItems);
+
+      if (outboxRepo && syncStateRepo && merchantContext?.organizationId) {
+        try {
+          const accountId = await loadOfflineMerchantAccountId();
+          if (accountId) {
+            const orgId = merchantContext.organizationId;
+            const outletIds = [selectedOutlet];
+            const partitions = outletIds.map((id) => createPartitionContext(accountId, orgId, id));
+            setSync(await summarizeOperationalSync(partitions, syncStateRepo, outboxRepo));
+          }
+        } catch {
+          // Local sync reading error
+        }
+      }
+    } catch (error) {
+      setItems([]);
+      setMessage(error instanceof Error ? error.message : 'Inventory unavailable.');
+    }
+  }, [merchantContext, outboxRepo, syncStateRepo]);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    await load(outletId);
+    setRefreshing(false);
+  }, [load, outletId]);
 
   useEffect(() => {
+    let active = true;
     void (async () => {
+      setLoading(true);
       try {
         const context = await fetchMerchantCatalogContext();
-        const outlet = context.outletIds[0];
-        if (!outlet) return;
-        setOutletId(outlet);
-        const permissions = context.permissionsByOutlet[outlet] ?? [];
-        setCanWrite(permissions.includes('OWNER') || permissions.includes('INVENTORY_WRITE'));
-        const item = (await fetchCatalogPage(outlet, { pageSize: 1 })).items[0];
-        if (!item) return;
-        setListing(item);
-        await refresh(outlet, item);
+        if (!active) return;
+        setMerchantContext(context);
+        const initialOutlet = context.outletIds[0];
+        if (initialOutlet) {
+          setOutletId(initialOutlet);
+          const permissions = context.permissionsByOutlet[initialOutlet] ?? [];
+          setCanWrite(permissions.includes('OWNER') || permissions.includes('INVENTORY_WRITE') || permissions.includes('CATALOG_WRITE'));
+          await load(initialOutlet);
+        }
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : 'Inventory unavailable.');
+        if (active) setMessage(error instanceof Error ? error.message : 'Inventory unavailable.');
       } finally {
-        setBusy(false);
+        if (active) setLoading(false);
       }
     })();
-  }, []);
+    return () => { active = false; };
+  }, [load]);
 
-  async function commit(command: InventoryAdjustmentCommand) {
-    if (!outletId || !listing || busy || !canWrite) return;
-    setBusy(true);
-    setSyncStatus('Syncing');
+  const outletOptions = useMemo(() => {
+    if (!merchantContext) return [];
+    return merchantContext.outletIds.map((id, index) => ({
+      id,
+      name: `Outlet ${index + 1} (${id.slice(0, 8)})`,
+    }));
+  }, [merchantContext]);
+
+  const currentOutletName = useMemo(() => {
+    if (!outletId) return 'All Outlets';
+    const found = outletOptions.find((o) => o.id === outletId);
+    return found ? found.name : outletId;
+  }, [outletId, outletOptions]);
+
+  const syncMode: SyncStateMode = useMemo(() => {
+    if (message && message.toLowerCase().includes('network')) return 'offline';
+    if (!sync) return 'online';
+    if (sync.commands.rejected > 0 || sync.commands.blocked > 0) return 'failed';
+    if (sync.commands.sending > 0) return 'syncing';
+    if (sync.commands.pending > 0 || sync.commands.retry > 0) return 'pending';
+    return 'online';
+  }, [message, sync]);
+
+  const pendingCount = sync ? (sync.commands.pending + sync.commands.retry + sync.commands.reconciliation) : 0;
+
+  function handleSelectOutlet(selected?: string) {
+    if (!selected) return;
+    setOutletId(selected);
+    const permissions = merchantContext?.permissionsByOutlet[selected] ?? [];
+    setCanWrite(permissions.includes('OWNER') || permissions.includes('INVENTORY_WRITE') || permissions.includes('CATALOG_WRITE'));
+    setLoading(true);
+    void (async () => {
+      await load(selected);
+      setLoading(false);
+    })();
+  }
+
+  // Filter options with counts
+  const filterOptions: FilterOption<InventoryFilter>[] = useMemo(() => {
+    const lowStockCount = items.filter((i) => i.balance.available > 0 && i.balance.available <= 5).length;
+    const outOfStockCount = items.filter((i) => i.balance.available <= 0).length;
+    const pendingCount = items.filter((i) => i.syncState === 'Pending sync').length;
+
+    return [
+      { id: 'ALL', label: 'All Stock', badge: items.length || undefined },
+      { id: 'LOW_STOCK', label: 'Low Stock', badge: lowStockCount || undefined },
+      { id: 'OUT_OF_STOCK', label: 'Out of Stock', badge: outOfStockCount || undefined },
+      { id: 'PENDING_SYNC', label: 'Pending Sync', badge: pendingCount || undefined },
+    ];
+  }, [items]);
+
+  // Filtered and searched items
+  const filteredItems = useMemo(() => {
+    return items.filter((item) => {
+      if (selectedFilter === 'LOW_STOCK' && (item.balance.available <= 0 || item.balance.available > 5)) {
+        return false;
+      }
+      if (selectedFilter === 'OUT_OF_STOCK' && item.balance.available > 0) {
+        return false;
+      }
+      if (selectedFilter === 'PENDING_SYNC' && item.syncState !== 'Pending sync') {
+        return false;
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const matchesName = item.listing.name.toLowerCase().includes(q);
+        const matchesSku = item.listing.sku?.toLowerCase().includes(q) ?? false;
+        const matchesBarcode = item.listing.normalizedBarcode.toLowerCase().includes(q);
+        const matchesCategory = item.listing.category.toLowerCase().includes(q);
+        return matchesName || matchesSku || matchesBarcode || matchesCategory;
+      }
+      return true;
+    });
+  }, [items, searchQuery, selectedFilter]);
+
+  // Movement operations handlers
+  async function handleManualAdjustment(units: number, isDecrease: boolean, reason: InventoryAdjustmentReason) {
+    if (!outletId || !activeAdjustItem) return;
+    const command = createInventoryAdjustmentCommand({
+      outletId,
+      listingId: activeAdjustItem.listing.id,
+      quantityDelta: isDecrease ? -units : units,
+      reason,
+    });
     try {
       await submitInventoryAdjustment(command);
-      setPending(undefined);
-      setSyncStatus('Applied');
-      await refresh(outletId, listing);
-      setMessage('Inventory movement committed.');
-    } catch (error) {
-      setPending(command);
-      setSyncStatus('Pending sync');
-      setMessage(error instanceof Error ? error.message : 'Inventory update failed.');
-    } finally {
-      setBusy(false);
+      setMessage(`Stock adjustment of ${isDecrease ? '-' : '+'}${units} units applied.`);
+      await load(outletId);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Inventory update failed.');
+      throw err;
     }
   }
 
-  async function adjust() {
-    if (!outletId || !listing || pending) return;
-    const quantity = Number(units);
-    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
-      setMessage('Use a positive whole-unit quantity.');
-      return;
-    }
-    await commit(
-      createInventoryAdjustmentCommand({
-        outletId,
-        listingId: listing.id,
-        quantityDelta: decrease ? -quantity : quantity,
-        reason: decrease ? 'MANUAL_DECREASE' : 'MANUAL_INCREASE',
-      }),
-    );
-  }
-
-  async function handleReceiving() {
-    if (!outletId || !listing || !canWrite) return;
-    const quantity = Number(units);
-    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
-      setMessage('Use a positive whole-unit quantity.');
-      return;
-    }
-    setBusy(true);
+  async function handleReceiving(units: number, refType?: string, refId?: string, batchNo?: string, expiryDate?: string) {
+    if (!outletId || !activeAdjustItem) return;
     try {
       await submitReceiving({
         outletId,
-        listingId: listing.id,
-        quantity,
-        referenceType: refType || undefined,
-        referenceId: refId || undefined,
-        batchNumber: batchNo || undefined,
-        expiryDate: expiryDate || undefined,
+        listingId: activeAdjustItem.listing.id,
+        quantity: units,
+        referenceType: refType,
+        referenceId: refId,
+        batchNumber: batchNo,
+        expiryDate,
       });
-      setSyncStatus('Applied');
-      await refresh(outletId, listing);
-      setMessage('Receiving recorded successfully.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Receiving failed.');
-    } finally {
-      setBusy(false);
+      setMessage(`Recorded receiving of ${units} units.`);
+      await load(outletId);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Receiving failed.');
+      throw err;
     }
   }
 
-  async function handleDamage() {
-    if (!outletId || !listing || !canWrite) return;
-    const quantity = Number(units);
-    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
-      setMessage('Use a positive whole-unit quantity.');
-      return;
-    }
-    setBusy(true);
+  async function handleDamage(units: number, details?: string, refId?: string) {
+    if (!outletId || !activeAdjustItem) return;
     try {
       await submitDamage({
         outletId,
-        listingId: listing.id,
-        quantity,
-        reasonDetails: refType || undefined,
-        referenceId: refId || undefined,
+        listingId: activeAdjustItem.listing.id,
+        quantity: units,
+        reasonDetails: details,
+        referenceId: refId,
       });
-      setSyncStatus('Applied');
-      await refresh(outletId, listing);
-      setMessage('Damage recorded successfully.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Damage recording failed.');
-    } finally {
-      setBusy(false);
+      setMessage(`Recorded damaged stock of ${units} units.`);
+      await load(outletId);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Damage write-off failed.');
+      throw err;
     }
   }
 
-  async function handleExpiry() {
-    if (!outletId || !listing || !canWrite) return;
-    const quantity = Number(units);
-    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
-      setMessage('Use a positive whole-unit quantity.');
-      return;
-    }
-    setBusy(true);
+  async function handleExpiry(units: number, batchNo?: string, expiryDate?: string) {
+    if (!outletId || !activeAdjustItem) return;
     try {
       await submitExpiry({
         outletId,
-        listingId: listing.id,
-        quantity,
-        batchReference: batchNo || undefined,
-        expiryDate: expiryDate || undefined,
+        listingId: activeAdjustItem.listing.id,
+        quantity: units,
+        batchReference: batchNo,
+        expiryDate,
       });
-      setSyncStatus('Applied');
-      await refresh(outletId, listing);
-      setMessage('Expiry recorded successfully.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Expiry recording failed.');
-    } finally {
-      setBusy(false);
+      setMessage(`Recorded ${units} expired units.`);
+      await load(outletId);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Expiry recording failed.');
+      throw err;
     }
   }
 
-  async function handleShrinkage() {
-    if (!outletId || !listing || !canWrite) return;
-    const quantity = Number(units);
-    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
-      setMessage('Use a positive whole-unit quantity.');
-      return;
-    }
-    setBusy(true);
+  async function handleShrinkage(units: number, notes?: string, refId?: string) {
+    if (!outletId || !activeAdjustItem) return;
     try {
       await submitShrinkage({
         outletId,
-        listingId: listing.id,
-        quantity,
-        notes: refType || undefined,
-        referenceId: refId || undefined,
+        listingId: activeAdjustItem.listing.id,
+        quantity: units,
+        notes,
+        referenceId: refId,
       });
-      setSyncStatus('Applied');
-      await refresh(outletId, listing);
-      setMessage('Shrinkage recorded successfully.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Shrinkage recording failed.');
-    } finally {
-      setBusy(false);
+      setMessage(`Recorded shrinkage of ${units} units.`);
+      await load(outletId);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Shrinkage recording failed.');
+      throw err;
     }
   }
 
-  async function handleReturn() {
-    if (!outletId || !listing || !canWrite) return;
-    const quantity = Number(units);
-    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
-      setMessage('Use a positive whole-unit quantity.');
-      return;
-    }
-    setBusy(true);
+  async function handleReturn(units: number, returnType: 'CUSTOMER_RETURN' | 'VENDOR_RETURN', refId?: string) {
+    if (!outletId || !activeAdjustItem) return;
     try {
       await submitReturn({
         outletId,
-        listingId: listing.id,
-        quantity,
+        listingId: activeAdjustItem.listing.id,
+        quantity: units,
         returnType,
-        referenceType: refType || undefined,
-        referenceId: refId || undefined,
+        referenceId: refId,
       });
-      setSyncStatus('Applied');
-      await refresh(outletId, listing);
-      setMessage('Return recorded successfully.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Return recording failed.');
-    } finally {
-      setBusy(false);
+      setMessage(`Recorded return of ${units} units.`);
+      await load(outletId);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Return failed.');
+      throw err;
     }
   }
 
-  async function handleTransfer() {
-    if (!outletId || !listing || !canWrite || !destOutletId) {
-      setMessage('Destination outlet ID is required.');
-      return;
-    }
-    const quantity = Number(units);
-    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
-      setMessage('Use a positive whole-unit quantity.');
-      return;
-    }
-    setBusy(true);
+  async function handleTransfer(units: number, destinationOutletId: string) {
+    if (!outletId || !activeAdjustItem) return;
     try {
       await submitTransfer({
         sourceOutletId: outletId,
-        destinationOutletId: destOutletId,
-        sourceListingId: listing.id,
-        quantity,
+        destinationOutletId,
+        sourceListingId: activeAdjustItem.listing.id,
+        quantity: units,
       });
-      setSyncStatus('Applied');
-      await refresh(outletId, listing);
-      setMessage('Transfer completed successfully.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Transfer failed.');
-    } finally {
-      setBusy(false);
+      setMessage(`Transferred ${units} units to outlet ${destinationOutletId.slice(0, 8)}…`);
+      await load(outletId);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Transfer failed.');
+      throw err;
     }
   }
 
-  async function handleStartCount() {
-    if (!outletId || !canWrite) return;
-    setBusy(true);
+  async function handleStartCount(): Promise<InventoryCountSession> {
+    if (!outletId) throw new Error('Outlet ID required.');
+    const session = await startStockCount(outletId);
+    setCountSession(session);
+    return session;
+  }
+
+  async function handleAddCountLine(sessionId: string, qty: number) {
+    if (!outletId || !activeAdjustItem) return;
+    const updated = await updateStockCountLines(outletId, sessionId, [
+      { listingId: activeAdjustItem.listing.id, countedQuantity: qty },
+    ]);
+    setCountSession(updated);
+  }
+
+  async function handleSubmitCount(sessionId: string) {
+    if (!outletId) return;
+    const res = await submitStockCount(outletId, sessionId);
+    setMessage(`Count submitted: ${res.lines.length} line(s) reconciled.`);
+    await load(outletId);
+  }
+
+  async function openMovementLedger(item: InventoryItemView) {
+    if (!outletId) return;
+    setLedgerItem(item);
+    setLedgerLoading(true);
     try {
-      const session = await startStockCount(outletId);
-      setCountSession(session);
-      setMessage(`Count session started: ${session.id}`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Starting count session failed.');
+      const page = await fetchInventoryMovements(outletId, item.listing.id, 0, 50);
+      setLedgerMovements(page.items);
+    } catch {
+      setLedgerMovements([]);
     } finally {
-      setBusy(false);
+      setLedgerLoading(false);
     }
   }
 
-  async function handleAddCountLine() {
-    if (!outletId || !listing || !countSession) return;
-    const qty = Number(countedQty);
-    if (!Number.isSafeInteger(qty) || qty < 0) {
-      setMessage('Counted quantity must be non-negative.');
-      return;
-    }
-    setBusy(true);
-    try {
-      const updated = await updateStockCountLines(outletId, countSession.id, [
-        { listingId: listing.id, countedQuantity: qty },
-      ]);
-      setCountSession(updated);
-      setMessage('Count line saved.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Updating count line failed.');
-    } finally {
-      setBusy(false);
-    }
+  function openAdjustment(item: InventoryItemView, mode: StockOperationMode = 'ADJUSTMENT') {
+    setActiveAdjustItem(item);
+    setAdjustInitialMode(mode);
   }
 
-  async function handleSubmitCount() {
-    if (!outletId || !countSession) return;
-    setBusy(true);
-    try {
-      const res = await submitStockCount(outletId, countSession.id);
-      setMessage(`Count submitted. ${res.lines.length} lines reconciled.`);
-      if (listing) await refresh(outletId, listing);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Count submission failed.');
-    } finally {
-      setBusy(false);
-    }
-  }
+  const moreMenuItems = useMemo(() => [
+    {
+      key: 'barcode',
+      label: 'Barcode Scanner',
+      icon: '📷',
+      subtitle: 'Scan & onboard products offline',
+      onPress: () => router.push('/barcode'),
+    },
+    {
+      key: 'appointments',
+      label: 'Booking Requests',
+      icon: '📅',
+      subtitle: 'Grooming & vet appointments',
+      onPress: () => router.push('/appointments'),
+    },
+    {
+      key: 'notifications',
+      label: 'Notifications',
+      icon: '🔔',
+      subtitle: 'Inbox & operational alerts',
+      onPress: () => router.push('/notifications'),
+    },
+    {
+      key: 'sync',
+      label: 'Sync & Conflicts',
+      icon: '🔄',
+      subtitle: 'Device outbox and sync status',
+      badge: pendingCount > 0 ? pendingCount : undefined,
+      onPress: () => router.push('/sync-status'),
+    },
+  ], [pendingCount]);
 
   return (
-    <SafeAreaView style={{ flex: 1, padding: 20 }}>
-      <ScrollView contentContainerStyle={{ gap: 12 }}>
-        <Text style={{ fontSize: 28, fontWeight: '800' }}>Inventory</Text>
-        <Text>Immutable movement ledger · canonical server balance</Text>
-        <Text style={{ fontSize: 12, color: '#666' }}>Sync status: {syncStatus}</Text>
-        {busy ? <Text>Loading…</Text> : null}
-        {message ? <Text accessibilityRole="alert">{message}</Text> : null}
-        {!canWrite && outletId ? (
-          <Text accessibilityRole="alert">Inventory write permission is required.</Text>
-        ) : null}
-        {listing ? (
-          <>
-            <Text style={{ fontWeight: '800' }}>{listing.name}</Text>
-            <Text>
-              On hand {balance?.onHand ?? '—'} · Reserved {balance?.reserved ?? '—'} · Available{' '}
-              {balance?.available ?? '—'}
+    <View style={styles.container}>
+      <MerchantHeader
+        outletName={currentOutletName}
+        businessName="MyPet Merchant"
+        outlets={outletOptions}
+        selectedOutletId={outletId}
+        onSelectOutlet={handleSelectOutlet}
+        syncMode={syncMode}
+        pendingSyncCount={pendingCount}
+        onSyncPress={() => router.push('/sync-status')}
+        onNotificationsPress={() => router.push('/notifications')}
+      />
+
+      <MerchantScreen
+        showHeader={false}
+        scrollable
+        refreshing={refreshing}
+        onRefresh={() => void refresh()}
+        offlineBannerProps={
+          syncMode === 'offline' || pendingCount > 0 || syncMode === 'failed'
+            ? {
+                variant: syncMode === 'failed' ? 'failed' : pendingCount > 0 ? 'pending' : 'offline',
+                pendingCount,
+                onAction: () => router.push('/sync-status'),
+                actionLabel: syncMode === 'failed' ? 'Resolve' : 'View Sync',
+              }
+            : undefined
+        }
+        showBottomNav={false}
+        contentContainerStyle={styles.content}
+      >
+        {/* Controls Section */}
+        <View style={styles.controls}>
+          <SearchInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search product, SKU, barcode, category…"
+            onBarcodeScan={() => router.push('/barcode')}
+            accessibilityLabel="Search inventory"
+            testID="inventory-search-input"
+          />
+
+          <FilterBar
+            options={filterOptions}
+            selectedId={selectedFilter}
+            onSelect={setSelectedFilter}
+            testID="inventory-filter-bar"
+          />
+        </View>
+
+        {/* Notice/Alert Banner */}
+        {message ? (
+          <View style={styles.noticeBanner}>
+            <Text accessibilityRole="alert" style={styles.noticeText}>
+              {message}
             </Text>
-
-            {/* Operation mode buttons */}
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-              {(['ADJUSTMENT', 'RECEIVING', 'DAMAGE', 'EXPIRY', 'SHRINKAGE', 'RETURN', 'TRANSFER', 'COUNT'] as const).map((mode) => (
-                <Button
-                  key={mode}
-                  title={mode}
-                  color={opMode === mode ? '#007AFF' : '#888888'}
-                  onPress={() => setOpMode(mode)}
-                />
-              ))}
-            </View>
-
-            {opMode === 'ADJUSTMENT' && (
-              <>
-                <TextInput
-                  accessibilityLabel="Inventory quantity"
-                  keyboardType="number-pad"
-                  value={units}
-                  onChangeText={setUnits}
-                />
-                <Button
-                  title={decrease ? 'Decrease mode' : 'Increase mode'}
-                  disabled={busy || !!pending}
-                  onPress={() => setDecrease((value) => !value)}
-                />
-                <Button
-                  title="Commit movement"
-                  disabled={busy || !canWrite || !!pending}
-                  onPress={() => void adjust()}
-                />
-                {pending ? (
-                  <>
-                    <Text>Previous response is uncertain; retry preserves its command key.</Text>
-                    <Button
-                      title="Retry same command"
-                      disabled={busy}
-                      onPress={() => void commit(pending)}
-                    />
-                    <Button
-                      title="Discard retry"
-                      disabled={busy}
-                      onPress={() => setPending(undefined)}
-                    />
-                  </>
-                ) : null}
-              </>
-            )}
-
-            {opMode === 'RECEIVING' && (
-              <>
-                <Text style={{ fontWeight: '600' }}>Stock Receiving</Text>
-                <TextInput
-                  placeholder="Units received"
-                  keyboardType="number-pad"
-                  value={units}
-                  onChangeText={setUnits}
-                />
-                <TextInput
-                  placeholder="Reference type (e.g. PO)"
-                  value={refType}
-                  onChangeText={setRefType}
-                />
-                <TextInput
-                  placeholder="Reference ID"
-                  value={refId}
-                  onChangeText={setRefId}
-                />
-                <TextInput
-                  placeholder="Batch number (optional)"
-                  value={batchNo}
-                  onChangeText={setBatchNo}
-                />
-                <TextInput
-                  placeholder="Expiry date (optional YYYY-MM-DD)"
-                  value={expiryDate}
-                  onChangeText={setExpiryDate}
-                />
-                <Button
-                  title="Record Receiving"
-                  disabled={busy || !canWrite}
-                  onPress={() => void handleReceiving()}
-                />
-              </>
-            )}
-
-            {opMode === 'DAMAGE' && (
-              <>
-                <Text style={{ fontWeight: '600' }}>Damaged Stock</Text>
-                <TextInput
-                  placeholder="Units damaged"
-                  keyboardType="number-pad"
-                  value={units}
-                  onChangeText={setUnits}
-                />
-                <TextInput
-                  placeholder="Reason / details"
-                  value={refType}
-                  onChangeText={setRefType}
-                />
-                <Button
-                  title="Record Damage"
-                  disabled={busy || !canWrite}
-                  onPress={() => void handleDamage()}
-                />
-              </>
-            )}
-
-            {opMode === 'EXPIRY' && (
-              <>
-                <Text style={{ fontWeight: '600' }}>Expired Stock</Text>
-                <TextInput
-                  placeholder="Units expired"
-                  keyboardType="number-pad"
-                  value={units}
-                  onChangeText={setUnits}
-                />
-                <TextInput
-                  placeholder="Batch reference (optional)"
-                  value={batchNo}
-                  onChangeText={setBatchNo}
-                />
-                <Button
-                  title="Record Expiry"
-                  disabled={busy || !canWrite}
-                  onPress={() => void handleExpiry()}
-                />
-              </>
-            )}
-
-            {opMode === 'SHRINKAGE' && (
-              <>
-                <Text style={{ fontWeight: '600' }}>Shrinkage</Text>
-                <TextInput
-                  placeholder="Units missing/shrunk"
-                  keyboardType="number-pad"
-                  value={units}
-                  onChangeText={setUnits}
-                />
-                <TextInput
-                  placeholder="Notes"
-                  value={refType}
-                  onChangeText={setRefType}
-                />
-                <Button
-                  title="Record Shrinkage"
-                  disabled={busy || !canWrite}
-                  onPress={() => void handleShrinkage()}
-                />
-              </>
-            )}
-
-            {opMode === 'RETURN' && (
-              <>
-                <Text style={{ fontWeight: '600' }}>Stock Return</Text>
-                <TextInput
-                  placeholder="Units returned"
-                  keyboardType="number-pad"
-                  value={units}
-                  onChangeText={setUnits}
-                />
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  <Button
-                    title="Customer Return (+)"
-                    color={returnType === 'CUSTOMER_RETURN' ? '#007AFF' : '#888'}
-                    onPress={() => setReturnType('CUSTOMER_RETURN')}
-                  />
-                  <Button
-                    title="Vendor Return (-)"
-                    color={returnType === 'VENDOR_RETURN' ? '#007AFF' : '#888'}
-                    onPress={() => setReturnType('VENDOR_RETURN')}
-                  />
-                </View>
-                <TextInput
-                  placeholder="Reference ID"
-                  value={refId}
-                  onChangeText={setRefId}
-                />
-                <Button
-                  title="Record Return"
-                  disabled={busy || !canWrite}
-                  onPress={() => void handleReturn()}
-                />
-              </>
-            )}
-
-            {opMode === 'TRANSFER' && (
-              <>
-                <Text style={{ fontWeight: '600' }}>Outlet Transfer</Text>
-                <TextInput
-                  placeholder="Transfer quantity"
-                  keyboardType="number-pad"
-                  value={units}
-                  onChangeText={setUnits}
-                />
-                <TextInput
-                  placeholder="Destination Outlet UUID"
-                  value={destOutletId}
-                  onChangeText={setDestOutletId}
-                />
-                <Button
-                  title="Execute Transfer"
-                  disabled={busy || !canWrite}
-                  onPress={() => void handleTransfer()}
-                />
-              </>
-            )}
-
-            {opMode === 'COUNT' && (
-              <>
-                <Text style={{ fontWeight: '600' }}>Stock Count Session</Text>
-                {!countSession ? (
-                  <Button
-                    title="Start New Count Session"
-                    disabled={busy || !canWrite}
-                    onPress={() => void handleStartCount()}
-                  />
-                ) : (
-                  <>
-                    <Text>Session ID: {countSession.id}</Text>
-                    <Text>Status: {countSession.status}</Text>
-                    <TextInput
-                      placeholder="Counted physical quantity"
-                      keyboardType="number-pad"
-                      value={countedQty}
-                      onChangeText={setCountedQty}
-                    />
-                    <Button
-                      title="Save Count for Current Item"
-                      disabled={busy || countSession.status !== 'OPEN'}
-                      onPress={() => void handleAddCountLine()}
-                    />
-                    <Button
-                      title="Submit Stock Count"
-                      disabled={busy || countSession.status !== 'OPEN'}
-                      onPress={() => void handleSubmitCount()}
-                    />
-                  </>
-                )}
-              </>
-            )}
-
-            <Text style={{ fontWeight: '800' }}>Recent movements</Text>
-            {history.map((movement) => (
-              <Text key={movement.id}>
-                {movement.reason} {movement.quantityDelta > 0 ? '+' : ''}
-                {movement.quantityDelta} → {movement.resultingOnHand}
-              </Text>
-            ))}
-          </>
-        ) : !busy ? (
-          <Text>No catalog listing is available.</Text>
+          </View>
         ) : null}
-      </ScrollView>
-    </SafeAreaView>
+
+        {/* List Content */}
+        {loading ? (
+          <LoadingState message="Loading inventory & stock balances…" testID="inventory-loading-view" />
+        ) : filteredItems.length === 0 ? (
+          items.length === 0 ? (
+            <EmptyState
+              title="No Inventory Items"
+              description="No catalog products found in this outlet."
+              actionTitle="Scan / Add Products"
+              onAction={() => router.push('/barcode')}
+              testID="inventory-empty-state"
+            />
+          ) : (
+            <EmptyState
+              title="No Matching Items"
+              description={`No stock matches filter "${selectedFilter}" or query "${searchQuery}".`}
+              actionTitle="Clear Filters"
+              onAction={() => {
+                setSelectedFilter('ALL');
+                setSearchQuery('');
+              }}
+              testID="inventory-filtered-empty-state"
+            />
+          )
+        ) : (
+          <View style={styles.inventoryList}>
+            {filteredItems.map((item) => (
+              <InventoryCard
+                key={item.listing.id}
+                balance={item.balance}
+                listingName={item.listing.name}
+                sku={item.listing.sku}
+                barcode={item.listing.normalizedBarcode}
+                category={item.listing.category}
+                syncStatus={item.syncState}
+                canWrite={canWrite}
+                onAdjust={() => openAdjustment(item, 'ADJUSTMENT')}
+                onReceive={() => openAdjustment(item, 'RECEIVING')}
+                onMoreOps={() => openAdjustment(item, 'DAMAGE')}
+                onViewLedger={() => void openMovementLedger(item)}
+                testID={`inventory-card-${item.listing.id}`}
+              />
+            ))}
+          </View>
+        )}
+      </MerchantScreen>
+
+      {/* Stock Adjustment & Operations Modal */}
+      {activeAdjustItem ? (
+        <StockAdjustmentModal
+          visible={Boolean(activeAdjustItem)}
+          listingId={activeAdjustItem.listing.id}
+          listingName={activeAdjustItem.listing.name}
+          currentBalance={activeAdjustItem.balance}
+          initialMode={adjustInitialMode}
+          onClose={() => setActiveAdjustItem(null)}
+          onManualAdjustment={handleManualAdjustment}
+          onReceiving={handleReceiving}
+          onDamage={handleDamage}
+          onExpiry={handleExpiry}
+          onShrinkage={handleShrinkage}
+          onReturn={handleReturn}
+          onTransfer={handleTransfer}
+          onStartCount={handleStartCount}
+          onAddCountLine={handleAddCountLine}
+          onSubmitCount={handleSubmitCount}
+          countSession={countSession}
+          testID="stock-adjustment-modal"
+        />
+      ) : null}
+
+      {/* Movement Ledger Modal */}
+      {ledgerItem ? (
+        <MovementLedgerModal
+          visible={Boolean(ledgerItem)}
+          listingName={ledgerItem.listing.name}
+          movements={ledgerMovements}
+          loading={ledgerLoading}
+          onClose={() => setLedgerItem(null)}
+          testID="movement-ledger-modal"
+        />
+      ) : null}
+
+      <BottomNavigation
+        activeTab="inventory"
+        onTabPress={(tab) => {
+          if (tab === 'home') router.push('/dashboard');
+          else if (tab === 'orders') router.push('/orders');
+          else if (tab === 'catalog') router.push('/catalog');
+          else if (tab === 'inventory') void refresh();
+        }}
+        moreMenuItems={moreMenuItems}
+      />
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.surfaceDim,
+  },
+  content: {
+    padding: spacing.md,
+    gap: spacing.md,
+    paddingBottom: spacing.xxl,
+  },
+  controls: {
+    gap: spacing.xs,
+  },
+  noticeBanner: {
+    backgroundColor: colors.warningContainer,
+    padding: spacing.md,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  noticeText: {
+    ...typography.bodyMd,
+    color: colors.onWarningContainer,
+    fontWeight: '600',
+  },
+  inventoryList: {
+    gap: spacing.md,
+  },
+});

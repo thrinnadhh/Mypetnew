@@ -1,9 +1,10 @@
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { MerchantDatabaseProvider, useMerchantDatabase } from "../src/data";
+import { ErrorState, LoadingState, colors } from "../src/design";
 
 function RootNavigation() {
   const { isLoading, error, isReady } = useMerchantDatabase();
@@ -11,8 +12,7 @@ function RootNavigation() {
   if (isLoading) {
     return (
       <View style={styles.centerContainer} testID="database-loading-view">
-        <ActivityIndicator size="large" color="#0284c7" />
-        <Text style={styles.loadingText}>Initializing offline database...</Text>
+        <LoadingState message="Initializing offline SQLite database…" />
       </View>
     );
   }
@@ -20,27 +20,35 @@ function RootNavigation() {
   if (error || !isReady) {
     return (
       <View style={styles.centerContainer} testID="database-error-view">
-        <Text style={styles.errorTitle}>Offline Database Error</Text>
-        <Text style={styles.errorMessage}>
-          {error?.message ?? "Failed to initialize offline database"}
-        </Text>
+        <ErrorState
+          title="Offline Database Error"
+          message={error?.message ?? "Failed to initialize offline database"}
+        />
       </View>
     );
   }
 
   return (
-    <Stack>
+    <Stack
+      screenOptions={{
+        headerStyle: { backgroundColor: colors.surface },
+        headerTintColor: colors.primary,
+        headerTitleStyle: { fontWeight: "700", color: colors.slate900 },
+        headerShadowVisible: false,
+        contentStyle: { backgroundColor: colors.surfaceDim },
+      }}
+    >
       <Stack.Screen name="index" options={{ title: "MyPet Merchant" }} />
-      <Stack.Screen name="login" options={{ title: "Merchant sign in" }} />
-      <Stack.Screen name="dashboard" options={{ title: "Operations dashboard" }} />
-      <Stack.Screen name="inventory" options={{ title: "Inventory & stock" }} />
-      <Stack.Screen name="catalog" options={{ title: "Catalog & products" }} />
-      <Stack.Screen name="barcode" options={{ title: "Barcode onboarding" }} />
-      <Stack.Screen name="orders" options={{ title: "Order work" }} />
-      <Stack.Screen name="appointments" options={{ title: "Booking requests" }} />
+      <Stack.Screen name="login" options={{ title: "Merchant Sign In" }} />
+      <Stack.Screen name="dashboard" options={{ title: "Operations Dashboard" }} />
+      <Stack.Screen name="inventory" options={{ title: "Inventory & Stock" }} />
+      <Stack.Screen name="catalog" options={{ title: "Catalog & Products" }} />
+      <Stack.Screen name="barcode" options={{ title: "Barcode Scanner & Drafts" }} />
+      <Stack.Screen name="orders" options={{ title: "Order Fulfilment" }} />
+      <Stack.Screen name="appointments" options={{ title: "Booking Requests" }} />
       <Stack.Screen name="notifications" options={{ title: "Notifications" }} />
-      <Stack.Screen name="staff" options={{ title: "Staff permissions" }} />
-      <Stack.Screen name="sync-status" options={{ title: "Sync & conflicts" }} />
+      <Stack.Screen name="staff" options={{ title: "Staff Permissions" }} />
+      <Stack.Screen name="sync-status" options={{ title: "Sync & Conflicts" }} />
     </Stack>
   );
 }
@@ -49,7 +57,7 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <MerchantDatabaseProvider>
-        <StatusBar style="auto" />
+        <StatusBar style="dark" />
         <RootNavigation />
       </MerchantDatabaseProvider>
     </SafeAreaProvider>
@@ -62,22 +70,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
-    backgroundColor: "#ffffff",
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 14,
-    color: "#64748b",
-  },
-  errorTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#ef4444",
-    marginBottom: 8,
-  },
-  errorMessage: {
-    fontSize: 14,
-    color: "#64748b",
-    textAlign: "center",
+    backgroundColor: colors.surfaceDim,
   },
 });

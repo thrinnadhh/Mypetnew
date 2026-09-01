@@ -1,12 +1,23 @@
-import { Link } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
-import { Button, ScrollView, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { router } from "expo-router";
+import React, { useCallback, useEffect, useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
 import {
   hasRuntimeMerchantSession,
   logoutMerchant,
   restoreMerchantSession,
 } from "../src/auth/session";
+import {
+  ErrorState,
+  LoadingState,
+  MerchantScreen,
+  OfflineBanner,
+  PrimaryButton,
+  SecondaryButton,
+  colors,
+  radius,
+  spacing,
+  typography,
+} from "../src/design";
 import { MerchantDashboardContent } from "./dashboard";
 
 type StartupState = "loading" | "authenticated" | "signed-out" | "offline" | "error";
@@ -70,48 +81,165 @@ export default function MerchantEntryScreen() {
 
   if (state === "authenticated") {
     return (
-      <SafeAreaView style={styles.page}>
-        <MerchantDashboardContent showHomeLink={false} />
-        <View style={styles.sessionActions}>
-          {message ? <Text accessibilityRole="alert" style={styles.body}>{message}</Text> : null}
-          <Button
-            title={signingOut ? "Signing out…" : "Sign out"}
-            disabled={signingOut}
-            onPress={() => void signOut()}
-            accessibilityLabel="Sign out of MyPet Merchant"
-          />
-        </View>
-      </SafeAreaView>
+      <View style={styles.authenticatedWrapper}>
+        <MerchantDashboardContent
+          showHomeLink={false}
+          onSignOut={() => void signOut()}
+        />
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.page}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.title}>MyPet Merchant</Text>
-        {state === "loading" ? <Text accessibilityLiveRegion="polite">Restoring your secure session…</Text> : null}
-        {state === "signed-out" ? (
-          <>
-            <Text style={styles.body}>Sign in with your authorized Merchant mobile number to continue.</Text>
-            <Link href="/login" accessibilityRole="button">Sign in</Link>
-          </>
-        ) : null}
-        {state === "offline" || state === "error" ? (
-          <>
-            <Text accessibilityRole="alert" style={styles.body}>{message}</Text>
-            <Button title="Retry" onPress={() => void restore()} accessibilityLabel="Retry Merchant session restore" />
-            <Link href="/login" accessibilityRole="button">Sign in again</Link>
-          </>
-        ) : null}
-      </ScrollView>
-    </SafeAreaView>
+    <MerchantScreen
+      showHeader={false}
+      scrollable
+      contentContainerStyle={styles.landingContent}
+    >
+      <View style={styles.brandHero}>
+        <View style={styles.brandBadge}>
+          <Text style={styles.brandBadgeText}>🏪 Merchant Ops</Text>
+        </View>
+        <Text style={styles.heroTitle}>MyPet Merchant</Text>
+        <Text style={styles.heroSubtitle}>
+          Professional store operations, offline inventory ledger & booking management
+        </Text>
+      </View>
+
+      {state === "loading" && (
+        <LoadingState message="Restoring your secure Merchant session…" testID="session-loading-view" />
+      )}
+
+      {state === "signed-out" && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Sign In Required</Text>
+          <Text style={styles.cardBody}>
+            Sign in with your authorized Merchant mobile number (+91) to access your store outlet.
+          </Text>
+          <PrimaryButton
+            title="Sign in with Mobile OTP"
+            onPress={() => router.push("/login")}
+            accessibilityLabel="Sign in to Merchant App"
+            testID="sign-in-cta"
+          />
+        </View>
+      )}
+
+      {state === "offline" && (
+        <View style={styles.stateContainer}>
+          <OfflineBanner
+            variant="offline"
+            message={message || "Network offline. Stored offline sessions will activate when connectivity returns."}
+            onAction={() => void restore()}
+            actionLabel="Retry"
+          />
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Offline Mode</Text>
+            <Text style={styles.cardBody}>
+              {message || "Reconnect to internet and retry to authenticate with your Merchant account."}
+            </Text>
+            <View style={styles.buttonRow}>
+              <PrimaryButton
+                title="Retry Connection"
+                onPress={() => void restore()}
+                accessibilityLabel="Retry Merchant session restore"
+              />
+              <SecondaryButton
+                title="Sign in with Mobile OTP"
+                onPress={() => router.push("/login")}
+                accessibilityLabel="Sign in again"
+              />
+            </View>
+          </View>
+        </View>
+      )}
+
+      {state === "error" && (
+        <View style={styles.stateContainer}>
+          <ErrorState
+            title="Session Restore Failed"
+            message={message}
+            onRetry={() => void restore()}
+            retryTitle="Retry Restore"
+            testID="session-error-view"
+          />
+          <SecondaryButton
+            title="Sign in with Mobile OTP"
+            onPress={() => router.push("/login")}
+            accessibilityLabel="Sign in again"
+          />
+        </View>
+      )}
+    </MerchantScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: "#fff" },
-  content: { flexGrow: 1, padding: 24, alignItems: "center", gap: 16 },
-  title: { fontSize: 26, fontWeight: "700" },
-  body: { fontSize: 16, color: "#4b5563", textAlign: "center" },
-  sessionActions: { paddingHorizontal: 24, paddingBottom: 16, gap: 8 },
+  authenticatedWrapper: {
+    flex: 1,
+    backgroundColor: colors.surfaceDim,
+  },
+  landingContent: {
+    flexGrow: 1,
+    padding: spacing.lg,
+    justifyContent: "center",
+    gap: spacing.lg,
+  },
+  brandHero: {
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingVertical: spacing.md,
+  },
+  brandBadge: {
+    backgroundColor: colors.primaryLight,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs - 2,
+    borderRadius: radius.full,
+    marginBottom: spacing.xs,
+  },
+  brandBadgeText: {
+    ...typography.labelSm,
+    color: colors.primaryDark,
+    fontWeight: "800",
+  },
+  heroTitle: {
+    ...typography.headlineLg,
+    color: colors.slate900,
+    textAlign: "center",
+  },
+  heroSubtitle: {
+    ...typography.bodyMd,
+    color: colors.slate600,
+    textAlign: "center",
+    maxWidth: 320,
+    lineHeight: 20,
+  },
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    gap: spacing.md,
+    shadowColor: colors.slate900,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  cardTitle: {
+    ...typography.headlineSm,
+    color: colors.slate900,
+  },
+  cardBody: {
+    ...typography.bodyMd,
+    color: colors.slate600,
+    lineHeight: 20,
+  },
+  stateContainer: {
+    gap: spacing.md,
+  },
+  buttonRow: {
+    gap: spacing.sm,
+  },
 });

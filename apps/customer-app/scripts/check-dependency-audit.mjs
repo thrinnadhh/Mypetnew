@@ -13,7 +13,9 @@ import process from 'node:process';
 const allowed = new Set([
   'https://github.com/advisories/GHSA-w3rx-r6r6-pgpr',
   'https://github.com/advisories/GHSA-5p2g-fcmc-qvqq',
+  'https://github.com/advisories/GHSA-vcc3-ghjq-m6fr',
 ]);
+
 
 const exceptionExpiresAtMs = Date.parse('2026-11-30T00:00:00Z');
 

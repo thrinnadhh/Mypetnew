@@ -209,4 +209,3 @@ describe('MF3 Merchant Catalog Screen', () => {
     expect(mediaMock).toHaveBeenCalledWith(mockListing, asset, 'media-key-1');
   });
 });
-

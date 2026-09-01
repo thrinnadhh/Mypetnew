@@ -24,4 +24,3 @@ export * from './StockAdjustmentModal';
 export * from './MovementLedgerModal';
 export * from './CatalogProductCard';
 export * from './ProductEditorModal';
-

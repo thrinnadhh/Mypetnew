@@ -143,4 +143,3 @@ The application uses an Android-friendly 5-destination bottom navigation bar com
 * **MF5 — Barcode Scanner & POS Hardware Integration**: Hardware laser scanner integration, viewfinder haptics, and fast barcode continuous scanning.
 * **MF6 — Staff Access & Permissions Admin**: Multi-role assignment matrix, granular outlet permission management.
 * **MF7 — Store Performance Analytics & Reporting**: Sales revenue charts, bestsellers matrix, and shrinkage reconciliation reporting.
-

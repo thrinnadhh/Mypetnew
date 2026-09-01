@@ -15,6 +15,10 @@ This document records the baseline design constraints, Stitch MCP project refere
 * **Stitch Movement Ledger Screen:** `projects/16891330123471591482/screens/02adf9ae32b64384bd0061f2ec9a28e5`
 * **Stitch Catalog Production Screen:** `projects/16891330123471591482/screens/b09a4b4bc1d74a378eacf46fdb381503`
 * **Stitch Product Editor Screen:** `projects/16891330123471591482/screens/0d05c260fe7f404d8eaed893a95f2d50`
+* **Stitch Appointments List Screen (MF4):** `projects/16891330123471591482/screens/1a321f6399a64087ba1dc07c76311868`
+* **Stitch Appointment Detail - Booked (MF4):** `projects/16891330123471591482/screens/b12705b77e5e455694ea71aa4694589d`
+* **Stitch Appointment Detail - Confirmed (MF4):** `projects/16891330123471591482/screens/0cf0d76dd7c143f193312e5e6b7708bf`
+* **Stitch Appointment Detail - In Service (MF4):** `projects/16891330123471591482/screens/1776c4d464974a48a32293b63e079382`
 
 ---
 
@@ -29,8 +33,9 @@ This document records the baseline design constraints, Stitch MCP project refere
 | **Offline Persistence** | Prominent UI distinction between local SQLite cached data / outbox state and confirmed canonical backend state. |
 | **State Consistency** | Explicit, standardized representations for `isLoading`, `isReady`, `error` (with retry action), `offline`, and empty states. |
 | **Outlet Context** | Every operational surface clearly displays the active outlet identity and organization partition context with quick outlet switching affordances. |
-| **Safety Invariants** | No hidden or single-tap destructive actions; stock adjustments, damage write-offs, expiry reports, returns, and order rejections require explicit user confirmation with validated reasons. |
+| **Safety Invariants** | No hidden or single-tap destructive actions; stock adjustments, damage write-offs, expiry reports, returns, and order/appointment rejections require explicit user confirmation with validated reasons. |
 | **Canonical Distinction** | Local unacknowledged outbox commands are visually demarcated from server-acknowledged records. |
+| **Payment Authority** | Client never assumes payment authority; payment state displays canonical server/webhook state. |
 
 ---
 
@@ -109,7 +114,7 @@ The application uses an Android-friendly 5-destination bottom navigation bar com
 * **`PrimaryButton`**, **`SecondaryButton`**, **`IconButton`**: Touch-accessible buttons guaranteeing >= 48dp touch targets.
 * **`OutletPickerModal`**: Modal dialog for fast switching between "All Outlets" and specific outlet partitions.
 
-### Operational Primitives (MF3)
+### Operational Primitives (MF3 & MF4)
 * **`FilterBar`**: Horizontal chip filter bar with badge counts and scroll support.
 * **`SearchInput`**: Accessible search field with clear action and optional barcode scanner trigger.
 * **`ConfirmationModal`**: Destructive action confirmation modal with validated reason text entry.
@@ -120,10 +125,31 @@ The application uses an Android-friendly 5-destination bottom navigation bar com
 * **`MovementLedgerModal`**: Historical stock movement timeline with +/- quantity delta badges and source references.
 * **`CatalogProductCard`**: Product card with image thumbnail, category/medicine chips, price comparison, image quota, active toggle, and edit action.
 * **`ProductEditorModal`**: Full product creation and edit modal sheet with validation, live margin calculation, and barcode scanner shortcut.
+* **`AppointmentCard` (MF4)**: Operational appointment card with grooming/vet category pills, scheduled time range, duration, customer notes preview, payment status badge, price, and state-specific action buttons.
+* **`AppointmentDetailModal` (MF4)**: Full appointment lifecycle detail modal sheet with service details, pet context, customer special instructions, payment breakdown, and server-authorized transition buttons.
 
 ---
 
-## 6. Accessibility Certification
+## 6. MF4 Appointments & Service Operations Baseline
+
+### State Machine & Merchant Transitions
+The Merchant application strictly enforces backend-defined appointment lifecycle rules:
+* `BOOKED` -> `CONFIRMED` ("Accept Booking")
+* `BOOKED` -> `REJECTED` ("Reject Booking", requires reason)
+* `CONFIRMED` -> `CHECKED_IN` ("Mark Checked In")
+* `CHECKED_IN` -> `IN_SERVICE` ("Start Service")
+* `IN_SERVICE` -> `COMPLETED` ("Complete Service", explicit confirmation)
+* `BOOKED` / `CONFIRMED` -> `NO_SHOW` ("Mark No-Show")
+* `BOOKED` / `CONFIRMED` -> `CANCELLED` ("Cancel Appointment", requires reason)
+
+### Offline & Stale-State Behavior
+* **Offline Read:** Cached appointment data is displayed with `OfflineBanner` ("Cached — last known server state").
+* **Offline Transitions:** Mutation actions are disabled when offline to preserve authoritative backend state rules.
+* **Stale Reconciliation:** When an appointment status transition is rejected due to server state change (e.g. action taken on another device), the UI alerts the merchant, re-fetches canonical state from the server, and updates the local workload.
+
+---
+
+## 7. Accessibility Certification
 
 1. **Touch Target Dimensions**: Verified all interactive elements (buttons, nav items, chips, metric cards) meet or exceed 48px × 48px.
 2. **Text & Visual Contrast**: High-contrast ratios meeting WCAG AA standards (minimum 4.5:1 for body text, 3:1 for large headlines and components).
@@ -137,9 +163,8 @@ The application uses an Android-friendly 5-destination bottom navigation bar com
 
 ---
 
-## 7. Deferred Work (MF4+)
+## 8. Deferred Work (MF5+)
 
-* **MF4 — Appointments & Service Booking Redesign**: Calendar slot grid, customer pet history, groomer/vet assignment.
 * **MF5 — Barcode Scanner & POS Hardware Integration**: Hardware laser scanner integration, viewfinder haptics, and fast barcode continuous scanning.
 * **MF6 — Staff Access & Permissions Admin**: Multi-role assignment matrix, granular outlet permission management.
 * **MF7 — Store Performance Analytics & Reporting**: Sales revenue charts, bestsellers matrix, and shrinkage reconciliation reporting.

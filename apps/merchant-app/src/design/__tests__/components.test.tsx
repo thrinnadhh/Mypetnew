@@ -1,6 +1,9 @@
 import React from 'react';
+import type { MerchantAppointmentRequest } from '../../appointments/api';
 import {
   ActionCard,
+  AppointmentCard,
+  AppointmentDetailModal,
   BottomNavigation,
   EmptyState,
   ErrorState,
@@ -29,7 +32,26 @@ jest.mock('react', () => {
   };
 });
 
-describe('MF2 Design Components', () => {
+const mockAppointment: MerchantAppointmentRequest = {
+  appointmentId: 'apt-101',
+  outletId: 'outlet-1',
+  serviceId: 'srv-1',
+  slotId: 'slot-1',
+  petName: 'Rocky',
+  serviceName: 'Full Grooming Spa',
+  startsAt: '2026-09-01T10:00:00Z',
+  endsAt: '2026-09-01T10:45:00Z',
+  status: 'BOOKED',
+  paymentMethod: 'ONLINE_PAYMENT',
+  paymentStatus: 'PAID',
+  pricePaise: 149900,
+  currency: 'INR',
+  notes: 'Sensitive skin shampoo',
+  createdAt: '2026-09-01T08:00:00Z',
+  updatedAt: '2026-09-01T08:00:00Z',
+};
+
+describe('MF2 & MF4 Design Components', () => {
   describe('StatusBadge', () => {
     it('renders all status variants with appropriate colors and roles', () => {
       const variants = ['success', 'warning', 'error', 'info', 'syncing', 'pending', 'neutral'] as const;
@@ -273,6 +295,47 @@ describe('MF2 Design Components', () => {
         children: <LoadingState message="Testing fixed" />,
       });
       expect(nonScrollable).toBeTruthy();
+    });
+  });
+
+  describe('MF4 Appointment Components (AppointmentCard, AppointmentDetailModal)', () => {
+    it('renders AppointmentCard with service, pet, payment badge, and actions', () => {
+      const onTransition = jest.fn();
+      const onViewDetails = jest.fn();
+      const card = AppointmentCard({
+        appointment: mockAppointment,
+        availableTargets: ['CONFIRMED', 'REJECTED'],
+        onTransition,
+        onViewDetails,
+      });
+      expect(card).toBeTruthy();
+      expect(card.props.accessibilityRole).toBe('text');
+      expect(card.props.accessibilityLabel).toContain('Rocky');
+      expect(card.props.accessibilityLabel).toContain('Full Grooming Spa');
+    });
+
+    it('renders AppointmentDetailModal with full context and action controls', () => {
+      const onTransition = jest.fn();
+      const onClose = jest.fn();
+      const modal = AppointmentDetailModal({
+        visible: true,
+        appointment: mockAppointment,
+        availableTargets: ['CONFIRMED', 'REJECTED'],
+        onClose,
+        onTransition,
+      });
+      expect(modal).toBeTruthy();
+    });
+
+    it('handles null appointment in AppointmentDetailModal gracefully', () => {
+      const modal = AppointmentDetailModal({
+        visible: false,
+        appointment: null,
+        availableTargets: [],
+        onClose: jest.fn(),
+        onTransition: jest.fn(),
+      });
+      expect(modal).toBeNull();
     });
   });
 });

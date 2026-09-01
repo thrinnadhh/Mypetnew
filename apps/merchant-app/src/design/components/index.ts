@@ -24,3 +24,5 @@ export * from './StockAdjustmentModal';
 export * from './MovementLedgerModal';
 export * from './CatalogProductCard';
 export * from './ProductEditorModal';
+export * from './AppointmentCard';
+export * from './AppointmentDetailModal';

@@ -1,0 +1,11 @@
+{
+  "name": "@mypetnew/engineering-agent-foundation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test evals/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

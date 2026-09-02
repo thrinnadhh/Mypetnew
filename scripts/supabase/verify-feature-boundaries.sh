@@ -45,6 +45,15 @@ if app_source_files | xargs -r grep -InE \
   fail "direct Supabase Data API/Realtime endpoint appears in application source"
 fi
 
+# Spring Boot/Flyway owns schema evolution. Preview branching may use
+# supabase/config.toml for environment configuration, but SQL migration copies
+# under supabase/migrations would create a second migration authority.
+if [[ -d supabase/migrations ]]; then
+  if find supabase/migrations -type f -name '*.sql' -print -quit | grep -q .; then
+    fail "supabase/migrations contains SQL; backend Flyway must remain the sole migration authority"
+  fi
+fi
+
 # Edge Functions are not an application-domain runtime in MyPetNew. If this
 # directory is introduced later, the architecture decision must be explicit.
 if [[ -d supabase/functions ]]; then
@@ -61,4 +70,4 @@ if grep -RIn --include='V*__*.sql' \
   fail "deferred Supabase/Postgres extension enabled in application Flyway migrations"
 fi
 
-echo "Supabase feature boundaries verified: Spring authority preserved; deferred features remain deferred."
+echo "Supabase feature boundaries verified: Spring/Flyway authority preserved; deferred features remain deferred."

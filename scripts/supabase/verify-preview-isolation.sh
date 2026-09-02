@@ -3,14 +3,14 @@ set -euo pipefail
 
 DB_URL="${PREVIEW_DATABASE_URL:-}"
 PREVIEW_REF="${PREVIEW_PROJECT_REF:-}"
-PRODUCTION_REF="${SUPABASE_PRODUCTION_PROJECT_REF:-}"
+PARENT_REF="${SUPABASE_PARENT_PROJECT_REF:-}"
 
-if [[ -z "$DB_URL" || -z "$PREVIEW_REF" || -z "$PRODUCTION_REF" ]]; then
+if [[ -z "$DB_URL" || -z "$PREVIEW_REF" || -z "$PARENT_REF" ]]; then
   echo "Preview database URL and project refs are required." >&2
   exit 2
 fi
-if [[ "$PREVIEW_REF" == "$PRODUCTION_REF" ]]; then
-  echo "Refusing preview-isolation verification against production." >&2
+if [[ "$PREVIEW_REF" == "$PARENT_REF" ]]; then
+  echo "Refusing preview-isolation verification against the parent project." >&2
   exit 2
 fi
 if ! command -v psql >/dev/null 2>&1; then

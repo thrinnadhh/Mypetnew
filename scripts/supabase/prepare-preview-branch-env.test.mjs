@@ -7,7 +7,7 @@ import test from 'node:test';
 
 const script = new URL('./prepare-preview-branch-env.mjs', import.meta.url);
 
-function runCase(source, productionRef = 'productionref') {
+function runCase(source, parentRef = 'parentref') {
   const dir = mkdtempSync(join(tmpdir(), 'mypet-preview-env-'));
   const input = join(dir, 'branch.env');
   const output = join(dir, 'github.env');
@@ -17,7 +17,7 @@ function runCase(source, productionRef = 'productionref') {
     env: {
       ...process.env,
       GITHUB_ENV: output,
-      SUPABASE_PRODUCTION_PROJECT_REF: productionRef,
+      SUPABASE_PARENT_PROJECT_REF: parentRef,
     },
   });
   const envText = result.status === 0 ? readFileSync(output, 'utf8') : '';
@@ -36,12 +36,12 @@ test('prepares JDBC and psql variables for an isolated preview project', () => {
   assert.match(result.envText, /PREVIEW_DB_PASSWORD=p@ss/);
 });
 
-test('fails closed when branch credentials point at production', () => {
+test('fails closed when branch credentials point at the parent project', () => {
   const result = runCase(
-    'POSTGRES_URL_NON_POOLING=postgresql://postgres.productionref:secret@db.productionref.supabase.co:5432/postgres?sslmode=require\n',
+    'POSTGRES_URL_NON_POOLING=postgresql://postgres.parentref:secret@db.parentref.supabase.co:5432/postgres?sslmode=require\n',
   );
   assert.equal(result.status, 2);
-  assert.match(result.stderr, /refusing to run preview certification against the production Supabase project/);
+  assert.match(result.stderr, /refusing to run preview certification against the parent Supabase project/);
 });
 
 test('rejects pooler or non-Supabase hosts for preview migration', () => {

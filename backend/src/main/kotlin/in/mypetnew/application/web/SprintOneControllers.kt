@@ -669,6 +669,38 @@ class MerchantCommerceApiController(
         return sale
     }
 
+    @GetMapping("/pos/sales/{saleId}")
+    fun getSale(
+        authentication: Authentication,
+        @PathVariable saleId: UUID,
+    ): `in`.mypetnew.pos.domain.PosSale {
+        val principal = authentication.domainPrincipal()
+        val sale = pos.get(saleId)
+        providers.requireActiveOutlet(
+            principal,
+            sale.outletId,
+            MerchantPermission.POS_OPERATE,
+        )
+        return sale
+    }
+
+    @GetMapping("/pos/sales/by-key")
+    fun findSaleByKey(
+        authentication: Authentication,
+        @RequestParam outletId: UUID,
+        @RequestParam idempotencyKey: String,
+    ): `in`.mypetnew.pos.domain.PosSale {
+        val principal = authentication.domainPrincipal()
+        val outlet = providers.requireActiveOutlet(
+            principal,
+            outletId,
+            MerchantPermission.POS_OPERATE,
+        )
+        val persisted = pos.find(outlet.id, idempotencyKey)
+            ?: throw DomainException("POS_SALE_NOT_FOUND", "The POS sale is unavailable")
+        return persisted.sale
+    }
+
     private fun authorizedOrder(principal: Principal, orderId: UUID): ProductOrder {
         val order = orders.get(orderId)
         Authorizer.requireOutlet(principal, order.outletId)

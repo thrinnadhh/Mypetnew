@@ -175,6 +175,10 @@ class PosService(
         }
     }
 
+    fun get(saleId: UUID): PosSale = persistence.get(saleId)
+
+    fun find(outletId: UUID, idempotencyKey: String): PersistedPosSale? = persistence.find(outletId, idempotencyKey)
+
     private fun canonicalPosLines(
         merchantId: UUID,
         outletId: UUID,

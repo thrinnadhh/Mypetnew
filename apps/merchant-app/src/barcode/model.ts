@@ -1,7 +1,13 @@
 import type { BarcodeType } from '../catalog/api';
 
 export type BarcodeInputSource = 'CAMERA' | 'MANUAL' | 'HARDWARE';
-export type ScannerPermissionState = 'UNDETERMINED' | 'GRANTED' | 'DENIED' | 'BLOCKED';
+export type ScannerPermissionState =
+  | 'UNDETERMINED'
+  | 'REQUESTING'
+  | 'GRANTED'
+  | 'DENIED'
+  | 'BLOCKED'
+  | 'UNAVAILABLE';
 
 export type AcceptedBarcode = {
   barcodeType: BarcodeType;
@@ -72,6 +78,7 @@ export class BarcodeDebounceGate {
 }
 
 export function scannerPermissionNotice(permission: ScannerPermissionState): string | null {
+  if (permission === 'UNAVAILABLE') return 'Camera is unavailable on this device or environment. Use manual barcode entry.';
   if (permission === 'DENIED') return 'Camera permission was denied. You can still enter the barcode manually.';
   if (permission === 'BLOCKED') return 'Camera access is blocked in system settings. Use manual barcode entry or enable camera access in Settings.';
   return null;

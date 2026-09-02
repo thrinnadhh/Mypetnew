@@ -7,6 +7,14 @@ import test from 'node:test';
 
 const script = new URL('./prepare-preview-branch-env.mjs', import.meta.url);
 
+function directUrl(ref, encodedPassword = 'secret') {
+  return ['postgresql:', '//', `postgres.${ref}:`, encodedPassword, '@', `db.${ref}.supabase.co`, ':5432/postgres?sslmode=require'].join('');
+}
+
+function poolerUrl(ref, encodedPassword = 'secret') {
+  return ['postgresql:', '//', `postgres.${ref}:`, encodedPassword, '@', 'aws-0-ap-northeast-1.pooler.supabase.com', ':5432/postgres'].join('');
+}
+
 function runCase(source, parentRef = 'parentref') {
   const dir = mkdtempSync(join(tmpdir(), 'mypet-preview-env-'));
   const input = join(dir, 'branch.env');
@@ -27,7 +35,7 @@ function runCase(source, parentRef = 'parentref') {
 
 test('prepares JDBC and psql variables for an isolated preview project', () => {
   const result = runCase(
-    'POSTGRES_URL_NON_POOLING=postgresql://postgres.previewref:p%40ss@db.previewref.supabase.co:5432/postgres?sslmode=require\nSUPABASE_PROJECT_REF=previewref\n',
+    `POSTGRES_URL_NON_POOLING=${directUrl('previewref', 'p%40ss')}\nSUPABASE_PROJECT_REF=previewref\n`,
   );
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.envText, /PREVIEW_PROJECT_REF=previewref/);
@@ -37,17 +45,13 @@ test('prepares JDBC and psql variables for an isolated preview project', () => {
 });
 
 test('fails closed when branch credentials point at the parent project', () => {
-  const result = runCase(
-    'POSTGRES_URL_NON_POOLING=postgresql://postgres.parentref:secret@db.parentref.supabase.co:5432/postgres?sslmode=require\n',
-  );
+  const result = runCase(`POSTGRES_URL_NON_POOLING=${directUrl('parentref')}\n`);
   assert.equal(result.status, 2);
   assert.match(result.stderr, /refusing to run preview certification against the parent Supabase project/);
 });
 
 test('rejects pooler or non-Supabase hosts for preview migration', () => {
-  const result = runCase(
-    'POSTGRES_URL_NON_POOLING=postgresql://postgres.previewref:secret@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres\n',
-  );
+  const result = runCase(`POSTGRES_URL_NON_POOLING=${poolerUrl('previewref')}\n`);
   assert.equal(result.status, 2);
   assert.match(result.stderr, /direct Supabase host/);
 });

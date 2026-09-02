@@ -43,6 +43,13 @@ jobs:
       - name: Verify Supabase architecture boundaries
         run: bash ./scripts/supabase/verify-feature-boundaries.sh
 
+      - name: Verify Supabase preview tooling
+        run: |
+          bash -n ./scripts/supabase/migrate-preview-branch.sh
+          bash -n ./scripts/supabase/verify-preview-isolation.sh
+          node --check ./scripts/supabase/prepare-preview-branch-env.mjs
+          node --test ./scripts/supabase/prepare-preview-branch-env.test.mjs
+
       - name: Verify Supabase audit script is read-only
         run: |
           if grep -Ein '^[[:space:]]*(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|comment|vacuum|reindex|cluster)[[:space:]]' infra/supabase/audit_baseline.sql; then

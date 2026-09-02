@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mypetnew.invalid/schemas/engineering-report.schema.json",
+  "title": "MyPetNew engineering report envelope",
+  "type": "object",
+  "required": ["schema_version", "report_type", "status", "summary", "next_actions", "artifacts"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "report_type": { "enum": ["contract", "scope", "dependency", "archaeology", "certification"] },
+    "status": { "enum": ["success", "warning", "error", "PASS", "WARN", "FAIL", "BLOCKED"] },
+    "summary": { "type": ["string", "object"] },
+    "next_actions": { "type": "array", "items": { "type": "string" } },
+    "artifacts": { "type": "array", "items": { "type": "string" } }
+  }
+}

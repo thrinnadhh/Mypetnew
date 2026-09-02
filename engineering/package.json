@@ -1,0 +1,12 @@
+{
+  "name": "@mypetnew/engineering-agent-foundation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test evals/*.test.mjs",
+    "test:coverage": "node --experimental-test-coverage --test --test-coverage-include=\"lib/**/*.mjs\" --test-coverage-include=\"bin/**/*.mjs\" --test-coverage-lines=80 --test-coverage-functions=80 evals/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.8.0"
+  }
+}

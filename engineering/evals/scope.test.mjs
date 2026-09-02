@@ -19,6 +19,8 @@ test('backend-only change inside declared backend scope is accepted', () => {
   const contract = validContract();
   contract.scope.allowed_paths = ['backend/**'];
   contract.scope.forbidden_paths = [];
+  contract.workers[0].allowed_paths = ['backend/**'];
+  contract.workers[0].forbidden_paths = [];
 
   const report = evaluateScope({
     contract,
@@ -43,6 +45,8 @@ test('dependency manifest addition requires justification even inside scope', ()
   const contract = validContract();
   contract.scope.allowed_paths = ['apps/merchant-app/**'];
   contract.scope.forbidden_paths = [];
+  contract.workers[0].allowed_paths = ['apps/merchant-app/**'];
+  contract.workers[0].forbidden_paths = [];
 
   const report = evaluateScope({
     contract,

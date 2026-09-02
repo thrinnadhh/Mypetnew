@@ -26,7 +26,7 @@ export function validContract(overrides = {}) {
         repository_facts: ['Node 22 is already used in CI.'],
         dependencies: [],
         acceptance_criteria: ['All engineering evals pass.'],
-        required_tests: ['node --test engineering/evals/*.test.mjs'],
+        required_check_ids: ['engineering_evals'],
         expected_artifacts: ['engineering/reports/certification.json'],
         evidence_requirements: ['Capture command, exit code, and duration.'],
       },

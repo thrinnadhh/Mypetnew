@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "observed_at_sha": "bc4736172ad55879a2c4aed53918ecb533c3a36f",
+  "runtime": { "node": "22", "java": "21", "gradle_wrapper": "9.6.0" },
+  "surfaces": {
+    "backend": { "path": "backend", "ecosystem": "gradle-kotlin-spring", "available": true },
+    "customer_app": { "path": "apps/customer-app", "ecosystem": "npm-expo", "available": true },
+    "merchant_app": { "path": "apps/merchant-app", "ecosystem": "npm-expo", "available": true },
+    "captain_app": { "path": "apps/captain-app", "ecosystem": "npm-expo", "available": true },
+    "admin_web": { "path": "apps/admin-web", "ecosystem": "unknown", "available": false }
+  },
+  "report_directory": "evidence/generated/engineering",
+  "notes": [
+    "Repository manifests and tracked files are authoritative; the root README is stale at the observed SHA.",
+    "A successful placeholder Admin CI job is not certification because no Admin application exists.",
+    "Expo and React Native version differences across apps are pre-existing and not automatically defects."
+  ]
+}

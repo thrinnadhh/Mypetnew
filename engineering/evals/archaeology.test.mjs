@@ -12,7 +12,7 @@ test('extracts introduction, bug-fix history, line origins, and co-change files'
   appendFileSync(`${root}/pet.txt`, 'safe\n');
   appendFileSync(`${root}/friend.txt`, 'updated\n');
   git(root, ['add', '--', 'pet.txt', 'friend.txt']);
-  const fixed = git(root, ['commit', '--quiet', '-m', 'fix: prevent pet regression']) || git(root, ['rev-parse', 'HEAD']);
+  const commitOutput = git(root, ['commit', '--quiet', '-m', 'fix: prevent pet regression']);
   const fixedSha = git(root, ['rev-parse', 'HEAD']);
 
   const report = analyzeFileHistory({ repoRoot: root, path: 'pet.txt', maxCommits: 20 });
@@ -23,7 +23,7 @@ test('extracts introduction, bug-fix history, line origins, and co-change files'
   assert.ok(report.bug_fix_commits.some(({ commit }) => commit === fixedSha));
   assert.ok(report.co_changed_files.some(({ path }) => path === 'friend.txt'));
   assert.ok(report.line_origins.length >= 2);
-  assert.equal(fixed, '');
+  assert.equal(commitOutput, '');
 });
 
 test('rejects paths outside the repository', () => {

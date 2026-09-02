@@ -52,3 +52,28 @@ test('path rules cannot escape the repository or encode commands', () => {
   assert.equal(report.valid, false);
   assert.match(report.errors.join('\n'), /safe repository-relative pattern/);
 });
+
+test('worker dependency cycles are rejected', () => {
+  const contract = validContract();
+  contract.workers.push({
+    ...structuredClone(contract.workers[0]),
+    id: 'reviewer',
+    dependencies: ['tooling'],
+  });
+  contract.workers[0].dependencies = ['reviewer'];
+
+  const report = validateSprintContract(contract);
+
+  assert.equal(report.valid, false);
+  assert.match(report.errors.join('\n'), /dependency graph contains a cycle/);
+});
+
+test('unknown reviewed check IDs are rejected when a catalog is supplied', () => {
+  const contract = validContract();
+  contract.workers[0].required_check_ids = ['made_up_check'];
+
+  const report = validateSprintContract(contract, { knownCheckIds: ['engineering_evals'] });
+
+  assert.equal(report.valid, false);
+  assert.match(report.errors.join('\n'), /unknown check id made_up_check/);
+});

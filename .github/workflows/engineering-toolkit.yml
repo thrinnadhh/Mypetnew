@@ -1,0 +1,46 @@
+name: engineering-toolkit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "engineering/**"
+      - "scripts/verify-engineering-toolkit.sh"
+      - ".github/workflows/engineering-toolkit.yml"
+  push:
+    branches: [main]
+    paths:
+      - "engineering/**"
+      - "scripts/verify-engineering-toolkit.sh"
+      - ".github/workflows/engineering-toolkit.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engineering-toolkit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deterministic-evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify engineering-agent foundation
+        run: ./scripts/verify-engineering-toolkit.sh
+
+      - name: Upload deterministic contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engineering-toolkit-evidence-${{ github.sha }}
+          if-no-files-found: error
+          path: evidence/generated/engineering-toolkit-ci

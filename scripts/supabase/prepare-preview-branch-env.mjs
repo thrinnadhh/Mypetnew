@@ -9,11 +9,11 @@ function fail(message) {
 
 const sourcePath = process.argv[2];
 const outputPath = process.env.GITHUB_ENV || process.argv[3];
-const productionRef = (process.env.SUPABASE_PRODUCTION_PROJECT_REF || '').trim();
+const parentRef = (process.env.SUPABASE_PARENT_PROJECT_REF || '').trim();
 
 if (!sourcePath) fail('branch environment file path is required');
 if (!outputPath) fail('GITHUB_ENV or an explicit output path is required');
-if (!productionRef) fail('SUPABASE_PRODUCTION_PROJECT_REF is required');
+if (!parentRef) fail('SUPABASE_PARENT_PROJECT_REF is required');
 if (!fs.existsSync(sourcePath)) fail(`branch environment file does not exist: ${sourcePath}`);
 
 const allowed = new Set([
@@ -59,8 +59,8 @@ if (!parsed.username || !parsed.password) fail('preview database credentials are
 const hostMatch = /^db\.([a-z0-9]+)\.supabase\.co$/i.exec(parsed.hostname);
 if (!hostMatch) fail(`preview database must use a direct Supabase host, received ${parsed.hostname}`);
 const previewRef = hostMatch[1];
-if (previewRef === productionRef) {
-  fail('refusing to run preview certification against the production Supabase project');
+if (previewRef === parentRef) {
+  fail('refusing to run preview certification against the parent Supabase project');
 }
 
 const declaredRef = values.get('SUPABASE_PROJECT_REF');

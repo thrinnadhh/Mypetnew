@@ -10,6 +10,9 @@
     "merchant-app": ["repository.merchant.read", "repository.merchant.write", "checks.merchant.run"],
     "captain-app": ["repository.captain.read", "repository.captain.write", "checks.captain.run"],
     "device": ["repository.apps.read", "device.test.run"],
+    "testing": ["repository.read", "git.diff.read", "analyzers.run", "checks.run", "reports.write"],
+    "documentation": ["repository.read", "repository.documentation.write", "reports.read"],
+    "ci": ["repository.read", "repository.ci.write", "checks.engineering.run"],
     "release": ["repository.read", "ci.read", "pull_request.draft.write"]
   },
   "never_default": ["database.production.write", "secrets.read", "pull_request.merge", "deployment.production.run"]

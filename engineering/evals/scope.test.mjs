@@ -95,6 +95,7 @@ test('CI, security, public API, generated, lockfile churn, and test deletion sig
     changes: [
       change('.github/workflows/ci.yml'),
       change('backend/src/main/kotlin/in/mypetnew/security/Auth.kt'),
+      change('backend/src/main/kotlin/in/mypetnew/application/web/DeliveryControllers.kt'),
       change('contracts/public-api.json'),
       change('generated/client.ts', { status: 'A' }),
       change('apps/customer-app/package-lock.json', { additions: 900, deletions: 850 }),

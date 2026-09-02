@@ -414,9 +414,21 @@ export function analyzeDependencyState({
     const beforeRecords = dependencyRecords(before, path, findings, 'INVALID_MANIFEST_DIFF');
     const afterRecords = dependencyRecords(after, path, findings, 'INVALID_MANIFEST_DIFF');
     const beforeNames = new Set(beforeRecords.map(({ dependency }) => dependency));
+    const afterNames = new Set(afterRecords.map(({ dependency }) => dependency));
+    if (manifestDiff.change_kind === 'deleted') {
+      findings.push(finding('MANIFEST_REMOVED', path, 'A package manifest was removed and requires dependency-impact review.'));
+    }
     for (const record of afterRecords) {
       if (beforeNames.has(record.dependency)) continue;
       findings.push(finding('DEPENDENCY_ADDED', path, `${record.dependency} was added to ${record.section}.`, {
+        dependency: record.dependency,
+        version: record.version,
+        section: record.section,
+      }));
+    }
+    for (const record of beforeRecords) {
+      if (afterNames.has(record.dependency)) continue;
+      findings.push(finding('DEPENDENCY_REMOVED', path, `${record.dependency} was removed from ${record.section}.`, {
         dependency: record.dependency,
         version: record.version,
         section: record.section,

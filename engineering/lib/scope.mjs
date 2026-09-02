@@ -39,7 +39,7 @@ function signalsFor(change) {
   if (MIGRATION.test(path)) signals.push(finding('DATABASE_MIGRATION_CHANGED', path, 'Database migration changed.'));
   if (path.startsWith('.github/workflows/')) signals.push(finding('CI_CONFIG_CHANGED', path, 'CI workflow changed.'));
   if (/(^|\/)(auth|security)(\/|\.|-)|Security|Auth/.test(path)) signals.push(finding('AUTH_SECURITY_CHANGED', path, 'Authentication or security-sensitive code changed.'));
-  if (path.startsWith('contracts/') || /Controller\.(kt|java)$/.test(path)) signals.push(finding('PUBLIC_CONTRACT_CHANGED', path, 'Public API or contract surface changed.'));
+  if (path.startsWith('contracts/') || /Controllers?\.(kt|java)$/.test(path)) signals.push(finding('PUBLIC_CONTRACT_CHANGED', path, 'Public API or contract surface changed.'));
   if (GENERATED.test(path)) signals.push(finding('GENERATED_FILE_CHANGED', path, 'Generated or build-output path changed.'));
   if (LOCKFILE.test(path) && Number(change.additions ?? 0) + Number(change.deletions ?? 0) >= 500) {
     signals.push(finding('LOCKFILE_CHURN', path, 'Lockfile has unusually large churn.'));
@@ -132,6 +132,7 @@ function git(repoRoot, args) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 20 * 1024 * 1024,
+    timeout: 30_000,
   });
 }
 
@@ -139,7 +140,7 @@ export function collectGitChanges({ repoRoot, base, head = 'HEAD' }) {
   if (!/^[0-9A-Za-z_./^-]+$/.test(base) || !/^[0-9A-Za-z_./^-]+$/.test(head)) {
     throw new Error('Git revisions contain unsupported characters.');
   }
-  const range = `${base}...${head}`;
+  const range = `${base}..${head}`;
   const statusOutput = git(repoRoot, ['diff', '--name-status', '--no-renames', '-z', range, '--']);
   const numberOutput = git(repoRoot, ['diff', '--numstat', '--no-renames', '-z', range, '--']);
   const numberByPath = new Map();

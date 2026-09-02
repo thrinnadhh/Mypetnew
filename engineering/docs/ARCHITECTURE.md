@@ -21,7 +21,7 @@ Git diff ──→ scope guard ─────────┐
 Git history → archaeology report ─┘
 ```
 
-Policy, deterministic verification, model reasoning, and tool execution are separate. The deterministic layer has no AI/provider dependency and makes no network request.
+Policy, deterministic analysis, model reasoning, and tool execution are separate. The analysis layer has no AI/provider dependency and makes no network request. Reviewed product checks run through the separate execution layer and may require policy-controlled network access.
 
 ## Why `engineering/`
 
@@ -43,7 +43,7 @@ Everything else is denied.
 
 Generated artifacts belong under `evidence/generated/engineering/<sprint>/<head>/`, which is already ignored. Reports distinguish deterministic facts from heuristics. Scope classifications are `IN_SCOPE`, `JUSTIFICATION_REQUIRED`, and `LIKELY_SCOPE_CREEP`. Commit messages and co-change frequency are signals, not proof of intent or dependency.
 
-Certification is fail-closed. A required check must have an exit code, duration, exact-head SHA, output artifact, and SHA-256 digest. Missing, stale, blocked, or failed evidence yields `NOT_CERTIFIED`. Local reports help review; merge eligibility should ultimately rely on protected exact-head CI.
+Certification is fail-closed. Scope analysis and certification require a clean working tree so uncommitted or untracked changes cannot disappear from the evidence range. Common ignored environment and credential configuration (`.env*`, `.npmrc`, `.yarnrc*`, `local.properties`, and `settings.xml`) is also rejected during check execution. A required check must have an exit code, duration, exact-head SHA, output artifact, and SHA-256 digest, and the in-process certifier accepts only result objects created by its runner. Missing, stale, blocked, fabricated, or failed evidence yields `NOT_CERTIFIED`. Local reports help review; merge eligibility should ultimately rely on protected exact-head CI.
 
 ## Security properties
 
@@ -51,8 +51,20 @@ Certification is fail-closed. A required check must have an exit code, duration,
 - Executables, working directories, timeouts, and check IDs are reviewed in the catalog.
 - Working directories and report paths must resolve inside the repository.
 - Only a small runtime environment allowlist is passed; sprint data cannot add environment keys.
-- Known credential-shaped output is redacted and logs are created mode `0600` locally.
+- Reviewed catalog checks persist only generic pass/fail summaries in mode-`0600` atomic files. Raw command and nested secret-scanner output is never written to evidence.
 - Git revisions and paths are validated and passed after `--` where applicable.
-- No repository source, `.env`, or report is uploaded by the toolkit.
+- The local CLI performs no uploads. The included CI workflow uploads only the two explicit contract-validation JSON reports as build artifacts; it does not upload repository source, `.env` files, or raw check logs.
 
 Prompt path restrictions are not a security boundary. A production worker broker must enforce filesystem and capability policy independently.
+
+## Known limitations
+
+- Dependency inspection is deterministic manifest/lockfile/build-file analysis. It flags drift and suspicious declarations; it does not prove semantic reachability or safely auto-remove packages.
+- Git archaeology provides bounded commit-message, co-change, and blame signals. Those are review clues, not proof of ownership, intent, or causality.
+- The policy documents define model-neutral roles and MCP routing, but this foundation does not ship a model runtime, MCP broker, container sandbox, or network-isolation layer.
+- Process-group termination covers normal completion, timeout, output-limit termination, and parent `SIGINT`/`SIGTERM` handling. It remains best effort across operating systems; a process that deliberately creates a new session requires a container or OS sandbox boundary.
+- Reviewed commands still execute repository-controlled scripts. Use local `--run` only for code you trust to execute; authoritative pull-request evidence belongs on a disposable, unprivileged CI runner with no application or production secrets. This foundation does not provide OS-level filesystem or network isolation.
+- Local ignored dependency trees and arbitrary ignored non-configuration files can still influence project commands. Protected CI should provision dependencies into a fresh checkout from reviewed lockfiles.
+- The isolated Gradle home is intentionally empty to avoid inheriting credentials or init scripts; a backend check may need policy-controlled network access to populate it.
+- An independently protected CI run is stronger evidence than local certification performed by the same actor that made the change.
+- No Admin application is present in repository truth at the foundation SHA, so no Admin-specific command is fabricated.

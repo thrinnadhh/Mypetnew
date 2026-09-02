@@ -1,20 +1,20 @@
 {
   "schema_version": 1,
   "checks": [
-    { "id": "backend_verify", "category": "TESTS", "cwd": ".", "argv": ["bash", "scripts/verify.sh"], "timeout_ms": 1800000 },
-    { "id": "customer_typecheck", "category": "TYPECHECK", "cwd": "apps/customer-app", "argv": ["npm", "run", "typecheck"], "timeout_ms": 900000 },
-    { "id": "customer_lint", "category": "LINT", "cwd": "apps/customer-app", "argv": ["npm", "run", "lint"], "timeout_ms": 900000 },
-    { "id": "customer_tests", "category": "TESTS", "cwd": "apps/customer-app", "argv": ["npm", "test", "--", "--runInBand"], "timeout_ms": 1800000 },
-    { "id": "merchant_routes", "category": "CONTRACTS", "cwd": "apps/merchant-app", "argv": ["npm", "run", "check:routes"], "timeout_ms": 300000 },
-    { "id": "merchant_typecheck", "category": "TYPECHECK", "cwd": "apps/merchant-app", "argv": ["npm", "run", "typecheck"], "timeout_ms": 900000 },
-    { "id": "merchant_lint", "category": "LINT", "cwd": "apps/merchant-app", "argv": ["npm", "run", "lint"], "timeout_ms": 900000 },
-    { "id": "merchant_tests", "category": "TESTS", "cwd": "apps/merchant-app", "argv": ["npm", "run", "test:ci"], "timeout_ms": 1800000 },
-    { "id": "captain_typecheck", "category": "TYPECHECK", "cwd": "apps/captain-app", "argv": ["npm", "run", "typecheck"], "timeout_ms": 900000 },
-    { "id": "captain_lint", "category": "LINT", "cwd": "apps/captain-app", "argv": ["npm", "run", "lint"], "timeout_ms": 900000 },
-    { "id": "captain_tests", "category": "TESTS", "cwd": "apps/captain-app", "argv": ["npm", "test"], "timeout_ms": 1800000 },
-    { "id": "captain_architecture", "category": "CONTRACTS", "cwd": "apps/captain-app", "argv": ["npm", "run", "test:architecture"], "timeout_ms": 900000 },
-    { "id": "migration_contract", "category": "CONTRACTS", "cwd": ".", "argv": ["bash", "scripts/supabase/verify-repository-migrations.sh"], "timeout_ms": 300000 },
-    { "id": "security_scan", "category": "SECURITY", "cwd": ".", "argv": ["bash", "scripts/secret-scan.sh"], "timeout_ms": 300000 },
-    { "id": "engineering_evals", "category": "TESTS", "cwd": ".", "argv": ["npm", "test", "--prefix", "engineering"], "timeout_ms": 300000 }
+    { "id": "backend_verify", "category": "TESTS", "cwd": ".", "argv": ["bash", "scripts/verify.sh"], "timeout_ms": 1800000, "output_policy": "summary_only" },
+    { "id": "customer_typecheck", "category": "TYPECHECK", "cwd": "apps/customer-app", "argv": ["npm", "run", "typecheck"], "timeout_ms": 900000, "output_policy": "summary_only" },
+    { "id": "customer_lint", "category": "LINT", "cwd": "apps/customer-app", "argv": ["npm", "run", "lint"], "timeout_ms": 900000, "output_policy": "summary_only" },
+    { "id": "customer_tests", "category": "TESTS", "cwd": "apps/customer-app", "argv": ["npm", "test", "--", "--runInBand"], "timeout_ms": 1800000, "output_policy": "summary_only" },
+    { "id": "merchant_routes", "category": "CONTRACTS", "cwd": "apps/merchant-app", "argv": ["npm", "run", "check:routes"], "timeout_ms": 300000, "output_policy": "summary_only" },
+    { "id": "merchant_typecheck", "category": "TYPECHECK", "cwd": "apps/merchant-app", "argv": ["npm", "run", "typecheck"], "timeout_ms": 900000, "output_policy": "summary_only" },
+    { "id": "merchant_lint", "category": "LINT", "cwd": "apps/merchant-app", "argv": ["npm", "run", "lint"], "timeout_ms": 900000, "output_policy": "summary_only" },
+    { "id": "merchant_tests", "category": "TESTS", "cwd": "apps/merchant-app", "argv": ["npm", "run", "test:ci"], "timeout_ms": 1800000, "output_policy": "summary_only" },
+    { "id": "captain_typecheck", "category": "TYPECHECK", "cwd": "apps/captain-app", "argv": ["npm", "run", "typecheck"], "timeout_ms": 900000, "output_policy": "summary_only" },
+    { "id": "captain_lint", "category": "LINT", "cwd": "apps/captain-app", "argv": ["npm", "run", "lint"], "timeout_ms": 900000, "output_policy": "summary_only" },
+    { "id": "captain_tests", "category": "TESTS", "cwd": "apps/captain-app", "argv": ["npm", "test"], "timeout_ms": 1800000, "output_policy": "summary_only" },
+    { "id": "captain_architecture", "category": "CONTRACTS", "cwd": "apps/captain-app", "argv": ["npm", "run", "test:architecture"], "timeout_ms": 900000, "output_policy": "summary_only" },
+    { "id": "migration_contract", "category": "CONTRACTS", "cwd": ".", "argv": ["bash", "scripts/supabase/verify-repository-migrations.sh"], "timeout_ms": 300000, "output_policy": "summary_only" },
+    { "id": "security_scan", "category": "SECURITY", "cwd": ".", "argv": ["bash", "scripts/secret-scan.sh"], "timeout_ms": 300000, "output_policy": "summary_only" },
+    { "id": "engineering_evals", "category": "TESTS", "cwd": ".", "argv": ["npm", "run", "test:coverage", "--prefix", "engineering"], "timeout_ms": 300000, "output_policy": "summary_only" }
   ]
 }

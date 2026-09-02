@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "observed_at_sha": "bc4736172ad55879a2c4aed53918ecb533c3a36f",
-  "runtime": { "node": "22", "java": "21", "gradle_wrapper": "9.6.0" },
+  "runtime": { "node": ">=22.8.0", "java": "21", "gradle_wrapper": "9.6.0" },
   "surfaces": {
     "backend": { "path": "backend", "ecosystem": "gradle-kotlin-spring", "available": true },
     "customer_app": { "path": "apps/customer-app", "ecosystem": "npm-expo", "available": true },

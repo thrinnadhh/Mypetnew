@@ -22,13 +22,17 @@ if command -v rg >/dev/null 2>&1; then
     --glob '!package-lock.json'
   )
 
-  if rg -n "${scan_globs[@]}" -- "$secret_pattern" .; then
-    echo "Potential server credential or private key found." >&2
-    exit 1
-  fi
+  scan_status=0
+  rg -q "${scan_globs[@]}" -- "$secret_pattern" . || scan_status=$?
+  case "$scan_status" in
+    0) echo "Potential server credential or private key found." >&2; exit 1 ;;
+    1) ;;
+    *) echo "Secret-boundary scanner failed before completing." >&2; exit 1 ;;
+  esac
 else
   echo "ripgrep not available; using grep fallback for secret-boundary scan."
-  if grep -RInE \
+  scan_status=0
+  grep -RqE \
     --exclude-dir=.git \
     --exclude-dir=node_modules \
     --exclude-dir=build \
@@ -41,10 +45,12 @@ else
     --exclude='.env.example' \
     --exclude='.env.staging.example' \
     --exclude='package-lock.json' \
-    -- "$secret_pattern" .; then
-    echo "Potential server credential or private key found." >&2
-    exit 1
-  fi
+    -- "$secret_pattern" . || scan_status=$?
+  case "$scan_status" in
+    0) echo "Potential server credential or private key found." >&2; exit 1 ;;
+    1) ;;
+    *) echo "Secret-boundary scanner failed before completing." >&2; exit 1 ;;
+  esac
 fi
 
 # Tracked environment templates are intentionally excluded from the broad secret
@@ -53,30 +59,45 @@ fi
 template_secret_keys='^(DATABASE_PASSWORD|MYPET_TOKEN_SECRET|MYPET_DEVICE_TOKEN_KEY|SUPABASE_SERVICE_ROLE_KEY|CASHFREE_CLIENT_SECRET)='
 for template in .env.example .env.staging.example; do
   [[ -f "$template" ]] || continue
-  while IFS= read -r assignment; do
-    value="${assignment#*=}"
-    if [[ "$value" != replace-* ]]; then
-      echo "$template contains a non-placeholder privileged value for ${assignment%%=*}." >&2
-      exit 1
-    fi
-  done < <(grep -E "$template_secret_keys" "$template" || true)
+  template_assignments=""
+  scan_status=0
+  template_assignments="$(grep -E "$template_secret_keys" "$template")" || scan_status=$?
+  case "$scan_status" in
+    0)
+      while IFS= read -r assignment; do
+        value="${assignment#*=}"
+        if [[ "$value" != replace-* ]]; then
+          echo "$template contains a non-placeholder privileged value for ${assignment%%=*}." >&2
+          exit 1
+        fi
+      done <<< "$template_assignments"
+      ;;
+    1) ;;
+    *) echo "Environment template scanner failed before completing." >&2; exit 1 ;;
+  esac
 done
 
 client_pattern='SUPABASE_SERVICE_ROLE_KEY|DATABASE_PASSWORD|FIREBASE_PRIVATE_KEY|GOOGLE_APPLICATION_CREDENTIALS'
 if command -v rg >/dev/null 2>&1; then
-  if rg -n --glob '!**/node_modules/**' --glob '!**/dist/**' --glob '!**/dist-ci/**' -- "$client_pattern" apps; then
-    echo "Privileged server configuration referenced by a client package." >&2
-    exit 1
-  fi
+  scan_status=0
+  rg -q --glob '!**/node_modules/**' --glob '!**/dist/**' --glob '!**/dist-ci/**' -- "$client_pattern" apps || scan_status=$?
+  case "$scan_status" in
+    0) echo "Privileged server configuration referenced by a client package." >&2; exit 1 ;;
+    1) ;;
+    *) echo "Client privilege scanner failed before completing." >&2; exit 1 ;;
+  esac
 else
-  if grep -RInE \
+  scan_status=0
+  grep -RqE \
     --exclude-dir=node_modules \
     --exclude-dir=dist \
     --exclude-dir=dist-ci \
-    -- "$client_pattern" apps; then
-    echo "Privileged server configuration referenced by a client package." >&2
-    exit 1
-  fi
+    -- "$client_pattern" apps || scan_status=$?
+  case "$scan_status" in
+    0) echo "Privileged server configuration referenced by a client package." >&2; exit 1 ;;
+    1) ;;
+    *) echo "Client privilege scanner failed before completing." >&2; exit 1 ;;
+  esac
 fi
 
 echo "Secret-boundary scan passed."

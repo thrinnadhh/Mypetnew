@@ -13,7 +13,7 @@ node engineering/bin/mypet-engineering.mjs contract validate \
 
 ## Inspect and verify
 
-Run the scope guard against the contract's starting SHA:
+Run the scope guard against the contract's starting SHA from a clean working tree. Commit the intended implementation first; dirty or untracked paths block analysis instead of being omitted:
 
 ```bash
 node engineering/bin/mypet-engineering.mjs scope \
@@ -39,13 +39,15 @@ Plan certification without executing commands (the result must be `NOT_CERTIFIED
 node engineering/bin/mypet-engineering.mjs certify --contract <contract.json> --head HEAD
 ```
 
-Execute the allowlisted relevant checks and write evidence:
+Execute the allowlisted relevant checks and write evidence. Explicit `--output` paths, when used, must be JSON files below `evidence/generated/`:
 
 ```bash
 node engineering/bin/mypet-engineering.mjs certify --contract <contract.json> --head HEAD --run
 ```
 
-The runner does not install dependencies. A developer or CI job must first prepare the repository using its established Java/npm setup. Never interpret `NOT_RUN`, `BLOCKED`, a missing app, or an exit-zero placeholder as passing evidence.
+The runner does not install dependencies. A developer or CI job must first prepare the repository using its established Java/npm setup. The isolated Gradle home may require policy-controlled downloads. Certification also requires the requested SHA to be the current clean `HEAD` before and after every check and rejects common ignored environment/credential files. Never interpret `NOT_RUN`, `BLOCKED`, a missing app, or an exit-zero placeholder as passing evidence.
+
+`--run` executes reviewed repository scripts. Run it locally only on code you trust to execute. For pull requests, prefer the disposable, unprivileged CI job; the foundation does not itself provide a container sandbox or deny network access.
 
 ## Run toolkit evals
 
@@ -53,4 +55,6 @@ The runner does not install dependencies. A developer or CI job must first prepa
 ./scripts/verify-engineering-toolkit.sh
 ```
 
-CI runs only this deterministic, offline suite. It does not call models or MCP servers and does not duplicate full product builds.
+CI runs only this deterministic, offline suite. It does not call models or MCP servers and does not duplicate full product builds. The workflow uploads only the two explicit contract-validation reports; security-check output is not part of that artifact.
+
+The wrapper enforces at least 80% line and function coverage for the dependency-free Node toolkit.

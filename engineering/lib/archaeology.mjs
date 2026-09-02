@@ -32,6 +32,7 @@ function git(repoRoot, args, { allowFailure = false } = {}) {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       maxBuffer: 20 * 1024 * 1024,
+      timeout: 30_000,
       windowsHide: true,
     });
   } catch (error) {

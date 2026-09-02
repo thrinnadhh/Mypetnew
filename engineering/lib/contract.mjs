@@ -56,12 +56,15 @@ function requireStringArray(value, location, errors, { allowEmpty = false, itemV
     errors.push(`${location} must be ${allowEmpty ? 'an' : 'a non-empty'} array`);
     return false;
   }
+  const seen = new Set();
   value.forEach((item, index) => {
     if (typeof item !== 'string' || item.trim().length === 0) {
       errors.push(`${location}[${index}] must be a non-empty string`);
     } else if (itemValidator && !itemValidator(item)) {
       errors.push(`${location}[${index}] has an invalid format`);
     }
+    if (typeof item === 'string' && seen.has(item)) errors.push(`${location}[${index}] must be unique`);
+    if (typeof item === 'string') seen.add(item);
   });
   return true;
 }
@@ -107,18 +110,17 @@ export function matchesPattern(path, pattern) {
   return patternToRegExp(pattern).test(path);
 }
 
-function staticPrefix(pattern) {
-  const wildcard = pattern.search(/[*{]/);
-  return (wildcard === -1 ? pattern : pattern.slice(0, wildcard)).replace(/\/$/, '');
+function patternCovers(containerPattern, candidatePattern) {
+  if (containerPattern === '**' || containerPattern === candidatePattern) return true;
+  if (!containerPattern.endsWith('/**') || containerPattern.slice(0, -3).includes('*')) return false;
+  const containerDirectory = containerPattern.slice(0, -3);
+  if (!candidatePattern.startsWith(`${containerDirectory}/`)) return false;
+  const candidateLiteralPrefix = candidatePattern.split('*', 1)[0].replace(/\/$/, '');
+  return candidateLiteralPrefix === containerDirectory || candidateLiteralPrefix.startsWith(`${containerDirectory}/`);
 }
 
 function workerPatternWithinSprint(workerPattern, sprintPatterns) {
-  const workerPrefix = staticPrefix(workerPattern);
-  return sprintPatterns.some((sprintPattern) => {
-    if (sprintPattern === '**' || sprintPattern === workerPattern) return true;
-    const sprintPrefix = staticPrefix(sprintPattern);
-    return workerPrefix === sprintPrefix || workerPrefix.startsWith(`${sprintPrefix}/`);
-  });
+  return sprintPatterns.some((sprintPattern) => patternCovers(sprintPattern, workerPattern));
 }
 
 function validatePathPatterns(value, location, errors, options = {}) {
@@ -207,6 +209,13 @@ export function validateSprintContract(contract, { changedPaths = [], knownCheck
           }
         }
       }
+      if (Array.isArray(worker.forbidden_paths) && Array.isArray(contract.scope?.forbidden_paths)) {
+        for (const sprintForbidden of contract.scope.forbidden_paths) {
+          if (!worker.forbidden_paths.some((workerForbidden) => patternCovers(workerForbidden, sprintForbidden))) {
+            errors.push(`${location}.forbidden_paths must inherit sprint forbidden path ${sprintForbidden}`);
+          }
+        }
+      }
     });
     contract.workers.forEach((worker, index) => {
       if (!Array.isArray(worker?.dependencies)) return;
@@ -215,7 +224,7 @@ export function validateSprintContract(contract, { changedPaths = [], knownCheck
         if (dependency === worker.id) errors.push(`workers[${index}].dependencies cannot reference itself`);
       }
     });
-    const dependenciesById = new Map(contract.workers.map((worker) => [worker.id, worker.dependencies ?? []]));
+    const dependenciesById = new Map(contract.workers.filter(isObject).map((worker) => [worker.id, Array.isArray(worker.dependencies) ? worker.dependencies : []]));
     const visiting = new Set();
     const visited = new Set();
     const hasCycle = (id) => {
@@ -247,6 +256,14 @@ export function validateSprintContract(contract, { changedPaths = [], knownCheck
     }
     if (!['all_required_pass', 'all_required_pass_no_warnings'].includes(contract.certification.merge_policy)) {
       errors.push('certification.merge_policy must be all_required_pass or all_required_pass_no_warnings');
+    }
+    if (Array.isArray(contract.certification.required_checks) && Array.isArray(contract.workers)) {
+      const certificationChecks = new Set(contract.certification.required_checks);
+      for (const worker of contract.workers.filter(isObject)) {
+        for (const checkId of Array.isArray(worker.required_check_ids) ? worker.required_check_ids : []) {
+          if (!certificationChecks.has(checkId)) errors.push(`certification.required_checks must include worker-required check ${checkId}`);
+        }
+      }
     }
   }
 

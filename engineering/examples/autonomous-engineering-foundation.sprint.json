@@ -9,6 +9,7 @@
     "allowed_paths": [
       "engineering/**",
       "scripts/verify-engineering-toolkit.sh",
+      "scripts/secret-scan.sh",
       ".github/workflows/engineering-toolkit.yml"
     ],
     "forbidden_paths": [
@@ -20,7 +21,8 @@
     ],
     "justifications": {
       "engineering/package.json": "A dependency-free local package declares only the Node eval command and runtime floor.",
-      ".github/workflows/engineering-toolkit.yml": "A deterministic, fast, secretless workflow runs the foundation eval suite on relevant changes."
+      "scripts/secret-scan.sh": "Quiet matching prevents a detected credential value from being echoed into direct CI logs.",
+      ".github/workflows/engineering-toolkit.yml": "A deterministic, fast, least-privilege workflow runs the foundation eval suite without application or production secrets."
     }
   },
   "workers": [
@@ -29,7 +31,7 @@
       "role": "testing",
       "objective": "Implement contract, scope, dependency, archaeology, command-runner, and certification modules.",
       "allowed_paths": ["engineering/lib/**", "engineering/bin/**", "engineering/policies/**", "engineering/schemas/**"],
-      "forbidden_paths": ["backend/**", "apps/**", "infra/**"],
+      "forbidden_paths": ["backend/**", "apps/**", "infra/**", "contracts/merchant-operations/**"],
       "repository_facts": ["Node 22 and dependency-free node:test scripts are existing repository conventions."],
       "dependencies": [],
       "acceptance_criteria": ["The deterministic core satisfies all required eval scenarios and rejects injection-shaped input."],
@@ -42,7 +44,7 @@
       "role": "testing",
       "objective": "Define deterministic behavioral evals for the foundation.",
       "allowed_paths": ["engineering/evals/**", "engineering/package.json"],
-      "forbidden_paths": ["backend/**", "apps/**", "infra/**"],
+      "forbidden_paths": ["backend/**", "apps/**", "infra/**", "contracts/merchant-operations/**"],
       "repository_facts": ["Temporary Git repositories are an existing local test pattern."],
       "dependencies": [],
       "acceptance_criteria": ["Every required contract, scope, certifier, dependency, and archaeology scenario is executable."],
@@ -55,7 +57,7 @@
       "role": "documentation",
       "objective": "Document roles, operation, security, provenance, and future least-capability MCP routing.",
       "allowed_paths": ["engineering/README.md", "engineering/agents/**", "engineering/docs/**", "engineering/examples/**"],
-      "forbidden_paths": ["backend/**", "apps/**", "infra/**"],
+      "forbidden_paths": ["backend/**", "apps/**", "infra/**", "contracts/merchant-operations/**"],
       "repository_facts": ["No Admin application exists at the starting SHA and the root README is stale."],
       "dependencies": ["deterministic-core"],
       "acceptance_criteria": ["A future sprint can create a contract, scope workers, run guards, and understand certification limitations."],
@@ -67,13 +69,13 @@
       "id": "ci-integration",
       "role": "ci",
       "objective": "Add a fast deterministic wrapper and path-scoped CI workflow.",
-      "allowed_paths": ["scripts/verify-engineering-toolkit.sh", ".github/workflows/engineering-toolkit.yml"],
-      "forbidden_paths": ["backend/**", "apps/**", "infra/**"],
+      "allowed_paths": ["scripts/verify-engineering-toolkit.sh", "scripts/secret-scan.sh", ".github/workflows/engineering-toolkit.yml"],
+      "forbidden_paths": ["backend/**", "apps/**", "infra/**", "contracts/merchant-operations/**"],
       "repository_facts": ["Mandatory CI must not invoke models, MCP tools, or production services."],
       "dependencies": ["deterministic-core", "eval-suite"],
       "acceptance_criteria": ["The wrapper and workflow validate examples and run deterministic evals only."],
       "required_check_ids": ["engineering_evals", "security_scan"],
-      "expected_artifacts": ["scripts/verify-engineering-toolkit.sh", ".github/workflows/engineering-toolkit.yml"],
+      "expected_artifacts": ["scripts/verify-engineering-toolkit.sh", "scripts/secret-scan.sh", ".github/workflows/engineering-toolkit.yml"],
       "evidence_requirements": ["Run the wrapper twice and record exact results."]
     }
   ],

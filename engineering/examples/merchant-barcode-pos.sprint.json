@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "sprint": {
+    "id": "mf5-barcode-pos-example",
+    "objective": "Implement an approved merchant barcode/POS increment while preserving backend authority and offline recovery contracts.",
+    "starting_sha": "bc4736172ad55879a2c4aed53918ecb533c3a36f"
+  },
+  "scope": {
+    "allowed_paths": [
+      "apps/merchant-app/**",
+      "backend/**",
+      "contracts/merchant-operations/**",
+      "scripts/merchant-app/**",
+      "docs/qa/**"
+    ],
+    "forbidden_paths": [
+      "apps/customer-app/**",
+      "apps/captain-app/**",
+      ".github/**"
+    ],
+    "justifications": {
+      "apps/merchant-app/package.json": "Only if the approved POS design requires a reviewed direct dependency; lockfile must change with it.",
+      "backend/src/main/resources/db/migration/**": "Only a forward migration may be added when the approved backend contract requires persistence."
+    }
+  },
+  "workers": [
+    {
+      "id": "backend-contract",
+      "role": "backend",
+      "objective": "Implement any approved server-authoritative barcode/POS contract and its backend tests.",
+      "allowed_paths": ["backend/**", "contracts/merchant-operations/**"],
+      "forbidden_paths": ["apps/**", ".github/**"],
+      "repository_facts": ["The Kotlin/Spring backend is the business authority.", "Flyway history is forward-only."],
+      "dependencies": [],
+      "acceptance_criteria": ["API and persistence invariants are enforced by executable tests."],
+      "required_check_ids": ["backend_verify", "migration_contract"],
+      "expected_artifacts": ["evidence/generated/engineering/**"],
+      "evidence_requirements": ["Record exact-head exit codes and log hashes for required checks."]
+    },
+    {
+      "id": "merchant-pos",
+      "role": "merchant-app",
+      "objective": "Implement the scoped merchant barcode/POS UI and offline-safe workflow.",
+      "allowed_paths": ["apps/merchant-app/**", "scripts/merchant-app/**"],
+      "forbidden_paths": ["apps/customer-app/**", "apps/captain-app/**", ".github/**"],
+      "repository_facts": ["The Merchant app uses Expo 56 and an independent npm lockfile.", "Offline commands must remain partitioned and recoverable."],
+      "dependencies": ["backend-contract"],
+      "acceptance_criteria": ["Barcode/POS behavior passes route, type, lint, and test gates without demo-only fallback."],
+      "required_check_ids": ["merchant_routes", "merchant_typecheck", "merchant_lint", "merchant_tests"],
+      "expected_artifacts": ["evidence/generated/engineering/**"],
+      "evidence_requirements": ["Capture check output and identify device-only evidence that remains manual."]
+    },
+    {
+      "id": "pos-certification",
+      "role": "testing",
+      "objective": "Review scope, dependency changes, cross-stack contracts, and exact-head evidence.",
+      "allowed_paths": ["docs/qa/**"],
+      "forbidden_paths": ["backend/src/main/**", "apps/**", ".github/**"],
+      "repository_facts": ["A passing check requires executed evidence; blocked device evidence is not a pass."],
+      "dependencies": ["backend-contract", "merchant-pos"],
+      "acceptance_criteria": ["Scope and dependency reports are reviewed and every required check is evidence-backed."],
+      "required_check_ids": ["security_scan"],
+      "expected_artifacts": ["evidence/generated/engineering/**", "docs/qa/**"],
+      "evidence_requirements": ["Report failures and repairs; never fabricate physical-device evidence."]
+    }
+  ],
+  "acceptance": {
+    "functional": ["Approved barcode/POS behavior is usable in the Merchant app and server-authoritative where required."],
+    "regression": ["Merchant route, offline, contract, and backend checks pass as selected."],
+    "security": ["Tenant/outlet boundaries and input validation are exercised; no secrets enter evidence."],
+    "contracts": ["Any API or schema change is forward-compatible and tested on affected sides."]
+  },
+  "certification": {
+    "required_checks": ["backend_verify", "migration_contract", "merchant_routes", "merchant_typecheck", "merchant_lint", "merchant_tests", "security_scan"],
+    "merge_policy": "all_required_pass_no_warnings"
+  }
+}

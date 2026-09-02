@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "sprint": {
+    "id": "autonomous-engineering-foundation",
+    "objective": "Create a provider-neutral, deterministic MyPetNew engineering-agent foundation without changing product functionality.",
+    "starting_sha": "bc4736172ad55879a2c4aed53918ecb533c3a36f"
+  },
+  "scope": {
+    "allowed_paths": [
+      "engineering/**",
+      "scripts/verify-engineering-toolkit.sh",
+      "scripts/secret-scan.sh",
+      ".github/workflows/engineering-toolkit.yml"
+    ],
+    "forbidden_paths": [
+      "backend/src/main/**",
+      "backend/src/test/**",
+      "apps/**",
+      "infra/**",
+      "contracts/merchant-operations/**"
+    ],
+    "justifications": {
+      "engineering/package.json": "A dependency-free local package declares only the Node eval command and runtime floor.",
+      "engineering/evals/security.test.mjs": "Executable adversarial fixtures verify secret redaction, scanner error handling, evidence provenance, and process isolation boundaries.",
+      "scripts/secret-scan.sh": "Quiet matching prevents a detected credential value from being echoed into direct CI logs.",
+      ".github/workflows/engineering-toolkit.yml": "A deterministic, fast, least-privilege workflow runs the foundation eval suite without application or production secrets."
+    }
+  },
+  "workers": [
+    {
+      "id": "deterministic-core",
+      "role": "testing",
+      "objective": "Implement contract, scope, dependency, archaeology, command-runner, and certification modules.",
+      "allowed_paths": ["engineering/lib/**", "engineering/bin/**", "engineering/policies/**", "engineering/schemas/**"],
+      "forbidden_paths": ["backend/**", "apps/**", "infra/**", "contracts/merchant-operations/**"],
+      "repository_facts": ["Node 22 and dependency-free node:test scripts are existing repository conventions."],
+      "dependencies": [],
+      "acceptance_criteria": ["The deterministic core satisfies all required eval scenarios and rejects injection-shaped input."],
+      "required_check_ids": ["engineering_evals", "security_scan"],
+      "expected_artifacts": ["engineering/lib/**", "engineering/policies/**", "engineering/schemas/**"],
+      "evidence_requirements": ["Capture RED, GREEN, and second-pass test evidence."]
+    },
+    {
+      "id": "eval-suite",
+      "role": "testing",
+      "objective": "Define deterministic behavioral evals for the foundation.",
+      "allowed_paths": ["engineering/evals/**", "engineering/package.json"],
+      "forbidden_paths": ["backend/**", "apps/**", "infra/**", "contracts/merchant-operations/**"],
+      "repository_facts": ["Temporary Git repositories are an existing local test pattern."],
+      "dependencies": [],
+      "acceptance_criteria": ["Every required contract, scope, certifier, dependency, and archaeology scenario is executable."],
+      "required_check_ids": ["engineering_evals"],
+      "expected_artifacts": ["engineering/evals/**"],
+      "evidence_requirements": ["Record test counts and failures exactly."]
+    },
+    {
+      "id": "architecture-docs",
+      "role": "documentation",
+      "objective": "Document roles, operation, security, provenance, and future least-capability MCP routing.",
+      "allowed_paths": ["engineering/README.md", "engineering/agents/**", "engineering/docs/**", "engineering/examples/**"],
+      "forbidden_paths": ["backend/**", "apps/**", "infra/**", "contracts/merchant-operations/**"],
+      "repository_facts": ["No Admin application exists at the starting SHA and the root README is stale."],
+      "dependencies": ["deterministic-core"],
+      "acceptance_criteria": ["A future sprint can create a contract, scope workers, run guards, and understand certification limitations."],
+      "required_check_ids": ["engineering_evals"],
+      "expected_artifacts": ["engineering/README.md", "engineering/agents/**", "engineering/docs/**", "engineering/examples/**"],
+      "evidence_requirements": ["Do not include fake execution evidence."]
+    },
+    {
+      "id": "ci-integration",
+      "role": "ci",
+      "objective": "Add a fast deterministic wrapper and path-scoped CI workflow.",
+      "allowed_paths": ["scripts/verify-engineering-toolkit.sh", "scripts/secret-scan.sh", ".github/workflows/engineering-toolkit.yml"],
+      "forbidden_paths": ["backend/**", "apps/**", "infra/**", "contracts/merchant-operations/**"],
+      "repository_facts": ["Mandatory CI must not invoke models, MCP tools, or production services."],
+      "dependencies": ["deterministic-core", "eval-suite"],
+      "acceptance_criteria": ["The wrapper and workflow validate examples and run deterministic evals only."],
+      "required_check_ids": ["engineering_evals", "security_scan"],
+      "expected_artifacts": ["scripts/verify-engineering-toolkit.sh", "scripts/secret-scan.sh", ".github/workflows/engineering-toolkit.yml"],
+      "evidence_requirements": ["Run the wrapper twice and record exact results."]
+    }
+  ],
+  "acceptance": {
+    "functional": ["Sprint contracts, scope checks, dependency analysis, Git archaeology, and certification are reusable from a CLI."],
+    "regression": ["No product implementation or test file is changed."],
+    "security": ["No untrusted contract field can inject commands, environment values, or paths outside the repository."],
+    "contracts": ["Reports and sprint examples remain machine-readable JSON."]
+  },
+  "certification": {
+    "required_checks": ["engineering_evals", "security_scan"],
+    "merge_policy": "all_required_pass_no_warnings"
+  }
+}

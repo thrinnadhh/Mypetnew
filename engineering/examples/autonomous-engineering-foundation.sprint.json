@@ -21,6 +21,7 @@
     ],
     "justifications": {
       "engineering/package.json": "A dependency-free local package declares only the Node eval command and runtime floor.",
+      "engineering/evals/security.test.mjs": "Executable adversarial fixtures verify secret redaction, scanner error handling, evidence provenance, and process isolation boundaries.",
       "scripts/secret-scan.sh": "Quiet matching prevents a detected credential value from being echoed into direct CI logs.",
       ".github/workflows/engineering-toolkit.yml": "A deterministic, fast, least-privilege workflow runs the foundation eval suite without application or production secrets."
     }

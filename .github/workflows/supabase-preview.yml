@@ -94,9 +94,8 @@ jobs:
         run: bash ./scripts/supabase/migrate-preview-branch.sh
 
       - name: Verify preview Flyway drift
-        env:
-          SUPABASE_DATABASE_URL: ${{ env.PREVIEW_DATABASE_URL }}
-        run: bash ./scripts/supabase/verify-live-drift.sh
+        shell: bash
+        run: SUPABASE_DATABASE_URL="$PREVIEW_DATABASE_URL" bash ./scripts/supabase/verify-live-drift.sh
 
       - name: Verify preview contains no production data
         run: bash ./scripts/supabase/verify-preview-isolation.sh

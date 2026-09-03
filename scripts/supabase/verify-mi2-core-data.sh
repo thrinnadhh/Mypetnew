@@ -41,9 +41,13 @@ grep -Fq "SPRING_FLYWAY_USER=replace-with-migration-user" .env.staging.example |
   exit 1
 }
 
-# Domain clients must remain API clients, not direct Supabase Data API writers.
+# All tracked role clients must remain API clients, not direct Supabase Data API writers.
+client_roots=(apps/customer-app/src apps/merchant-app/src apps/captain-app/src)
+for optional_root in apps/admin-app/src apps/admin-web/src; do
+  [[ -d "$optional_root" ]] && client_roots+=("$optional_root")
+done
 if grep -RIn --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
-  -E '\bsupabase\s*\.\s*(from|rpc)\s*\(' apps/customer-app/src apps/merchant-app/src 2>/dev/null; then
+  -E '\bsupabase\s*\.\s*(from|rpc)\s*\(' "${client_roots[@]}" 2>/dev/null; then
   echo "MI2: direct Supabase domain-table access found in role client source" >&2
   exit 1
 fi

@@ -4,15 +4,32 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MODE="${1:-}"
 
-if [[ -n "${DATABASE_URL:-}" ]]; then
-  db_url_host="$(printf '%s' "$DATABASE_URL" | sed -E -e 's#^jdbc:##' -e 's#^[a-zA-Z0-9]+://([^/@:]+@)?([^/:]+).*#\2#')"
-  case "$db_url_host" in
-    127.0.0.1|localhost) ;;
+verify_loopback_host() {
+  local host="$1"
+  local origin_desc="$2"
+  host="${host#[}"
+  host="${host%]}"
+  case "$host" in
+    127.0.0.1|localhost|::1) ;;
     *)
-      echo "Ephemeral DB verification only permits loopback PostgreSQL; received DATABASE_URL host '$db_url_host'." >&2
+      echo "Ephemeral DB verification only permits loopback PostgreSQL; received $origin_desc host '$1'." >&2
       exit 2
       ;;
   esac
+}
+
+if [[ -n "${DATABASE_URL:-}" ]]; then
+  if [[ "$DATABASE_URL" == *","* ]]; then
+    echo "Ephemeral DB verification strictly forbids multi-host DATABASE_URL; received '$DATABASE_URL'." >&2
+    exit 2
+  fi
+  url_no_jdbc="${DATABASE_URL#jdbc:}"
+  if [[ ! "$url_no_jdbc" =~ ^[a-zA-Z0-9]+://([^/@]+@)?(\[[^\]]+\]|[^/:]+)(:[0-9]+)?(/.*)?$ ]]; then
+    echo "Malformed DATABASE_URL: '$DATABASE_URL'." >&2
+    exit 2
+  fi
+  db_url_host="${BASH_REMATCH[2]}"
+  verify_loopback_host "$db_url_host" "DATABASE_URL"
 fi
 
 : "${PGHOST:?PGHOST is required}"
@@ -20,13 +37,7 @@ fi
 : "${PGUSER:?PGUSER is required}"
 : "${PGDATABASE:?PGDATABASE is required}"
 
-case "$PGHOST" in
-  127.0.0.1|localhost) ;;
-  *)
-    echo "Ephemeral DB verification only permits loopback PostgreSQL; received '$PGHOST'." >&2
-    exit 2
-    ;;
-esac
+verify_loopback_host "$PGHOST" "PGHOST"
 
 if ! command -v psql >/dev/null 2>&1; then
   echo "psql is required for ephemeral PostgreSQL verification." >&2
@@ -101,29 +112,40 @@ case "$MODE" in
       exit 1
     fi
 
-    read -r identity_count session_count order_count sale_count payment_count < <(
-      "${psql_cmd[@]}" -c "
-        SELECT
-          (SELECT COUNT(*) FROM mypet.identity_account),
-          (SELECT COUNT(*) FROM mypet.user_session),
-          (SELECT COUNT(*) FROM mypet.product_order),
-          (SELECT COUNT(*) FROM mypet.pos_sale),
-          (SELECT COUNT(*) FROM mypet.payment);
-      " | tr '|' ' '
-    )
-
-    for value in "$identity_count" "$session_count" "$order_count" "$sale_count" "$payment_count"; do
-      [[ "$value" =~ ^[0-9]+$ ]] || {
-        echo "Unexpected data-isolation response from ephemeral PostgreSQL." >&2
-        exit 1
-      }
-    done
-    if (( identity_count != 0 || session_count != 0 || order_count != 0 || sale_count != 0 || payment_count != 0 )); then
-      echo "Ephemeral PostgreSQL unexpectedly contains identity/transaction rows." >&2
+    non_empty_tables="$("${psql_cmd[@]}" -c "
+      DO \$\$
+      DECLARE
+        r RECORD;
+        cnt BIGINT;
+        non_empty TEXT[] := ARRAY[]::TEXT[];
+      BEGIN
+        FOR r IN (
+          SELECT table_name
+          FROM information_schema.tables
+          WHERE table_schema = 'mypet'
+            AND table_type = 'BASE TABLE'
+            AND table_name NOT IN ('flyway_schema_history', 'service_region', 'service_region_pincode')
+          ORDER BY table_name
+        ) LOOP
+          EXECUTE format('SELECT count(*) FROM mypet.%I', r.table_name) INTO cnt;
+          IF cnt > 0 THEN
+            non_empty := array_append(non_empty, format('%s=%s', r.table_name, cnt));
+          END IF;
+        END LOOP;
+        IF array_length(non_empty, 1) > 0 THEN
+          RAISE EXCEPTION 'NON_EMPTY:%', array_to_string(non_empty, ',');
+        END IF;
+      END \$\$;
+    " 2>&1)" || {
+      if [[ "$non_empty_tables" =~ NON_EMPTY:([a-zA-Z0-9_,=]+) ]]; then
+        echo "Ephemeral PostgreSQL unexpectedly contains transactional/seeded data: ${BASH_REMATCH[1]}." >&2
+      else
+        echo "Failed to verify ephemeral PostgreSQL data isolation: $non_empty_tables" >&2
+      fi
       exit 1
-    fi
+    }
 
-    echo "Ephemeral PostgreSQL certified: Flyway V${live_latest}; PostGIS=extensions; failed=0; transactional seed data=0."
+    echo "Ephemeral PostgreSQL certified: Flyway V${live_latest}; PostGIS=extensions; failed=0; all business tables verified empty."
     ;;
 
   *)

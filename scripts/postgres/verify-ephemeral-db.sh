@@ -78,6 +78,19 @@ case "$MODE" in
       exit 1
     fi
 
+    postgis_namespace="$("${psql_cmd[@]}" -c "
+      SELECT COALESCE((
+        SELECT n.nspname
+        FROM pg_extension e
+        JOIN pg_namespace n ON n.oid = e.extnamespace
+        WHERE e.extname = 'postgis'
+      ), 'missing');
+    ")"
+    if [[ "$postgis_namespace" != extensions ]]; then
+      echo "PostGIS namespace mismatch: expected extensions, found '$postgis_namespace'." >&2
+      exit 1
+    fi
+
     read -r identity_count session_count order_count sale_count payment_count < <(
       "${psql_cmd[@]}" -c "
         SELECT
@@ -100,7 +113,7 @@ case "$MODE" in
       exit 1
     fi
 
-    echo "Ephemeral PostgreSQL certified: Flyway V${live_latest}; failed=0; transactional seed data=0."
+    echo "Ephemeral PostgreSQL certified: Flyway V${live_latest}; PostGIS=extensions; failed=0; transactional seed data=0."
     ;;
 
   *)

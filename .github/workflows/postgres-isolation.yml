@@ -85,6 +85,27 @@ jobs:
       - name: Prove database starts empty
         run: bash ./scripts/postgres/verify-ephemeral-db.sh preflight
 
+      - name: Align PostGIS extension layout with Supabase
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DROP EXTENSION IF EXISTS postgis_topology CASCADE;
+          DROP EXTENSION IF EXISTS postgis CASCADE;
+          CREATE SCHEMA IF NOT EXISTS extensions;
+          CREATE EXTENSION postgis WITH SCHEMA extensions;
+          SQL
+          namespace="$(psql -A -t -v ON_ERROR_STOP=1 -c "
+            SELECT n.nspname
+            FROM pg_extension e
+            JOIN pg_namespace n ON n.oid = e.extnamespace
+            WHERE e.extname = 'postgis';
+          ")"
+          [[ "$namespace" == extensions ]] || {
+            echo "PostGIS extension namespace is '$namespace', expected 'extensions'." >&2
+            exit 1
+          }
+
       - name: Boot exact backend against fresh PostgreSQL
         shell: bash
         run: |
@@ -100,20 +121,20 @@ jobs:
 
           healthy=false
           for attempt in $(seq 1 90); do
-            if curl -fsS "http://127.0.0.1:${SERVER_PORT}/actuator/health" >/dev/null; then
+            if curl -fsS "http://127.0.0.1:${SERVER_PORT}/actuator/health" >/dev/null 2>&1; then
               healthy=true
               break
             fi
             if ! kill -0 "$backend_pid" 2>/dev/null; then
               echo "Backend exited during fresh-database startup." >&2
-              tail -n 160 "$log_file" >&2 || true
+              tail -n 180 "$log_file" >&2 || true
               exit 1
             fi
             sleep 1
           done
           if [[ "$healthy" != true ]]; then
             echo "Backend did not become healthy against the fresh PostgreSQL database." >&2
-            tail -n 160 "$log_file" >&2 || true
+            tail -n 180 "$log_file" >&2 || true
             exit 1
           fi
           curl -fsS "http://127.0.0.1:${SERVER_PORT}/actuator/health" | grep -q '"status":"UP"'
@@ -141,6 +162,7 @@ jobs:
             echo "git_sha=$GITHUB_SHA"
             echo "postgres=17"
             echo "postgis=3.5"
+            echo "postgis_schema=extensions"
             echo "database=fresh-ephemeral"
             echo "supabase_staging_used=false"
           } > build/evidence/postgres-isolation/summary.txt

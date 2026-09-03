@@ -49,19 +49,61 @@ case "$(uname -m 2>/dev/null || true)" in
   arm64|aarch64) platform_args=(--platform linux/amd64) ;;
 esac
 
+validate_state_path_safety() {
+  if [[ -L "$state_dir" ]]; then
+    echo "State directory '$state_dir' is a symlink; refusing operation for safety." >&2
+    exit 2
+  fi
+  if [[ -e "$state_file" && -L "$state_file" ]]; then
+    echo "State file '$state_file' is a symlink; refusing operation for safety." >&2
+    exit 2
+  fi
+  if [[ -e "$pid_file" && -L "$pid_file" ]]; then
+    echo "PID file '$pid_file' is a symlink; refusing operation for safety." >&2
+    exit 2
+  fi
+  if [[ -e "$log_file" && -L "$log_file" ]]; then
+    echo "Log file '$log_file' is a symlink; refusing operation for safety." >&2
+    exit 2
+  fi
+}
+
 load_state() {
+  validate_state_path_safety
   [[ -f "$state_file" ]] || {
     echo "Isolated environment '$env_name' does not exist. Run create first." >&2
     exit 2
   }
+  local file_uid
+  file_uid="$(stat -f '%u' "$state_file" 2>/dev/null || stat -c '%u' "$state_file" 2>/dev/null || true)"
+  if [[ -n "$file_uid" && "$file_uid" != "$(id -u)" ]]; then
+    echo "State file '$state_file' is owned by UID $file_uid, expected current UID $(id -u)." >&2
+    exit 2
+  fi
+  local mode
+  mode="$(stat -f '%Lp' "$state_file" 2>/dev/null || stat -c '%a' "$state_file" 2>/dev/null || true)"
+  if [[ -n "$mode" && "$mode" =~ [2367]$|[2367][0-9]$ ]]; then
+    echo "State file '$state_file' has unsafe permissions '$mode'; must not be group/world writable." >&2
+    exit 2
+  fi
+  local safe_line_pattern="^[A-Z0-9_]+=('([^']*)'|[a-zA-Z0-9_./@:-]*)$"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
+    if [[ ! "$line" =~ $safe_line_pattern ]]; then
+      echo "State file '$state_file' contains invalid or unsafe line: '$line'." >&2
+      exit 2
+    fi
+  done <"$state_file"
+
   # shellcheck disable=SC1090
   source "$state_file"
 }
 
 write_state() {
+  validate_state_path_safety
+  umask 077
   mkdir -p "$state_dir"
   chmod 700 "$state_dir"
-  umask 077
   {
     printf 'DB_PASSWORD=%q\n' "$DB_PASSWORD"
     printf 'TOKEN_SECRET=%q\n' "$TOKEN_SECRET"
@@ -79,9 +121,20 @@ write_state() {
 
 wait_for_postgres() {
   for _ in $(seq 1 60); do
-    if docker logs "$container" 2>&1 | grep -q "PostgreSQL init process complete; ready for start up" && \
-       docker exec "$container" pg_isready -U mypet -d "$db_name" >/dev/null 2>&1; then
-      return 0
+    local status
+    status="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo "missing")"
+    if [[ "$status" == "exited" || "$status" == "dead" ]]; then
+      echo "PostgreSQL container '$container' unexpectedly stopped (status: $status)." >&2
+      docker logs --tail 60 "$container" >&2 || true
+      return 1
+    fi
+    if [[ "$status" == "running" ]] && \
+       docker exec "$container" pg_isready -U mypet -d "$db_name" >/dev/null 2>&1 && \
+       docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -c "SELECT 1;" >/dev/null 2>&1; then
+      sleep 0.5
+      if docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -c "SELECT 1;" >/dev/null 2>&1; then
+        return 0
+      fi
     fi
     sleep 1
   done
@@ -101,11 +154,30 @@ ensure_supabase_postgis_layout() {
   ")"
   [[ "$namespace" == extensions ]] && return 0
 
-  mypet_tables="$(docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -v ON_ERROR_STOP=1 -c "
-    SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'mypet';
+  # Safety guard: Refuse destructive extension recreation if user tables exist anywhere
+  # in the database (not just the mypet schema) or if any user objects depend on PostGIS.
+  existing_tables="$(docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -v ON_ERROR_STOP=1 -c "
+    SELECT COUNT(*) FROM information_schema.tables
+    WHERE table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+      AND table_name NOT IN ('spatial_ref_sys', 'topology');
   ")"
-  if [[ ! "$mypet_tables" =~ ^[0-9]+$ ]] || (( mypet_tables != 0 )); then
-    echo "PostGIS is in schema '$namespace' but application tables already exist; refusing destructive relocation." >&2
+  if [[ ! "$existing_tables" =~ ^[0-9]+$ ]] || (( existing_tables != 0 )); then
+    echo "PostGIS is in schema '$namespace' but database contains $existing_tables existing table(s); refusing destructive extension relocation." >&2
+    exit 1
+  fi
+
+  dependent_objects="$(docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -v ON_ERROR_STOP=1 -c "
+    SELECT COUNT(*)
+    FROM pg_depend dep
+    JOIN pg_extension ext ON dep.refobjid = ext.oid
+    JOIN pg_class cls ON dep.objid = cls.oid
+    JOIN pg_namespace nsp ON cls.relnamespace = nsp.oid
+    WHERE ext.extname IN ('postgis', 'postgis_topology')
+      AND dep.deptype != 'e'
+      AND nsp.nspname NOT IN ('pg_catalog', 'information_schema');
+  ")"
+  if [[ ! "$dependent_objects" =~ ^[0-9]+$ ]] || (( dependent_objects != 0 )); then
+    echo "PostGIS is in schema '$namespace' but $dependent_objects user object(s) depend on it; refusing destructive relocation." >&2
     exit 1
   fi
 
@@ -135,7 +207,16 @@ is_mypet_backend_process() {
   fi
   local cmd
   cmd="$(ps -p "$check_pid" -o command= 2>/dev/null || ps -p "$check_pid" -o args= 2>/dev/null || true)"
-  if [[ "$cmd" =~ mypetnew || "$cmd" =~ bootRun || "$cmd" =~ java.*backend || "$cmd" =~ gradle ]]; then
+  if [[ "$cmd" =~ in\.mypetnew || "$cmd" =~ :backend:bootRun || ("$cmd" =~ mypet && "$cmd" =~ java) ]]; then
+    return 0
+  fi
+  local proc_cwd=""
+  if command -v lsof >/dev/null 2>&1; then
+    proc_cwd="$(lsof -p "$check_pid" -a -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' || true)"
+  elif [[ -d "/proc/$check_pid" ]]; then
+    proc_cwd="$(readlink "/proc/$check_pid/cwd" 2>/dev/null || true)"
+  fi
+  if [[ -n "$proc_cwd" && "$proc_cwd" == "$ROOT"* && ("$cmd" =~ gradle || "$cmd" =~ java) ]]; then
     return 0
   fi
   return 1
@@ -194,7 +275,7 @@ case "$command_name" in
     rollback_create() {
       docker rm -f "$container" >/dev/null 2>&1 || true
       docker network rm "$network" >/dev/null 2>&1 || true
-      rm -rf "$state_dir"
+      [[ ! -L "$state_dir" ]] && rm -rf "$state_dir"
     }
 
     docker network create "$network" >/dev/null
@@ -320,7 +401,11 @@ case "$command_name" in
   certify)
     "$0" migrate "$env_name"
     "$0" boot "$env_name"
-    echo "Isolated environment '$env_name' certified: migration validated and backend healthy."
+    load_state
+    PGHOST=127.0.0.1 PGPORT="$DB_PORT" PGUSER=mypet PGPASSWORD="$DB_PASSWORD" PGDATABASE="$DB_NAME" \
+      DATABASE_URL="jdbc:postgresql://127.0.0.1:${DB_PORT}/${DB_NAME}" \
+      bash "$ROOT/scripts/postgres/verify-ephemeral-db.sh" postflight
+    echo "Isolated environment '$env_name' certified: migration validated, backend healthy, PostGIS in extensions, and zero transactional seed data."
     ;;
 
   stop)
@@ -331,11 +416,12 @@ case "$command_name" in
     ;;
 
   destroy)
+    validate_state_path_safety
     load_state
     stop_backend
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
     docker network rm "$NETWORK" >/dev/null 2>&1 || true
-    rm -rf "$state_dir"
+    [[ ! -L "$state_dir" ]] && rm -rf "$state_dir"
     echo "Destroyed only isolated environment '$env_name'."
     ;;
 

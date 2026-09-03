@@ -98,25 +98,7 @@ jobs:
         run: bash ./scripts/postgres/verify-ephemeral-db.sh preflight
 
       - name: Align PostGIS extension layout with Supabase
-        shell: bash
-        run: |
-          set -euo pipefail
-          psql -v ON_ERROR_STOP=1 <<'SQL'
-          DROP EXTENSION IF EXISTS postgis_topology CASCADE;
-          DROP EXTENSION IF EXISTS postgis CASCADE;
-          CREATE SCHEMA IF NOT EXISTS extensions;
-          CREATE EXTENSION postgis WITH SCHEMA extensions;
-          SQL
-          namespace="$(psql -A -t -v ON_ERROR_STOP=1 -c "
-            SELECT n.nspname
-            FROM pg_extension e
-            JOIN pg_namespace n ON n.oid = e.extnamespace
-            WHERE e.extname = 'postgis';
-          ")"
-          [[ "$namespace" == extensions ]] || {
-            echo "PostGIS extension namespace is '$namespace', expected 'extensions'." >&2
-            exit 1
-          }
+        run: bash ./scripts/postgres/prepare-supabase-postgis.sh
 
       - name: Compile backend before runtime deadline
         run: ./gradlew :backend:classes --no-daemon --no-configuration-cache

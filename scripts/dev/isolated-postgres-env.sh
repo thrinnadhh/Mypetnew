@@ -67,6 +67,7 @@ write_state() {
     printf 'TOKEN_SECRET=%q\n' "$TOKEN_SECRET"
     printf 'SYNC_CURSOR_SECRET=%q\n' "$SYNC_CURSOR_SECRET"
     printf 'DEVICE_TOKEN_KEY=%q\n' "$DEVICE_TOKEN_KEY"
+    printf 'SERVICE_ROLE_KEY=%q\n' "$SERVICE_ROLE_KEY"
     printf 'DB_PORT=%q\n' "$db_port"
     printf 'BACKEND_PORT=%q\n' "$backend_port"
     printf 'DB_NAME=%q\n' "$db_name"
@@ -188,6 +189,7 @@ case "$command_name" in
     TOKEN_SECRET="$(openssl rand -hex 32)"
     SYNC_CURSOR_SECRET="$(openssl rand -hex 32)"
     DEVICE_TOKEN_KEY="$(openssl rand -base64 32 | tr -d '\n')"
+    SERVICE_ROLE_KEY="$(openssl rand -hex 32)"
 
     rollback_create() {
       docker rm -f "$container" >/dev/null 2>&1 || true
@@ -278,7 +280,7 @@ case "$command_name" in
       export NOTIFICATION_DELIVERY_ENABLED=false
       export CASHFREE_ENABLED=false
       export SUPABASE_URL="https://isolated.mypet.local"
-      export SUPABASE_SERVICE_ROLE_KEY="isolated-local-service-role-key-32-chars-minimum"
+      export SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY:-isolated-local-service-role-key-32-chars-minimum}
       export SUPABASE_PRIVATE_EVIDENCE_BUCKET="provider-verification-private"
       export SUPABASE_CATALOG_MEDIA_BUCKET="catalog-media"
       export MANAGEMENT_HEALTH_REDIS_ENABLED=false

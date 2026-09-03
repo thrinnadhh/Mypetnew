@@ -1,7 +1,0 @@
-project_id = "mypetnew"
-
-[db]
-major_version = 17
-
-[db.seed]
-enabled = false

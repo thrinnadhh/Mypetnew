@@ -275,6 +275,7 @@ case "$command_name" in
       export MYPET_TOKEN_ISSUER="mypetnew-local-${env_name}"
       export MYPET_TOKEN_AUDIENCE="mypetnew-local-${env_name}"
       export MYPET_DEVICE_TOKEN_KEY="$DEVICE_TOKEN_KEY"
+      export SPRING_PROFILES_ACTIVE=local-isolated
       export MYPET_ENVIRONMENT=development
       export FIREBASE_PROJECT_ID="mypetnew-local-${env_name}"
       export NOTIFICATION_DELIVERY_ENABLED=false

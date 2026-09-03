@@ -58,7 +58,7 @@ class InMemoryPrivateDocumentMetadataRepository : PrivateDocumentMetadataReposit
 }
 
 @Repository
-@Profile("!test & !development")
+@Profile("!test & !development & !local-isolated")
 class JdbcPrivateDocumentMetadataRepository(private val jdbc: JdbcClient) : PrivateDocumentMetadataRepository {
     override fun save(metadata: PrivateDocumentMetadata) {
         jdbc.sql(
@@ -274,7 +274,7 @@ class SupabaseStorageHttpClient(
 }
 
 @Configuration
-@Profile("!test & !development")
+@Profile("!test & !development & !local-isolated")
 @EnableConfigurationProperties(SupabaseStorageProperties::class)
 class SupabaseStorageConfiguration {
     @Bean

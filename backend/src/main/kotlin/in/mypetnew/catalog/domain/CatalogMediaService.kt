@@ -367,7 +367,7 @@ class InMemoryCatalogMediaPersistence : CatalogMediaPersistence {
 }
 
 @Service
-@Profile("test", "development")
+@Profile("test", "development", "local-isolated")
 class InMemoryCatalogMediaObjectStore : CatalogMediaObjectStore {
     private val objects = mutableSetOf<String>()
 

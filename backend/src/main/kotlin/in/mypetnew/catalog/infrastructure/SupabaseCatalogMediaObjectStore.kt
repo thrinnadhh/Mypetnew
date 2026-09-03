@@ -87,7 +87,7 @@ class SupabaseCatalogMediaObjectStore(
 }
 
 @Configuration
-@Profile("!test & !development")
+@Profile("!test & !development & !local-isolated")
 @EnableConfigurationProperties(CatalogMediaStorageProperties::class)
 class CatalogMediaStorageConfiguration {
     @Bean

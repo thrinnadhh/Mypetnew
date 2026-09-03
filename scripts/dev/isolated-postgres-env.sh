@@ -3,14 +3,13 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 STATE_ROOT="$ROOT/.mypet-env"
-POSTGIS_IMAGE="${MYPET_POSTGIS_IMAGE:-postgis/postgis:17-3.5-alpine}"
-FLYWAY_IMAGE="${MYPET_FLYWAY_IMAGE:-flyway/flyway:12.4.0}"
 MIGRATIONS="$ROOT/backend/src/main/resources/db/migration"
 
+: "${POSTGIS_IMAGE:=postgis/postgis:17-3.5}"
+: "${FLYWAY_IMAGE:=flyway/flyway:11.3.4}"
+
 usage() {
-  cat >&2 <<'EOF'
-Usage: scripts/dev/isolated-postgres-env.sh <create|migrate|boot|status|certify|stop|destroy> <name>
-EOF
+  echo "Usage: $0 <create|migrate|boot|status|certify|stop|destroy> <env_name>" >&2
   exit 2
 }
 
@@ -36,7 +35,7 @@ container="mypet-${env_name}-postgres"
 network="mypet-${env_name}-net"
 db_name="mypet_${safe_name}"
 state_dir="$STATE_ROOT/$env_name"
-state_file="$state_dir/environment.sh"
+state_file="$state_dir/environment.env"
 pid_file="$state_dir/backend.pid"
 log_file="$state_dir/backend.log"
 
@@ -58,6 +57,10 @@ validate_state_path_safety() {
     echo "State file '$state_file' is a symlink; refusing operation for safety." >&2
     exit 2
   fi
+  if [[ -e "$state_dir/environment.sh" && -L "$state_dir/environment.sh" ]]; then
+    echo "State file '$state_dir/environment.sh' is a symlink; refusing operation for safety." >&2
+    exit 2
+  fi
   if [[ -e "$pid_file" && -L "$pid_file" ]]; then
     echo "PID file '$pid_file' is a symlink; refusing operation for safety." >&2
     exit 2
@@ -70,6 +73,9 @@ validate_state_path_safety() {
 
 load_state() {
   validate_state_path_safety
+  if [[ ! -f "$state_file" && -f "$state_dir/environment.sh" ]]; then
+    state_file="$state_dir/environment.sh"
+  fi
   [[ -f "$state_file" ]] || {
     echo "Isolated environment '$env_name' does not exist. Run create first." >&2
     exit 2
@@ -86,17 +92,86 @@ load_state() {
     echo "State file '$state_file' has unsafe permissions '$mode'; must not be group/world writable." >&2
     exit 2
   fi
-  local safe_line_pattern="^[A-Z0-9_]+=('([^']*)'|[a-zA-Z0-9_./@:-]*)$"
+
+  local seen_keys=" "
+  local line_no=0
+
+  PARSED_DB_PASSWORD=""
+  PARSED_TOKEN_SECRET=""
+  PARSED_SYNC_CURSOR_SECRET=""
+  PARSED_DEVICE_TOKEN_KEY=""
+  PARSED_SERVICE_ROLE_KEY=""
+  PARSED_DB_PORT=""
+  PARSED_BACKEND_PORT=""
+  PARSED_DB_NAME=""
+  PARSED_CONTAINER=""
+  PARSED_NETWORK=""
+
   while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ -z "$line" || "$line" =~ ^# ]] && continue
-    if [[ ! "$line" =~ $safe_line_pattern ]]; then
-      echo "State file '$state_file' contains invalid or unsafe line: '$line'." >&2
+    line_no=$((line_no + 1))
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+
+    if [[ "$line" =~ ^[[:space:]] || "$line" =~ [[:space:]]$ ]]; then
+      echo "State file '$state_file' line $line_no contains forbidden whitespace: '$line'." >&2
       exit 2
     fi
+
+    if [[ ! "$line" =~ ^([A-Z0-9_]+)=(.*)$ ]]; then
+      echo "State file '$state_file' line $line_no is not a valid KEY=VALUE pair: '$line'." >&2
+      exit 2
+    fi
+
+    local key="${BASH_REMATCH[1]}"
+    local val="${BASH_REMATCH[2]}"
+
+    if [[ "$seen_keys" == *" $key "* ]]; then
+      echo "State file '$state_file' contains duplicate key: '$key'." >&2
+      exit 2
+    fi
+    seen_keys="${seen_keys}${key} "
+
+    # Value character allowlist: strictly letters, digits, and safe delimiters: _ . / @ : = + -
+    if [[ ! "$val" =~ ^[a-zA-Z0-9_./@:=+-]*$ ]]; then
+      echo "State file '$state_file' key '$key' contains invalid characters in value: '$val'." >&2
+      exit 2
+    fi
+
+    case "$key" in
+      DB_PASSWORD)        PARSED_DB_PASSWORD="$val" ;;
+      TOKEN_SECRET)       PARSED_TOKEN_SECRET="$val" ;;
+      SYNC_CURSOR_SECRET) PARSED_SYNC_CURSOR_SECRET="$val" ;;
+      DEVICE_TOKEN_KEY)   PARSED_DEVICE_TOKEN_KEY="$val" ;;
+      SERVICE_ROLE_KEY)   PARSED_SERVICE_ROLE_KEY="$val" ;;
+      DB_PORT)            PARSED_DB_PORT="$val" ;;
+      BACKEND_PORT)       PARSED_BACKEND_PORT="$val" ;;
+      DB_NAME)            PARSED_DB_NAME="$val" ;;
+      CONTAINER)          PARSED_CONTAINER="$val" ;;
+      NETWORK)            PARSED_NETWORK="$val" ;;
+      BACKEND_PID|BACKEND_PROCESS_TOKEN|BACKEND_START_TIME) ;;
+      *)
+        echo "State file '$state_file' contains unknown key: '$key'." >&2
+        exit 2
+        ;;
+    esac
   done <"$state_file"
 
-  # shellcheck disable=SC1090
-  source "$state_file"
+  for required in DB_PASSWORD TOKEN_SECRET SYNC_CURSOR_SECRET DEVICE_TOKEN_KEY DB_PORT BACKEND_PORT DB_NAME CONTAINER NETWORK; do
+    if [[ "$seen_keys" != *" $required "* ]]; then
+      echo "State file '$state_file' is missing required key: '$required'." >&2
+      exit 2
+    fi
+  done
+
+  DB_PASSWORD="$PARSED_DB_PASSWORD"
+  TOKEN_SECRET="$PARSED_TOKEN_SECRET"
+  SYNC_CURSOR_SECRET="$PARSED_SYNC_CURSOR_SECRET"
+  DEVICE_TOKEN_KEY="$PARSED_DEVICE_TOKEN_KEY"
+  SERVICE_ROLE_KEY="$PARSED_SERVICE_ROLE_KEY"
+  DB_PORT="$PARSED_DB_PORT"
+  BACKEND_PORT="$PARSED_BACKEND_PORT"
+  DB_NAME="$PARSED_DB_NAME"
+  CONTAINER="$PARSED_CONTAINER"
+  NETWORK="$PARSED_NETWORK"
 }
 
 write_state() {
@@ -105,16 +180,16 @@ write_state() {
   mkdir -p "$state_dir"
   chmod 700 "$state_dir"
   {
-    printf 'DB_PASSWORD=%q\n' "$DB_PASSWORD"
-    printf 'TOKEN_SECRET=%q\n' "$TOKEN_SECRET"
-    printf 'SYNC_CURSOR_SECRET=%q\n' "$SYNC_CURSOR_SECRET"
-    printf 'DEVICE_TOKEN_KEY=%q\n' "$DEVICE_TOKEN_KEY"
-    printf 'SERVICE_ROLE_KEY=%q\n' "$SERVICE_ROLE_KEY"
-    printf 'DB_PORT=%q\n' "$db_port"
-    printf 'BACKEND_PORT=%q\n' "$backend_port"
-    printf 'DB_NAME=%q\n' "$db_name"
-    printf 'CONTAINER=%q\n' "$container"
-    printf 'NETWORK=%q\n' "$network"
+    echo "DB_PASSWORD=$DB_PASSWORD"
+    echo "TOKEN_SECRET=$TOKEN_SECRET"
+    echo "SYNC_CURSOR_SECRET=$SYNC_CURSOR_SECRET"
+    echo "DEVICE_TOKEN_KEY=$DEVICE_TOKEN_KEY"
+    echo "SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY"
+    echo "DB_PORT=$db_port"
+    echo "BACKEND_PORT=$backend_port"
+    echo "DB_NAME=$db_name"
+    echo "CONTAINER=$container"
+    echo "NETWORK=$network"
   } >"$state_file"
   chmod 600 "$state_file"
 }
@@ -128,11 +203,18 @@ wait_for_postgres() {
       docker logs --tail 60 "$container" >&2 || true
       return 1
     fi
-    if [[ "$status" == "running" ]] && \
-       docker exec "$container" pg_isready -U mypet -d "$db_name" >/dev/null 2>&1 && \
-       docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -c "SELECT 1;" >/dev/null 2>&1; then
-      sleep 0.5
-      if docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -c "SELECT 1;" >/dev/null 2>&1; then
+
+    if docker logs "$container" 2>&1 | grep -q "PostgreSQL init process complete; ready for start up"; then
+      if [[ "$status" == "running" ]] && \
+         docker exec "$container" pg_isready -h 127.0.0.1 -U mypet -d "$db_name" >/dev/null 2>&1 && \
+         docker exec "$container" psql -h 127.0.0.1 -U mypet -d "$db_name" -X -A -t -c "SELECT 1;" >/dev/null 2>&1; then
+        return 0
+      fi
+    elif docker logs "$container" 2>&1 | grep -q "database system is ready to accept connections" && \
+         ! docker logs "$container" 2>&1 | grep -q "running bootstrap script"; then
+      if [[ "$status" == "running" ]] && \
+         docker exec "$container" pg_isready -h 127.0.0.1 -U mypet -d "$db_name" >/dev/null 2>&1 && \
+         docker exec "$container" psql -h 127.0.0.1 -U mypet -d "$db_name" -X -A -t -c "SELECT 1;" >/dev/null 2>&1; then
         return 0
       fi
     fi
@@ -144,60 +226,8 @@ wait_for_postgres() {
 }
 
 ensure_supabase_postgis_layout() {
-  namespace="$(docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -v ON_ERROR_STOP=1 -c "
-    SELECT COALESCE((
-      SELECT n.nspname
-      FROM pg_extension e
-      JOIN pg_namespace n ON n.oid = e.extnamespace
-      WHERE e.extname = 'postgis'
-    ), 'missing');
-  ")"
-  [[ "$namespace" == extensions ]] && return 0
-
-  # Safety guard: Refuse destructive extension recreation if user tables exist anywhere
-  # in the database (not just the mypet schema) or if any user objects depend on PostGIS.
-  existing_tables="$(docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -v ON_ERROR_STOP=1 -c "
-    SELECT COUNT(*) FROM information_schema.tables
-    WHERE table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-      AND table_name NOT IN ('spatial_ref_sys', 'topology');
-  ")"
-  if [[ ! "$existing_tables" =~ ^[0-9]+$ ]] || (( existing_tables != 0 )); then
-    echo "PostGIS is in schema '$namespace' but database contains $existing_tables existing table(s); refusing destructive extension relocation." >&2
-    exit 1
-  fi
-
-  dependent_objects="$(docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -v ON_ERROR_STOP=1 -c "
-    SELECT COUNT(*)
-    FROM pg_depend dep
-    JOIN pg_extension ext ON dep.refobjid = ext.oid
-    JOIN pg_class cls ON dep.objid = cls.oid
-    JOIN pg_namespace nsp ON cls.relnamespace = nsp.oid
-    WHERE ext.extname IN ('postgis', 'postgis_topology')
-      AND dep.deptype != 'e'
-      AND nsp.nspname NOT IN ('pg_catalog', 'information_schema');
-  ")"
-  if [[ ! "$dependent_objects" =~ ^[0-9]+$ ]] || (( dependent_objects != 0 )); then
-    echo "PostGIS is in schema '$namespace' but $dependent_objects user object(s) depend on it; refusing destructive relocation." >&2
-    exit 1
-  fi
-
-  docker exec -i "$container" psql -U mypet -d "$db_name" -X -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
-DROP EXTENSION IF EXISTS postgis_topology CASCADE;
-DROP EXTENSION IF EXISTS postgis CASCADE;
-CREATE SCHEMA IF NOT EXISTS extensions;
-CREATE EXTENSION postgis WITH SCHEMA extensions;
-SQL
-
-  namespace="$(docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -v ON_ERROR_STOP=1 -c "
-    SELECT n.nspname
-    FROM pg_extension e
-    JOIN pg_namespace n ON n.oid = e.extnamespace
-    WHERE e.extname = 'postgis';
-  ")"
-  [[ "$namespace" == extensions ]] || {
-    echo "Could not align PostGIS with Supabase extensions schema." >&2
-    exit 1
-  }
+  PGHOST=127.0.0.1 PGPORT="$db_port" PGUSER=mypet PGPASSWORD="$DB_PASSWORD" PGDATABASE="$db_name" \
+    bash "$ROOT/scripts/postgres/prepare-supabase-postgis.sh" --container "$container"
 }
 
 is_mypet_backend_process() {
@@ -205,27 +235,67 @@ is_mypet_backend_process() {
   if [[ ! "$check_pid" =~ ^[0-9]+$ ]] || ! kill -0 "$check_pid" 2>/dev/null; then
     return 1
   fi
-  local cmd
-  cmd="$(ps -p "$check_pid" -o command= 2>/dev/null || ps -p "$check_pid" -o args= 2>/dev/null || true)"
-  if [[ "$cmd" =~ in\.mypetnew || "$cmd" =~ :backend:bootRun || ("$cmd" =~ mypet && "$cmd" =~ java) ]]; then
-    return 0
+
+  local exp_token="" exp_lstart="" exp_cwd=""
+  if [[ -f "$pid_file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in
+        PROCESS_TOKEN=*) exp_token="${line#PROCESS_TOKEN=}" ;;
+        START_TIME=*)    exp_lstart="${line#START_TIME=}" ;;
+        EXPECTED_CWD=*)  exp_cwd="${line#EXPECTED_CWD=}" ;;
+      esac
+    done <"$pid_file"
   fi
+
+  if [[ -n "$exp_lstart" ]]; then
+    local cur_lstart
+    cur_lstart="$(ps -p "$check_pid" -o lstart= 2>/dev/null | tr -s ' ' | sed -e 's/^[ ]*//' -e 's/[ ]*$//' || true)"
+    if [[ "$cur_lstart" != "$exp_lstart" ]]; then
+      return 1
+    fi
+  fi
+
+  local cmd
+  cmd="$(ps -p "$check_pid" -o args= 2>/dev/null || ps -p "$check_pid" -o command= 2>/dev/null || true)"
+  if [[ -n "$exp_token" ]]; then
+    if [[ "$cmd" != *"mypet.process.token=$exp_token"* && "$cmd" != *"$exp_token"* ]]; then
+      return 1
+    fi
+  else
+    if [[ ! "$cmd" =~ :backend:bootRun && ! "$cmd" =~ in\.mypetnew ]]; then
+      return 1
+    fi
+  fi
+
   local proc_cwd=""
   if command -v lsof >/dev/null 2>&1; then
     proc_cwd="$(lsof -p "$check_pid" -a -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' || true)"
   elif [[ -d "/proc/$check_pid" ]]; then
     proc_cwd="$(readlink "/proc/$check_pid/cwd" 2>/dev/null || true)"
   fi
-  if [[ -n "$proc_cwd" && "$proc_cwd" == "$ROOT"* && ("$cmd" =~ gradle || "$cmd" =~ java) ]]; then
-    return 0
+  local target_cwd="${exp_cwd:-$ROOT}"
+  if [[ -n "$proc_cwd" && "$proc_cwd" != "$target_cwd"* ]]; then
+    return 1
   fi
-  return 1
+
+  return 0
 }
 
 stop_backend() {
+  validate_state_path_safety
   if [[ -f "$pid_file" ]]; then
-    pid="$(cat "$pid_file" 2>/dev/null || true)"
-    if is_mypet_backend_process "$pid"; then
+    local pid=""
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" =~ ^PID=([0-9]+)$ ]]; then
+        pid="${BASH_REMATCH[1]}"
+        break
+      elif [[ "$line" =~ ^[0-9]+$ ]]; then
+        pid="$line"
+        break
+      fi
+    done <"$pid_file"
+
+    if [[ -n "$pid" ]] && is_mypet_backend_process "$pid"; then
       kill -TERM "$pid" 2>/dev/null || true
       for _ in $(seq 1 20); do
         kill -0 "$pid" 2>/dev/null || break
@@ -234,8 +304,8 @@ stop_backend() {
       if kill -0 "$pid" 2>/dev/null && is_mypet_backend_process "$pid"; then
         kill -KILL "$pid" 2>/dev/null || true
       fi
-    elif [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
-      echo "PID $pid in $pid_file does not belong to MyPet backend; leaving unrelated process untouched." >&2
+    elif [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "PID $pid in $pid_file does not match MyPet backend identity token/start-time; leaving unrelated process untouched." >&2
     fi
     rm -f "$pid_file"
   fi
@@ -243,7 +313,7 @@ stop_backend() {
 
 case "$command_name" in
   create)
-    [[ ! -e "$state_file" && ! -d "$state_dir" ]] || {
+    [[ ! -e "$state_file" && ! -e "$state_dir/environment.sh" && ! -d "$state_dir" ]] || {
       echo "Environment '$env_name' already exists." >&2
       exit 2
     }
@@ -336,14 +406,29 @@ case "$command_name" in
     load_state
     docker start "$CONTAINER" >/dev/null 2>&1 || true
     wait_for_postgres
-    if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file" 2>/dev/null || true)" 2>/dev/null; then
-      echo "Backend is already running for '$env_name'."
-      exit 0
+    if [[ -f "$pid_file" ]]; then
+      existing_pid=""
+      while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^PID=([0-9]+)$ ]]; then
+          existing_pid="${BASH_REMATCH[1]}"
+          break
+        elif [[ "$line" =~ ^[0-9]+$ ]]; then
+          existing_pid="$line"
+          break
+        fi
+      done <"$pid_file"
+      if [[ -n "$existing_pid" ]] && is_mypet_backend_process "$existing_pid"; then
+        echo "Backend is already running for '$env_name' (PID: $existing_pid)."
+        exit 0
+      fi
     fi
+
     if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
       echo "Backend port $BACKEND_PORT is already in use by another process." >&2
       exit 2
     fi
+
+    BACKEND_PROCESS_TOKEN="$(openssl rand -hex 16)"
     : >"$log_file"
     (
       cd "$ROOT"
@@ -361,20 +446,25 @@ case "$command_name" in
       export FIREBASE_PROJECT_ID="mypetnew-local-${env_name}"
       export NOTIFICATION_DELIVERY_ENABLED=false
       export CASHFREE_ENABLED=false
-      export SUPABASE_URL="https://isolated.mypet.local"
-      export SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY:-isolated-local-service-role-key-32-chars-minimum}
-      export SUPABASE_PRIVATE_EVIDENCE_BUCKET="provider-verification-private"
-      export SUPABASE_CATALOG_MEDIA_BUCKET="catalog-media"
       export MANAGEMENT_HEALTH_REDIS_ENABLED=false
-      exec ./gradlew :backend:bootRun --no-daemon --no-configuration-cache
+      exec ./gradlew :backend:bootRun -Dmypet.process.token="$BACKEND_PROCESS_TOKEN" --no-daemon --no-configuration-cache
     ) >>"$log_file" 2>&1 &
-    echo "$!" >"$pid_file"
+    backend_pid=$!
+    backend_lstart="$(ps -p "$backend_pid" -o lstart= 2>/dev/null | tr -s ' ' | sed -e 's/^[ ]*//' -e 's/[ ]*$//' || true)"
+    {
+      echo "PID=$backend_pid"
+      echo "PROCESS_TOKEN=$BACKEND_PROCESS_TOKEN"
+      echo "START_TIME=$backend_lstart"
+      echo "EXPECTED_CWD=$ROOT"
+    } >"$pid_file"
+    chmod 600 "$pid_file"
+
     for _ in $(seq 1 90); do
       if curl -fsS "http://127.0.0.1:${BACKEND_PORT}/actuator/health" >/dev/null 2>&1; then
         echo "Backend '$env_name' is healthy on http://127.0.0.1:${BACKEND_PORT}."
         exit 0
       fi
-      if ! kill -0 "$(cat "$pid_file" 2>/dev/null || true)" 2>/dev/null; then
+      if ! kill -0 "$backend_pid" 2>/dev/null; then
         echo "Backend exited before becoming healthy." >&2
         tail -n 120 "$log_file" >&2 || true
         rm -f "$pid_file"
@@ -392,8 +482,20 @@ case "$command_name" in
     load_state
     container_state="$(docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null || echo missing)"
     backend_state=stopped
-    if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
-      backend_state=running
+    if [[ -f "$pid_file" ]]; then
+      status_pid=""
+      while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^PID=([0-9]+)$ ]]; then
+          status_pid="${BASH_REMATCH[1]}"
+          break
+        elif [[ "$line" =~ ^[0-9]+$ ]]; then
+          status_pid="$line"
+          break
+        fi
+      done <"$pid_file"
+      if [[ -n "$status_pid" ]] && is_mypet_backend_process "$status_pid"; then
+        backend_state=running
+      fi
     fi
     echo "name=$env_name db=$container_state db_port=$DB_PORT backend=$backend_state backend_port=$BACKEND_PORT"
     ;;

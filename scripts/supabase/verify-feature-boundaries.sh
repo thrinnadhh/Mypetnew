@@ -45,9 +45,9 @@ if app_source_files | xargs -r grep -InE \
   fail "direct Supabase Data API/Realtime endpoint appears in application source"
 fi
 
-# Spring Boot/Flyway owns schema evolution. Preview branching may use
-# supabase/config.toml for environment configuration, but SQL migration copies
-# under supabase/migrations would create a second migration authority.
+# Spring Boot/Flyway owns application schema evolution in local Docker, CI,
+# Supabase staging and future production. A second SQL history under
+# supabase/migrations would create ambiguous migration authority and drift.
 if [[ -d supabase/migrations ]]; then
   if find supabase/migrations -type f -name '*.sql' -print -quit | grep -q .; then
     fail "supabase/migrations contains SQL; backend Flyway must remain the sole migration authority"
@@ -63,7 +63,7 @@ if [[ -d supabase/functions ]]; then
 fi
 
 # PGMQ, pg_cron and pgvector are deliberate deferrals. PostGIS is NOT blocked by
-# this guard because Phase 8 may intentionally enable it in a future V31+ change.
+# this guard because it is part of the current canonical PostgreSQL foundation.
 if grep -RIn --include='V*__*.sql' \
   -E 'create[[:space:]]+extension([[:space:]]+if[[:space:]]+not[[:space:]]+exists)?[[:space:]]+(pgmq|pg_cron|vector)([[:space:];]|$)' \
   backend/src/main/resources/db/migration 2>/dev/null; then

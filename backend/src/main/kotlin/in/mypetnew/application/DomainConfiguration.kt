@@ -53,7 +53,7 @@ import org.springframework.context.annotation.Profile
 @Configuration
 class DomainConfiguration {
     @Bean
-    @Profile("test", "development")
+    @Profile("!staging & !device")
     fun otpProvider(): OtpProvider = InMemoryOtpProvider()
 
     @Bean

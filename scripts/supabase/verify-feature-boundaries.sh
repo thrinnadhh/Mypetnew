@@ -64,7 +64,7 @@ fi
 
 # PGMQ, pg_cron and pgvector are deliberate deferrals. PostGIS is NOT blocked by
 # this guard because it is part of the current canonical PostgreSQL foundation.
-if grep -RIn --include='V*__*.sql' \
+if grep -RIn -i --include='V*__*.sql' \
   -E 'create[[:space:]]+extension([[:space:]]+if[[:space:]]+not[[:space:]]+exists)?[[:space:]]+(pgmq|pg_cron|vector)([[:space:];]|$)' \
   backend/src/main/resources/db/migration 2>/dev/null; then
   fail "deferred Supabase/Postgres extension enabled in application Flyway migrations"

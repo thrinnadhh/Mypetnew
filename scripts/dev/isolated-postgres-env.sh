@@ -77,8 +77,9 @@ write_state() {
 }
 
 wait_for_postgres() {
-  for _ in $(seq 1 40); do
-    if docker exec "$container" pg_isready -U mypet -d "$db_name" >/dev/null 2>&1; then
+  for _ in $(seq 1 60); do
+    if docker logs "$container" 2>&1 | grep -q "PostgreSQL init process complete; ready for start up" && \
+       docker exec "$container" pg_isready -U mypet -d "$db_name" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -126,16 +127,33 @@ SQL
   }
 }
 
+is_mypet_backend_process() {
+  local check_pid="$1"
+  if [[ ! "$check_pid" =~ ^[0-9]+$ ]] || ! kill -0 "$check_pid" 2>/dev/null; then
+    return 1
+  fi
+  local cmd
+  cmd="$(ps -p "$check_pid" -o command= 2>/dev/null || ps -p "$check_pid" -o args= 2>/dev/null || true)"
+  if [[ "$cmd" =~ mypetnew || "$cmd" =~ bootRun || "$cmd" =~ java.*backend || "$cmd" =~ gradle ]]; then
+    return 0
+  fi
+  return 1
+}
+
 stop_backend() {
   if [[ -f "$pid_file" ]]; then
-    pid="$(cat "$pid_file")"
-    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if is_mypet_backend_process "$pid"; then
       kill -TERM "$pid" 2>/dev/null || true
       for _ in $(seq 1 20); do
         kill -0 "$pid" 2>/dev/null || break
         sleep 0.5
       done
-      kill -KILL "$pid" 2>/dev/null || true
+      if kill -0 "$pid" 2>/dev/null && is_mypet_backend_process "$pid"; then
+        kill -KILL "$pid" 2>/dev/null || true
+      fi
+    elif [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "PID $pid in $pid_file does not belong to MyPet backend; leaving unrelated process untouched." >&2
     fi
     rm -f "$pid_file"
   fi
@@ -143,7 +161,7 @@ stop_backend() {
 
 case "$command_name" in
   create)
-    [[ ! -e "$state_file" ]] || {
+    [[ ! -e "$state_file" && ! -d "$state_dir" ]] || {
       echo "Environment '$env_name' already exists." >&2
       exit 2
     }
@@ -151,15 +169,31 @@ case "$command_name" in
       echo "Container '$container' already exists; refusing to adopt it." >&2
       exit 2
     fi
-    if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$db_port" -sTCP:LISTEN >/dev/null 2>&1; then
-      echo "Loopback DB port $db_port is already in use; choose another environment name." >&2
+    if docker network inspect "$network" >/dev/null 2>&1; then
+      echo "Network '$network' already exists; refusing to adopt it." >&2
       exit 2
+    fi
+    if command -v lsof >/dev/null 2>&1; then
+      if lsof -nP -iTCP:"$db_port" -sTCP:LISTEN >/dev/null 2>&1; then
+        echo "Loopback DB port $db_port is already in use; choose another environment name." >&2
+        exit 2
+      fi
+      if lsof -nP -iTCP:"$backend_port" -sTCP:LISTEN >/dev/null 2>&1; then
+        echo "Backend port $backend_port is already in use; choose another environment name." >&2
+        exit 2
+      fi
     fi
 
     DB_PASSWORD="$(openssl rand -hex 24)"
     TOKEN_SECRET="$(openssl rand -hex 32)"
     SYNC_CURSOR_SECRET="$(openssl rand -hex 32)"
     DEVICE_TOKEN_KEY="$(openssl rand -base64 32 | tr -d '\n')"
+
+    rollback_create() {
+      docker rm -f "$container" >/dev/null 2>&1 || true
+      docker network rm "$network" >/dev/null 2>&1 || true
+      rm -rf "$state_dir"
+    }
 
     docker network create "$network" >/dev/null
     if ! docker run -d "${platform_args[@]}" \
@@ -170,15 +204,17 @@ case "$command_name" in
       -e POSTGRES_PASSWORD="$DB_PASSWORD" \
       -e POSTGRES_DB="$db_name" \
       "$POSTGIS_IMAGE" >/dev/null; then
-      docker network rm "$network" >/dev/null 2>&1 || true
+      rollback_create
       exit 1
     fi
     if ! wait_for_postgres; then
-      docker rm -f "$container" >/dev/null 2>&1 || true
-      docker network rm "$network" >/dev/null 2>&1 || true
+      rollback_create
       exit 1
     fi
-    ensure_supabase_postgis_layout
+    if ! ensure_supabase_postgis_layout; then
+      rollback_create
+      exit 1
+    fi
     write_state
     echo "Created isolated PostgreSQL '$env_name' on 127.0.0.1:${db_port} with Supabase-compatible PostGIS layout."
     ;;
@@ -217,9 +253,13 @@ case "$command_name" in
     load_state
     docker start "$CONTAINER" >/dev/null 2>&1 || true
     wait_for_postgres
-    if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+    if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file" 2>/dev/null || true)" 2>/dev/null; then
       echo "Backend is already running for '$env_name'."
       exit 0
+    fi
+    if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+      echo "Backend port $BACKEND_PORT is already in use by another process." >&2
+      exit 2
     fi
     : >"$log_file"
     (
@@ -233,9 +273,15 @@ case "$command_name" in
       export MYPET_TOKEN_ISSUER="mypetnew-local-${env_name}"
       export MYPET_TOKEN_AUDIENCE="mypetnew-local-${env_name}"
       export MYPET_DEVICE_TOKEN_KEY="$DEVICE_TOKEN_KEY"
-      export MYPET_ENVIRONMENT=local-isolated
+      export MYPET_ENVIRONMENT=development
+      export FIREBASE_PROJECT_ID="mypetnew-local-${env_name}"
       export NOTIFICATION_DELIVERY_ENABLED=false
       export CASHFREE_ENABLED=false
+      export SUPABASE_URL="https://isolated.mypet.local"
+      export SUPABASE_SERVICE_ROLE_KEY="isolated-local-service-role-key-32-chars-minimum"
+      export SUPABASE_PRIVATE_EVIDENCE_BUCKET="provider-verification-private"
+      export SUPABASE_CATALOG_MEDIA_BUCKET="catalog-media"
+      export MANAGEMENT_HEALTH_REDIS_ENABLED=false
       exec ./gradlew :backend:bootRun --no-daemon --no-configuration-cache
     ) >>"$log_file" 2>&1 &
     echo "$!" >"$pid_file"
@@ -244,7 +290,7 @@ case "$command_name" in
         echo "Backend '$env_name' is healthy on http://127.0.0.1:${BACKEND_PORT}."
         exit 0
       fi
-      if ! kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+      if ! kill -0 "$(cat "$pid_file" 2>/dev/null || true)" 2>/dev/null; then
         echo "Backend exited before becoming healthy." >&2
         tail -n 120 "$log_file" >&2 || true
         rm -f "$pid_file"

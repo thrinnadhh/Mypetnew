@@ -4,6 +4,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MODE="${1:-}"
 
+if [[ -n "${DATABASE_URL:-}" ]]; then
+  db_url_host="$(printf '%s' "$DATABASE_URL" | sed -E -e 's#^jdbc:##' -e 's#^[a-zA-Z0-9]+://([^/@:]+@)?([^/:]+).*#\2#')"
+  case "$db_url_host" in
+    127.0.0.1|localhost) ;;
+    *)
+      echo "Ephemeral DB verification only permits loopback PostgreSQL; received DATABASE_URL host '$db_url_host'." >&2
+      exit 2
+      ;;
+  esac
+fi
+
 : "${PGHOST:?PGHOST is required}"
 : "${PGPORT:?PGPORT is required}"
 : "${PGUSER:?PGUSER is required}"
@@ -43,22 +54,21 @@ case "$MODE" in
     ;;
 
   postflight)
-    mapfile -t migration_files < <(
-      find "$ROOT/backend/src/main/resources/db/migration" -maxdepth 1 -type f -name 'V*__*.sql' -print | sort -V
-    )
-    if (( ${#migration_files[@]} == 0 )); then
-      echo "No repository Flyway migrations found." >&2
-      exit 1
-    fi
-
     repo_latest=0
-    for file in "${migration_files[@]}"; do
+    migration_count=0
+    for file in "$ROOT/backend/src/main/resources/db/migration"/V*__*.sql; do
+      [[ -f "$file" ]] || continue
+      migration_count=$((migration_count + 1))
       base="$(basename "$file")"
       if [[ "$base" =~ ^V([0-9]+)__ ]]; then
         version=$((10#${BASH_REMATCH[1]}))
         (( version > repo_latest )) && repo_latest="$version"
       fi
     done
+    if (( migration_count == 0 || repo_latest == 0 )); then
+      echo "No repository Flyway migrations found." >&2
+      exit 1
+    fi
 
     read -r live_latest failed_count < <(
       "${psql_cmd[@]}" -c "

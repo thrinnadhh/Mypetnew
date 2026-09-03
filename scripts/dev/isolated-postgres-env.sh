@@ -81,13 +81,21 @@ load_state() {
     exit 2
   }
   local file_uid
-  file_uid="$(stat -f '%u' "$state_file" 2>/dev/null || stat -c '%u' "$state_file" 2>/dev/null || true)"
+  if stat -c '%u' "$state_file" >/dev/null 2>&1; then
+    file_uid="$(stat -c '%u' "$state_file")"
+  else
+    file_uid="$(stat -f '%u' "$state_file" 2>/dev/null || true)"
+  fi
   if [[ -n "$file_uid" && "$file_uid" != "$(id -u)" ]]; then
     echo "State file '$state_file' is owned by UID $file_uid, expected current UID $(id -u)." >&2
     exit 2
   fi
   local mode
-  mode="$(stat -f '%Lp' "$state_file" 2>/dev/null || stat -c '%a' "$state_file" 2>/dev/null || true)"
+  if stat -c '%a' "$state_file" >/dev/null 2>&1; then
+    mode="$(stat -c '%a' "$state_file")"
+  else
+    mode="$(stat -f '%Lp' "$state_file" 2>/dev/null || true)"
+  fi
   if [[ -n "$mode" && "$mode" =~ [2367]$|[2367][0-9]$ ]]; then
     echo "State file '$state_file' has unsafe permissions '$mode'; must not be group/world writable." >&2
     exit 2

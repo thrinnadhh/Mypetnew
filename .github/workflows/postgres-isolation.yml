@@ -21,8 +21,8 @@ jobs:
         image: postgis/postgis:17-3.5-alpine
         env:
           POSTGRES_USER: mypet_ci
+          POSTGRES_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
           POSTGRES_DB: mypet_ci
-          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
@@ -35,10 +35,11 @@ jobs:
       PGHOST: 127.0.0.1
       PGPORT: '5432'
       PGUSER: mypet_ci
+      PGPASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
       PGDATABASE: mypet_ci
       DATABASE_URL: jdbc:postgresql://127.0.0.1:5432/mypet_ci
       DATABASE_USERNAME: mypet_ci
-      DATABASE_PASSWORD: ''
+      DATABASE_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
       SERVER_PORT: '18080'
       MYPET_TOKEN_ISSUER: mypetnew-ci
       MYPET_TOKEN_AUDIENCE: mypetnew-ci
@@ -57,6 +58,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
 
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
@@ -106,6 +109,9 @@ jobs:
             exit 1
           }
 
+      - name: Compile backend before runtime deadline
+        run: ./gradlew :backend:classes --no-daemon --no-configuration-cache
+
       - name: Boot exact backend against fresh PostgreSQL
         shell: bash
         run: |
@@ -120,7 +126,7 @@ jobs:
           trap cleanup EXIT
 
           healthy=false
-          for attempt in $(seq 1 90); do
+          for attempt in $(seq 1 120); do
             if curl -fsS "http://127.0.0.1:${SERVER_PORT}/actuator/health" >/dev/null 2>&1; then
               healthy=true
               break
@@ -133,7 +139,7 @@ jobs:
             sleep 1
           done
           if [[ "$healthy" != true ]]; then
-            echo "Backend did not become healthy against the fresh PostgreSQL database." >&2
+            echo "Backend did not become healthy after compilation completed." >&2
             tail -n 180 "$log_file" >&2 || true
             exit 1
           fi

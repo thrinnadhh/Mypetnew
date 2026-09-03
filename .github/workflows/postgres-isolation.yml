@@ -43,9 +43,15 @@ jobs:
       SERVER_PORT: '18080'
       MYPET_TOKEN_ISSUER: mypetnew-ci
       MYPET_TOKEN_AUDIENCE: mypetnew-ci
-      MYPET_ENVIRONMENT: ci-isolated
+      MYPET_ENVIRONMENT: development
+      FIREBASE_PROJECT_ID: mypetnew-ci
       NOTIFICATION_DELIVERY_ENABLED: 'false'
       CASHFREE_ENABLED: 'false'
+      SUPABASE_URL: https://isolated.mypet.local
+      SUPABASE_SERVICE_ROLE_KEY: isolated-ci-service-role-key-32-chars-minimum
+      SUPABASE_PRIVATE_EVIDENCE_BUCKET: provider-verification-private
+      SUPABASE_CATALOG_MEDIA_BUCKET: catalog-media
+      MANAGEMENT_HEALTH_REDIS_ENABLED: 'false'
 
     steps:
       - uses: actions/checkout@v4
@@ -84,6 +90,8 @@ jobs:
           bash ./scripts/supabase/verify-feature-boundaries.sh
           bash -n ./scripts/postgres/verify-ephemeral-db.sh
           bash -n ./scripts/dev/isolated-postgres-env.sh
+          bash -n ./scripts/postgres/test-isolation-adversarial.sh
+          bash ./scripts/postgres/test-isolation-adversarial.sh
 
       - name: Prove database starts empty
         run: bash ./scripts/postgres/verify-ephemeral-db.sh preflight

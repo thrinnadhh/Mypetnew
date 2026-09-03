@@ -6,6 +6,7 @@ Status: controlled exception register, 2026-08-16. An exception never means a de
 |---|---|---|---|---|---|---|
 | GHSA-w3rx-r6r6-pgpr / CVE-2025-71330 | Expo/React Native build tooling → Metro → `image-size` | Upstream path has no selected patched release in current Expo SDK line | Repository-controlled build assets only; prohibit untrusted JXL/HEIF build input; production runtime does not call this parser; dependency audit remains enabled | @thrinnadhh | Review every Expo release; hard expiry 2026-09-11 | Source CI exception only; release owner must confirm no untrusted build input |
 | GHSA-5p2g-fcmc-qvqq / CVE-2025-71329 | Same build-time dependency path | Same | Same | @thrinnadhh | Review every Expo release; hard expiry 2026-09-11 | Same |
+| GHSA-6gmq-8vp8-gcm6 | Expo build tooling → `@expo/plist` / `plist` → `@xmldom/xmldom` | Upstream `@expo/plist` has not yet bumped xmldom dependency | Build-time plist parser only; no user-controlled XML at runtime; absent from web/mobile production bundles | @thrinnadhh | Review every Expo release; hard expiry 2026-11-30 | Source CI exception only; build tooling only |
 
 Expiry, wider runtime reach, user-controlled input, a patched supported release or an increase in severity immediately invalidates an exception. Customer-specific dependency evidence is tracked in `docs/qa/CUSTOMER_DEPENDENCY_SECURITY_TRIAGE.md`.
 

@@ -53,7 +53,7 @@ import org.springframework.context.annotation.Profile
 @Configuration
 class DomainConfiguration {
     @Bean
-    @Profile("test", "development")
+    @Profile("test", "development", "local-isolated")
     fun otpProvider(): OtpProvider = InMemoryOtpProvider()
 
     @Bean
@@ -75,7 +75,7 @@ class DomainConfiguration {
     fun developmentSessionStore(): SessionStore = InMemorySessionStore()
 
     @Bean
-    @Profile("test", "development")
+    @Profile("test", "development", "local-isolated")
     fun documentStore(): DocumentStore = InMemoryPrivateDocumentStore()
 
     @Bean

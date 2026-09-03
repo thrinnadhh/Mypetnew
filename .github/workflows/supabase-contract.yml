@@ -43,6 +43,11 @@ jobs:
       - name: Verify Supabase architecture boundaries
         run: bash ./scripts/supabase/verify-feature-boundaries.sh
 
+      - name: Verify isolated PostgreSQL tooling
+        run: |
+          bash -n ./scripts/postgres/verify-ephemeral-db.sh
+          bash -n ./scripts/dev/isolated-postgres-env.sh
+
       - name: Verify Supabase audit script is read-only
         run: |
           if grep -Ein '^[[:space:]]*(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|comment|vacuum|reindex|cluster)[[:space:]]' infra/supabase/audit_baseline.sql; then

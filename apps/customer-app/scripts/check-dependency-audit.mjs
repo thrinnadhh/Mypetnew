@@ -14,6 +14,7 @@ const allowed = new Set([
   'https://github.com/advisories/GHSA-w3rx-r6r6-pgpr',
   'https://github.com/advisories/GHSA-5p2g-fcmc-qvqq',
   'https://github.com/advisories/GHSA-vcc3-ghjq-m6fr',
+  'https://github.com/advisories/GHSA-6gmq-8vp8-gcm6',
 ]);
 
 

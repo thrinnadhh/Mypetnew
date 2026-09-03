@@ -18,6 +18,7 @@ coverage/
 .DS_Store
 evidence/generated/
 mypet-work/
+.mypet-env/
 .kotlin/
 .vscode/
 *.tar.xz

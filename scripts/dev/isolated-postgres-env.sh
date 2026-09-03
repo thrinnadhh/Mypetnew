@@ -88,6 +88,44 @@ wait_for_postgres() {
   return 1
 }
 
+ensure_supabase_postgis_layout() {
+  namespace="$(docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -v ON_ERROR_STOP=1 -c "
+    SELECT COALESCE((
+      SELECT n.nspname
+      FROM pg_extension e
+      JOIN pg_namespace n ON n.oid = e.extnamespace
+      WHERE e.extname = 'postgis'
+    ), 'missing');
+  ")"
+  [[ "$namespace" == extensions ]] && return 0
+
+  mypet_tables="$(docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -v ON_ERROR_STOP=1 -c "
+    SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'mypet';
+  ")"
+  if [[ ! "$mypet_tables" =~ ^[0-9]+$ ]] || (( mypet_tables != 0 )); then
+    echo "PostGIS is in schema '$namespace' but application tables already exist; refusing destructive relocation." >&2
+    exit 1
+  fi
+
+  docker exec -i "$container" psql -U mypet -d "$db_name" -X -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+DROP EXTENSION IF EXISTS postgis_topology CASCADE;
+DROP EXTENSION IF EXISTS postgis CASCADE;
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION postgis WITH SCHEMA extensions;
+SQL
+
+  namespace="$(docker exec "$container" psql -U mypet -d "$db_name" -X -A -t -v ON_ERROR_STOP=1 -c "
+    SELECT n.nspname
+    FROM pg_extension e
+    JOIN pg_namespace n ON n.oid = e.extnamespace
+    WHERE e.extname = 'postgis';
+  ")"
+  [[ "$namespace" == extensions ]] || {
+    echo "Could not align PostGIS with Supabase extensions schema." >&2
+    exit 1
+  }
+}
+
 stop_backend() {
   if [[ -f "$pid_file" ]]; then
     pid="$(cat "$pid_file")"
@@ -140,14 +178,16 @@ case "$command_name" in
       docker network rm "$network" >/dev/null 2>&1 || true
       exit 1
     fi
+    ensure_supabase_postgis_layout
     write_state
-    echo "Created isolated PostgreSQL '$env_name' on 127.0.0.1:${db_port}."
+    echo "Created isolated PostgreSQL '$env_name' on 127.0.0.1:${db_port} with Supabase-compatible PostGIS layout."
     ;;
 
   migrate)
     load_state
     docker start "$CONTAINER" >/dev/null 2>&1 || true
     wait_for_postgres
+    ensure_supabase_postgis_layout
     docker run --rm "${platform_args[@]}" \
       --network "$NETWORK" \
       -v "$MIGRATIONS:/flyway/sql:ro" \
@@ -206,14 +246,14 @@ case "$command_name" in
       fi
       if ! kill -0 "$(cat "$pid_file")" 2>/dev/null; then
         echo "Backend exited before becoming healthy." >&2
-        tail -n 100 "$log_file" >&2 || true
+        tail -n 120 "$log_file" >&2 || true
         rm -f "$pid_file"
         exit 1
       fi
       sleep 1
     done
     echo "Backend health check timed out for '$env_name'." >&2
-    tail -n 100 "$log_file" >&2 || true
+    tail -n 120 "$log_file" >&2 || true
     stop_backend
     exit 1
     ;;

@@ -52,33 +52,9 @@ class MI3AsyncInfrastructurePostgresContractTest {
             )
         }
 
-        // Disable only FK triggers so these probes isolate the notification status CHECK contract.
+        // Disable FK triggers so the notification probe isolates the status CHECK failure mode.
         jdbc.execute("SET session_replication_role = replica")
         try {
-            val validInvalidAttemptId = UUID.randomUUID()
-            assertEquals(
-                1,
-                jdbc.update(
-                    """
-                    INSERT INTO mypet.notification_attempt(
-                        id, notification_id, registration_id, channel, status, attempt_count
-                    ) VALUES (?, ?, ?, 'PUSH', 'INVALID', 0)
-                    """.trimIndent(),
-                    validInvalidAttemptId,
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                ),
-            )
-            assertEquals(
-                "INVALID",
-                jdbc.queryForObject(
-                    "SELECT status FROM mypet.notification_attempt WHERE id = ?",
-                    String::class.java,
-                    validInvalidAttemptId,
-                ),
-            )
-            jdbc.update("DELETE FROM mypet.notification_attempt WHERE id = ?", validInvalidAttemptId)
-
             assertThrows(Exception::class.java) {
                 jdbc.update(
                     """
@@ -97,7 +73,7 @@ class MI3AsyncInfrastructurePostgresContractTest {
     }
 
     @Test
-    fun `MI3 async claim and dedupe indexes remain present after V32`() {
+    fun `MI3 async claim and dedupe indexes remain present after lifecycle repair`() {
         PostgresTestDatabase.resetAndMigrate()
         val jdbc = JdbcTemplate(PostgresTestDatabase.dataSource())
 

@@ -197,7 +197,7 @@ jobs:
           echo "total_drill_recovery_seconds_observed=$(( backup_seconds + restore_seconds + boot_seconds ))" >> "$MI5_EVIDENCE_DIR/recovery-summary.txt"
 
       - name: Run backend regression and security baseline
-        run: ./scripts/verify.sh
+        run: env -u SPRING_PROFILES_ACTIVE ./scripts/verify.sh
 
       - name: Verify patch whitespace
         run: git diff --check "origin/${GITHUB_BASE_REF:-main}...HEAD"

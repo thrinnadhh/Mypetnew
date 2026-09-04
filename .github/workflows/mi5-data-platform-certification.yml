@@ -73,6 +73,26 @@ jobs:
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
+      - name: Pin archive tools to PostgreSQL server major
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_id="$(docker ps --filter ancestor=postgis/postgis:17-3.5-alpine --format '{{.ID}}' | head -n 1)"
+          [[ -n "$container_id" ]] || { echo "PostGIS service container not found." >&2; exit 1; }
+          server_version_num="$(psql -X -A -t -v ON_ERROR_STOP=1 -c 'SHOW server_version_num;')"
+          server_major="$(( server_version_num / 10000 ))"
+          dump_version="$(docker exec "$container_id" pg_dump --version)"
+          restore_version="$(docker exec "$container_id" pg_restore --version)"
+          dump_major="$(sed -E 's/.* ([0-9]+)(\..*)?$/\1/' <<<"$dump_version")"
+          restore_major="$(sed -E 's/.* ([0-9]+)(\..*)?$/\1/' <<<"$restore_version")"
+          if [[ "$dump_major" != "$server_major" || "$restore_major" != "$server_major" ]]; then
+            echo "Archive-tool/server major mismatch: server=$server_major dump=$dump_major restore=$restore_major" >&2
+            exit 1
+          fi
+          echo "MI5_PG_CLIENT_CONTAINER=$container_id" >> "$GITHUB_ENV"
+          echo "MI5_PG_CLIENT_MAJOR=$server_major" >> "$GITHUB_ENV"
+          echo "Pinned MI5 archive tools to PostgreSQL major $server_major in container $container_id"
+
       - name: Generate isolated runtime secrets
         shell: bash
         run: |

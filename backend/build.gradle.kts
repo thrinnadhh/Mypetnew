@@ -79,6 +79,14 @@ tasks.register<Test>("merchantOpsConcurrencyTest") {
     useJUnitPlatform { includeTags("merchant-ops-concurrency") }
 }
 
+tasks.register<Test>("connectedE2eTest") {
+    description = "Runs the connected Customer-Merchant-Captain-Admin E2E certification."
+    group = "verification"
+    testClassesDirs = merchantOperationsTestSourceSet.get().output.classesDirs
+    classpath = merchantOperationsTestSourceSet.get().runtimeClasspath
+    useJUnitPlatform { includeTags("connected-e2e") }
+}
+
 tasks.jacocoTestReport {
     dependsOn(tasks.test)
     classDirectories.setFrom(

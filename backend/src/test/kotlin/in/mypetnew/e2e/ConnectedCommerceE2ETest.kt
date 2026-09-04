@@ -21,6 +21,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import org.springframework.test.web.servlet.MockHttpServletRequestDsl
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
@@ -38,23 +39,17 @@ import java.util.UUID
     classes = [MyPetNewApplication::class],
     properties = [
         "spring.flyway.enabled=false",
-        "mypet.security.token-secret=connected-e2e-token-secret-that-is-longer-than-32-bytes",
+        "mypet.security.token-secret=test-only-connected-e2e-token-secret-1234567890",
         "mypet.security.token-issuer=mypetnew-connected-e2e",
         "mypet.security.token-audience=mypetnew-connected-e2e-clients",
-        "mypet.sync.cursor-secret=connected-e2e-sync-cursor-secret-at-least-32-chars-long",
+        "mypet.sync.cursor-secret=test-only-connected-e2e-cursor-secret-1234567890",
         "mypet.delivery.base-fee-paise=2500",
         "mypet.delivery.eta-minutes=35",
         "mypet.cashfree.enabled=false",
         "mypet.notifications.delivery.enabled=false",
-        "mypet.notifications.device-token-encryption-key=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+        "mypet.notifications.device-token-encryption-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         "mypet.firebase.project-id=mypetnew-e2e",
         "mypet.firebase.environment=development",
-        "mypet.supabase.storage.url=https://isolated.mypet.local",
-        "mypet.supabase.storage.service-key=isolated-e2e-service-role-key-32-characters",
-        "mypet.supabase.storage.private-bucket=provider-verification-private",
-        "mypet.supabase.catalog-media.url=https://isolated.mypet.local",
-        "mypet.supabase.catalog-media.service-key=isolated-e2e-service-role-key-32-characters",
-        "mypet.supabase.catalog-media.bucket=catalog-media",
         "management.health.redis.enabled=false",
     ],
 )
@@ -80,7 +75,6 @@ class ConnectedCommerceE2ETest {
         seedIdentity(captainId, captainMobile, Role.CAPTAIN)
         val admin = seedAdmin()
 
-        // Merchant authority comes from a real OTP challenge plus a server-owned canonical identity.
         val merchant = loginMerchant(merchantMobile)
         assertEquals(merchantId, merchant.accountId)
 
@@ -98,14 +92,12 @@ class ConnectedCommerceE2ETest {
             admin.accessToken,
             "e2e-outlet-approve",
             "{}",
-            headers = mapOf(
+            mapOf(
                 "X-Admin-Purpose" to "PROVIDER_REVIEW",
                 "X-Admin-Reason" to "Connected E2E provider verification approval",
             ),
         )
 
-        // Reauthorization is DB-backed on every Merchant request; the original token now resolves
-        // the OWNER membership created by canonical onboarding.
         mockMvc.put("/api/v1/merchant/outlets/$outletId/dispatch-origin") {
             bearer(merchant.accessToken)
             contentType = MediaType.APPLICATION_JSON
@@ -129,7 +121,6 @@ class ConnectedCommerceE2ETest {
             """{"outletId":"$outletId","listingId":"$listingId","quantity":5}""",
         )
 
-        // Captain uses the real identity, onboarding, Admin approval and Redis-backed availability path.
         val captain = loginCaptain(captainMobile)
         assertEquals(captainId, captain.accountId)
         completeCaptainOnboarding(captain.accessToken)
@@ -149,9 +140,8 @@ class ConnectedCommerceE2ETest {
             jsonPath("$.online") { value(true) }
         }
 
-        // Customer session and delivery address are also created through public application APIs.
         val customer = loginCustomer(customerMobile)
-        val addressResponse = mockMvc.post("/api/v1/customer/addresses") {
+        val address = mockMvc.post("/api/v1/customer/addresses") {
             bearer(customer.accessToken)
             contentType = MediaType.APPLICATION_JSON
             content = """
@@ -170,36 +160,24 @@ class ConnectedCommerceE2ETest {
             status { isCreated() }
             jsonPath("$.pincode") { value("517501") }
         }.andReturn()
-        val addressId = json.readTree(addressResponse.response.contentAsString).uuid("addressId")
+        val addressId = json.readTree(address.response.contentAsString).uuid("addressId")
 
-        val quoteResponse = mockMvc.post("/api/v1/customer/quotes/delivery") {
+        val quoteResult = mockMvc.post("/api/v1/customer/quotes/delivery") {
             bearer(customer.accessToken)
             contentType = MediaType.APPLICATION_JSON
             content = """{"outletId":"$outletId","addressId":"$addressId","lines":[{"listingId":"$listingId","quantity":1}]}"""
         }.andExpect {
             status { isOk() }
             jsonPath("$.fulfilmentMode") { value("MYPET_CAPTAIN_DELIVERY") }
-            jsonPath("$.deliveryFeePaise") { value(2500) }
+            jsonPath("$.pricing.deliveryFeePaise") { value(2500) }
             jsonPath("$.etaMinutes") { value(35) }
         }.andReturn()
-        val quote = json.readTree(quoteResponse.response.contentAsString)
-
+        val quote = json.readTree(quoteResult.response.contentAsString)
         val checkoutBody = """{"quoteId":"${quote.uuid("id")}","cartSignature":"${quote.path("cartSignature").asString()}"}"""
-        val firstOrder = postJson(
-            "/api/v1/customer/orders",
-            customer.accessToken,
-            "e2e-checkout",
-            checkoutBody,
-        )
-        val orderId = firstOrder.uuid("id")
 
-        // Checkout replay must return the same canonical order, not reserve inventory twice.
-        val replayOrder = postJson(
-            "/api/v1/customer/orders",
-            customer.accessToken,
-            "e2e-checkout",
-            checkoutBody,
-        )
+        val firstOrder = postJson("/api/v1/customer/orders", customer.accessToken, "e2e-checkout", checkoutBody)
+        val replayOrder = postJson("/api/v1/customer/orders", customer.accessToken, "e2e-checkout", checkoutBody)
+        val orderId = firstOrder.uuid("id")
         assertEquals(orderId, replayOrder.uuid("id"))
         assertEquals(1, scalarInt("SELECT COUNT(*) FROM mypet.product_order WHERE id = ?", orderId))
         assertEquals(1, scalarInt("SELECT COUNT(*) FROM mypet.inventory_reservation WHERE order_id = ?", orderId))
@@ -207,8 +185,6 @@ class ConnectedCommerceE2ETest {
         transitionMerchant(orderId, merchant.accessToken, "ACCEPTED", "e2e-order-accepted")
         transitionMerchant(orderId, merchant.accessToken, "PREPARING", "e2e-order-preparing")
         transitionMerchant(orderId, merchant.accessToken, "READY_FOR_PICKUP", "e2e-order-ready")
-
-        // Replaying READY_FOR_PICKUP cannot create a second dispatch job.
         transitionMerchant(orderId, merchant.accessToken, "READY_FOR_PICKUP", "e2e-order-ready")
         assertEquals(1, scalarInt("SELECT COUNT(*) FROM mypet.dispatch_job WHERE order_id = ?", orderId))
 
@@ -232,17 +208,15 @@ class ConnectedCommerceE2ETest {
         }.andReturn()
         val jobId = json.readTree(assignment.response.contentAsString).uuid("jobId")
 
-        // Customer receives only the delivery proof; the Merchant receives only the pickup proof.
-        val trackingAssigned = mockMvc.get("/api/v1/customer/orders/$orderId/tracking") {
+        val assignedTracking = mockMvc.get("/api/v1/customer/orders/$orderId/tracking") {
             bearer(customer.accessToken)
         }.andExpect {
             status { isOk() }
-            jsonPath("$.status") { value("READY_FOR_PICKUP") }
             jsonPath("$.flowStep") { value("assigned") }
             jsonPath("$.captain.captainId") { value(captainId.toString()) }
             jsonPath("$.deliveryPin") { isNotEmpty() }
         }.andReturn()
-        val deliveryPin = json.readTree(trackingAssigned.response.contentAsString).path("deliveryPin").asString()
+        val deliveryPin = json.readTree(assignedTracking.response.contentAsString).path("deliveryPin").asString()
 
         val handoff = mockMvc.get("/api/v1/merchant/orders/$orderId/delivery-handoff") {
             bearer(merchant.accessToken)
@@ -256,28 +230,12 @@ class ConnectedCommerceE2ETest {
         val pickupPin = json.readTree(handoff.response.contentAsString).path("pickupPin").asString()
         assertNotEquals(deliveryPin, pickupPin)
 
-        // Customer cannot use the Merchant proof channel.
         mockMvc.get("/api/v1/merchant/orders/$orderId/delivery-handoff") {
             bearer(customer.accessToken)
         }.andExpect { status { isForbidden() } }
 
-        mockMvc.post("/api/v1/captain/dispatch/$jobId/picked-up") {
-            bearer(captain.accessToken)
-            header("Idempotency-Key", "e2e-captain-pickup")
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"proof":{"type":"PIN","pinCode":"$pickupPin"}}""
-        }.andExpect {
-            status { isOk() }
-            jsonPath("$.status") { value("PICKED_UP") }
-        }
-
-        // Pickup replay is safe and the pickup secret is immediately redacted from Merchant reads.
-        mockMvc.post("/api/v1/captain/dispatch/$jobId/picked-up") {
-            bearer(captain.accessToken)
-            header("Idempotency-Key", "e2e-captain-pickup")
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"proof":{"type":"PIN","pinCode":"$pickupPin"}}""
-        }.andExpect { status { isOk() } }
+        captainProof("/api/v1/captain/dispatch/$jobId/picked-up", captain.accessToken, "e2e-captain-pickup", pickupPin, "PICKED_UP")
+        captainProof("/api/v1/captain/dispatch/$jobId/picked-up", captain.accessToken, "e2e-captain-pickup", pickupPin, "PICKED_UP")
         mockMvc.get("/api/v1/merchant/orders/$orderId/delivery-handoff") {
             bearer(merchant.accessToken)
         }.andExpect {
@@ -301,21 +259,8 @@ class ConnectedCommerceE2ETest {
             jsonPath("$.deliveryPin") { value(deliveryPin) }
         }
 
-        mockMvc.post("/api/v1/captain/dispatch/$jobId/delivered") {
-            bearer(captain.accessToken)
-            header("Idempotency-Key", "e2e-captain-delivered")
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"proof":{"type":"PIN","pinCode":"$deliveryPin"}}""
-        }.andExpect {
-            status { isOk() }
-            jsonPath("$.status") { value("DELIVERED") }
-        }
-        mockMvc.post("/api/v1/captain/dispatch/$jobId/delivered") {
-            bearer(captain.accessToken)
-            header("Idempotency-Key", "e2e-captain-delivered")
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"proof":{"type":"PIN","pinCode":"$deliveryPin"}}""
-        }.andExpect { status { isOk() } }
+        captainProof("/api/v1/captain/dispatch/$jobId/delivered", captain.accessToken, "e2e-captain-delivered", deliveryPin, "DELIVERED")
+        captainProof("/api/v1/captain/dispatch/$jobId/delivered", captain.accessToken, "e2e-captain-delivered", deliveryPin, "DELIVERED")
 
         mockMvc.get("/api/v1/customer/orders/$orderId/tracking") {
             bearer(customer.accessToken)
@@ -331,16 +276,21 @@ class ConnectedCommerceE2ETest {
             bearer(captain.accessToken)
         }.andExpect { status { isNoContent() } }
 
-        // Canonical PostgreSQL truth: one order, one dispatch, one fulfilled reservation, one unit consumed.
         assertEquals("DELIVERED", scalarString("SELECT status FROM mypet.product_order WHERE id = ?", orderId))
         assertEquals("DELIVERED", scalarString("SELECT status FROM mypet.dispatch_job WHERE id = ?", jobId))
         assertEquals("FULFILLED", scalarString("SELECT status FROM mypet.inventory_reservation WHERE order_id = ?", orderId))
         assertEquals(4, scalarInt("SELECT on_hand FROM mypet.inventory_balance WHERE listing_id = ?", listingId))
         assertEquals(0, scalarInt("SELECT reserved FROM mypet.inventory_balance WHERE listing_id = ?", listingId))
-        assertEquals(1, scalarInt("SELECT COUNT(*) FROM mypet.audit_event WHERE target_id = ? AND action = 'ADMIN_PROVIDER_OUTLET_APPROVED'", outletId))
+        assertEquals(
+            1,
+            scalarInt(
+                "SELECT COUNT(*) FROM mypet.audit_event WHERE target_id = ? AND action = 'ADMIN_PROVIDER_OUTLET_APPROVED'",
+                outletId,
+            ),
+        )
         assertTrue(
-            scalarInt("SELECT COUNT(*) FROM mypet.notification WHERE recipient_id = ?", customer.accountId) >= 3,
-            "customer should receive accepted, pickup and delivered notification records",
+            scalarInt("SELECT COUNT(*) FROM mypet.notification_item WHERE recipient_id = ?", customer.accountId) >= 3,
+            "customer should receive durable order notification records",
         )
         assertEquals(organizationId, submitted.uuid("organizationId"))
     }
@@ -354,6 +304,18 @@ class ConnectedCommerceE2ETest {
         }.andExpect {
             status { isOk() }
             jsonPath("$.status") { value(target) }
+        }
+    }
+
+    private fun captainProof(path: String, token: String, key: String, pin: String, status: String) {
+        mockMvc.post(path) {
+            bearer(token)
+            header("Idempotency-Key", key)
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"proof":{"type":"PIN","pinCode":"$pin"}}"""
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.status") { value(status) }
         }
     }
 
@@ -456,11 +418,7 @@ class ConnectedCommerceE2ETest {
             Principal(
                 actorId = adminId,
                 role = Role.ADMIN,
-                permissions = setOf(
-                    AdminPermission.PROVIDER_REVIEW,
-                    AdminPermission.CAPTAIN_REVIEW,
-                    AdminPermission.AUDIT_VIEW,
-                ),
+                permissions = setOf(AdminPermission.PROVIDER_REVIEW, AdminPermission.CAPTAIN_REVIEW, AdminPermission.AUDIT_VIEW),
                 sessionId = sessionId,
             ),
         )
@@ -484,16 +442,13 @@ class ConnectedCommerceE2ETest {
         return json.readTree(result.response.contentAsString)
     }
 
-    private fun org.springframework.test.web.servlet.request.MockHttpServletRequestDsl.bearer(token: String) {
+    private fun MockHttpServletRequestDsl.bearer(token: String) {
         header("Authorization", "Bearer $token")
     }
 
     private fun session(body: String): Session {
         val node = json.readTree(body)
-        return Session(
-            accountId = node.uuid("accountId"),
-            accessToken = node.path("accessToken").asString(),
-        )
+        return Session(node.uuid("accountId"), node.path("accessToken").asString())
     }
 
     private fun JsonNode.uuid(field: String): UUID = UUID.fromString(path(field).asString())

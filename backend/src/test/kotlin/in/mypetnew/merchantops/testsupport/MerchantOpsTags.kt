@@ -16,3 +16,8 @@ annotation class MerchantOpsPostgres
 @Retention(AnnotationRetention.RUNTIME)
 @Tag("merchant-ops-concurrency")
 annotation class MerchantOpsConcurrency
+
+@Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.RUNTIME)
+@Tag("connected-e2e")
+annotation class ConnectedE2E

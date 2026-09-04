@@ -8,6 +8,12 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 import org.testcontainers.utility.DockerImageName
 import javax.sql.DataSource
 
+data class PostgresConnectionInfo(
+    val jdbcUrl: String,
+    val username: String,
+    val password: String,
+)
+
 object PostgresTestDatabase {
     private val postgisImage: DockerImageName by lazy {
         val imageName = ImageFromDockerfile("mypetnew-postgres-postgis:17.6", false)
@@ -28,11 +34,16 @@ object PostgresTestDatabase {
             .also { it.start() }
     }
 
-    fun dataSource(): DataSource = DriverManagerDataSource(
-        container.jdbcUrl,
-        container.username,
-        container.password,
+    fun connectionInfo(): PostgresConnectionInfo = PostgresConnectionInfo(
+        jdbcUrl = container.jdbcUrl,
+        username = container.username,
+        password = container.password,
     )
+
+    fun dataSource(): DataSource {
+        val info = connectionInfo()
+        return DriverManagerDataSource(info.jdbcUrl, info.username, info.password)
+    }
 
     @Synchronized
     fun resetAndMigrate(): MigrateResult {

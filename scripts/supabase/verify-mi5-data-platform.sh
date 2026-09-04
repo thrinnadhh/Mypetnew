@@ -30,6 +30,8 @@ grep -Fq -- '--format=custom' "$drill_script" || fail "recovery drill is not cus
 grep -Fq 'pg_restore --list' "$drill_script" || fail "recovery drill does not inspect archive contents"
 grep -Fq -- '--exit-on-error' "$drill_script" || fail "recovery restore does not fail closed"
 grep -Fq 'sha256sum --check' "$drill_script" || fail "recovery drill does not verify checksums"
+grep -Fq 'MI5_PG_CLIENT_CONTAINER' "$drill_script" || fail "recovery drill lacks server-major archive-tool pinning"
+grep -Fq 'archive_tooling=' "$drill_script" || fail "recovery evidence does not record archive tooling source"
 grep -Fq 'production_rpo_certified=false' "$drill_script" || fail "RPO truth boundary is missing"
 grep -Fq 'production_rto_certified=false' "$drill_script" || fail "RTO truth boundary is missing"
 grep -Fq 'pitr_certified=false' "$drill_script" || fail "PITR truth boundary is missing"
@@ -42,6 +44,8 @@ grep -Fq "method: 'GET'" "$storage_script" || fail "read-only Storage verifier d
 grep -Fq "id: 'catalog-media'" "$storage_script" || fail "catalog-media policy is missing"
 grep -Fq "id: 'provider-verification-private'" "$storage_script" || fail "private verification bucket policy is missing"
 
+grep -Fq 'Pin archive tools to PostgreSQL server major' "$workflow" || fail "workflow does not pin archive tools to the server major"
+grep -Fq 'MI5_PG_CLIENT_CONTAINER=' "$workflow" || fail "workflow does not export pinned archive-tool container"
 grep -Fq 'Boot restored backend' "$workflow" || fail "workflow does not boot the restored runtime"
 grep -Fq 'mi5-backup-restore-drill.sh' "$workflow" || fail "workflow does not run recovery drill"
 grep -Fq 'verify-storage-readonly.test.mjs' "$workflow" || fail "workflow does not test Storage verifier"

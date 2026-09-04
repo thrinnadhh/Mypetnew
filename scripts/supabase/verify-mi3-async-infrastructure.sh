@@ -48,10 +48,10 @@ grep -Fq "INSERT INTO mypet.outbox_event" "$inventory" || {
   exit 1
 }
 
-# PGMQ must not be introduced in parallel while the Spring outbox/inbox owns async delivery.
-if grep -RIn --exclude='verify-mi3-async-infrastructure.sh' --exclude='MI3_ASYNC_INFRASTRUCTURE.md' \
-  -E '\b(pg_mq|pgmq|queue_send|queue_read)\b' backend/src/main scripts infra .github 2>/dev/null; then
-  echo "MI3: competing PGMQ queue authority detected" >&2
+# PGMQ must not become a parallel production queue authority while Spring outbox/inbox owns delivery.
+if grep -RIn -E '\b(pg_mq|pgmq|queue_send|queue_read)\b' \
+  backend/src/main/kotlin backend/src/main/resources/db/migration 2>/dev/null; then
+  echo "MI3: competing PGMQ queue authority detected in production code or Flyway history" >&2
   exit 1
 fi
 

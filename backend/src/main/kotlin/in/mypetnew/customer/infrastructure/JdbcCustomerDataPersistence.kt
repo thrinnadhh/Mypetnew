@@ -9,6 +9,7 @@ import `in`.mypetnew.customer.domain.PetSpecies
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.support.TransactionTemplate
 import java.sql.ResultSet
+import java.sql.Timestamp
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
@@ -56,8 +57,8 @@ class JdbcCustomerDataPersistence(
             .param("species", pet.species.name)
             .param("breed", pet.breed)
             .param("date_of_birth", pet.dateOfBirth)
-            .param("created_at", pet.createdAt)
-            .param("updated_at", pet.updatedAt)
+            .param("created_at", pet.createdAt.jdbcTimestamp())
+            .param("updated_at", pet.updatedAt.jdbcTimestamp())
             .update()
         return pet
     }
@@ -74,7 +75,7 @@ class JdbcCustomerDataPersistence(
             .param("species", pet.species.name)
             .param("breed", pet.breed)
             .param("date_of_birth", pet.dateOfBirth)
-            .param("updated_at", pet.updatedAt)
+            .param("updated_at", pet.updatedAt.jdbcTimestamp())
             .param("id", pet.id)
             .param("customer_id", pet.customerId)
             .update()
@@ -132,8 +133,8 @@ class JdbcCustomerDataPersistence(
             .param("state", address.state)
             .param("pincode", address.pincode)
             .param("is_default", shouldDefault)
-            .param("created_at", address.createdAt)
-            .param("updated_at", address.updatedAt)
+            .param("created_at", address.createdAt.jdbcTimestamp())
+            .param("updated_at", address.updatedAt.jdbcTimestamp())
             .update()
         getAddress(address.customerId, address.id)!!
     }
@@ -160,7 +161,7 @@ class JdbcCustomerDataPersistence(
             .param("state", address.state)
             .param("pincode", address.pincode)
             .param("is_default", effectiveDefault)
-            .param("updated_at", address.updatedAt)
+            .param("updated_at", address.updatedAt.jdbcTimestamp())
             .param("id", address.id)
             .param("customer_id", address.customerId)
             .update()
@@ -185,7 +186,7 @@ class JdbcCustomerDataPersistence(
             if (replacement != null) {
                 jdbc.sql(
                     "UPDATE mypet.customer_address SET is_default = TRUE, updated_at = :now WHERE id = :id",
-                ).param("now", now).param("id", replacement).update()
+                ).param("now", now.jdbcTimestamp()).param("id", replacement).update()
             }
         }
         true
@@ -225,7 +226,7 @@ class JdbcCustomerDataPersistence(
             UPDATE mypet.customer_address SET is_default = FALSE, updated_at = :now
             WHERE customer_id = :customer_id AND is_default = TRUE
             """.trimIndent(),
-        ).param("now", now).param("customer_id", customerId).update()
+        ).param("now", now.jdbcTimestamp()).param("customer_id", customerId).update()
     }
 
     private fun mapPet(rows: ResultSet, rowNumber: Int): CustomerPet {
@@ -261,3 +262,5 @@ class JdbcCustomerDataPersistence(
         )
     }
 }
+
+private fun Instant.jdbcTimestamp(): Timestamp = Timestamp.from(this)

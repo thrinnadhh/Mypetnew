@@ -13,30 +13,36 @@ The platform already has:
 - `mypet.dead_letter` for terminal failures;
 - `notification_attempt` with retry timing and stale-claim recovery;
 - `FOR UPDATE ... SKIP LOCKED` notification claiming;
-- notification retry and dead-letter transitions;
+- notification retry, invalid-token and dead-letter transitions;
 - `idx_outbox_claim` and `idx_notification_attempt_delivery` claim indexes;
 - unique inventory movement publication protection.
 
-Live PetShop staging was inspected read-only before MI-3. `outbox_event` and `notification_attempt` currently contain no rows, and `pgmq` is not installed.
+Live PetShop staging was inspected read-only before MI-3. `outbox_event` and `notification_attempt` contained no rows, and `pgmq` was not installed.
 
-## V32 forward migration
+## V32 lifecycle hardening and V33 forward repair
 
-`V32__async_delivery_state_hardening.sql` adds and validates explicit lifecycle constraints for:
+`V32__async_delivery_state_hardening.sql` introduced explicit lifecycle constraints for the outbox and notification-attempt tables.
+
+A post-merge source audit found that production notification delivery intentionally writes `notification_attempt.status = 'INVALID'` when a push token is rejected. V32 had omitted that legitimate terminal state. Because V32 was already merged, it is not edited in place.
+
+`V33__notification_invalid_terminal_state.sql` is the forward-only repair. The effective lifecycle sets are:
 
 - `outbox_event.status`: `PENDING`, `PROCESSING`, `RETRY`, `DELIVERED`, `DEAD_LETTER`;
-- `notification_attempt.status`: the same bounded lifecycle set.
+- `notification_attempt.status`: `PENDING`, `PROCESSING`, `RETRY`, `DELIVERED`, `INVALID`, `DEAD_LETTER`.
 
-Both constraints use the `NOT VALID` then `VALIDATE CONSTRAINT` pattern so an upgrade detects incompatible historical data before claiming success.
+The V33 constraint also uses `NOT VALID` followed by `VALIDATE CONSTRAINT` so incompatible historical data is detected before an upgrade is considered successful.
 
 ## Failure-mode evidence
 
 `MI3AsyncInfrastructurePostgresContractTest` runs against real PostgreSQL and:
 
-1. validates the new constraints exist and are validated;
-2. attempts an invalid outbox state and requires PostgreSQL rejection;
-3. disables FK triggers only for the notification-attempt probe so rejection must come from the status CHECK rather than an unrelated foreign key;
-4. verifies the async claim/dedupe indexes remain present;
-5. verifies the inbox composite primary key remains intact.
+1. validates the lifecycle constraints exist and are validated;
+2. proves the validated notification-attempt CHECK definition explicitly includes `INVALID`;
+3. attempts an invalid outbox state and requires PostgreSQL rejection;
+4. disables FK triggers only for the unknown notification-status probe so rejection is isolated from unrelated foreign keys;
+5. proves an unknown notification status is rejected;
+6. verifies the async claim/dedupe indexes remain present;
+7. verifies the inbox composite primary key remains intact.
 
 ## Queue authority decision
 
@@ -48,4 +54,4 @@ PGMQ remains **deferred**. Introducing it now would create a competing queue abs
 - Spring Boot remains async worker authority.
 - No historical migration is edited.
 - No API contract changes.
-- No staging mutation is performed by this PR.
+- Staging DDL remains separately controlled.

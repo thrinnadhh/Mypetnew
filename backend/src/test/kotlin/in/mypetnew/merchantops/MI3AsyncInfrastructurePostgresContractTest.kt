@@ -36,6 +36,8 @@ class MI3AsyncInfrastructurePostgresContractTest {
             assertTrue(definition.contains("PENDING"))
             assertTrue(definition.contains("DEAD_LETTER"))
         }
+        val notificationConstraint = constraints.single { (name, _, _) -> name == "chk_notification_attempt_status" }
+        assertTrue(notificationConstraint.third.contains("INVALID"))
 
         assertThrows(Exception::class.java) {
             jdbc.update(
@@ -50,7 +52,7 @@ class MI3AsyncInfrastructurePostgresContractTest {
             )
         }
 
-        // Disable only FK triggers so the second assertion isolates the status CHECK failure mode.
+        // Disable FK triggers so the notification probe isolates the status CHECK failure mode.
         jdbc.execute("SET session_replication_role = replica")
         try {
             assertThrows(Exception::class.java) {
@@ -71,7 +73,7 @@ class MI3AsyncInfrastructurePostgresContractTest {
     }
 
     @Test
-    fun `MI3 async claim and dedupe indexes remain present after V32`() {
+    fun `MI3 async claim and dedupe indexes remain present after lifecycle repair`() {
         PostgresTestDatabase.resetAndMigrate()
         val jdbc = JdbcTemplate(PostgresTestDatabase.dataSource())
 

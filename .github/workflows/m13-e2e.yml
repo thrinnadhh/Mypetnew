@@ -1,0 +1,111 @@
+name: m13-e2e-certification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m13-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  merchant-failure-modes:
+    name: Merchant offline / restart / recovery failure modes
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/merchant-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/merchant-app/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Typecheck Merchant failure-mode surface
+        run: npm run typecheck
+      - name: Certify offline, process death, timeout, replay, corruption and upgrade behavior
+        run: |
+          npx jest --ci --runInBand --runTestsByPath \
+            src/test-support/offline-harness.test.ts \
+            src/__tests__/m0-m7-offline-recovery-flow.test.ts \
+            src/sync/__tests__/process-death.test.ts \
+            src/sync/__tests__/connected-unknown-outcome.test.ts \
+            src/sync/__tests__/sync-coordinator.test.ts \
+            src/data/database/__tests__/recovery.test.ts \
+            src/data/database/__tests__/bootstrap-and-migrations.test.ts
+      - name: Upload Merchant M13 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m13-merchant-failure-mode-evidence-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            apps/merchant-app/coverage
+            apps/merchant-app/junit.xml
+
+  postgres-replay-concurrency:
+    name: PostgreSQL replay / multi-writer concurrency
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Verify forward-only upgrade path
+        run: bash scripts/merchant-operations/verify-forward-migrations.sh
+      - name: Certify PostgreSQL replay and unknown-outcome contracts
+        run: ./gradlew :backend:merchantOpsPostgresTest --no-daemon --no-configuration-cache
+      - name: Certify multi-writer inventory and POS/order conflicts
+        run: ./gradlew :backend:merchantOpsConcurrencyTest --no-daemon --no-configuration-cache
+      - name: Upload PostgreSQL M13 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m13-postgres-failure-mode-evidence-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            backend/build/reports/tests/merchantOpsPostgresTest
+            backend/build/reports/tests/merchantOpsConcurrencyTest
+            backend/build/test-results/merchantOpsPostgresTest
+            backend/build/test-results/merchantOpsConcurrencyTest
+
+  certification:
+    name: M13 E2E failure-mode certification
+    if: always()
+    needs: [merchant-failure-modes, postgres-replay-concurrency]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record exact-SHA M13-E2E verdict
+        shell: bash
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          # M13-E2E-001 certification
+          Exact SHA: \`${GITHUB_SHA}\`
+
+          | Failure-mode lane | Result |
+          |---|---|
+          | Merchant offline / restart / recovery | ${{ needs.merchant-failure-modes.result }} |
+          | PostgreSQL replay / multi-writer concurrency | ${{ needs.postgres-replay-concurrency.result }} |
+
+          This gate certifies the repository-executable M13-E2E failure modes only.
+          It does **not** certify M13-DEVICE-001 or substitute CI/emulator evidence for a real Android camera/barcode run.
+          EOF
+          if [ "${{ needs.merchant-failure-modes.result }}" != success ] || \
+             [ "${{ needs.postgres-replay-concurrency.result }}" != success ]; then
+            echo "M13 E2E failure-mode certification failed." >&2
+            exit 1
+          fi

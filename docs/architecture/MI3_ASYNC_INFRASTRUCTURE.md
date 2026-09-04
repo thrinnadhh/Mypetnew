@@ -37,9 +37,9 @@ The V33 constraint also uses `NOT VALID` followed by `VALIDATE CONSTRAINT` so in
 `MI3AsyncInfrastructurePostgresContractTest` runs against real PostgreSQL and:
 
 1. validates the lifecycle constraints exist and are validated;
-2. proves `INVALID` is accepted for notification attempts;
+2. proves the validated notification-attempt CHECK definition explicitly includes `INVALID`;
 3. attempts an invalid outbox state and requires PostgreSQL rejection;
-4. disables FK triggers only for the notification-attempt probes so status behavior is isolated from unrelated foreign keys;
+4. disables FK triggers only for the unknown notification-status probe so rejection is isolated from unrelated foreign keys;
 5. proves an unknown notification status is rejected;
 6. verifies the async claim/dedupe indexes remain present;
 7. verifies the inbox composite primary key remains intact.

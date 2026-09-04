@@ -15,6 +15,7 @@ import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.support.TransactionTemplate
 import java.sql.ResultSet
+import java.sql.Timestamp
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -52,8 +53,8 @@ class JdbcPrivacyRepository(
         ).param("account_id", customerId)
             .param("display_name", profile.displayName)
             .param("email", profile.email)
-            .param("adult_attested_at", profile.adultEligibilityAttestedAt)
-            .param("updated_at", profile.updatedAt)
+            .param("adult_attested_at", profile.adultEligibilityAttestedAt?.jdbcTimestamp())
+            .param("updated_at", profile.updatedAt?.jdbcTimestamp())
             .update()
         return profileFor(customerId)
     }
@@ -64,7 +65,7 @@ class JdbcPrivacyRepository(
             UPDATE mypet.privacy_consent SET withdrawn_at = :now
             WHERE customer_id = :customer_id AND purpose = :purpose AND withdrawn_at IS NULL
             """.trimIndent(),
-        ).param("now", record.grantedAt)
+        ).param("now", record.grantedAt.jdbcTimestamp())
             .param("customer_id", record.customerId)
             .param("purpose", record.purpose.name)
             .update()
@@ -82,7 +83,7 @@ class JdbcPrivacyRepository(
             .param("notice_version", record.noticeVersion)
             .param("source", record.source.name)
             .param("proof_metadata", record.proofMetadata)
-            .param("granted_at", record.grantedAt)
+            .param("granted_at", record.grantedAt.jdbcTimestamp())
             .update()
         record
     }
@@ -102,7 +103,7 @@ class JdbcPrivacyRepository(
                 .optional()
                 .orElseThrow { DomainException("CONSENT_NOT_ACTIVE", "No active consent exists for this purpose") }
             jdbc.sql("UPDATE mypet.privacy_consent SET withdrawn_at = :withdrawn_at WHERE id = :id")
-                .param("withdrawn_at", withdrawnAt)
+                .param("withdrawn_at", withdrawnAt.jdbcTimestamp())
                 .param("id", active.consentId)
                 .update()
             active.copy(withdrawnAt = withdrawnAt)
@@ -131,9 +132,9 @@ class JdbcPrivacyRepository(
             .param("request_type", request.requestType.name)
             .param("status", request.status.name)
             .param("request_details", request.requestDetails)
-            .param("requested_at", request.requestedAt)
-            .param("identity_verified_at", request.identityVerifiedAt)
-            .param("updated_at", request.updatedAt)
+            .param("requested_at", request.requestedAt.jdbcTimestamp())
+            .param("identity_verified_at", request.identityVerifiedAt.jdbcTimestamp())
+            .param("updated_at", request.updatedAt.jdbcTimestamp())
             .update()
         return request
     }
@@ -167,7 +168,7 @@ class JdbcPrivacyRepository(
             WHERE id = :customer_id AND role = 'CUSTOMER' AND status IN ('ACTIVE', 'DELETION_PENDING')
             """.trimIndent(),
         ).param("deleted_mobile", deletedMobile)
-            .param("now", now)
+            .param("now", now.jdbcTimestamp())
             .param("customer_id", customerId)
             .update()
         if (updated != 1) throw DomainException("RESOURCE_NOT_FOUND", "The requested resource is unavailable")
@@ -178,16 +179,16 @@ class JdbcPrivacyRepository(
             SET display_name = NULL, email = NULL, adult_eligibility_attested_at = NULL, updated_at = :now
             WHERE account_id = :customer_id
             """.trimIndent(),
-        ).param("now", now).param("customer_id", customerId).update()
+        ).param("now", now.jdbcTimestamp()).param("customer_id", customerId).update()
         jdbc.sql(
             "UPDATE mypet.user_session SET revoked_at = COALESCE(revoked_at, :now) WHERE account_id = :customer_id",
-        ).param("now", now).param("customer_id", customerId).update()
+        ).param("now", now.jdbcTimestamp()).param("customer_id", customerId).update()
         jdbc.sql(
             """
             UPDATE mypet.device_registration
             SET status = 'REVOKED', protected_token = '', updated_at = :now WHERE user_id = :customer_id
             """.trimIndent(),
-        ).param("now", now).param("customer_id", customerId).update()
+        ).param("now", now.jdbcTimestamp()).param("customer_id", customerId).update()
         jdbc.sql(
             "DELETE FROM mypet.cart_line WHERE cart_id IN (SELECT id FROM mypet.customer_cart WHERE owner_id = :customer_id)",
         ).param("customer_id", customerId).update()
@@ -195,7 +196,7 @@ class JdbcPrivacyRepository(
             .param("customer_id", customerId).update()
         jdbc.sql(
             "UPDATE mypet.privacy_consent SET withdrawn_at = :now WHERE customer_id = :customer_id AND withdrawn_at IS NULL",
-        ).param("now", now).param("customer_id", customerId).update()
+        ).param("now", now.jdbcTimestamp()).param("customer_id", customerId).update()
         jdbc.sql(
             """
             INSERT INTO mypet.account_deletion_request(
@@ -208,9 +209,9 @@ class JdbcPrivacyRepository(
             """.trimIndent(),
         ).param("id", requestId)
             .param("customer_id", customerId)
-            .param("now", now)
-            .param("legal_review_due_at", legalReviewDueAt)
-            .param("backup_suppression_until", backupSuppressionUntil)
+            .param("now", now.jdbcTimestamp())
+            .param("legal_review_due_at", legalReviewDueAt.jdbcTimestamp())
+            .param("backup_suppression_until", backupSuppressionUntil.jdbcTimestamp())
             .update()
         jdbc.sql(
             """
@@ -219,8 +220,8 @@ class JdbcPrivacyRepository(
             ) VALUES (:customer_id, :now, :backup_suppression_until, 'CUSTOMER_REQUEST')
             """.trimIndent(),
         ).param("customer_id", customerId)
-            .param("now", now)
-            .param("backup_suppression_until", backupSuppressionUntil)
+            .param("now", now.jdbcTimestamp())
+            .param("backup_suppression_until", backupSuppressionUntil.jdbcTimestamp())
             .update()
         jdbc.sql(
             """
@@ -234,7 +235,7 @@ class JdbcPrivacyRepository(
         ).param("id", UUID.randomUUID())
             .param("customer_id", customerId)
             .param("trace_id", UUID.randomUUID().toString())
-            .param("now", now)
+            .param("now", now.jdbcTimestamp())
             .update()
         AccountDeletionReceipt(
             requestId = requestId,
@@ -301,3 +302,5 @@ class JdbcPrivacyRepository(
         )
     }
 }
+
+private fun Instant.jdbcTimestamp(): Timestamp = Timestamp.from(this)

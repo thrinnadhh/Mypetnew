@@ -45,7 +45,10 @@ class V31SecurityPostgisContractTest {
             organizationId,
         )
 
-        val v31 = flyway(dataSource)
+        // Keep this regression scoped to the V30 -> V31 upgrade even when later
+        // migrations exist. Without an explicit target, adding V32+ legitimately
+        // makes more than one migration pending and breaks the V31-specific proof.
+        val v31 = flyway(dataSource, MigrationVersion.fromVersion("31"))
         val pending = v31.info().pending()
         assertEquals(1, pending.size)
         assertEquals("31", pending.single().version.version)

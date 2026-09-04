@@ -5,6 +5,7 @@ import `in`.mypetnew.catalog.domain.CatalogMediaService
 import `in`.mypetnew.catalog.infrastructure.CatalogMediaCleanupWorker
 import `in`.mypetnew.catalog.infrastructure.JdbcCatalogMediaPersistence
 import `in`.mypetnew.common.error.DomainException
+import `in`.mypetnew.common.scheduling.PostgresScheduledJobLock
 import `in`.mypetnew.merchantops.testsupport.MerchantOpsConcurrency
 import `in`.mypetnew.merchantops.testsupport.MerchantOpsContract
 import `in`.mypetnew.merchantops.testsupport.MerchantOpsPostgres
@@ -135,7 +136,11 @@ class M4CatalogMediaPostgresContractTest {
         assertEquals(2, store.objects.size)
 
         store.failDelete = false
-        CatalogMediaCleanupWorker(context.jdbc, store).retryDueCleanup()
+        CatalogMediaCleanupWorker(
+            context.jdbc,
+            store,
+            PostgresScheduledJobLock(PostgresTestDatabase.dataSource()),
+        ).retryDueCleanup()
         assertEquals(0, context.jdbc.queryForObject("SELECT COUNT(*) FROM mypet.catalog_media_cleanup", Int::class.java))
         assertEquals(1, store.objects.size)
     }

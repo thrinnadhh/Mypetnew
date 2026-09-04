@@ -1,0 +1,37 @@
+name: mi4-scheduled-infrastructure
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mi4-scheduled-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scheduled-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Verify all scheduled entry points are cluster guarded
+        run: bash ./scripts/supabase/verify-mi4-scheduled-infrastructure.sh
+      - name: Prove scheduler locks on real PostgreSQL
+        run: ./gradlew :backend:merchantOpsPostgresTest --no-daemon --no-configuration-cache
+      - name: Prove existing concurrency invariants on real PostgreSQL
+        run: ./gradlew :backend:merchantOpsConcurrencyTest --no-daemon --no-configuration-cache
+      - name: Run backend regression and security baseline
+        run: ./scripts/verify.sh
+      - name: Verify patch whitespace
+        run: git diff --check "origin/${GITHUB_BASE_REF:-main}...HEAD"

@@ -1,0 +1,211 @@
+name: mi5-data-platform-certification
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mi5-data-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  recovery-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5-alpine
+        env:
+          POSTGRES_USER: mypet_ci
+          POSTGRES_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          POSTGRES_DB: mypet_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mypet_ci -d mypet_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: mypet_ci
+      PGPASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      PGDATABASE: mypet_ci
+      DATABASE_URL: jdbc:postgresql://127.0.0.1:5432/mypet_ci
+      DATABASE_USERNAME: mypet_ci
+      DATABASE_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      SERVER_PORT: '18080'
+      MYPET_TOKEN_ISSUER: mypetnew-ci
+      MYPET_TOKEN_AUDIENCE: mypetnew-ci
+      SPRING_PROFILES_ACTIVE: local-isolated
+      MYPET_ENVIRONMENT: development
+      FIREBASE_PROJECT_ID: mypetnew-ci
+      NOTIFICATION_DELIVERY_ENABLED: 'false'
+      CASHFREE_ENABLED: 'false'
+      SUPABASE_URL: https://isolated.mypet.local
+      SUPABASE_SERVICE_ROLE_KEY: isolated-ci-service-role-key-32-chars-minimum
+      SUPABASE_PRIVATE_EVIDENCE_BUCKET: provider-verification-private
+      SUPABASE_CATALOG_MEDIA_BUCKET: catalog-media
+      MANAGEMENT_HEALTH_REDIS_ENABLED: 'false'
+      MI5_RESTORE_DATABASE: mypet_restore
+      MI5_EVIDENCE_DIR: build/evidence/mi5-data-platform
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Pin archive tools to PostgreSQL server major
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_id="$(docker ps --filter ancestor=postgis/postgis:17-3.5-alpine --format '{{.ID}}' | head -n 1)"
+          [[ -n "$container_id" ]] || { echo "PostGIS service container not found." >&2; exit 1; }
+          server_version_num="$(psql -X -A -t -v ON_ERROR_STOP=1 -c 'SHOW server_version_num;')"
+          server_major="$(( server_version_num / 10000 ))"
+          dump_version="$(docker exec "$container_id" pg_dump --version)"
+          restore_version="$(docker exec "$container_id" pg_restore --version)"
+          dump_major="$(sed -E 's/.* ([0-9]+)(\..*)?$/\1/' <<<"$dump_version")"
+          restore_major="$(sed -E 's/.* ([0-9]+)(\..*)?$/\1/' <<<"$restore_version")"
+          if [[ "$dump_major" != "$server_major" || "$restore_major" != "$server_major" ]]; then
+            echo "Archive-tool/server major mismatch: server=$server_major dump=$dump_major restore=$restore_major" >&2
+            exit 1
+          fi
+          echo "MI5_PG_CLIENT_CONTAINER=$container_id" >> "$GITHUB_ENV"
+          echo "MI5_PG_CLIENT_MAJOR=$server_major" >> "$GITHUB_ENV"
+          echo "Pinned MI5 archive tools to PostgreSQL major $server_major in container $container_id"
+
+      - name: Generate isolated runtime secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          sync_secret="$(openssl rand -hex 32)"
+          token_secret="$(openssl rand -hex 32)"
+          device_key="$(openssl rand -base64 32 | tr -d '\n')"
+          printf '::add-mask::%s\n' "$sync_secret" "$token_secret" "$device_key"
+          {
+            echo "MYPET_SYNC_CURSOR_SECRET=$sync_secret"
+            echo "MYPET_TOKEN_SECRET=$token_secret"
+            echo "MYPET_DEVICE_TOKEN_KEY=$device_key"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify MI-5 repository boundaries
+        run: bash ./scripts/supabase/verify-mi5-data-platform.sh
+
+      - name: Prove Storage verifier is read only and fail closed
+        run: node --test ./scripts/supabase/verify-storage-readonly.test.mjs
+
+      - name: Align source PostGIS with Supabase
+        run: bash ./scripts/postgres/prepare-supabase-postgis.sh
+
+      - name: Compile backend before recovery drill
+        run: ./gradlew :backend:classes --no-daemon --no-configuration-cache
+
+      - name: Migrate source with exact backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          log_file="$RUNNER_TEMP/mi5-source-backend.log"
+          ./gradlew :backend:bootRun --no-daemon --no-configuration-cache >"$log_file" 2>&1 &
+          backend_pid=$!
+          cleanup() {
+            kill -TERM "$backend_pid" 2>/dev/null || true
+            wait "$backend_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          healthy=false
+          for attempt in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${SERVER_PORT}/actuator/health" | grep -q '"status":"UP"'; then
+              healthy=true
+              break
+            fi
+            if ! kill -0 "$backend_pid" 2>/dev/null; then
+              echo "Source backend exited during MI5 migration." >&2
+              tail -n 180 "$log_file" >&2 || true
+              exit 1
+            fi
+            sleep 1
+          done
+          [[ "$healthy" == true ]] || { tail -n 180 "$log_file" >&2 || true; exit 1; }
+          latest="$(psql -X -A -t -v ON_ERROR_STOP=1 -c "SELECT max(version::int) FROM mypet.flyway_schema_history WHERE success=true AND version ~ '^[0-9]+$';")"
+          failed="$(psql -X -A -t -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM mypet.flyway_schema_history WHERE success=false;")"
+          [[ "$latest" == "33" && "$failed" == "0" ]]
+
+      - name: Run backup restore drill
+        run: bash ./scripts/postgres/mi5-backup-restore-drill.sh
+
+      - name: Boot restored backend
+        shell: bash
+        env:
+          PGDATABASE: mypet_restore
+          DATABASE_URL: jdbc:postgresql://127.0.0.1:5432/mypet_restore
+        run: |
+          set -euo pipefail
+          mkdir -p "$MI5_EVIDENCE_DIR"
+          boot_started="$(date +%s)"
+          log_file="$RUNNER_TEMP/mi5-restored-backend.log"
+          ./gradlew :backend:bootRun --no-daemon --no-configuration-cache >"$log_file" 2>&1 &
+          backend_pid=$!
+          cleanup() {
+            kill -TERM "$backend_pid" 2>/dev/null || true
+            wait "$backend_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          healthy=false
+          for attempt in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${SERVER_PORT}/actuator/health" | grep -q '"status":"UP"'; then
+              healthy=true
+              break
+            fi
+            if ! kill -0 "$backend_pid" 2>/dev/null; then
+              echo "Restored backend exited during MI5 recovery boot." >&2
+              tail -n 180 "$log_file" >&2 || true
+              exit 1
+            fi
+            sleep 1
+          done
+          if [[ "$healthy" != true ]]; then
+            echo "Restored backend did not become healthy." >&2
+            tail -n 180 "$log_file" >&2 || true
+            exit 1
+          fi
+          boot_seconds="$(( $(date +%s) - boot_started ))"
+          latest="$(psql -X -A -t -v ON_ERROR_STOP=1 -c "SELECT max(version::int) FROM mypet.flyway_schema_history WHERE success=true AND version ~ '^[0-9]+$';")"
+          failed="$(psql -X -A -t -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM mypet.flyway_schema_history WHERE success=false;")"
+          [[ "$latest" == "33" && "$failed" == "0" ]]
+          echo "restored_runtime_boot_seconds_observed=$boot_seconds" >> "$MI5_EVIDENCE_DIR/recovery-summary.txt"
+          backup_seconds="$(awk -F= '$1=="backup_seconds_observed" {print $2}' "$MI5_EVIDENCE_DIR/recovery-summary.txt")"
+          restore_seconds="$(awk -F= '$1=="restore_seconds_observed" {print $2}' "$MI5_EVIDENCE_DIR/recovery-summary.txt")"
+          echo "total_drill_recovery_seconds_observed=$(( backup_seconds + restore_seconds + boot_seconds ))" >> "$MI5_EVIDENCE_DIR/recovery-summary.txt"
+
+      - name: Run backend regression and security baseline
+        run: env -u SPRING_PROFILES_ACTIVE ./scripts/verify.sh
+
+      - name: Verify patch whitespace
+        run: git diff --check "origin/${GITHUB_BASE_REF:-main}...HEAD"
+
+      - name: Upload MI-5 recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mi5-data-platform-${{ github.sha }}
+          if-no-files-found: error
+          path: build/evidence/mi5-data-platform

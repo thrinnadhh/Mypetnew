@@ -36,6 +36,8 @@ class MI3AsyncInfrastructurePostgresContractTest {
             assertTrue(definition.contains("PENDING"))
             assertTrue(definition.contains("DEAD_LETTER"))
         }
+        val notificationConstraint = constraints.single { (name, _, _) -> name == "chk_notification_attempt_status" }
+        assertTrue(notificationConstraint.third.contains("INVALID"))
 
         assertThrows(Exception::class.java) {
             jdbc.update(
@@ -50,9 +52,33 @@ class MI3AsyncInfrastructurePostgresContractTest {
             )
         }
 
-        // Disable only FK triggers so the second assertion isolates the status CHECK failure mode.
+        // Disable only FK triggers so these probes isolate the notification status CHECK contract.
         jdbc.execute("SET session_replication_role = replica")
         try {
+            val validInvalidAttemptId = UUID.randomUUID()
+            assertEquals(
+                1,
+                jdbc.update(
+                    """
+                    INSERT INTO mypet.notification_attempt(
+                        id, notification_id, registration_id, channel, status, attempt_count
+                    ) VALUES (?, ?, ?, 'PUSH', 'INVALID', 0)
+                    """.trimIndent(),
+                    validInvalidAttemptId,
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                ),
+            )
+            assertEquals(
+                "INVALID",
+                jdbc.queryForObject(
+                    "SELECT status FROM mypet.notification_attempt WHERE id = ?",
+                    String::class.java,
+                    validInvalidAttemptId,
+                ),
+            )
+            jdbc.update("DELETE FROM mypet.notification_attempt WHERE id = ?", validInvalidAttemptId)
+
             assertThrows(Exception::class.java) {
                 jdbc.update(
                     """

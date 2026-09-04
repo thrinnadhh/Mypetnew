@@ -7,6 +7,8 @@ import `in`.mypetnew.engagement.domain.NotificationDeliveryWorker
 import `in`.mypetnew.engagement.domain.NotificationProvider
 import `in`.mypetnew.engagement.domain.NotificationRepository
 import `in`.mypetnew.engagement.domain.PushDeliveryCommand
+import `in`.mypetnew.common.scheduling.PostgresScheduledJobLock
+import `in`.mypetnew.common.scheduling.ScheduledJobNames
 import java.sql.ResultSet
 import java.sql.Timestamp
 import java.time.Clock
@@ -452,9 +454,12 @@ class NotificationWorkerConfiguration {
 class NotificationDeliveryScheduler(
     private val worker: NotificationDeliveryWorker,
     private val properties: NotificationWorkerProperties,
+    private val schedulerLock: PostgresScheduledJobLock,
 ) {
     @Scheduled(fixedDelayString = "\${mypet.notifications.worker.fixed-delay-millis:1000}")
     fun deliver() {
-        worker.runBatch(properties.batchSize)
+        schedulerLock.runIfAcquired(ScheduledJobNames.NOTIFICATION_DELIVERY) {
+            worker.runBatch(properties.batchSize)
+        }
     }
 }

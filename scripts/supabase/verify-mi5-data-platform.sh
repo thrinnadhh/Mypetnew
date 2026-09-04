@@ -49,6 +49,7 @@ grep -Fq 'MI5_PG_CLIENT_CONTAINER=' "$workflow" || fail "workflow does not expor
 grep -Fq 'Boot restored backend' "$workflow" || fail "workflow does not boot the restored runtime"
 grep -Fq 'mi5-backup-restore-drill.sh' "$workflow" || fail "workflow does not run recovery drill"
 grep -Fq 'verify-storage-readonly.test.mjs' "$workflow" || fail "workflow does not test Storage verifier"
+grep -Fq 'env -u SPRING_PROFILES_ACTIVE ./scripts/verify.sh' "$workflow" || fail "broad regression baseline must run without the recovery-only Spring profile"
 
 grep -Fq 'does not certify production RPO' "$doc" || fail "documentation does not preserve RPO boundary"
 grep -Fq 'does not certify production RTO' "$doc" || fail "documentation does not preserve RTO boundary"

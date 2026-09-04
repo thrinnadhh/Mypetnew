@@ -29,6 +29,8 @@ jobs:
         run: bash ./scripts/supabase/verify-mi3-async-infrastructure.sh
       - name: Prove async constraints on real PostgreSQL
         run: ./gradlew :backend:merchantOpsPostgresTest --no-daemon --no-configuration-cache
+      - name: Prove async concurrency invariants on real PostgreSQL
+        run: ./gradlew :backend:merchantOpsConcurrencyTest --no-daemon --no-configuration-cache
       - name: Run backend regression and security baseline
         run: ./scripts/verify.sh
       - name: Verify patch whitespace

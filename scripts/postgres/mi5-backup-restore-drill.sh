@@ -11,13 +11,14 @@ case "${PGHOST#[}" in
   *) echo "MI5 recovery drill only permits loopback PostgreSQL." >&2; exit 2 ;;
 esac
 
-for command in psql pg_dump pg_restore createdb dropdb sha256sum; do
+for command in psql sha256sum; do
   command -v "$command" >/dev/null 2>&1 || { echo "$command is required." >&2; exit 2; }
 done
 
 SOURCE_DATABASE="$PGDATABASE"
 RESTORE_DATABASE="${MI5_RESTORE_DATABASE:-mypet_restore}"
 EVIDENCE_DIR="${MI5_EVIDENCE_DIR:-build/evidence/mi5-data-platform}"
+PG_CLIENT_CONTAINER="${MI5_PG_CLIENT_CONTAINER:-}"
 mkdir -p "$EVIDENCE_DIR"
 chmod 700 "$EVIDENCE_DIR"
 
@@ -32,6 +33,53 @@ query() {
   PGDATABASE="$database" psql -X -A -t -v ON_ERROR_STOP=1 -c "$sql"
 }
 
+if [[ -n "$PG_CLIENT_CONTAINER" ]]; then
+  command -v docker >/dev/null 2>&1 || { echo "docker is required for container-pinned PostgreSQL archive tools." >&2; exit 2; }
+  docker inspect "$PG_CLIENT_CONTAINER" >/dev/null 2>&1 || { echo "MI5 PostgreSQL client container is unavailable." >&2; exit 2; }
+
+  archive_dump() {
+    docker exec -e PGPASSWORD="$PGPASSWORD" "$PG_CLIENT_CONTAINER" \
+      pg_dump -h 127.0.0.1 -p 5432 -U "$PGUSER" -d "$SOURCE_DATABASE" \
+      --format=custom --compress=9 --no-owner --no-privileges --schema=mypet > "$DUMP_FILE"
+  }
+  archive_list() {
+    docker exec -i "$PG_CLIENT_CONTAINER" pg_restore --list < "$DUMP_FILE" > "$LIST_FILE"
+  }
+  database_drop() {
+    docker exec -e PGPASSWORD="$PGPASSWORD" "$PG_CLIENT_CONTAINER" \
+      dropdb -h 127.0.0.1 -p 5432 -U "$PGUSER" --if-exists "$RESTORE_DATABASE"
+  }
+  database_create() {
+    docker exec -e PGPASSWORD="$PGPASSWORD" "$PG_CLIENT_CONTAINER" \
+      createdb -h 127.0.0.1 -p 5432 -U "$PGUSER" "$RESTORE_DATABASE"
+  }
+  archive_restore() {
+    docker exec -i -e PGPASSWORD="$PGPASSWORD" "$PG_CLIENT_CONTAINER" \
+      pg_restore -h 127.0.0.1 -p 5432 -U "$PGUSER" \
+      --no-owner --no-privileges --exit-on-error --dbname="$RESTORE_DATABASE" < "$DUMP_FILE"
+  }
+else
+  for command in pg_dump pg_restore createdb dropdb; do
+    command -v "$command" >/dev/null 2>&1 || { echo "$command is required when MI5_PG_CLIENT_CONTAINER is unset." >&2; exit 2; }
+  done
+  archive_dump() {
+    pg_dump --format=custom --compress=9 --no-owner --no-privileges --schema=mypet --file="$DUMP_FILE"
+  }
+  archive_list() {
+    pg_restore --list "$DUMP_FILE" > "$LIST_FILE"
+  }
+  database_drop() {
+    dropdb --if-exists "$RESTORE_DATABASE"
+  }
+  database_create() {
+    createdb "$RESTORE_DATABASE"
+  }
+  archive_restore() {
+    PGDATABASE="$RESTORE_DATABASE" pg_restore \
+      --no-owner --no-privileges --exit-on-error --dbname="$RESTORE_DATABASE" "$DUMP_FILE"
+  }
+fi
+
 source_latest="$(query "$SOURCE_DATABASE" "SELECT coalesce(max(version::int),0) FROM mypet.flyway_schema_history WHERE success=true AND version ~ '^[0-9]+$';")"
 source_failed="$(query "$SOURCE_DATABASE" "SELECT count(*) FROM mypet.flyway_schema_history WHERE success=false;")"
 source_tables="$(query "$SOURCE_DATABASE" "SELECT count(*) FROM information_schema.tables WHERE table_schema='mypet' AND table_type='BASE TABLE';")"
@@ -45,14 +93,8 @@ source_history_checksum="$(query "$SOURCE_DATABASE" "SELECT md5(string_agg(coale
 [[ "$source_latest" =~ ^[0-9]+$ ]] || { echo "Source Flyway version is invalid." >&2; exit 1; }
 
 backup_started="$(date +%s)"
-pg_dump \
-  --format=custom \
-  --compress=9 \
-  --no-owner \
-  --no-privileges \
-  --schema=mypet \
-  --file="$DUMP_FILE"
-pg_restore --list "$DUMP_FILE" > "$LIST_FILE"
+archive_dump
+archive_list
 [[ -s "$DUMP_FILE" && -s "$LIST_FILE" ]] || { echo "Backup artifact verification failed." >&2; exit 1; }
 (
   cd "$EVIDENCE_DIR"
@@ -61,17 +103,12 @@ pg_restore --list "$DUMP_FILE" > "$LIST_FILE"
 )
 backup_seconds="$(( $(date +%s) - backup_started ))"
 
-dropdb --if-exists "$RESTORE_DATABASE"
-createdb "$RESTORE_DATABASE"
+database_drop
+database_create
 PGDATABASE="$RESTORE_DATABASE" bash ./scripts/postgres/prepare-supabase-postgis.sh
 
 restore_started="$(date +%s)"
-PGDATABASE="$RESTORE_DATABASE" pg_restore \
-  --no-owner \
-  --no-privileges \
-  --exit-on-error \
-  --dbname="$RESTORE_DATABASE" \
-  "$DUMP_FILE"
+archive_restore
 restore_seconds="$(( $(date +%s) - restore_started ))"
 
 restore_latest="$(query "$RESTORE_DATABASE" "SELECT coalesce(max(version::int),0) FROM mypet.flyway_schema_history WHERE success=true AND version ~ '^[0-9]+$';")"
@@ -118,6 +155,7 @@ dump_bytes=$dump_bytes
 dump_sha256=$dump_sha256
 backup_seconds_observed=$backup_seconds
 restore_seconds_observed=$restore_seconds
+archive_tooling=$([[ -n "$PG_CLIENT_CONTAINER" ]] && echo container-pinned || echo host)
 production_rpo_certified=false
 production_rto_certified=false
 pitr_certified=false

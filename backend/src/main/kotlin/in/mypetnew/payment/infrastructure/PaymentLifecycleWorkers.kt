@@ -12,7 +12,7 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 
 @Component
-@Profile("!test & !development")
+@Profile("!test & !development & !local-isolated")
 class PaymentLifecycleWorkers(
     private val payments: PaymentService,
     private val appointmentPayments: JdbcAppointmentOnlinePaymentService,

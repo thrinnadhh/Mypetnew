@@ -46,7 +46,8 @@ export interface DeliveryJob {
  */
 export function sanitizeDeliveryProof(proof?: DeliveryProof): DeliveryProof | undefined {
   if (!proof) return undefined;
-  const { pinCode: _pinCode, ...sanitized } = proof;
+  const sanitized = { ...proof };
+  delete sanitized.pinCode;
   return sanitized;
 }
 

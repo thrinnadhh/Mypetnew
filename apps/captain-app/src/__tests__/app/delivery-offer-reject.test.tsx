@@ -18,7 +18,7 @@ jest.mock('../../state/delivery-store', () => ({
 }));
 
 jest.mock('../../components/DeliveryOfferCard', () => ({
-  DeliveryOfferCard: (props: any) => require('react').createElement('DeliveryOfferCard', props),
+  DeliveryOfferCard: (props: any) => jest.requireActual('react').createElement('DeliveryOfferCard', props),
 }));
 
 const offer = {

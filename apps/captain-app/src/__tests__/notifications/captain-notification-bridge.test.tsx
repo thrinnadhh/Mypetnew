@@ -115,4 +115,33 @@ describe('Captain notification signal bridge', () => {
     expect(Notifications.clearLastNotificationResponseAsync).toHaveBeenCalledTimes(1);
     renderer.unmount();
   });
+
+  it('retries cold-start validation after a transient backend failure while connectivity stays online', async () => {
+    revalidateOffer.mockResolvedValueOnce(null).mockResolvedValueOnce(true);
+    (Notifications.getLastNotificationResponseAsync as jest.Mock).mockResolvedValue({
+      notification: signalNotification(),
+    });
+
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<CaptainNotificationBridge />);
+      await flushEffects();
+    });
+
+    expect(revalidateOffer).toHaveBeenCalledTimes(1);
+    expect(router.push).not.toHaveBeenCalled();
+    expect(Notifications.clearLastNotificationResponseAsync).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await flushEffects();
+    });
+
+    expect(connectivity.online).toBe(true);
+    expect(revalidateOffer).toHaveBeenCalledTimes(2);
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith('/delivery/offer');
+    expect(Notifications.clearLastNotificationResponseAsync).toHaveBeenCalledTimes(1);
+    renderer.unmount();
+  });
 });

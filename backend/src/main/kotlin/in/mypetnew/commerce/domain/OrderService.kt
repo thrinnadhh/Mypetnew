@@ -371,7 +371,10 @@ class OrderService(
         "A cart item changed after this quote was created",
     )
 
-    private fun replayCheckout(customerId: UUID, idempotencyKey: String, fingerprint: String): ProductOrder? {
+    fun findCheckout(customerId: UUID, idempotencyKey: String): PersistedCheckout? =
+        persistence.findCheckout(customerId, idempotencyKey)
+
+    fun replayCheckout(customerId: UUID, idempotencyKey: String, fingerprint: String): ProductOrder? {
         val existing = persistence.findCheckout(customerId, idempotencyKey) ?: return null
         if (existing.requestFingerprint != fingerprint) {
             throw DomainException(
@@ -415,7 +418,7 @@ class OrderService(
         Role.ADMIN -> emptySet()
     }
 
-    private fun checkoutFingerprint(quote: Quote, organizationId: UUID): String {
+    fun checkoutFingerprint(quote: Quote, organizationId: UUID): String {
         val canonical = buildString {
             append(quote.id).append(':')
             append(quote.customerId).append(':')
@@ -429,7 +432,7 @@ class OrderService(
         return sha256(canonical)
     }
 
-    private fun validateIdempotencyKey(key: String) {
+    fun validateIdempotencyKey(key: String) {
         if (!key.matches(Regex("[A-Za-z0-9._:-]{1,128}"))) {
             throw DomainException("IDEMPOTENCY_KEY_INVALID", "The idempotency key is invalid")
         }

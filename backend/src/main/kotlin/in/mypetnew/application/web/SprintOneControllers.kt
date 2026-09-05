@@ -443,6 +443,34 @@ class CustomerCommerceApiController(
     ): ProductOrder {
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
+        orders.validateIdempotencyKey(idempotencyKey)
+
+        val existing = orders.findCheckout(customer.actorId, idempotencyKey)
+        if (existing != null) {
+            if (request.quoteId != existing.order.quoteId) {
+                throw DomainException(
+                    "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+                    "The idempotency key was already used for another request",
+                )
+            }
+            val quote = quotes.get(request.quoteId)
+            if (quote.customerId != customer.actorId) resourceUnavailable()
+            if (quote.cartSignature != request.cartSignature) {
+                throw DomainException(
+                    "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+                    "The idempotency key was already used for another request",
+                )
+            }
+            val fingerprint = orders.checkoutFingerprint(quote, existing.order.organizationId)
+            if (existing.requestFingerprint != fingerprint) {
+                throw DomainException(
+                    "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+                    "The idempotency key was already used for another request",
+                )
+            }
+            return existing.order
+        }
+
         val quote = quotes.requireValid(request.quoteId, request.cartSignature)
         if (quote.customerId != customer.actorId) resourceUnavailable()
 
@@ -502,6 +530,19 @@ class CustomerCommerceApiController(
             resourceId = order.id,
         )
         return order
+    }
+
+    @GetMapping("/orders/by-key")
+    fun findOrderByKey(
+        authentication: Authentication,
+        @RequestParam idempotencyKey: String,
+    ): ProductOrder {
+        val customer = authentication.domainPrincipal()
+        Authorizer.requireRole(customer, Role.CUSTOMER)
+        orders.validateIdempotencyKey(idempotencyKey)
+        val persisted = orders.findCheckout(customer.actorId, idempotencyKey)
+            ?: throw DomainException("ORDER_NOT_FOUND", "The order is unavailable")
+        return persisted.order
     }
 
     data class ChallengeRequest(val organizationId: UUID, val outletId: UUID)
@@ -630,6 +671,23 @@ class MerchantCommerceApiController(
             request.outletId,
             MerchantPermission.POS_OPERATE,
         )
+        pos.validateKey(idempotencyKey)
+
+        val lineQuantities = request.lines.associate { it.listingId to it.quantity }
+        val replayed = pos.replaySale(
+            merchantId = outlet.organizationId,
+            outletId = outlet.id,
+            customerId = null,
+            associationChallengeId = request.associationChallengeId,
+            lineQuantities = lineQuantities,
+            payment = request.paymentDeclaration,
+            cashierId = principal.actorId,
+            idempotencyKey = idempotencyKey,
+        )
+        if (replayed != null) {
+            return replayed
+        }
+
         val listingNames = mutableMapOf<UUID, String>()
         val lines = request.lines.associate { line ->
             val listing = catalog.getListing(line.listingId)
@@ -696,6 +754,7 @@ class MerchantCommerceApiController(
             outletId,
             MerchantPermission.POS_OPERATE,
         )
+        pos.validateKey(idempotencyKey)
         val persisted = pos.find(outlet.id, idempotencyKey)
             ?: throw DomainException("POS_SALE_NOT_FOUND", "The POS sale is unavailable")
         return persisted.sale

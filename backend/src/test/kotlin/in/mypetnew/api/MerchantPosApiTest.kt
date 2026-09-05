@@ -165,6 +165,122 @@ class MerchantPosApiTest {
         }.andExpect {
             status { isNotFound() }
         }
+
+        // 7. Invalid idempotency key format on lookup returns 400 IDEMPOTENCY_KEY_INVALID
+        mockMvc.get("/api/v1/merchant/pos/sales/by-key?outletId=$outletId&idempotencyKey=invalid key with spaces!") {
+            header("Authorization", "Bearer $merchantToken")
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.code") { value("IDEMPOTENCY_KEY_INVALID") }
+        }
+    }
+
+    @Test
+    fun `POS sale last-unit replay succeeds and recovers committed sale when stock is zero`() {
+        val merchantActor = UUID.randomUUID()
+        val admin = Principal(UUID.randomUUID(), Role.ADMIN, permissions = setOf(AdminPermission.PROVIDER_REVIEW))
+        val merchantBootstrapToken = tokens.issue(Principal(merchantActor, Role.MERCHANT))
+        val adminToken = tokens.issue(admin)
+
+        val submitted = post(
+            "/api/v1/merchant/outlets",
+            merchantBootstrapToken,
+            "submit-outlet-pos-last-unit",
+            """{"name":"Last Unit Pet Store","capabilities":["PRODUCT_STORE"],"servicePinCodes":["560002"]}""",
+        )
+        val outletId = submitted.uuid("id")
+        val organizationId = submitted.uuid("organizationId")
+
+        post("/api/v1/admin/outlets/$outletId/approve", adminToken, "approve-outlet-pos-last-unit", "{}")
+        val merchant = Principal(
+            merchantActor,
+            Role.MERCHANT,
+            organizationId = organizationId,
+            outletIds = setOf(outletId),
+            merchantPermissionsByOutlet = mapOf(outletId to setOf(MerchantPermission.OWNER, MerchantPermission.POS_OPERATE)),
+        )
+        val merchantToken = tokens.issue(merchant)
+
+        val listing = post(
+            "/api/v1/merchant/listings",
+            merchantToken,
+            "listing-create-pos-last-unit",
+            """{"outletId":"$outletId","barcodeType":"INTERNAL","barcode":"POS-LAST-UNIT-1","name":"Last Unit Chew Toy","kind":"PRODUCT","mrpPaise":10000,"sellingPricePaise":8000,"category":"toys"}""",
+        )
+        val listingId = listing.uuid("id")
+
+        // Receive exactly 2 units (the exact sale quantity)
+        post(
+            "/api/v1/merchant/inventory/receive",
+            merchantToken,
+            "receive-pos-stock-last-unit",
+            """{"outletId":"$outletId","listingId":"$listingId","quantity":2}""",
+        )
+
+        val idempotencyKey = "pos-last-unit-001"
+        val salePayload = """{
+            "outletId": "$outletId",
+            "associationChallengeId": null,
+            "paymentDeclaration": "CASH",
+            "lines": [{"listingId": "$listingId", "quantity": 2}]
+        }""".trimIndent()
+
+        // 1. First sale completes -> consumes all 2 units
+        val sale = post(
+            "/api/v1/merchant/pos/sales",
+            merchantToken,
+            idempotencyKey,
+            salePayload,
+        )
+        val saleId = sale.uuid("id")
+        assertEquals(16000L, sale.path("totalPaise").asLong())
+
+        // AC6: 2. Identical replay when stock is 0 succeeds, returns existing sale, NOT LISTING_UNAVAILABLE
+        val replay = post(
+            "/api/v1/merchant/pos/sales",
+            merchantToken,
+            idempotencyKey,
+            salePayload,
+        )
+        assertEquals(saleId, replay.uuid("id"))
+        assertEquals(16000L, replay.path("totalPaise").asLong())
+
+        // AC2/POS: 3. Genuinely new sale for now-depleted stock fails with LISTING_UNAVAILABLE
+        mockMvc.post("/api/v1/merchant/pos/sales") {
+            header("Authorization", "Bearer $merchantToken")
+            header("Idempotency-Key", "pos-fresh-sale-002")
+            contentType = MediaType.APPLICATION_JSON
+            content = salePayload
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.code") { value("LISTING_UNAVAILABLE") }
+        }
+
+        // AC7: 4. Same key with conflicting lines fails with 409 IDEMPOTENCY_FINGERPRINT_MISMATCH
+        val conflictingPayload = """{
+            "outletId": "$outletId",
+            "associationChallengeId": null,
+            "paymentDeclaration": "CASH",
+            "lines": [{"listingId": "$listingId", "quantity": 1}]
+        }""".trimIndent()
+        mockMvc.post("/api/v1/merchant/pos/sales") {
+            header("Authorization", "Bearer $merchantToken")
+            header("Idempotency-Key", idempotencyKey)
+            contentType = MediaType.APPLICATION_JSON
+            content = conflictingPayload
+        }.andExpect {
+            status { isConflict() }
+            jsonPath("$.code") { value("IDEMPOTENCY_FINGERPRINT_MISMATCH") }
+        }
+
+        // 5. Recovery lookup recovers the committed sale
+        mockMvc.get("/api/v1/merchant/pos/sales/by-key?outletId=$outletId&idempotencyKey=$idempotencyKey") {
+            header("Authorization", "Bearer $merchantToken")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.id") { value(saleId.toString()) }
+            jsonPath("$.totalPaise") { value(16000) }
+        }
     }
 
     private fun post(path: String, token: String, idempotencyKey: String, body: String): JsonNode {

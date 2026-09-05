@@ -507,6 +507,76 @@ class M9OrderPosConcurrencyPostgresContractTest {
         inventory.requireReconciled(scope(scenario))
     }
 
+    @Test
+    fun `M9 concurrent identical checkout with same idempotency key converges to single order and reservation`() {
+        val scenario = fixture.create()
+        seedStock(scenario, 1, "m9-concurrent-checkout-seed")
+        val customerId = createCustomer()
+        val quote = pickupQuote(scenario, customerId, 1, 9_000)
+        val services = services()
+        val ready = CountDownLatch(2)
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+
+        try {
+            val futures = listOf(
+                executor.submit(Callable {
+                    ready.countDown()
+                    check(start.await(5, TimeUnit.SECONDS))
+                    services.orders.checkout(
+                        quote = quote,
+                        organizationId = scenario.organizationId,
+                        listingNames = mapOf(scenario.listingId to "Product Name"),
+                        idempotencyKey = "m9-concurrent-checkout-key",
+                        actorId = customerId,
+                        traceId = "trace-m9-concurrent-checkout-1",
+                    )
+                }),
+                executor.submit(Callable {
+                    ready.countDown()
+                    check(start.await(5, TimeUnit.SECONDS))
+                    services.orders.checkout(
+                        quote = quote,
+                        organizationId = scenario.organizationId,
+                        listingNames = mapOf(scenario.listingId to "Product Name"),
+                        idempotencyKey = "m9-concurrent-checkout-key",
+                        actorId = customerId,
+                        traceId = "trace-m9-concurrent-checkout-2",
+                    )
+                }),
+            )
+            assertTrue(ready.await(5, TimeUnit.SECONDS))
+            start.countDown()
+            val results = futures.map { it.get(15, TimeUnit.SECONDS) }
+
+            assertEquals(results[0].id, results[1].id)
+            assertEquals(customerId, results[0].customerId)
+            assertEquals(OrderStatus.PLACED, results[0].status)
+            assertEquals(quote.pricing.grandTotalPaise, results[0].grandTotalPaise)
+
+            assertEquals(1, count("mypet.product_order"))
+            assertEquals(0, count("mypet.pos_sale"))
+            assertEquals(1, count("mypet.product_order_line"))
+            assertEquals(1, countWhere("mypet.inventory_reservation", "status = 'RESERVED'"))
+            assertEquals(1, countWhere("mypet.inventory_movement", "reason = 'ORDER_RESERVE'"))
+            assertEquals(0, inventory.available(scenario.listingId))
+            assertEquals(1, inventory.reserved(scenario.listingId))
+
+            assertEquals(
+                results[0].id.toString(),
+                jdbc.queryForObject(
+                    "SELECT id::text FROM mypet.product_order WHERE customer_id = ? AND checkout_idempotency_key = ?",
+                    String::class.java,
+                    customerId,
+                    "m9-concurrent-checkout-key",
+                ),
+            )
+            inventory.requireReconciled(scope(scenario))
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
     private fun services(
         authority: CommerceListingAuthority = listingAuthority,
         associations: CustomerAssociationChallengeService? = null,

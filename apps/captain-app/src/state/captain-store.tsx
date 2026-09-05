@@ -148,9 +148,9 @@ export const CaptainStoreProvider: React.FC<{ children: React.ReactNode }> = ({ 
         }
       } else if (nextAppState === 'active') {
         refreshPermissions();
-        if (presence.online) {
+        if (presence.online || profile?.busy) {
           setLocationActivityState('FOREGROUND_TRACKING');
-          locationUploader.publishCurrentLocation(true).catch(() => {});
+          locationUploader.publishCurrentLocation(presence.online).catch(() => {});
         }
       }
     };
@@ -342,10 +342,10 @@ export const CaptainStoreProvider: React.FC<{ children: React.ReactNode }> = ({ 
   );
 
   const refreshPresence = useCallback(async () => {
-    if (presence.online) {
-      await locationUploader.publishCurrentLocation(true);
+    if (presence.online || profile?.busy) {
+      await locationUploader.publishCurrentLocation(presence.online);
     }
-  }, [presence.online]);
+  }, [presence.online, profile?.busy]);
 
   const requestForeground = useCallback(async () => {
     const status = await requestForegroundLocationPermission();

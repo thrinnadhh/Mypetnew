@@ -19,7 +19,7 @@ export type CaptainPushSignal = {
   offerId: string;
 };
 
-const COLD_VALIDATION_RETRY_DELAYS_MS = [250, 1_000, 3_000] as const;
+const VALIDATION_RETRY_DELAYS_MS = [250, 1_000, 3_000] as const;
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -110,6 +110,10 @@ export function CaptainNotificationBridge(): React.ReactElement | null {
     let coldRetryInFlight = false;
     let coldRetryAttempt = 0;
     let coldRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingTapData: unknown = null;
+    let tapRetryInFlight = false;
+    let tapRetryAttempt = 0;
+    let tapRetryTimer: ReturnType<typeof setTimeout> | null = null;
     const validationFlights = new Map<string, Promise<boolean | null>>();
     const navigatedOffers = new Set<string>();
     const sessionIsCurrent = () =>
@@ -121,6 +125,13 @@ export function CaptainNotificationBridge(): React.ReactElement | null {
       if (coldRetryTimer) {
         clearTimeout(coldRetryTimer);
         coldRetryTimer = null;
+      }
+    };
+
+    const clearTapRetryTimer = () => {
+      if (tapRetryTimer) {
+        clearTimeout(tapRetryTimer);
+        tapRetryTimer = null;
       }
     };
 
@@ -162,15 +173,34 @@ export function CaptainNotificationBridge(): React.ReactElement | null {
         !sessionIsCurrent() ||
         !connectivity.online ||
         coldRetryTimer ||
-        coldRetryAttempt >= COLD_VALIDATION_RETRY_DELAYS_MS.length
+        coldRetryAttempt >= VALIDATION_RETRY_DELAYS_MS.length
       ) {
         return;
       }
-      const delay = COLD_VALIDATION_RETRY_DELAYS_MS[coldRetryAttempt++];
+      const delay = VALIDATION_RETRY_DELAYS_MS[coldRetryAttempt++];
       coldRetryTimer = setTimeout(() => {
         coldRetryTimer = null;
         if (pendingColdData) {
           processColdResponse(pendingColdData).catch(() => {});
+        }
+      }, delay);
+    };
+
+    const scheduleTapRetry = () => {
+      if (
+        !pendingTapData ||
+        !sessionIsCurrent() ||
+        !connectivity.online ||
+        tapRetryTimer ||
+        tapRetryAttempt >= VALIDATION_RETRY_DELAYS_MS.length
+      ) {
+        return;
+      }
+      const delay = VALIDATION_RETRY_DELAYS_MS[tapRetryAttempt++];
+      tapRetryTimer = setTimeout(() => {
+        tapRetryTimer = null;
+        if (pendingTapData) {
+          processTapResponse(pendingTapData).catch(() => {});
         }
       }, delay);
     };
@@ -196,6 +226,26 @@ export function CaptainNotificationBridge(): React.ReactElement | null {
       if (shouldRetry) scheduleColdRetry();
     };
 
+    const processTapResponse = async (data: unknown) => {
+      if (tapRetryInFlight || !sessionIsCurrent()) return;
+      tapRetryInFlight = true;
+      let shouldRetry = false;
+      try {
+        const outcome = await handleSignal(data, true);
+        if (outcome === 'RETRY') {
+          pendingTapData = data;
+          shouldRetry = true;
+        } else {
+          pendingTapData = null;
+          tapRetryAttempt = 0;
+          clearTapRetryTimer();
+        }
+      } finally {
+        tapRetryInFlight = false;
+      }
+      if (shouldRetry) scheduleTapRetry();
+    };
+
     registerCaptainNotifications(false).catch(() => {});
     const tokenSubscription = Notifications.addPushTokenListener((token) => {
       if (!sessionIsCurrent() || typeof token.data !== 'string') return;
@@ -205,21 +255,33 @@ export function CaptainNotificationBridge(): React.ReactElement | null {
       handleSignal(notification.request.content.data, false).catch(() => {});
     });
     const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      handleSignal(response.notification.request.content.data, true).catch(() => {});
+      processTapResponse(response.notification.request.content.data).catch(() => {});
     });
 
     const unsubscribeConnectivity = connectivity.subscribe((online) => {
-      if (online && pendingColdData) {
+      if (!online) return;
+      if (pendingColdData) {
         coldRetryAttempt = 0;
         clearColdRetryTimer();
         processColdResponse(pendingColdData).catch(() => {});
       }
+      if (pendingTapData) {
+        tapRetryAttempt = 0;
+        clearTapRetryTimer();
+        processTapResponse(pendingTapData).catch(() => {});
+      }
     });
     const appStateSubscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && pendingColdData && sessionIsCurrent()) {
+      if (state !== 'active' || !sessionIsCurrent()) return;
+      if (pendingColdData) {
         coldRetryAttempt = 0;
         clearColdRetryTimer();
         processColdResponse(pendingColdData).catch(() => {});
+      }
+      if (pendingTapData) {
+        tapRetryAttempt = 0;
+        clearTapRetryTimer();
+        processTapResponse(pendingTapData).catch(() => {});
       }
     });
 
@@ -232,6 +294,7 @@ export function CaptainNotificationBridge(): React.ReactElement | null {
     return () => {
       active = false;
       clearColdRetryTimer();
+      clearTapRetryTimer();
       tokenSubscription.remove();
       foregroundSubscription.remove();
       responseSubscription.remove();

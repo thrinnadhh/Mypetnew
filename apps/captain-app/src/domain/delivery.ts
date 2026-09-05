@@ -40,6 +40,16 @@ export interface DeliveryJob {
   failureReason?: string | null;
 }
 
+/**
+ * Proof secrets are transport-only. Never retain a successfully verified PIN in
+ * React/domain state after the authoritative mutation completes.
+ */
+export function sanitizeDeliveryProof(proof?: DeliveryProof): DeliveryProof | undefined {
+  if (!proof) return undefined;
+  const { pinCode: _pinCode, ...sanitized } = proof;
+  return sanitized;
+}
+
 export const DELIVERY_STATE_RANKS: Record<DeliveryState, number> = {
   ASSIGNED: 10,
   ARRIVING_PICKUP: 20,

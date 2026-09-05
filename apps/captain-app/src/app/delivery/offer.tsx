@@ -69,10 +69,23 @@ export default function DeliveryOfferModal() {
   };
 
   const handleReject = async () => {
+    setError(null);
     setLoading(true);
     try {
-      await rejectOffer(activeOffer.offerId);
-      router.back();
+      const outcome = await rejectOffer(activeOffer.offerId);
+      if (outcome.outcome === 'ACKNOWLEDGED') {
+        router.back();
+      } else if (outcome.outcome === 'REJECTED') {
+        if (outcome.error.code === 'OFFER_UNAVAILABLE' || outcome.error.status === 409) {
+          setOfferState('LOST');
+        } else {
+          setOfferState('PENDING');
+          setError(outcome.error.message);
+        }
+      } else {
+        setOfferState('UNKNOWN');
+        setError('The rejection could not be confirmed. The offer remains pending until the server is reconciled.');
+      }
     } finally {
       setLoading(false);
     }

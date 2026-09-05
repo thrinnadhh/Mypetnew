@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import React, { useEffect } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { registerCaptainDevice } from '../api/devices';
 import { getAuthGeneration, getRuntimeAccountId } from '../auth/session';
 import { useDeliveryStore } from '../state/delivery-store';
@@ -18,6 +18,8 @@ export type CaptainPushSignal = {
   notificationId?: string;
   offerId: string;
 };
+
+const COLD_VALIDATION_RETRY_DELAYS_MS = [250, 1_000, 3_000] as const;
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -106,12 +108,21 @@ export function CaptainNotificationBridge(): React.ReactElement | null {
     let active = true;
     let pendingColdData: unknown = null;
     let coldRetryInFlight = false;
+    let coldRetryAttempt = 0;
+    let coldRetryTimer: ReturnType<typeof setTimeout> | null = null;
     const validationFlights = new Map<string, Promise<boolean | null>>();
     const navigatedOffers = new Set<string>();
     const sessionIsCurrent = () =>
       active &&
       getRuntimeAccountId() === accountId &&
       getAuthGeneration() === generation;
+
+    const clearColdRetryTimer = () => {
+      if (coldRetryTimer) {
+        clearTimeout(coldRetryTimer);
+        coldRetryTimer = null;
+      }
+    };
 
     const handleSignal = async (
       data: unknown,
@@ -145,6 +156,46 @@ export function CaptainNotificationBridge(): React.ReactElement | null {
       return 'HANDLED';
     };
 
+    const scheduleColdRetry = () => {
+      if (
+        !pendingColdData ||
+        !sessionIsCurrent() ||
+        !connectivity.online ||
+        coldRetryTimer ||
+        coldRetryAttempt >= COLD_VALIDATION_RETRY_DELAYS_MS.length
+      ) {
+        return;
+      }
+      const delay = COLD_VALIDATION_RETRY_DELAYS_MS[coldRetryAttempt++];
+      coldRetryTimer = setTimeout(() => {
+        coldRetryTimer = null;
+        if (pendingColdData) {
+          processColdResponse(pendingColdData).catch(() => {});
+        }
+      }, delay);
+    };
+
+    const processColdResponse = async (data: unknown) => {
+      if (coldRetryInFlight || !sessionIsCurrent()) return;
+      coldRetryInFlight = true;
+      let shouldRetry = false;
+      try {
+        const outcome = await handleSignal(data, true);
+        if (outcome === 'RETRY') {
+          pendingColdData = data;
+          shouldRetry = true;
+        } else {
+          pendingColdData = null;
+          coldRetryAttempt = 0;
+          clearColdRetryTimer();
+          await Notifications.clearLastNotificationResponseAsync();
+        }
+      } finally {
+        coldRetryInFlight = false;
+      }
+      if (shouldRetry) scheduleColdRetry();
+    };
+
     registerCaptainNotifications(false).catch(() => {});
     const tokenSubscription = Notifications.addPushTokenListener((token) => {
       if (!sessionIsCurrent() || typeof token.data !== 'string') return;
@@ -157,24 +208,19 @@ export function CaptainNotificationBridge(): React.ReactElement | null {
       handleSignal(response.notification.request.content.data, true).catch(() => {});
     });
 
-    const processColdResponse = async (data: unknown) => {
-      if (coldRetryInFlight || !sessionIsCurrent()) return;
-      coldRetryInFlight = true;
-      try {
-        const outcome = await handleSignal(data, true);
-        if (outcome === 'RETRY') {
-          pendingColdData = data;
-        } else {
-          pendingColdData = null;
-          await Notifications.clearLastNotificationResponseAsync();
-        }
-      } finally {
-        coldRetryInFlight = false;
-      }
-    };
-
     const unsubscribeConnectivity = connectivity.subscribe((online) => {
-      if (online && pendingColdData) processColdResponse(pendingColdData).catch(() => {});
+      if (online && pendingColdData) {
+        coldRetryAttempt = 0;
+        clearColdRetryTimer();
+        processColdResponse(pendingColdData).catch(() => {});
+      }
+    });
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && pendingColdData && sessionIsCurrent()) {
+        coldRetryAttempt = 0;
+        clearColdRetryTimer();
+        processColdResponse(pendingColdData).catch(() => {});
+      }
     });
 
     Notifications.getLastNotificationResponseAsync()
@@ -185,9 +231,11 @@ export function CaptainNotificationBridge(): React.ReactElement | null {
 
     return () => {
       active = false;
+      clearColdRetryTimer();
       tokenSubscription.remove();
       foregroundSubscription.remove();
       responseSubscription.remove();
+      appStateSubscription.remove();
       unsubscribeConnectivity();
     };
   }, [revalidateOffer]);

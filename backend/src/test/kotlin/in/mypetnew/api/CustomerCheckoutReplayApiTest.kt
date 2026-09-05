@@ -7,6 +7,8 @@ import `in`.mypetnew.catalog.domain.CreateListingCommand
 import `in`.mypetnew.catalog.domain.InventoryService
 import `in`.mypetnew.catalog.domain.ListingKind
 import `in`.mypetnew.catalog.domain.StockReason
+import `in`.mypetnew.commerce.domain.OrderService
+import `in`.mypetnew.commerce.domain.OrderStatus
 import `in`.mypetnew.common.auth.AdminPermission
 import `in`.mypetnew.common.auth.Principal
 import `in`.mypetnew.common.auth.Role
@@ -49,6 +51,7 @@ class CustomerCheckoutReplayApiTest {
     @Autowired private lateinit var providers: ProviderService
     @Autowired private lateinit var catalog: CatalogService
     @Autowired private lateinit var inventory: InventoryService
+    @Autowired private lateinit var orders: OrderService
 
     @Test
     fun `checkout last-unit replay succeeds, fresh stale request fails, conflict rejected, and recovery lookup works`() {
@@ -169,6 +172,23 @@ class CustomerCheckoutReplayApiTest {
             status { isOk() }
             jsonPath("$.id") { value(orderAId) }
             jsonPath("$.status") { value("PLACED") }
+        }
+
+        // AC6 / Required Test K: Progressed order recovery returns current authoritative status
+        orders.transition(
+            orderId = UUID.fromString(orderAId),
+            target = OrderStatus.ACCEPTED,
+            idempotencyKey = "transition-accept-${UUID.randomUUID()}",
+            actorId = outlet.organizationId,
+            actorRole = Role.MERCHANT,
+            traceId = "trace-transition-accept",
+        )
+        mockMvc.get("/api/v1/customer/orders/by-key?idempotencyKey=$idempotencyKeyA") {
+            header("Authorization", "Bearer ${customerA.accessToken}")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.id") { value(orderAId) }
+            jsonPath("$.status") { value("ACCEPTED") }
         }
 
         // Recovery Lookup Contract: Non-existent key returns 404

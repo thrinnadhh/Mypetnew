@@ -385,6 +385,42 @@ class OrderService(
         return existing.order
     }
 
+    fun recoverCheckout(
+        customerId: UUID,
+        idempotencyKey: String,
+        quoteId: UUID,
+        cartSignature: String,
+        quoteProvider: (UUID) -> Quote?,
+    ): ProductOrder? {
+        validateIdempotencyKey(idempotencyKey)
+        val existing = persistence.findCheckout(customerId, idempotencyKey) ?: return null
+        if (existing.order.quoteId != quoteId) {
+            throw DomainException(
+                "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+                "The idempotency key was already used for another request",
+            )
+        }
+        val quote = quoteProvider(quoteId)
+            ?: throw DomainException(
+                "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+                "The idempotency key was already used for another request",
+            )
+        if (quote.customerId != customerId || quote.cartSignature != cartSignature) {
+            throw DomainException(
+                "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+                "The idempotency key was already used for another request",
+            )
+        }
+        val expectedFingerprint = checkoutFingerprint(quote, existing.order.organizationId)
+        if (existing.requestFingerprint != expectedFingerprint) {
+            throw DomainException(
+                "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+                "The idempotency key was already used for another request",
+            )
+        }
+        return existing.order
+    }
+
     private fun allowedTargets(order: ProductOrder, actorRole: Role): Set<OrderStatus> = when (actorRole) {
         Role.CUSTOMER -> when (order.status) {
             OrderStatus.PLACED -> setOf(OrderStatus.CANCELLED)

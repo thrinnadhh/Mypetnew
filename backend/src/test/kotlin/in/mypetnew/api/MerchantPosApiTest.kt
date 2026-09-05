@@ -273,6 +273,46 @@ class MerchantPosApiTest {
             jsonPath("$.code") { value("IDEMPOTENCY_FINGERPRINT_MISMATCH") }
         }
 
+        // AC11 / Required Test I: Duplicate lines [A x 1, A x 2] must fail closed with POS_LINE_INVALID (400)
+        // and must NOT collapse into an identical replay of the committed sale [A x 2]
+        val duplicateLinesPayload1 = """{
+            "outletId": "$outletId",
+            "associationChallengeId": null,
+            "paymentDeclaration": "CASH",
+            "lines": [
+                {"listingId": "$listingId", "quantity": 1},
+                {"listingId": "$listingId", "quantity": 2}
+            ]
+        }""".trimIndent()
+        mockMvc.post("/api/v1/merchant/pos/sales") {
+            header("Authorization", "Bearer $merchantToken")
+            header("Idempotency-Key", idempotencyKey)
+            contentType = MediaType.APPLICATION_JSON
+            content = duplicateLinesPayload1
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.code") { value("POS_LINE_INVALID") }
+        }
+
+        val duplicateLinesPayload2 = """{
+            "outletId": "$outletId",
+            "associationChallengeId": null,
+            "paymentDeclaration": "CASH",
+            "lines": [
+                {"listingId": "$listingId", "quantity": 2},
+                {"listingId": "$listingId", "quantity": 1}
+            ]
+        }""".trimIndent()
+        mockMvc.post("/api/v1/merchant/pos/sales") {
+            header("Authorization", "Bearer $merchantToken")
+            header("Idempotency-Key", idempotencyKey)
+            contentType = MediaType.APPLICATION_JSON
+            content = duplicateLinesPayload2
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.code") { value("POS_LINE_INVALID") }
+        }
+
         // 5. Recovery lookup recovers the committed sale
         mockMvc.get("/api/v1/merchant/pos/sales/by-key?outletId=$outletId&idempotencyKey=$idempotencyKey") {
             header("Authorization", "Bearer $merchantToken")

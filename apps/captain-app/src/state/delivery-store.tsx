@@ -15,6 +15,7 @@ import {
   DeliveryProof,
   DeliveryState,
   isDeliveryStateMoreAdvanced,
+  sanitizeDeliveryProof,
 } from '../domain/delivery';
 import { DispatchAssignment, DispatchOffer } from '../domain/dispatch';
 import { AppError } from '../domain/result';
@@ -258,13 +259,23 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     if (!sessionIsCurrent(capturedSession)) return outcome;
     setLastCommandOutcome(outcome);
 
-    setPendingOffers((prev) => prev.filter((o) => o.offerId !== offerId));
-    if (activeOffer?.offerId === offerId) {
-      setActiveOffer(null);
+    if (outcome.outcome === 'ACKNOWLEDGED') {
+      setPendingOffers((prev) => prev.filter((o) => o.offerId !== offerId));
+      if (activeOffer?.offerId === offerId) {
+        setActiveOffer(null);
+      }
+    } else if (outcome.outcome === 'REJECTED') {
+      setDeliveryError(outcome.error);
+      // A terminal server response is authoritative, but the canonical offer list
+      // determines whether this offer is still available to the captain.
+      await refreshOffers();
+    } else if ('error' in outcome && outcome.error) {
+      // PENDING/UNKNOWN must not synthesize a successful rejection in UI state.
+      setDeliveryError(outcome.error);
     }
 
     return outcome;
-  }, [activeOffer, captureSession, sessionIsCurrent]);
+  }, [activeOffer, captureSession, refreshOffers, sessionIsCurrent]);
 
   const confirmPickup = useCallback(async (
     jobId: string,
@@ -308,7 +319,7 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         ...prev,
         state: 'PICKED_UP',
         pickedUpAt: outcome.data.pickedUpAt || new Date().toISOString(),
-        pickupProof: proof,
+        pickupProof: sanitizeDeliveryProof(proof),
       } : null));
     } else if (outcome.outcome === 'UNKNOWN') {
       setActiveDelivery((prev) => (prev ? {
@@ -376,7 +387,7 @@ export const DeliveryStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         ...prev,
         state: 'DELIVERED',
         deliveredAt: outcome.data.deliveredAt || new Date().toISOString(),
-        deliveryProof: proof,
+        deliveryProof: sanitizeDeliveryProof(proof),
       } : null));
     } else if (outcome.outcome === 'UNKNOWN') {
       setActiveDelivery((prev) => (prev ? {

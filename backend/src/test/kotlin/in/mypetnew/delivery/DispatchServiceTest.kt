@@ -61,25 +61,33 @@ class DispatchServiceTest {
             )
         }
 
+        val pickupProof = `in`.mypetnew.delivery.domain.DeliveryProof("PIN", assigned.pickupPin)
         val pickedUp = fixture.dispatch.markPickedUp(
             captainId,
             assigned.id,
-            `in`.mypetnew.delivery.domain.DeliveryProof("PIN", assigned.pickupPin),
+            pickupProof,
             "captain-pickup",
         )
         assertEquals(DispatchStatus.PICKED_UP, pickedUp.status)
-        assertFalse(requireNotNull(pickedUp.pickupProofPayload).contains(assigned.pickupPin))
+        assertEquals(
+            """{"type":"PIN","capturedAt":"${pickupProof.capturedAt}"}""",
+            requireNotNull(pickedUp.pickupProofPayload),
+        )
         assertEquals(OrderStatus.PICKED_UP, fixture.orders.get(fixture.readyOrder.id).status)
         assertEquals(0, fixture.inventory.reserved(fixture.listingId))
 
+        val deliveryProof = `in`.mypetnew.delivery.domain.DeliveryProof("PIN", assigned.deliveryPin)
         val delivered = fixture.dispatch.markDelivered(
             captainId,
             assigned.id,
-            `in`.mypetnew.delivery.domain.DeliveryProof("PIN", assigned.deliveryPin),
+            deliveryProof,
             "captain-delivered",
         )
         assertEquals(DispatchStatus.DELIVERED, delivered.status)
-        assertFalse(requireNotNull(delivered.deliveryProofPayload).contains(assigned.deliveryPin))
+        assertEquals(
+            """{"type":"PIN","capturedAt":"${deliveryProof.capturedAt}"}""",
+            requireNotNull(delivered.deliveryProofPayload),
+        )
         assertEquals(OrderStatus.DELIVERED, fixture.orders.get(fixture.readyOrder.id).status)
         assertFalse(requireNotNull(fixture.dispatch.captainState(captainId)).busy)
 

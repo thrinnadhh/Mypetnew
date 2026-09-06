@@ -46,6 +46,13 @@ class AppointmentOnlinePaymentSourceContractTest {
     }
 
     @Test
+    fun `local isolated contract tests never auto start payment lifecycle workers`() {
+        val workers = source("src/main/kotlin/in/mypetnew/payment/infrastructure/PaymentLifecycleWorkers.kt")
+
+        assertTrue(workers.contains("@Profile(\"!test & !development & !local-isolated\")"))
+    }
+
+    @Test
     fun `terminal and late captured appointment payments enter refund workflow`() {
         val service = source("src/main/kotlin/in/mypetnew/payment/infrastructure/JdbcAppointmentOnlinePaymentService.kt")
         val persistence = source("src/main/kotlin/in/mypetnew/appointment/infrastructure/OnlineAwareJdbcAppointmentPersistence.kt")

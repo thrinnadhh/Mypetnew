@@ -371,9 +371,48 @@ class OrderService(
         "A cart item changed after this quote was created",
     )
 
-    private fun replayCheckout(customerId: UUID, idempotencyKey: String, fingerprint: String): ProductOrder? {
+    fun findCheckout(customerId: UUID, idempotencyKey: String): PersistedCheckout? =
+        persistence.findCheckout(customerId, idempotencyKey)
+
+    fun replayCheckout(customerId: UUID, idempotencyKey: String, fingerprint: String): ProductOrder? {
         val existing = persistence.findCheckout(customerId, idempotencyKey) ?: return null
         if (existing.requestFingerprint != fingerprint) {
+            throw DomainException(
+                "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+                "The idempotency key was already used for another request",
+            )
+        }
+        return existing.order
+    }
+
+    fun recoverCheckout(
+        customerId: UUID,
+        idempotencyKey: String,
+        quoteId: UUID,
+        cartSignature: String,
+        quoteProvider: (UUID) -> Quote?,
+    ): ProductOrder? {
+        validateIdempotencyKey(idempotencyKey)
+        val existing = persistence.findCheckout(customerId, idempotencyKey) ?: return null
+        if (existing.order.quoteId != quoteId) {
+            throw DomainException(
+                "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+                "The idempotency key was already used for another request",
+            )
+        }
+        val quote = quoteProvider(quoteId)
+            ?: throw DomainException(
+                "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+                "The idempotency key was already used for another request",
+            )
+        if (quote.customerId != customerId || quote.cartSignature != cartSignature) {
+            throw DomainException(
+                "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+                "The idempotency key was already used for another request",
+            )
+        }
+        val expectedFingerprint = checkoutFingerprint(quote, existing.order.organizationId)
+        if (existing.requestFingerprint != expectedFingerprint) {
             throw DomainException(
                 "IDEMPOTENCY_FINGERPRINT_MISMATCH",
                 "The idempotency key was already used for another request",
@@ -415,7 +454,7 @@ class OrderService(
         Role.ADMIN -> emptySet()
     }
 
-    private fun checkoutFingerprint(quote: Quote, organizationId: UUID): String {
+    fun checkoutFingerprint(quote: Quote, organizationId: UUID): String {
         val canonical = buildString {
             append(quote.id).append(':')
             append(quote.customerId).append(':')
@@ -429,7 +468,7 @@ class OrderService(
         return sha256(canonical)
     }
 
-    private fun validateIdempotencyKey(key: String) {
+    fun validateIdempotencyKey(key: String) {
         if (!key.matches(Regex("[A-Za-z0-9._:-]{1,128}"))) {
             throw DomainException("IDEMPOTENCY_KEY_INVALID", "The idempotency key is invalid")
         }

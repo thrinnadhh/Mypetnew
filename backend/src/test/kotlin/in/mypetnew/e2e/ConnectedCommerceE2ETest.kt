@@ -118,7 +118,7 @@ class ConnectedCommerceE2ETest {
             "/api/v1/merchant/inventory/receive",
             merchant.accessToken,
             "e2e-stock-receive",
-            """{"outletId":"$outletId","listingId":"$listingId","quantity":5}""",
+            """{"outletId":"$outletId","listingId":"$listingId","quantity":1}""",
         )
 
         val captain = loginCaptain(captainMobile)
@@ -181,6 +181,7 @@ class ConnectedCommerceE2ETest {
         assertEquals(orderId, replayOrder.uuid("id"))
         assertEquals(1, scalarInt("SELECT COUNT(*) FROM mypet.product_order WHERE id = ?", orderId))
         assertEquals(1, scalarInt("SELECT COUNT(*) FROM mypet.inventory_reservation WHERE order_id = ?", orderId))
+        assertEquals(0, scalarInt("SELECT on_hand - reserved FROM mypet.inventory_balance WHERE listing_id = ?", listingId), "available stock must be 0 (last unit reserved)")
 
         transitionMerchant(orderId, merchant.accessToken, "ACCEPTED", "e2e-order-accepted")
         transitionMerchant(orderId, merchant.accessToken, "PREPARING", "e2e-order-preparing")
@@ -279,7 +280,7 @@ class ConnectedCommerceE2ETest {
         assertEquals("DELIVERED", scalarString("SELECT status FROM mypet.product_order WHERE id = ?", orderId))
         assertEquals("DELIVERED", scalarString("SELECT status FROM mypet.dispatch_job WHERE id = ?", jobId))
         assertEquals("FULFILLED", scalarString("SELECT status FROM mypet.inventory_reservation WHERE order_id = ?", orderId))
-        assertEquals(4, scalarInt("SELECT on_hand FROM mypet.inventory_balance WHERE listing_id = ?", listingId))
+        assertEquals(0, scalarInt("SELECT on_hand FROM mypet.inventory_balance WHERE listing_id = ?", listingId))
         assertEquals(0, scalarInt("SELECT reserved FROM mypet.inventory_balance WHERE listing_id = ?", listingId))
         assertEquals(
             1,

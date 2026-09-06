@@ -286,10 +286,45 @@ class PosService(
         .entries
         .joinToString(",") { "${it.key}=${it.value.first}" }
 
-    private fun validateKey(idempotencyKey: String, traceId: String) {
+    fun validateKey(idempotencyKey: String) {
         if (!idempotencyKey.matches(Regex("[A-Za-z0-9._:-]{1,128}"))) {
             throw DomainException("IDEMPOTENCY_KEY_INVALID", "The idempotency key is invalid")
         }
+    }
+
+    fun replaySale(
+        merchantId: UUID,
+        outletId: UUID,
+        customerId: UUID?,
+        associationChallengeId: UUID?,
+        lineQuantities: Map<UUID, Int>,
+        payment: PaymentDeclaration,
+        cashierId: UUID,
+        idempotencyKey: String,
+    ): PosSale? {
+        validateKey(idempotencyKey)
+        val existing = persistence.find(outletId, idempotencyKey) ?: return null
+        val linesForFp = lineQuantities.mapValues { it.value to 0L }
+        val fp = fingerprint(
+            merchantId = merchantId,
+            outletId = outletId,
+            customerId = customerId,
+            associationChallengeId = associationChallengeId,
+            lines = linesForFp,
+            payment = payment,
+            cashierId = cashierId,
+        )
+        if (existing.requestFingerprint != fp && !legacyReplayMatches(existing.sale, merchantId, outletId, customerId, associationChallengeId, linesForFp, payment, cashierId)) {
+            throw DomainException(
+                "IDEMPOTENCY_FINGERPRINT_MISMATCH",
+                "The idempotency key was already used for another request",
+            )
+        }
+        return existing.sale
+    }
+
+    private fun validateKey(idempotencyKey: String, traceId: String) {
+        validateKey(idempotencyKey)
         if (!traceId.matches(Regex("[A-Za-z0-9._:-]{1,64}"))) {
             throw DomainException("TRACE_ID_INVALID", "The trace identifier is invalid")
         }

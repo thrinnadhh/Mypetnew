@@ -443,54 +443,79 @@ class CustomerCommerceApiController(
     ): ProductOrder {
         val customer = authentication.domainPrincipal()
         Authorizer.requireRole(customer, Role.CUSTOMER)
-        val quote = quotes.requireValid(request.quoteId, request.cartSignature)
-        if (quote.customerId != customer.actorId) resourceUnavailable()
+        orders.validateIdempotencyKey(idempotencyKey)
 
-        val outlet = providers.getOutlet(quote.outletId)
-        val fulfilmentAvailable = when (quote.fulfilmentMode) {
-            "STORE_PICKUP" -> outlet.pickupEnabled
-            DispatchService.DELIVERY_MODE -> {
-                val address = quote.deliveryAddress
-                address != null &&
-                    address.pincode in outlet.servicePinCodes &&
-                    outlet.latitude != null &&
-                    outlet.longitude != null
-            }
-            else -> false
-        }
-        if (
-            outlet.status != ProviderStatus.ACTIVE ||
-            ProviderCapability.PRODUCT_STORE !in outlet.capabilities ||
-            !fulfilmentAvailable
-        ) {
-            throw DomainException("QUOTE_STALE", "The provider changed after this quote was created")
-        }
-        val listingNames = quote.lines.map { (listingId, quotedLine) ->
-            val listing = catalog.getListing(listingId)
-            val (quantity, quotedUnitPrice) = quotedLine
-            if (
-                listing.outletId != outlet.id ||
-                listing.commerceMode != CommerceMode.COMMERCE ||
-                listing.sellingPricePaise != quotedUnitPrice ||
-                inventory.available(listing.id) < quantity
-            ) {
-                throw DomainException("QUOTE_STALE", "A cart item changed after this quote was created")
-            }
-            listingId to listing.name
-        }.toMap()
-
-        val order = orders.checkout(
-            quote = quote,
-            organizationId = outlet.organizationId,
-            listingNames = listingNames,
+        orders.recoverCheckout(
+            customerId = customer.actorId,
             idempotencyKey = idempotencyKey,
-            actorId = customer.actorId,
-            traceId = currentTraceId(),
-        )
+            quoteId = request.quoteId,
+            cartSignature = request.cartSignature,
+            quoteProvider = { quotes.get(it) },
+        )?.let { return it }
+
+        val order = try {
+            val quote = quotes.requireValid(request.quoteId, request.cartSignature)
+            if (quote.customerId != customer.actorId) resourceUnavailable()
+
+            val outlet = providers.getOutlet(quote.outletId)
+            val fulfilmentAvailable = when (quote.fulfilmentMode) {
+                "STORE_PICKUP" -> outlet.pickupEnabled
+                DispatchService.DELIVERY_MODE -> {
+                    val address = quote.deliveryAddress
+                    address != null &&
+                        address.pincode in outlet.servicePinCodes &&
+                        outlet.latitude != null &&
+                        outlet.longitude != null
+                }
+                else -> false
+            }
+            if (
+                outlet.status != ProviderStatus.ACTIVE ||
+                ProviderCapability.PRODUCT_STORE !in outlet.capabilities ||
+                !fulfilmentAvailable
+            ) {
+                throw DomainException("QUOTE_STALE", "The provider changed after this quote was created")
+            }
+            val listingNames = quote.lines.map { (listingId, quotedLine) ->
+                val listing = catalog.getListing(listingId)
+                val (quantity, quotedUnitPrice) = quotedLine
+                if (
+                    listing.outletId != outlet.id ||
+                    listing.commerceMode != CommerceMode.COMMERCE ||
+                    listing.sellingPricePaise != quotedUnitPrice ||
+                    inventory.available(listing.id) < quantity
+                ) {
+                    throw DomainException("QUOTE_STALE", "A cart item changed after this quote was created")
+                }
+                listingId to listing.name
+            }.toMap()
+
+            orders.checkout(
+                quote = quote,
+                organizationId = outlet.organizationId,
+                listingNames = listingNames,
+                idempotencyKey = idempotencyKey,
+                actorId = customer.actorId,
+                traceId = currentTraceId(),
+            )
+        } catch (ex: DomainException) {
+            val recovered = orders.recoverCheckout(
+                customerId = customer.actorId,
+                idempotencyKey = idempotencyKey,
+                quoteId = request.quoteId,
+                cartSignature = request.cartSignature,
+                quoteProvider = { quotes.get(it) },
+            )
+            if (recovered != null) {
+                return recovered
+            }
+            throw ex
+        }
         val isDelivery = order.fulfilmentMode == DispatchService.DELIVERY_MODE
+        val outletOwner = providers.getOutlet(order.outletId).ownerActorId
         notifications.enqueue(
             sourceEventId = order.id,
-            recipientId = outlet.ownerActorId,
+            recipientId = outletOwner,
             templateVersion = if (isDelivery) "delivery-order-placed-v1" else "pickup-order-placed-v1",
             title = if (isDelivery) "New delivery order" else "New pickup order",
             body = if (isDelivery) {
@@ -502,6 +527,19 @@ class CustomerCommerceApiController(
             resourceId = order.id,
         )
         return order
+    }
+
+    @GetMapping("/orders/by-key")
+    fun findOrderByKey(
+        authentication: Authentication,
+        @RequestParam idempotencyKey: String,
+    ): ProductOrder {
+        val customer = authentication.domainPrincipal()
+        Authorizer.requireRole(customer, Role.CUSTOMER)
+        orders.validateIdempotencyKey(idempotencyKey)
+        val persisted = orders.findCheckout(customer.actorId, idempotencyKey)
+            ?: throw DomainException("ORDER_NOT_FOUND", "The order is unavailable")
+        return persisted.order
     }
 
     data class ChallengeRequest(val organizationId: UUID, val outletId: UUID)
@@ -630,31 +668,72 @@ class MerchantCommerceApiController(
             request.outletId,
             MerchantPermission.POS_OPERATE,
         )
-        val listingNames = mutableMapOf<UUID, String>()
-        val lines = request.lines.associate { line ->
-            val listing = catalog.getListing(line.listingId)
-            if (
-                listing.outletId != outlet.id ||
-                listing.commerceMode != CommerceMode.COMMERCE ||
-                line.quantity <= 0 ||
-                inventory.available(listing.id) < line.quantity
-            ) throw DomainException("LISTING_UNAVAILABLE", "A POS item is unavailable")
-            listingNames[listing.id] = listing.name
-            listing.id to Pair(line.quantity, listing.sellingPricePaise)
+        pos.validateKey(idempotencyKey)
+
+        if (request.lines.isEmpty()) throw DomainException("POS_CART_EMPTY", "The POS cart is empty")
+        if (request.lines.any { it.quantity <= 0 }) throw DomainException("POS_LINE_INVALID", "A POS line is invalid")
+        val uniqueListingIds = request.lines.map { it.listingId }.toSet()
+        if (uniqueListingIds.size != request.lines.size) {
+            throw DomainException("POS_LINE_INVALID", "The POS cart contains duplicate lines")
         }
-        if (lines.size != request.lines.size) throw DomainException("POS_LINE_INVALID", "The POS cart contains duplicate lines")
-        val sale = pos.complete(
+
+        val lineQuantities = request.lines.associate { it.listingId to it.quantity }
+        fun attemptReplay(): `in`.mypetnew.pos.domain.PosSale? = pos.replaySale(
             merchantId = outlet.organizationId,
             outletId = outlet.id,
             customerId = null,
-            lines = lines,
-            payment = request.paymentDeclaration,
-            idempotencyKey = idempotencyKey,
-            listingNames = listingNames,
-            cashierId = principal.actorId,
-            traceId = currentTraceId(),
             associationChallengeId = request.associationChallengeId,
+            lineQuantities = lineQuantities,
+            payment = request.paymentDeclaration,
+            cashierId = principal.actorId,
+            idempotencyKey = idempotencyKey,
         )
+
+        val replayed = attemptReplay()
+        if (replayed != null) {
+            return replayed
+        }
+
+        val listingNames = mutableMapOf<UUID, String>()
+        val lines = try {
+            request.lines.associate { line ->
+                val listing = catalog.getListing(line.listingId)
+                if (
+                    listing.outletId != outlet.id ||
+                    listing.commerceMode != CommerceMode.COMMERCE ||
+                    inventory.available(listing.id) < line.quantity
+                ) throw DomainException("LISTING_UNAVAILABLE", "A POS item is unavailable")
+                listingNames[listing.id] = listing.name
+                listing.id to Pair(line.quantity, listing.sellingPricePaise)
+            }
+        } catch (ex: DomainException) {
+            val recovered = attemptReplay()
+            if (recovered != null) {
+                return recovered
+            }
+            throw ex
+        }
+
+        val sale = try {
+            pos.complete(
+                merchantId = outlet.organizationId,
+                outletId = outlet.id,
+                customerId = null,
+                lines = lines,
+                payment = request.paymentDeclaration,
+                idempotencyKey = idempotencyKey,
+                listingNames = listingNames,
+                cashierId = principal.actorId,
+                traceId = currentTraceId(),
+                associationChallengeId = request.associationChallengeId,
+            )
+        } catch (ex: DomainException) {
+            val recovered = attemptReplay()
+            if (recovered != null) {
+                return recovered
+            }
+            throw ex
+        }
         if (sale.customerId != null && sale.loyaltyAwarded) {
             notifications.enqueue(
                 sourceEventId = sale.id,
@@ -696,6 +775,7 @@ class MerchantCommerceApiController(
             outletId,
             MerchantPermission.POS_OPERATE,
         )
+        pos.validateKey(idempotencyKey)
         val persisted = pos.find(outlet.id, idempotencyKey)
             ?: throw DomainException("POS_SALE_NOT_FOUND", "The POS sale is unavailable")
         return persisted.sale

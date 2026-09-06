@@ -144,4 +144,33 @@ describe('Captain notification signal bridge', () => {
     expect(Notifications.clearLastNotificationResponseAsync).toHaveBeenCalledTimes(1);
     renderer.unmount();
   });
+
+  it('retries an in-session notification tap after transient offer validation failure', async () => {
+    revalidateOffer.mockResolvedValueOnce(null).mockResolvedValueOnce(true);
+
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<CaptainNotificationBridge />);
+      await flushEffects();
+    });
+
+    await act(async () => {
+      responseListener?.({ notification: signalNotification() });
+      await flushEffects();
+    });
+
+    expect(revalidateOffer).toHaveBeenCalledTimes(1);
+    expect(router.push).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await flushEffects();
+    });
+
+    expect(revalidateOffer).toHaveBeenCalledTimes(2);
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith('/delivery/offer');
+    expect(Notifications.clearLastNotificationResponseAsync).not.toHaveBeenCalled();
+    renderer.unmount();
+  });
 });

@@ -19,6 +19,8 @@ type BackgroundTrackingState = {
   accountId: string;
   online: boolean;
   activeDelivery: boolean;
+  distanceIntervalMeters?: number;
+  timeIntervalMs?: number;
 };
 
 const backgroundListeners: Set<BackgroundLocationListener> = new Set();
@@ -39,7 +41,12 @@ async function readTrackingState(): Promise<BackgroundTrackingState | null> {
       parsed.version !== 1 ||
       typeof parsed.accountId !== 'string' ||
       typeof parsed.online !== 'boolean' ||
-      typeof parsed.activeDelivery !== 'boolean'
+      typeof parsed.activeDelivery !== 'boolean' ||
+      (parsed.distanceIntervalMeters !== undefined &&
+        (typeof parsed.distanceIntervalMeters !== 'number' ||
+          !Number.isFinite(parsed.distanceIntervalMeters))) ||
+      (parsed.timeIntervalMs !== undefined &&
+        (typeof parsed.timeIntervalMs !== 'number' || !Number.isFinite(parsed.timeIntervalMs)))
     ) {
       return null;
     }
@@ -175,19 +182,35 @@ export async function startBackgroundLocation(
   }
 
   try {
-    await persistTrackingState({
+    const { distanceIntervalMeters = 15, timeIntervalMs = 10_000 } = options;
+    const previousState = await readTrackingState();
+    const nextState: BackgroundTrackingState = {
       version: 1,
       accountId,
       online: options.online ?? true,
       activeDelivery: options.activeDelivery ?? false,
-    });
+      distanceIntervalMeters,
+      timeIntervalMs,
+    };
 
     const isStarted = await Location.hasStartedLocationUpdatesAsync(
       CAPTAIN_BACKGROUND_LOCATION_TASK,
     );
-    if (isStarted) return true;
+    const nativeConfigurationChanged =
+      isStarted &&
+      (!previousState ||
+        previousState.accountId !== nextState.accountId ||
+        previousState.activeDelivery !== nextState.activeDelivery ||
+        previousState.distanceIntervalMeters !== distanceIntervalMeters ||
+        previousState.timeIntervalMs !== timeIntervalMs);
 
-    const { distanceIntervalMeters = 15, timeIntervalMs = 10_000 } = options;
+    await persistTrackingState(nextState);
+
+    if (isStarted && !nativeConfigurationChanged) return true;
+    if (nativeConfigurationChanged) {
+      await Location.stopLocationUpdatesAsync(CAPTAIN_BACKGROUND_LOCATION_TASK);
+    }
+
     await Location.startLocationUpdatesAsync(CAPTAIN_BACKGROUND_LOCATION_TASK, {
       accuracy: Location.Accuracy.High,
       timeInterval: timeIntervalMs,

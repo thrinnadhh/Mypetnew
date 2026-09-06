@@ -2,6 +2,7 @@ import * as Location from 'expo-location';
 import { publishCaptainLocation } from '../../api/availability';
 import { clearSession, storeSession } from '../../auth/session';
 import {
+  CAPTAIN_BACKGROUND_LOCATION_TASK,
   processBackgroundLocationBatch,
   startBackgroundLocation,
   stopBackgroundLocation,
@@ -97,5 +98,41 @@ describe('process-death-safe background location', () => {
       }],
     })).resolves.toBe(false);
     expect(publishCaptainLocation).not.toHaveBeenCalled();
+  });
+
+  it('restarts native tracking when active delivery needs a faster GPS cadence', async () => {
+    await storeSession(sessionFor('captain-a'));
+    await expect(startBackgroundLocation({
+      accountId: 'captain-a',
+      online: true,
+      activeDelivery: false,
+      distanceIntervalMeters: 25,
+      timeIntervalMs: 25_000,
+    })).resolves.toBe(true);
+
+    const startUpdates = Location.startLocationUpdatesAsync as jest.Mock;
+    const stopUpdates = Location.stopLocationUpdatesAsync as jest.Mock;
+    const startsBeforeActiveDelivery = startUpdates.mock.calls.length;
+    const stopsBeforeActiveDelivery = stopUpdates.mock.calls.length;
+
+    await expect(startBackgroundLocation({
+      accountId: 'captain-a',
+      online: true,
+      activeDelivery: true,
+      distanceIntervalMeters: 15,
+      timeIntervalMs: 10_000,
+    })).resolves.toBe(true);
+
+    expect(stopUpdates.mock.calls.length).toBe(stopsBeforeActiveDelivery + 1);
+    expect(startUpdates.mock.calls.length).toBe(startsBeforeActiveDelivery + 1);
+    expect(startUpdates).toHaveBeenLastCalledWith(
+      CAPTAIN_BACKGROUND_LOCATION_TASK,
+      expect.objectContaining({
+        distanceInterval: 15,
+        timeInterval: 10_000,
+        deferredUpdatesDistance: 15,
+        deferredUpdatesInterval: 10_000,
+      }),
+    );
   });
 });
